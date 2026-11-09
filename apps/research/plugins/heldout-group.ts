@@ -1,5 +1,4 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Study, canonical } from '../src/documents.ts';
@@ -14,7 +13,7 @@ import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '.
 export const finalizeGroup = defineTool({
   name: 'factor_finalize_group',
   description: 'Assess two or more original recorded Wasm selections together on one unseen held-out window. Include this conversation, select every member before any final assessment, then end research. No final tuning feedback.',
-  parameters: Type.Object({ reason: Type.String(), selections: Type.Array(Type.Object({ researchId: Type.Integer(), trialId: Type.Integer() }), { minItems: 2 }) }),
+  parameters: obj({ reason: str(), selections: arr(obj({ researchId: int(), trialId: int() }), { minItems: 2 }) }),
   replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     if (!args.selections.some((selection) => selection.researchId === api.conversationId)) throw new Error('caller_selection_required');
@@ -36,9 +35,9 @@ export const finalizeGroup = defineTool({
         const model = object(trial.proposal, 'proposal').model;
         if (typeof model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
         const data = JSON.parse(JSON.stringify(object(study.input.data.sealed, 'heldout_data'))) as JsonObject;
-        if (canonical(withoutExecutionQuotas(iterationRequest(data))) !== canonical(withoutExecutionQuotas(object(trial.result, 'trial_result').request!))
-          || canonical(withoutExecutionQuotas(iterationRequest(data))) !== canonical(withoutExecutionQuotas(iterationRequest(study.input.data)))) throw new Error('heldout_criteria_mismatch');
-        if (members.length && canonical(withoutExecutionQuotas(data)) !== canonical(withoutExecutionQuotas(members[0]!.data))) throw new Error('heldout_group_window_mismatch');
+        if (canonical((iterationRequest(data))) !== canonical((object(trial.result, 'trial_result').request!))
+          || canonical((iterationRequest(data))) !== canonical((iterationRequest(study.input.data)))) throw new Error('heldout_criteria_mismatch');
+        if (members.length && canonical((data)) !== canonical((members[0]!.data))) throw new Error('heldout_group_window_mismatch');
         study.final ??= { taskId: api.taskId, trialId: selection.trialId, comparedTrials: study.trials.map((trial) => trial.taskId!),
           selections: args.selections, reason: args.reason, status: 'STARTED', result: null, error: null };
         members.push({ id, model, data, settled: study.final.status !== 'STARTED' });
@@ -83,6 +82,6 @@ export const finalizeGroup = defineTool({
         }, context);
       }
     }
-    return { content: [{ type: 'text', text: 'Joint research assessment ended. Original selections, one exposure and native outcomes are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
+    return { output: [{ type: 'text', text: 'Joint research assessment ended. Original selections, one exposure and native outcomes are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
   },
 });

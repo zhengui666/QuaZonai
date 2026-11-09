@@ -10,6 +10,9 @@ async function plugins(page: Page) {
     if (path === '/data-sources') return route.fulfill({ json: [source] });
     if (path === '/extensions') return route.fulfill({ json: [{ ...source, kind: 'data' }] });
     if (path === '/datasets') return route.fulfill({ json: [] });
+    if (path === '/data-sources/test.data/events') {
+      return route.fulfill({ contentType: 'text/event-stream', body: `event: data-source\ndata: ${JSON.stringify({ taskId: 42, status: 'terminal', outcome: 'completed', source })}\n\n` });
+    }
     if (path.startsWith('/data-sources/test.data')) {
       writes.push({ method: request.method(), body: request.postData() ? request.postDataJSON() : null });
       if (request.method() === 'PUT') {
@@ -19,6 +22,7 @@ async function plugins(page: Page) {
       } else {
         if (failLoad) return route.fulfill({ status: 422, json: { message: '数据加载失败' } });
         source = { ...source, state: 'loaded', datasetIds: ['registered-dataset'], lastLoadedAt: '2026-10-26T00:00:00Z' };
+        return route.fulfill({ status: 202, json: { taskId: 42 } });
       }
       return route.fulfill({ json: source });
     }

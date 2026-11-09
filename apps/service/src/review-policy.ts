@@ -12,7 +12,7 @@ import { counter, json, nowNs, object, Problem, text } from './facts.ts';
 import { ReviewAllocations } from './review-allocation.ts';
 
 const context = BACKGROUND_CONTEXT;
-export const ReviewPolicies = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-policies', version: 1, scope: 'session', initial: () => ({ records: {} }) });
+export const ReviewPolicies = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-policies', version: 1, scope: 'session', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, initial: () => ({ records: {} }) });
 const Policies = ReviewPolicies;
 /** Calibrated anchors must be the immutable output of the retained-reference consumer. */
 export async function resolveRegisteredReviewPolicy(reader: DocumentReader, value: unknown): Promise<ReviewPolicy> {

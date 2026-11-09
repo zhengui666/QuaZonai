@@ -264,7 +264,7 @@ fn native_sma_seed_preserves_warmup_and_exposes_the_linear_spread_counterexample
         &market::module("local.get 2 local.get 3 f64.sub"),
     )
     .unwrap();
-    assert_eq!(fast.native_versions["nautilus-indicators"], "0.67.0");
+    assert_eq!(fast.native_versions["nautilus-indicators"], "0.68.0");
     for (instrument, base) in [("EUR/USD.SIM", 1.0), ("GBP/USD.SIM", 2.0)] {
         for report in [&fast, &slow, &spread] {
             let points: Vec<_> = report

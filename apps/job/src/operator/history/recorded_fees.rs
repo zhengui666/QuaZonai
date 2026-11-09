@@ -1,9 +1,9 @@
 //! Prepare conditional cost replay from original source fields and same-ID native quantities.
 //! No fee formula, quantity renormalization, instrument definition or qualification is inferred.
-use super::{event_key, field, hf_selection, seconds, text, v2, SourceRowContext};
-use anyhow::{ensure, Context, Result};
+use super::{SourceRowContext, event_key, field, hf_selection, seconds, text, v2};
+use anyhow::{Context, Result, ensure};
 use bigdecimal::BigDecimal;
-use contracts::{recorded_fees::*, science::NativeBarSelectionV1, DbCounter, SchemaV1};
+use contracts::{DbCounter, SchemaV1, recorded_fees::*, science::NativeBarSelectionV1};
 use nautilus_model::data::{Bar, TradeTick};
 use nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id;
 use nautilus_serialization::arrow::DecodeFromRecordBatch;
@@ -12,7 +12,7 @@ use parquet::{
     file::reader::{FileReader, SerializedFileReader},
     record::{Field, Row},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
@@ -90,7 +90,7 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
     for kind in types {
         let id = kind.instrument_id().to_string();
         ensure!(
-            kind.to_string().ends_with("-1-MINUTE-LAST-EXTERNAL")
+            kind.to_string().ends_with("-1-MINUTE-LAST-INTERNAL")
                 && kind.instrument_id().venue.as_str() == "POLYMARKET",
             "RECORDED_FEE_ONE_MINUTE_POLYMARKET_REQUIRED"
         );
@@ -106,10 +106,11 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
         let mut observed = false;
         native::<Bar>(&root, "bars", &kind.to_string(), |bar| {
             ensure!(bar.bar_type == kind, "RECORDED_FEE_NATIVE_ID_MISMATCH");
-            let end = bar.ts_event.as_u64();
+            let open = bar.ts_event.as_u64();
+            let end = crate::catalog::right_open_bar_close_ns(&bar)?;
             let available = bar.ts_init.as_u64();
-            if end < selected.event_start_ns.get()
-                || end >= selected.event_end_ns.get()
+            if open < selected.event_start_ns.get()
+                || open >= selected.event_end_ns.get()
                 || available < selected.event_start_ns.get()
                 || available > selected.decision_cutoff_ns.get()
             {
@@ -117,7 +118,7 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
             }
             crate::catalog::validate_price_bar(&bar, previous.as_ref())?;
             ensure!(
-                end == available && end >= MINUTE && end.is_multiple_of(MINUTE),
+                end <= available && open.is_multiple_of(MINUTE),
                 "RECORDED_FEE_BAR_CLOCK_MISMATCH"
             );
             rows += 1;

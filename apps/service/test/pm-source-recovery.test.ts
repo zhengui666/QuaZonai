@@ -21,7 +21,7 @@ test('same-source recovery records each failure episode once across HTTP observa
     const originalManifest = await readFile(dataset.revisionManifest, 'utf8'); await state.restart();
     const started = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: 'same-source-recovery', goal: 'Disclose unavailable research evidence without manufacturing an investment conclusion.', datasetId: dataset.id,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model, maxTrials: 1 } });
+        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model } });
     assert.equal(started.statusCode, 202, started.body); const first = started.json<Pm.PmMandateView>(); const id = first.mandate.id;
     const read = async () => {
       const response = await state.service.app.inject({ url: `/api/v3/mandates/${encodeURIComponent(id)}`, headers: state.headers });

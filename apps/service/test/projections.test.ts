@@ -152,12 +152,12 @@ test('list and usage do not load historical task results; list retains its exist
   } finally { await state.cleanup(); }
 });
 
-test('detail hydrates task metadata once, shares concurrent reads and follows committed newest-100 updates', { timeout: 20_000 }, async t => {
+test('detail reads live task state from the official graph and caches immutable terminal metadata', { timeout: 20_000 }, async t => {
   const storage = await openNodeSqliteStorage(':memory:'); const state = await setup(true, undefined, storage);
   try {
     const { receipt } = await studied(state); const host = state.service.research;
     const scan = storage.scanTasks.bind(storage); let scans = 0;
-    t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { if (args[0].conversationId === receipt.conversationId && !args[0].status) scans++; return scan(...args); });
+    t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { if (args[0].conversationId === receipt.conversationId && args[0].status === 'terminal') scans++; return scan(...args); });
     const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
     const [first, concurrent] = await Promise.all([get(), get()]);
     assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 1);

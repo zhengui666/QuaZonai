@@ -1,7 +1,7 @@
 //! Price/volume model inputs, not ABI recovery or historical execution definitions.
-use super::{event_key, field, hf_selection, seconds, text, v2, SourceRowContext};
+use super::{SourceRowContext, event_key, field, hf_selection, seconds, text, v2};
 use alloy_core::primitives::U256;
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use nautilus_model::{
     data::TradeTick,
     enums::AggressorSide,
@@ -14,7 +14,7 @@ use parquet::{
     record::{Field, Row},
 };
 use rust_decimal::{Decimal, RoundingStrategy};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
@@ -244,6 +244,7 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
     ensure!(trades_count > 0, "MODEL_EMPTY_SELECTION");
     let report = json!({"schema_version":1,"source":selection.repository,"revision":selection.revision,
         "source_observed_at":selection.retrieved_at,"amount_model":MODEL,
+        "bar_semantics":crate::catalog::aggregation::CONVENTION,
         "selection":{"start_seconds":args.start_seconds,"end_seconds":args.end_seconds,"bar_seconds":60},
         "scanned_rows":scanned,"outside_window_rows":outside,"exchange_summaries_excluded":summaries,
         "trades":trades_count,"bars":bars_count,"instrument_identities":identities.len(),"instrument_definitions":0,
@@ -294,10 +295,12 @@ mod tests {
         ] {
             assert!(amount(&row(value), "token_amount").is_err());
         }
-        assert!(amount(
-            &Row::new(vec![("token_amount".into(), Field::Null)]),
-            "token_amount"
-        )
-        .is_err());
+        assert!(
+            amount(
+                &Row::new(vec![("token_amount".into(), Field::Null)]),
+                "token_amount"
+            )
+            .is_err()
+        );
     }
 }

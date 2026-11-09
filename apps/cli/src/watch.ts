@@ -11,9 +11,12 @@ export async function observe(client: Client, id: number, seconds?: number, emit
   let last: ObservedResearch | null = null;
   try {
     while (!observation?.aborted) {
-      last = await client.request<ObservedResearch>('GET', `/research/${id}`, undefined, observation);
-      emit?.(last);
-      if (last.submission?.status === 'done' || last.submission?.status === 'unanswered') return { conversationId: id, submissionId: last.submission.id, submissionStatus: last.submission.status, settled: true, research: last };
+      for await (const state of client.events<ObservedResearch>(`/research/${id}/events`, observation)) {
+        last = state; emit?.(last);
+        if (last.submission?.status === 'done' || last.submission?.status === 'unanswered') return { conversationId: id, submissionId: last.submission.id, submissionStatus: last.submission.status, settled: true, research: last };
+      }
+      // Reattach a closed observer to the same committed conversation. Never
+      // submit work or infer settlement from a dropped connection.
       await delay(500, undefined, { signal: observation });
     }
   } catch (error) { if (!observation?.aborted) throw error; }
@@ -27,9 +30,10 @@ export async function observePortfolio(client: Client, id: string, seconds?: num
   let last: PortfolioView | null = null;
   try {
     while (!observation?.aborted) {
-      last = await client.request<PortfolioView>('GET', `/portfolios/${encodeURIComponent(id)}`, undefined, observation);
-      emit?.(last);
-      if (['COMPUTED', 'FAILED', 'STOPPED'].includes(last.status)) return { portfolioId: id, settled: true, portfolio: last };
+      for await (const state of client.events<PortfolioView>(`/portfolios/${encodeURIComponent(id)}/events`, observation)) {
+        last = state; emit?.(last);
+        if (['COMPUTED', 'FAILED', 'STOPPED'].includes(last.status)) return { portfolioId: id, settled: true, portfolio: last };
+      }
       await delay(1000, undefined, { signal: observation });
     }
   } catch (error) { if (!observation?.aborted) throw error; }

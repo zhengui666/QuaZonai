@@ -102,8 +102,11 @@ fn forecast_result(
     NativeForecastResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
-            ("nautilus-indicators".into(), "0.67.0".into()),
-            ("nautilus-persistence".into(), "0.67.0".into()),
+            ("nautilus-indicators".into(), crate::NAUTILUS_VERSION.into()),
+            (
+                "nautilus-persistence".into(),
+                crate::NAUTILUS_VERSION.into(),
+            ),
             ("wasmi".into(), "2.0.0".into()),
         ]),
         consumed_fuel,
@@ -215,6 +218,9 @@ fn forecast_compiled_bar_points<'a>(
             // Keep every original conversion and label check, including rows
             // which a portfolio does not retain. A bad prefix must still fail.
             let ordinal = u32::try_from(index)?;
+            // Official RightOpen aggregation timestamps the bar at its open.
+            // Its close/receipt is ts_init; never advertise the feature or label
+            // as available at the opening event timestamp.
             let event_ns = counter(bar.ts_event.as_u64())?;
             let available_ns = counter(bar.ts_init.as_u64())?;
             let label_available_ns = future

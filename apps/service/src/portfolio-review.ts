@@ -1,8 +1,6 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
+import { runScientificStage, scientificStageResult, type ScientificStageOperation } from './scientific-stages.ts';
 import type { Context } from '@earendil-works/chord';
 import { defineDocFamily, type ConversationId, type JsonObject } from '@earendil-works/pi-durable';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { ReviewCheck, ReviewMetric, ReviewReport } from '../../../packages/contracts/src/review.ts';
 import { allocationCapacityCheck, portfolioReviewVersion } from './review-allocation.ts';
 import { runIndependentReview } from '../../research/src/review-runtime.ts';
@@ -11,30 +9,19 @@ import { readTrustedSourceChecks, trustedSourceChecks } from '../../research/src
 import { canonical, Study, type ResearchInput } from '../../research/src/documents.ts';
 import { checkExposure } from '../../research/plugins/native-exposure.ts';
 import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
-import { runReviewScience } from '../../research/src/review-science-adapter.ts';
 import type { ResearchRuntime } from '../../research/src/research-runtime.ts';
-import { assertPortfolioIndependentContract, computePortfolio, nativeJob, type PortfolioTaskInput } from './native.ts';
-import { accountReviewMetrics, nativeReviewReturnPanel, adverseReviewRequest } from './review-account-science.ts';
+import { assertPortfolioIndependentContract, type PortfolioTaskInput } from './native.ts';
+import { nativeReviewReturnPanel, adverseReviewRequest } from './review-account-science.ts';
 import { Application, counter, json, object, portfolio, Problem } from './facts.ts';
 
 /** Persistent original scientific receipts keyed by their official Task identity.
  * Session lifetime preserves validation/selection evidence after Task retirement. */
-export const PortfolioReviewScience = defineDocFamily<{ results: Record<string, JsonObject>; reservations: Record<string, number>; reservedCalls: number }, null>({ kind: 'qz.portfolio-review-science', version: 1, scope: 'session', family: true, initial: () => ({ results: {}, reservations: {}, reservedCalls: 0 }) });
-export async function reservePortfolioReviewScience(input: PortfolioTaskInput, api: ResearchRuntime, context: Context, key: string, calls: number, action: () => Promise<JsonObject>): Promise<JsonObject> {
-  const previous = await api.snapshot(PortfolioReviewScience, String(api.taskId), context); if (previous?.results[key]) return previous.results[key]!;
-  let pending = false;
-  await api.commit(async tx => {
-    const state = await tx.doc(PortfolioReviewScience, String(api.taskId), null);
-    state.reservations ??= {};
-    if (state.reservations[key] !== undefined) { if (state.reservations[key] !== calls) throw new Problem('portfolio_review_stage_identity_conflict'); pending = true; return; }
-    state.reservations[key] = calls; state.reservedCalls += calls;
-  }, context);
-  // A native process may already have run before its result checkpoint. Never
-  // replace that unresolved invocation with a new execution identity for free.
-  if (pending) throw new Problem('portfolio_review_stage_requires_reconciliation');
-  const result = await action();
-  await api.commit(async tx => { (await tx.doc(PortfolioReviewScience, String(api.taskId), null)).results[key] = result; }, context);
-  return result;
+export const PortfolioReviewScience = defineDocFamily<{ selectionBinding: JsonObject | null }, null>({
+  kind: 'qz.portfolio-review-bindings', version: 1, scope: 'session', family: true,
+  checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, initial: () => ({ selectionBinding: null }),
+});
+export function reservePortfolioReviewScience(input: PortfolioTaskInput, api: ResearchRuntime, context: Context, key: string, calls: number, operation: ScientificStageOperation): Promise<JsonObject> {
+  return runScientificStage(api, context, key, calls, { binary: input.binary, dataDir: input.dataDir, ...operation });
 }
 
 /** Only original Validation inputs enter Review; component independent results stay private. */
@@ -66,10 +53,8 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
   const setCheck = (id: string, status: ReviewCheck['status'], reason: string) => { const check = checks.find(item => item.id === id); if (check) { check.status = status; check.reason = reason; check.evidenceRefs = [nativeRef]; } };
   setCheck('independent_window', 'UNKNOWN', 'fresh_portfolio_independent_window_required');
   let metrics: ReviewMetric[] = []; let scientific: JsonObject = { status: 'INCOMPLETE', reason: 'validation_shared_account_replay_not_completed' };
-  const reserve = (key: string, calls: number, action: () => Promise<JsonObject>) => reservePortfolioReviewScience(input, api, context, key, calls, action);
-  let directory: string | undefined;
+  const reserve = (key: string, calls: number, operation: ScientificStageOperation) => reservePortfolioReviewScience(input, api, context, key, calls, operation);
   try {
-    directory = await mkdtemp(join(input.dataDir, 'portfolio-review-'));
     if (input.review.stressMethod !== 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1') throw new Problem('portfolio_review_stress_method_not_frozen');
     if (input.policy.kind === 'catalog-ensemble') throw new Problem('portfolio_review_explicit_bar_strategy_required');
     for (const source of sources) {
@@ -78,15 +63,15 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
       await checkExposure(api, context, { ...validationData, request: raw! }, false);
     }
     const forecastCalls = sources.reduce((sum, source) => { const proposal = object(object(source.selected).proposal); const members = Array.isArray(proposal.members) ? proposal.members.length : 1; return sum + members + (members > 1 ? 1 : 0); }, 0);
-    const built = await reserve('candidate', forecastCalls + 3, async () => json(await computePortfolio(input, context, undefined, undefined, { partition: 'VALIDATION' })));
+    const built = await reserve('candidate', forecastCalls + 3, { kind: 'portfolio', input: input, partition: 'VALIDATION' });
     const native = object(built.native); const simulationRequest = object(native.simulationRequest, 'portfolio_review_explicit_shared_request_required');
     const candidate = object(native.simulation); const catalog = String(native.catalog);
     const cashRequest = structuredClone(simulationRequest);
     cashRequest.target_points = (cashRequest.target_points as JsonObject[]).map(point => ({ ...point, cash_weight: '1', targets: (point.targets as JsonObject[]).map(target => ({ ...target, weight: '0' })) }));
-    const cash = await reserve('cash', 1, () => nativeJob(input.binary, 'simulate', cashRequest, ['--catalog', catalog], directory!, context));
+    const cash = await reserve('cash', 1, { kind: 'native', command: 'simulate', input: cashRequest, args: ['--catalog', catalog] });
     const stressRequest = adverseReviewRequest(simulationRequest);
-    const stress = await reserve('stress', 1, () => nativeJob(input.binary, 'simulate', stressRequest, ['--catalog', catalog], directory!, context));
-    const diagnostics = await reserve('diagnostics', 2, async () => json(await accountReviewMetrics({ candidate, baseline: cash, stress, binary: input.binary, evidenceRef: nativeRef, context })));
+    const stress = await reserve('stress', 1, { kind: 'native', command: 'simulate', input: stressRequest, args: ['--catalog', catalog] });
+    const diagnostics = await reserve('diagnostics', 2, { kind: 'account-metrics', candidate, baseline: cash, stress, evidenceRef: nativeRef });
     metrics = diagnostics.metrics as unknown as ReviewMetric[];
     scientific = { status: 'COMPLETE', candidate: native, cash, stress, stressRequest, diagnostics: diagnostics.evidence!, capacity: built.capacity!, method: 'QZ_PORTFOLIO_REVIEW_VALIDATION_CASH_SLIPPAGE_BAR_DELAY_V1', unsupported: ['Venue fee multipliers are unsupported: source fee rates remain original.', 'BAR liquidity capacity is conditional historical evidence, not order-book depth or economic capacity.'] };
     const capacityCheck = allocationCapacityCheck(object(built.capacity), input.capital, stress, nativeRef);
@@ -98,7 +83,7 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
       await checkExposure(api, context, input.review.independentData, true, undefined, undefined, false);
       if (input.review.independentSource) {
         const source = input.review.independentSource;
-        const validated = await reserve('independent-source', 1, () => nativeJob(input.binary, 'review-source', { schema_version: 1, metadata: source.metadata, observed_at: source.receivedAt }, [], directory!, context));
+        const validated = await reserve('independent-source', 1, { kind: 'native', command: 'review-source', input: { schema_version: 1, metadata: source.metadata, observed_at: source.receivedAt }, args: [] });
         const sourceChecks = trustedSourceChecks(source, validated, input.review.independentData, (BigInt(Date.now())*1_000_000n).toString());
         if (sourceChecks.length >= 2 && sourceChecks.every(check => check.status === 'PASS')) setCheck('independent_window', 'PASS', 'fresh_registered_window_and_its_own_source_authority_verified_without_reading_values');
         else if (sourceChecks.some(check => check.status === 'FAIL')) setCheck('provenance', 'FAIL', sourceChecks.map(check => check.reason).join(';'));
@@ -108,10 +93,10 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
     const peers = Object.values(application!.portfolios).map(portfolio).filter(peer => peer.input.datasetId === current.input.datasetId && peer.view.capital === input.capital && peer.view.currency === input.currency);
     const panel = nativeReviewReturnPanel(candidate); const cohort: JsonObject[] = [{ id: input.id, returns: panel.returns }]; let complete = true;
     for (const peer of peers) if (peer.view.id !== input.id) {
-      const previous = peer.view.taskId === null ? null : await api.snapshot(PortfolioReviewScience, String(peer.view.taskId), context); const old = previous?.results.candidate;
+      const old = peer.view.taskId === null ? null : await scientificStageResult(api, context, peer.view.taskId, 'candidate');
       if (!old) { complete = false; continue; }
       const source = object(old.native); const original = object(source.simulationRequest);
-      if (canonical(withoutExecutionQuotas(original.selection!)) !== canonical(withoutExecutionQuotas(simulationRequest.selection!)) || canonical(original.settings!) !== canonical(simulationRequest.settings!)) { complete = false; continue; }
+      if (canonical((original.selection!)) !== canonical((simulationRequest.selection!)) || canonical(original.settings!) !== canonical(simulationRequest.settings!)) { complete = false; continue; }
       const returns = nativeReviewReturnPanel(object(source.simulation)); if (canonical(returns.times) !== canonical(panel.times)) { complete = false; continue; }
       cohort.push({ id: peer.view.id, returns: returns.returns });
     }
@@ -119,15 +104,15 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
     // capability. A restart cannot add newly admitted peers to the same analysis.
     const binding = await api.commit(async tx => {
       const state = await tx.doc(PortfolioReviewScience, String(api.taskId), null);
-      state.results['selection-binding'] ??= { source: { cohort, simulationRequest, candidate }, analysis: { kind: 'SELECTION', total_trials: peers.length, ledger_complete: complete, selected_trial_id: input.id, trials: cohort, timestamps_ns: panel.times, frequency: 'DAY', block_length: 1 } };
-      return JSON.parse(JSON.stringify(state.results['selection-binding'])) as JsonObject;
+      state.selectionBinding ??= { source: { cohort, simulationRequest, candidate }, analysis: { kind: 'SELECTION', total_trials: peers.length, ledger_complete: complete, selected_trial_id: input.id, trials: cohort, timestamps_ns: panel.times, frequency: 'DAY', block_length: 1 } };
+      return JSON.parse(JSON.stringify(state.selectionBinding)) as JsonObject;
     }, context);
-    const selected = await reserve('selection', 1, async () => json(await runReviewScience({ source: object(binding.source), analysis: object(binding.analysis), evidenceRef: nativeRef, target: input.binary, context })));
+    const selected = await reserve('selection', 1, { kind: 'review-science', source: object(binding.source), analysis: object(binding.analysis), evidenceRef: nativeRef });
     metrics.push(...selected.metrics as unknown as ReviewMetric[]); scientific.selection = selected.native!;
   } catch (error) {
     if (context.abortSignal?.aborted) throw error;
     scientific = { ...scientific, status: 'INCOMPLETE', reason: error instanceof Error ? error.message : 'portfolio_review_science_failed' };
-  } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+  }
   return runIndependentReview(api, context, {
     target: { kind: 'PORTFOLIO', id: input.id, version, sourceEvidenceRefs: refs, evaluationStartNs: start }, policy: input.review.policy, model: input.review.model, thinkingLevel: input.review.thinkingLevel,
     checks, metrics, createdAt: input.review.createdAt,

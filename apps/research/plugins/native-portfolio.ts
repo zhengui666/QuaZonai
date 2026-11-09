@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { executeNativeValue } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
@@ -42,7 +41,7 @@ export async function forecastMembers(binary: NativeTarget, catalog: string, mem
     await writeFile(modelPath, compileWasm(member.model, 'selected-factor.wat', 'portfolio-evaluation'));
     const args = ['--catalog', catalog, '--model', modelPath];
     const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context) : null;
-    if (summary && (canonical(withoutExecutionQuotas(summary.request!)) !== canonical(withoutExecutionQuotas(computationRequest)) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
+    if (summary && (canonical((summary.request!)) !== canonical((computationRequest)) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
     const forecastRequest = object(computationRequest.forecast, 'forecast_request');
     const command = policy.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast';
     const forecasts = await executeNative(binary, command, forecastRequest, args, directory, context);

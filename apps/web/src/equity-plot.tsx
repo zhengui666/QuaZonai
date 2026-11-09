@@ -74,7 +74,7 @@ export default function EquityPlot({ points, currency, initialCapital }: { point
     {performance.hasCapital && <dl className="equity-summary" aria-label="全区间表现">
       <div><dt><MetricLabel metricKey="endingEquity" /> <span>{currency}</span></dt><dd className={(latest?.value?.length ?? 0) > 16 ? 'equity-long-value' : undefined}><Exact value={formatEquity(latest?.value)} /></dd></div>
       <div><dt><MetricLabel metricKey="cumulativeReturn" /></dt><dd className={latestReturn != null && latestReturn < 0 ? 'equity-loss' : 'equity-gain'}>{percent(latestReturn)}</dd></div>
-      <div><dt><MetricLabel metricKey="maxDrawdown" /></dt><dd>{drawdownAvailable ? percent(performance.maxDrawdown) : '未提供'}</dd></div>
+      <div><dt><MetricLabel metricKey="snapshotMaxDrawdown" /></dt><dd>{drawdownAvailable ? percent(performance.maxDrawdown) : '未提供'}</dd></div>
     </dl>}
     {invalidTimes > 0 && <p className="error-text" role="status">{invalidTimes} 个记录时间无效，未绘制；原始记录见下方数据。</p>}
     {performance.hasCapital && !drawdownAvailable && <p className="quiet">记录不完整，回撤不可用；缺失权益保留断线。</p>}

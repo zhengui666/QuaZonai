@@ -48,7 +48,7 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?:
 });
 
 const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.factor-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
+  kind: 'qz.factor-child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 
 export async function runFactor(api: ResearchRuntime, context: Context, model: string, data: JsonObject): Promise<JsonObject> {

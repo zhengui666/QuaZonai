@@ -12,7 +12,7 @@ import { clipTickRegimeEvaluation, isTickResearchInput, nativeResearchInput, nat
 // Scientific exposure facts use the upstream session transaction, not a new
 // task/session database. A fork or a new conversation cannot rewind this doc.
 export const Exposures = defineDoc<{ windows: JsonObject[] }>({
-  kind: 'qz.native-exposure', version: 1, scope: 'session', initial: () => ({ windows: [] }),
+  kind: 'qz.native-exposure', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session', initial: () => ({ windows: [] }),
 });
 
 export function partitionBoundaries(request: JsonObject, catalog = false): void {

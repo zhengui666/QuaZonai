@@ -1,204 +1,87 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Fastify from 'fastify';
-import { configDefaults, existingDataset } from '../src/config.ts';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { createModels } from '@earendil-works/pi-ai';
+import type { TaskId } from '@earendil-works/pi-durable';
+import { openResearch } from '../../research/src/host.ts';
+import { configDefaults } from '../src/config.ts';
 import type { DatasetConfig } from '../src/config.ts';
-import { dataSources, registerDataSources } from '../src/data-sources.ts';
-
+import { dataSources } from '../src/data-sources.ts';
+const context = BACKGROUND_CONTEXT;
 const local = 'qz.data.local-config';
 const dataset = (id: string): DatasetConfig => ({ id, name: id, assetClass: 'CRYPTO', currency: 'USD', source: 'local', start: null, end: null,
   ready: true, data: { catalog: './catalog', sealed: { catalog: './heldout' }, request: {} } });
-
-test('disabling or closing a source aborts an active cooperative operator', async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'qz-source-cancel-'));
-  const module = join(dataDir, 'history.mjs');
-  await writeFile(module, `export default {name:'test.history',fields:[],async load(config,{signal}) {
-    await new Promise((resolve,reject)=> { if(signal.aborted) reject(new Error('aborted')); else signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}); }); return [];
-  }};`);
-  const sources = await dataSources(configDefaults({ dataDir, extensions: [{ name: 'test.history', module, kind: 'data', enabled: true }] }));
-  try {
-    let run = sources.refresh('test.history'); let rejected = assert.rejects(run, /data_source_refresh_cancelled/);
-    await new Promise(resolve => setImmediate(resolve));
-    await sources.save('test.history', { enabled: false, config: {} }); await rejected;
-    assert.equal(sources.view().find(item => item.name === 'test.history')!.enabled, false);
-    await sources.toggle('test.history', true);
-    run = sources.refresh('test.history'); rejected = assert.rejects(run, /data_source_refresh_cancelled/);
-    await new Promise(resolve => setImmediate(resolve)); await sources.close(); await rejected;
-  } finally { await sources.close(); await rm(dataDir, { recursive: true, force: true }); }
-});
-
-test('local source registers catalogs, persists and applies enablement to new admissions only', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-data-source-'));
-  const file = join(directory, 'export', 'dataset.json');
-  const target = { id: 'science', url: 'https://science.example', tokenEnv: 'TEST_TOKEN' };
-  const config = configDefaults({ dataDir: directory, datasets: [dataset('base')], nautilus: { backtest: target } });
-  let sources = await dataSources(config);
-  const app = Fastify(); registerDataSources(app, sources);
-  try {
-    assert.equal(sources.view().find(source => source.name === local)!.enabled, false);
-    assert.equal(sources.extensions().find(source => source.name === 'qz.data.config')!.kind, 'data');
-    await sources.toggle(local, true);
-    await sources.save(local, { enabled: false, config: { path: '' } });
-    assert.equal(sources.view().find(source => source.name === local)!.enabled, false, 'an unconfigured provider can be disabled');
-    await mkdir(join(directory, 'export')); await writeFile(file, JSON.stringify(dataset('imported')));
-    const saved = await app.inject({ method: 'PUT', url: `/api/v3/data-sources/${local}`, payload: { enabled: true, config: { path: 'export/dataset.json' } } });
-    assert.equal(saved.statusCode, 200);
-    assert.equal(config.datasets.length, 1, 'saving configuration does not read the source');
-    const loaded = await app.inject({ method: 'POST', url: `/api/v3/data-sources/${local}/refresh` });
-    assert.equal(loaded.statusCode, 200, loaded.body);
-    assert.deepEqual(loaded.json().datasetIds, ['imported']);
-    assert.equal(config.datasets[1]!.data.catalog, join(directory, 'export/catalog'));
-    assert.deepEqual(config.datasets[1]!.data.nautilusTarget, target);
-    const captured = structuredClone(config.datasets[1]);
-    await sources.toggle(local, false);
-    assert.deepEqual(config.datasets.map(value => value.id), ['base']);
-    await assert.rejects(sources.refresh(local), /data_source_disabled/);
-    await sources.toggle(local, true);
-    assert.equal(config.datasets.length, 2);
-    assert.deepEqual(captured, config.datasets[1]);
-    await writeFile(file, '{invalid');
-    await assert.rejects(sources.refresh(local), /data_source_refresh_failed/);
-    assert.deepEqual(config.datasets[1], captured);
-    await sources.close();
-    const restarted = configDefaults({ dataDir: directory, datasets: [dataset('base')], nautilus: { backtest: target } });
-    sources = await dataSources(restarted);
-    assert.deepEqual(restarted.datasets[1], captured, 'restart recovers last successful data without loading the broken source');
-    assert.equal(sources.view().find(source => source.name === local)!.error, 'data_source_refresh_failed');
-    assert.ok(JSON.parse(await readFile(join(directory, 'data-sources.json'), 'utf8'))[local].datasets.length);
-  } finally { await app.close(); await sources.close(); await rm(directory, { recursive: true, force: true }); }
-});
-
-test('disabling a provider cancels refreshes queued behind another source', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-data-source-queue-'));
-  const slowModule = join(directory, 'slow.mjs'); const queuedModule = join(directory, 'queued.mjs');
-  let start!: () => void; let release!: () => void;
-  const started = new Promise<void>(resolve => { start = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  const key = `__qzDataSourceQueue_${Date.now()}`;
-  const state = { start, gate, queuedLoads: 0 };
-  Object.assign(globalThis, { [key]: state });
-  await writeFile(slowModule, `export default {name:'source.slow',fields:[],async load(){globalThis[${JSON.stringify(key)}].start();await globalThis[${JSON.stringify(key)}].gate;return []}}`);
-  await writeFile(queuedModule, `export default {name:'source.queued',fields:[],async load(){globalThis[${JSON.stringify(key)}].queuedLoads++;return []}}`);
-  const sources = await dataSources(configDefaults({ dataDir: directory, extensions: [
-    { name: 'source.slow', module: slowModule, kind: 'data', enabled: true },
-    { name: 'source.queued', module: queuedModule, kind: 'data', enabled: true },
-  ] }));
-  try {
-    const running = sources.refresh('source.slow');
-    await started;
-    const queued = sources.refresh('source.queued');
-    const cancelled = assert.rejects(queued, /data_source_refresh_cancelled/);
-    const disabled = sources.toggle('source.queued', false);
-    release();
-    await running; await cancelled; await disabled;
-    assert.equal(state.queuedLoads, 0);
-    assert.equal(sources.view().find(source => source.name === 'source.queued')!.enabled, false);
-  } finally {
-    release(); await sources.close(); delete (globalThis as Record<string, unknown>)[key];
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('external modules load through data registry and failed or conflicting refresh keeps prior datasets', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-data-module-'));
-  const module = join(directory, 'plugin.mjs');
-  await writeFile(module, `export default {name:'custom.data',version:'2',fields:[{key:'id',label:'ID',type:'text',required:true},{key:'limit',label:'Limit',type:'number'}],async load(config){if(config.id==='throw')throw new Error('credential-must-not-escape');return [{id:config.id,name:'Custom',assetClass:'CRYPTO',currency:'USD',source:'custom',start:null,end:null,ready:true,data:config.id==='bad-number'?{bad:Infinity}:{catalog:'/custom'}}];}}`);
-  const config = configDefaults({ dataDir: directory, datasets: [dataset('base')], extensions: [{ name: 'custom.data', module, kind: 'data', enabled: true, config: { id: 'first' } }] });
+async function open(directory: string, extensions: ReturnType<typeof configDefaults>['extensions'] = []) {
+  const config = configDefaults({ dataDir: directory, datasets: [dataset('base')], extensions });
   const sources = await dataSources(config);
+  const host = await openResearch({ database: join(directory, 'sources.sqlite'), models: createModels(), extensions: [sources.extension], deferResume: true });
+  await sources.connect(host);
+  return { sources, host, config, async close() { await sources.close(); await host.close(); } };
+}
+async function settle(state: Awaited<ReturnType<typeof open>>, id: number) {
+  const task = await state.host.harness.waitForTask(id as TaskId, context);
+  assert.equal(task.state.status, 'terminal'); return task.state.outcome;
+}
+test('durable source publication survives reopen and broken input preserves successful immutable admissions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-source-durable-'));
+  let state = await open(directory);
   try {
-    assert.deepEqual(config.datasets.map(value => value.id), ['base'], 'startup does not call load');
-    await sources.refresh('custom.data');
-    await sources.save('custom.data', { enabled: true, config: { id: 'second' } }); await sources.refresh('custom.data');
-    assert.deepEqual(config.datasets.map(value => value.id), ['base', 'second']);
-    const cleared = await sources.save('custom.data', { enabled: true, config: { id: 'second', limit: null } });
-    assert.deepEqual(cleared.config, { id: 'second' });
-    for (const id of ['base', 'throw', 'bad-number']) {
-      await sources.save('custom.data', { enabled: true, config: { id } });
-      await assert.rejects(sources.refresh('custom.data'), /data_source_refresh_failed/);
-      assert.deepEqual(config.datasets.map(value => value.id), ['base', 'second']);
-      const persisted = JSON.parse(await readFile(join(directory, 'data-sources.json'), 'utf8'));
-      assert.deepEqual(persisted['custom.data'].datasets[0].data, { catalog: '/custom' });
-      assert.equal(sources.view().find(value => value.name === 'custom.data')!.error, 'data_source_refresh_failed');
-    }
-    await assert.rejects(sources.save('custom.data', { enabled: true, config: { id: '' } }), /data_source_config_required/);
-    const savedPath = join(directory, 'data-sources.json');
-    await rename(savedPath, `${savedPath}.retained`); await mkdir(savedPath);
-    await assert.rejects(sources.toggle('custom.data', false), /data_source_save_failed/);
-    assert.equal(sources.view().find(value => value.name === 'custom.data')!.enabled, true);
-    assert.deepEqual(config.datasets.map(value => value.id), ['base', 'second']);
-    await rm(savedPath, { recursive: true }); await rename(`${savedPath}.retained`, savedPath);
-    await sources.toggle('qz.data.config', false);
-    assert.deepEqual(config.datasets.map(value => value.id), ['second']);
-  } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
+    await mkdir(join(directory, 'export')); const path = join(directory, 'export/dataset.json');
+    await writeFile(path, JSON.stringify(dataset('imported')));
+    await state.sources.save(local, { enabled: true, config: { path: 'export/dataset.json' } });
+    const { taskId } = await state.sources.refresh(local);
+    assert.equal((await settle(state, taskId)).status, 'completed');
+    const captured = structuredClone(state.config.datasets[1]);
+    assert.equal(captured.id, 'imported'); assert.equal(captured.data.catalog, join(directory, 'export/catalog'));
+    await state.close(); state = await open(directory);
+    assert.deepEqual(state.config.datasets[1], captured);
+    await writeFile(path, '{invalid');
+    assert.equal((await settle(state, (await state.sources.refresh(local)).taskId)).status, 'failed');
+    assert.deepEqual(state.config.datasets[1], captured);
+    assert.equal(state.sources.view().find(v => v.name === local)!.error, 'data_source_refresh_failed');
+    await state.sources.toggle(local, false); assert.deepEqual(state.config.datasets.map(v => v.id), ['base']);
+    await assert.rejects(state.sources.refresh(local), /data_source_disabled/);
+    await state.sources.toggle(local, true); assert.deepEqual(state.config.datasets[1], captured);
+  } finally { await state.close(); await rm(directory, { recursive: true, force: true }); }
 });
-
-
-test('existing mandates retain source lookup after disable, omitted datasets and restart', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-retained-source-'));
-  const file = join(directory, 'dataset.json');
-  const original = { ...dataset('tracked'), revisionManifest: './source/current.json' };
-  await writeFile(file, JSON.stringify(original));
-  let config = configDefaults({ dataDir: directory });
-  let sources = await dataSources(config);
+test('an admitted source refresh resumes from official task storage after host close without resubmission', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-source-restart-'));
+  let state = await open(directory);
   try {
-    await sources.save(local, { enabled: true, config: { path: file } });
-    await sources.refresh(local);
-    const captured = structuredClone(existingDataset(config, 'tracked'));
-    await sources.toggle(local, false);
-    assert.deepEqual(config.datasets, [], 'disabled source is unavailable to new admissions');
-    assert.deepEqual(existingDataset(config, 'tracked'), captured);
-    await sources.close();
-    config = configDefaults({ dataDir: directory }); sources = await dataSources(config);
-    assert.deepEqual(config.datasets, []);
-    assert.deepEqual(existingDataset(config, 'tracked'), captured, 'disabled source survives restart');
-    await sources.toggle(local, true);
-    await writeFile(file, '[]'); await sources.refresh(local);
-    assert.deepEqual(config.datasets, [], 'an omitted dataset is unavailable to new admissions');
-    assert.deepEqual(existingDataset(config, 'tracked'), captured);
-    await sources.close();
-    config = configDefaults({ dataDir: directory }); sources = await dataSources(config);
-    assert.deepEqual(config.datasets, []);
-    assert.deepEqual(existingDataset(config, 'tracked'), captured, 'omitted source manifest remains available after restart');
-  } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
+    await writeFile(join(directory, 'dataset.json'), JSON.stringify(dataset('resumed')));
+    await state.sources.save(local, { enabled: true, config: { path: 'dataset.json' } });
+    const { taskId } = await state.sources.refresh(local);
+    await state.close(); state = await open(directory);
+    assert.equal((await settle(state, taskId)).status, 'completed');
+    assert.equal(state.config.datasets[1]!.id, 'resumed');
+  } finally { await state.close(); await rm(directory, { recursive: true, force: true }); }
 });
-
-test('retained dataset IDs stay owned by their original source after removal and restart', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-retained-source-owner-'));
-  const moduleA = join(directory, 'source-a.mjs'); const moduleB = join(directory, 'source-b.mjs');
-  await writeFile(moduleA, `export default {name:'source.a',version:'1',fields:[{key:'mode',label:'Mode',type:'text',required:true}],async load(config){return config.mode==='omit'?[]:[{id:'shared',name:config.mode,assetClass:'CRYPTO',currency:'USD',source:'source.a',start:null,end:null,ready:true,data:{catalog:'/source-a/'+config.mode}}];}}`);
-  await writeFile(moduleB, `export default {name:'source.b',version:'1',fields:[{key:'mode',label:'Mode',type:'text',required:true}],async load(config){return [{id:'shared',name:config.mode,assetClass:'CRYPTO',currency:'USD',source:'source.b',start:null,end:null,ready:true,data:{catalog:'/source-b/'+config.mode}}];}}`);
-  let config = configDefaults({ dataDir: directory, extensions: [
-    { name: 'source.a', module: moduleA, kind: 'data', enabled: true, config: { mode: 'original' } },
-    { name: 'source.b', module: moduleB, kind: 'data', enabled: false, config: { mode: 'conflict' } },
-  ] });
-  let sources = await dataSources(config);
+test('same revision refresh reuses the official active task and disabling explicitly aborts it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-source-abort-')); const module = join(directory, 'slow.mjs');
+  await writeFile(module, `export default {name:'test.slow',fields:[],async load(_config,{signal}) { await new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));return []}}`);
+  const state = await open(directory, [{ name: 'test.slow', kind: 'data', enabled: true, module }]);
   try {
-    await sources.refresh('source.a');
-    const original = structuredClone(existingDataset(config, 'shared'));
-    await sources.toggle('source.a', false);
-    await sources.save('source.a', { enabled: true, config: { mode: 'omit' } });
-    assert.deepEqual((await sources.refresh('source.a')).datasetIds, []);
-    await sources.toggle('source.a', false);
-
-    await sources.save('source.b', { enabled: true, config: { mode: 'conflict' } });
-    await assert.rejects(sources.refresh('source.b'), /data_source_refresh_failed/);
-    assert.deepEqual(existingDataset(config, 'shared'), original, 'a failed second source cannot replace the retained owner');
-
-    await sources.save('source.a', { enabled: true, config: { mode: 'updated' } });
-    await sources.refresh('source.a');
-    assert.equal(config.datasets.find(value => value.id === 'shared')?.name, 'updated', 'the owning source may update its own ID');
-    const updated = structuredClone(existingDataset(config, 'shared'));
-    await sources.close();
-
-    config = configDefaults({ dataDir: directory, extensions: [
-      { name: 'source.b', module: moduleB, kind: 'data', enabled: false, config: { mode: 'conflict' } },
-    ] });
-    sources = await dataSources(config);
-    assert.deepEqual(existingDataset(config, 'shared'), updated, 'removed source history remains available to existing mandates');
-    await assert.rejects(sources.refresh('source.b'), /data_source_refresh_failed/);
-    assert.deepEqual(existingDataset(config, 'shared'), updated, 'stored history still rejects ID reuse after restart');
-  } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
+    const first = await state.sources.refresh('test.slow'); const second = await state.sources.refresh('test.slow');
+    assert.equal(first.taskId, second.taskId);
+    state.host.harness.resume(); await new Promise(resolve => setImmediate(resolve));
+    await state.sources.toggle('test.slow', false);
+    assert.equal((await settle(state, first.taskId)).status, 'aborted');
+    assert.equal(state.sources.view().find(v => v.name === 'test.slow')!.enabled, false);
+  } finally { await state.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test('source publication conflicts and provider failures cannot corrupt base datasets or disclose private errors', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-source-conflict-')); const module = join(directory, 'custom.mjs');
+  await writeFile(module, `export default {name:'test.custom',fields:[{key:'fail',label:'fail',type:'boolean'}],async load(c) {if(c.fail)throw new Error('private-credential');return [${JSON.stringify(dataset('base'))}]}}`);
+  const state = await open(directory, [{ name: 'test.custom', kind: 'data', enabled: true, module }]);
+  try {
+    assert.equal((await settle(state, (await state.sources.refresh('test.custom')).taskId)).status, 'failed');
+    assert.deepEqual(state.config.datasets.map(v => v.id), ['base']);
+    await state.sources.save('test.custom', { enabled: true, config: { fail: true } });
+    const outcome = await settle(state, (await state.sources.refresh('test.custom')).taskId);
+    assert.equal(outcome.status, 'failed'); assert.doesNotMatch(JSON.stringify(outcome), /private-credential/);
+    await assert.rejects(state.sources.save('test.custom', { enabled: true, config: { unknown: 1 } }), /field_invalid/);
+  } finally { await state.close(); await rm(directory, { recursive: true, force: true }); }
 });

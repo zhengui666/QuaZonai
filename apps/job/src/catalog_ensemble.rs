@@ -3,14 +3,14 @@ use crate::{
     catalog::{NativeBarSeries, NativeMarketData},
     catalog_ensemble_policy::CatalogEnsemblePolicy,
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use bigdecimal::ToPrimitive;
 use contracts::{
+    DbCounter, SchemaV1,
     catalog_ensemble::*,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     recorded_fees::*,
     science::*,
-    DbCounter, SchemaV1,
 };
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
@@ -347,14 +347,8 @@ fn market(
     let mut series = Vec::new();
     let mut rows = 0;
     for id in ids {
-        let kind = BarType::from_str(&format!("{id}-1-MINUTE-LAST-EXTERNAL"))?;
-        let (_, mut bars) = series_rows(
-            root,
-            kind,
-            first.checked_add(1).context("CATALOG_ENSEMBLE_CLOCK")?,
-            last.checked_add(1).context("CATALOG_ENSEMBLE_CLOCK")?,
-            true,
-        )?;
+        let kind = BarType::from_str(&format!("{id}-1-MINUTE-LAST-INTERNAL"))?;
+        let (_, mut bars) = series_rows(root, kind, first, last, true)?;
         bars.sort_by_key(|bar| (bar.ts_init, bar.ts_event));
         for (index, bar) in bars.iter().enumerate() {
             crate::catalog::validate_price_bar(
@@ -508,9 +502,7 @@ pub fn replay(
         .context("CATALOG_ENSEMBLE_SOURCE_REQUIRED")?;
     ensure!(
         timestamp(&first_source.source_start)? <= request.event_start_ns.get()
-            && timestamp(&last_source.source_end_exclusive)?
-                .checked_add(1)
-                .is_some_and(|end| end >= request.event_end_ns.get()),
+            && timestamp(&last_source.source_end_exclusive)? >= request.event_end_ns.get(),
         "CATALOG_ENSEMBLE_SOURCE_WINDOW_REQUIRED"
     );
     let config = BacktestEngineConfig {
@@ -614,11 +606,13 @@ pub fn replay(
                         .account_type(AccountType::Margin)
                         .book_type(BookType::L1_MBP)
                         .base_currency(Currency::from_str("pUSD")?)
-                        .starting_balances(vec![Money::from_str_exact(&format!(
-                            "{} pUSD",
-                            settings.starting_capital.as_decimal().to_plain_string()
-                        ))
-                        .map_err(anyhow::Error::msg)?])
+                        .starting_balances(vec![
+                            Money::from_str_exact(&format!(
+                                "{} pUSD",
+                                settings.starting_capital.as_decimal().to_plain_string()
+                            ))
+                            .map_err(anyhow::Error::msg)?,
+                        ])
                         .default_leverage(Decimal::ONE)
                         .allow_cash_borrowing(false)
                         .fee_model(fee_errors.wrap(model.handle()))
@@ -650,11 +644,17 @@ pub fn replay(
             bars.sort_by_key(|bar| (bar.ts_event, bar.bar_type.instrument_id()));
             let mut cursor = 0;
             while cursor < bars.len() {
-                let at = bars[cursor].ts_event.as_u64();
+                let open = bars[cursor].ts_event.as_u64();
+                let at = crate::catalog::right_open_bar_close_ns(&bars[cursor])?;
                 let end =
-                    cursor + bars[cursor..].partition_point(|bar| bar.ts_event.as_u64() == at);
-                if at >= request.event_start_ns.get() && at < request.event_end_ns.get() {
-                    let modeled_available = at
+                    cursor + bars[cursor..].partition_point(|bar| bar.ts_event.as_u64() == open);
+                if open >= request.event_start_ns.get() && open < request.event_end_ns.get() {
+                    let modeled_available = bars[cursor..end]
+                        .iter()
+                        .map(|bar| bar.ts_init.as_u64())
+                        .max()
+                        .unwrap()
+                        .max(at)
                         .checked_add(request.modeled_lag_ns.get())
                         .context("CATALOG_ENSEMBLE_CLOCK")?;
                     if modeled_available > request.decision_cutoff_ns.get() {
@@ -677,11 +677,11 @@ pub fn replay(
                         let observed = bars[cursor..end]
                             .iter()
                             .map(|bar| {
-                                let mut delivered = *bar;
+                                let mut delivered = crate::catalog::runtime_bar(*bar)?;
                                 delivered.ts_init = available.into();
-                                delivered
+                                Ok(delivered)
                             })
-                            .collect::<Vec<_>>();
+                            .collect::<Result<Vec<_>>>()?;
                         let marks = observed
                             .iter()
                             .filter(|bar| registered.contains(&bar.bar_type.instrument_id()))
@@ -777,6 +777,10 @@ pub fn replay(
                                 .context("CATALOG_ENSEMBLE_TARGET_CLOCK")?;
                             inbox.borrow_mut().pending =
                                 Some(crate::simulation::CatalogReplayFrame {
+                                    bar_types: definitions.iter().map(|instrument|
+                                        observed.iter().find(|bar| bar.bar_type.instrument_id() == instrument.id())
+                                            .expect("registered definition has an observed native bar").bar_type
+                                    ).collect(),
                                     instruments: definitions,
                                     bar_end_ns: at,
                                     point: NativeTargetPointV1 {
@@ -867,6 +871,7 @@ pub fn replay(
                 "Original fill directions are provider BUY/SELL columns, not independently established aggressor roles; no L2 orderbook or spread is reconstructed".into(),
                 format!("Feature availability is modeled at completed BAR event plus {}ns; no observed receive-clock or PIT qualification", request.modeled_lag_ns.get()),
                 "Actual native fills consume the already completed source BAR pool bound to their target, using original same-ID quantities/fees once with the existing FIFO proportional allocator; pending orders retain that old pool across later BARs/source windows, never a future fee pool. This is conditional liquidity/cost reuse, not verified historical execution or fee eligibility".into(),
+                "Runtime transport maps frozen INTERNAL RightOpen BAR types to EXTERNAL because this input is supplied from outside the consuming BacktestEngine; instrument/spec/OHLCV remain unchanged; source ts_event is the frozen open while runtime ts_event is its theoretical close, and ts_init never precedes original receipt. This is not a claim that the venue aggregated the source BAR".into(),
                 "An execution-only BAR copy carries the disclosed modeled delivery clock; original event/OHLCV and stored native ts_init remain unchanged. Only existing native commands settle beyond the final source frame, with no additional prices, volume or fees".into(),
                 "A pending native target remains active until its reductions/increases settle; later source frames still update the account and policy, and a subsequent target is issued only against the next currently observed market frame".into(),
                 "All positive current scores participate in dynamic normalization; only markets with current real BARs can rebalance, and other native holdings retain their original last real marks".into(),

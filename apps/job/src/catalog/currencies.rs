@@ -1,5 +1,5 @@
 //! Preserve native currency definitions: InstrumentAny serializes currency codes only.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use nautilus_model::{
     enums::CurrencyType,
     instruments::{Instrument, InstrumentAny},

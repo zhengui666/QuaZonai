@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { arr, bool, lit, obj, str, union } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, hook, ToolTask, GenerationTask } from '@earendil-works/pi-durable';
 import type { Harness } from '@earendil-works/pi-durable';
 import { ReviewSession } from '../src/review-documents.ts';
@@ -17,7 +17,7 @@ export const reviewExtension = defineExtension({
   tools: [
     defineTool({
       name: 'review_run_analysis', description: 'Read the actual result of a required host-bound native analysis. The original science task runs once before review; repeated requests reuse its exact receipt and do not rerun market data or reset history.',
-      parameters: Type.Object({ kind: Type.Union([Type.Literal('FACTOR'), Type.Literal('SELECTION'), Type.Literal('PORTFOLIO')]) }), replay: 'safe', executionMode: 'sequential',
+      parameters: obj({ kind: union([lit('FACTOR'), lit('SELECTION'), lit('PORTFOLIO')]) }), replay: 'safe', executionMode: 'sequential',
       async execute(args, api, context) {
         const result = await api.commit(async tx => {
           const session = await tx.doc(ReviewSession, api.conversationId);
@@ -26,13 +26,13 @@ export const reviewExtension = defineExtension({
           // while it is live; never return a proxy for the outer tool to inspect.
           return JSON.stringify(session.nativeResults.find(row => row.kind === args.kind) ?? { kind: args.kind, status: 'UNSUPPORTED', reason: 'bound_native_analysis_inputs_unavailable' });
         }, context);
-        return { content: [{ type: 'text', text: result }] };
+        return { output: [{ type: 'text', text: result }] };
       },
     }),
     ...mandatoryReviewReads.map(kind => defineTool({
       name: `review_${kind}`,
       description: `Read the frozen ${kind} review evidence and explicit unsupported/missing results. Does not access held-out data or modify the candidate.`,
-      parameters: Type.Object({}), replay: 'safe', executionMode: 'sequential',
+      parameters: obj({}), replay: 'safe', executionMode: 'sequential',
       async execute(_args, api, context) {
         const evidence = await api.commit(async tx => {
           const review = await tx.doc(ReviewSession, api.conversationId);
@@ -42,14 +42,14 @@ export const reviewExtension = defineExtension({
           if (!review.reads.includes(kind)) review.reads.push(kind);
           return text;
         }, context);
-        return { content: [{ type: 'text', text: evidence }] };
+        return { output: [{ type: 'text', text: evidence }] };
       },
     })),
     defineTool({
       name: 'review_finish', description: 'Finish after reading every required evidence category. Supply evidence-cited implementation findings and a concise report narrative; trusted rules calculate all scores and gates.',
-      parameters: Type.Object({ narrative: Type.String({ minLength: 1, maxLength: 12000 }), mechanism: Type.Array(Type.Object({ criterion: Type.Union([Type.Literal('mechanism'), Type.Literal('availability'), Type.Literal('direction'), Type.Literal('implementation'), Type.Literal('complexity')]), supported: Type.Boolean(), evidenceRefs: Type.Array(Type.String({ maxLength: 1000 }), { minItems: 1, maxItems: 20 }) }), { minItems: 5, maxItems: 5 }), findings: Type.Array(Type.Object({
-        code: Type.String({ maxLength: 160 }), severity: Type.Union([Type.Literal('REJECT'), Type.Literal('WARNING')]),
-        detail: Type.String({ minLength: 1, maxLength: 3000 }), evidenceRefs: Type.Array(Type.String({ maxLength: 1000 }), { minItems: 1, maxItems: 20 }),
+      parameters: obj({ narrative: str({ minLength: 1, maxLength: 12000 }), mechanism: arr(obj({ criterion: union([lit('mechanism'), lit('availability'), lit('direction'), lit('implementation'), lit('complexity')]), supported: bool(), evidenceRefs: arr(str({ maxLength: 1000 }), { minItems: 1, maxItems: 20 }) }), { minItems: 5, maxItems: 5 }), findings: arr(obj({
+        code: str({ maxLength: 160 }), severity: union([lit('REJECT'), lit('WARNING')]),
+        detail: str({ minLength: 1, maxLength: 3000 }), evidenceRefs: arr(str({ maxLength: 1000 }), { minItems: 1, maxItems: 20 }),
       }), { maxItems: 20 }) }), replay: 'safe', executionMode: 'sequential',
       async execute(args, api, context) {
         await api.commit(async tx => {
@@ -63,7 +63,7 @@ export const reviewExtension = defineExtension({
           review.finished = true; review.narrative = args.narrative; review.findings = args.findings;
           review.evidence.mechanism = args.mechanism;
         }, context);
-        return { content: [{ type: 'text', text: 'Review interpretation saved. The trusted scoring policy determines the decision and weight eligibility.' }], control: { terminate: true } };
+        return { output: [{ type: 'text', text: 'Review interpretation saved. The trusted scoring policy determines the decision and weight eligibility.' }], control: { terminate: true } };
       },
     }),
   ],

@@ -49,7 +49,7 @@ async function fixture(initialReceipt: 'UNAVAILABLE' | 'PENDING' | 'LEGACY_ACKNO
     }, context);
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
       requestId: 'existing-receipt-monitor', goal: 'Observe original transport facts only; no scientific or investment qualification.', datasetId: 'controlled',
-      funding: { kind: 'ACCOUNT', accountBindingId: source.connection.id }, model: state.model, maxTrials: 1, operatingAuthority: 'RESEARCH_ONLY' } });
+      funding: { kind: 'ACCOUNT', accountBindingId: source.connection.id }, model: state.model, operatingAuthority: 'RESEARCH_ONLY' } });
     assert.equal(admitted.statusCode, 202, admitted.body); const mandateId: string = admitted.json().mandate.id;
     const decisionId = 'existing-decision', commandId = 'existing-command';
     let originalTaskId!: TaskId;

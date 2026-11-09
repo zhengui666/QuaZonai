@@ -17,13 +17,16 @@ export type NativeTickFactorRequest = {
     availability: 'EVENT_TIME_PROXY_UNVERIFIED' | 'RECEIVED_TIME_OBSERVED';
     representation?: 'EVENT_TIME_COHORT_CACHE_V1' | 'EVENT_TIME_COHORT_FLOW_CACHE_V1'
       | 'RECEIVED_TIME_COHORT_CACHE_V1' | 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1';
-    maximum_rows?: number; maximum_source_rows?: string;
   };
   sampling: { kind: 'EVENT_TIME_COHORT_V1' | 'RECEIVED_TIME_COHORT_V1'; maximum_cohort_rows: number };
   target: { kind: 'FIXED_TRADE_COHORTS'; horizon_cohorts: number }
     | { kind: 'FIXED_EVENT_TIME'; horizon_ns: string }
     | { kind: 'FIXED_RECEIVED_TIME'; horizon_ns: string };
-  parameters: { fast_period_cohorts: number; slow_period_cohorts: number; total_fuel?: string };
+  parameters: {
+    fast_period_cohorts: number; slow_period_cohorts: number;
+    /** Optional real Wasm fuel allowance; the native sandbox meters and reports consumption. */
+    total_fuel?: string;
+  };
   train_end_ns: string; validation_end_ns: string;
   evaluation_regimes?: NativeTickRegimeEvaluation;
 };
@@ -62,7 +65,7 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   fields(request, ['schema_version', 'input', 'sampling', 'target', 'parameters', 'train_end_ns', 'validation_end_ns', 'evaluation_regimes']);
   if (request.schema_version !== 1) throw new Error('native_tick_schema_version_unsupported');
   const input = object(request.input, 'native_tick_input');
-  fields(input, ['modality', 'instrument_ids', 'event_start_ns', 'event_end_ns', 'maximum_receive_delay_ns', 'decision_cutoff_ns', 'maximum_rows', 'source_revision', 'availability', 'representation', 'maximum_source_rows']);
+  fields(input, ['modality', 'instrument_ids', 'event_start_ns', 'event_end_ns', 'maximum_receive_delay_ns', 'decision_cutoff_ns', 'source_revision', 'availability', 'representation']);
   if (input.modality !== 'TRADE_TICK') throw new Error('native_tick_modality_required');
   if (!['EVENT_TIME_PROXY_UNVERIFIED', 'RECEIVED_TIME_OBSERVED'].includes(String(input.availability))) throw new Error('native_tick_availability_unsupported');
   const received = input.availability === 'RECEIVED_TIME_OBSERVED';
@@ -74,9 +77,6 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   if (received) {
     counter(input.maximum_receive_delay_ns, 'maximum_receive_delay_ns');
   } else if (input.maximum_receive_delay_ns !== undefined) throw new Error('native_tick_receive_delay_unsupported');
-  // Legacy row quotas remain readable but do not constrain the selected time range.
-  if (input.maximum_rows !== undefined && input.maximum_rows !== null && (typeof input.maximum_rows !== 'number' || !Number.isSafeInteger(input.maximum_rows) || input.maximum_rows < 0 || input.maximum_rows > 4294967295)) throw new Error('native_tick_maximum_rows_invalid');
-  if (input.maximum_source_rows !== undefined && input.maximum_source_rows !== null) counter(input.maximum_source_rows, 'maximum_source_rows');
   const start = counter(input.event_start_ns, 'event_start');
   const train = counter(request.train_end_ns, 'train_end');
   const validation = counter(request.validation_end_ns, 'validation_end');

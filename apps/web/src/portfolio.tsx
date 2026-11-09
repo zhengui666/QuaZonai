@@ -4,7 +4,7 @@ import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, ChartLi
 import { useQueryClient } from '@tanstack/react-query';
 import type { CapitalAssumptions, DatasetView, PortfolioView, ResearchDetail } from '../../../packages/contracts/src/index.ts';
 import { decimalUnits, draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
-import { useResource, useStudies } from './data-hooks';
+import { usePortfolioDetail, useResource, useStudies } from './data-hooks';
 import { currentRoute, href, navigate, type Route } from './router';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, MetricLabel, Metrics, PendingCommand, Status, Timestamp } from './ui';
 import { RecordTitle, TextDisclosure } from './disclosure';
@@ -82,7 +82,7 @@ function StrategyPortfolios({ route }: { route: Route }) {
   </section>;
 }
 function PortfolioDetail({ id, route }: { id: string; route: Route }) {
-  const query = useResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, { poll: 3000 }); const value = query.data;
+  const query = usePortfolioDetail(id); const value = query.data;
   return <div className="portfolio-result"><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} back={listPathFor(route)} /></>}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
     <ExecutionFailure error={value.error} detail={value.errorDetail} identity={`组合 ${value.id}${value.taskId !== null ? ` / 计算任务 #${value.taskId}` : ''}`} title="回测未完成" />
     <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />

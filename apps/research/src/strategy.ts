@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { readFile } from 'node:fs/promises';
 import { object } from './trials.ts';
@@ -105,8 +104,8 @@ export function validateNativeSimulationSettings(value: unknown, instrumentIds: 
       : field === 'latency_model' ? ['NAUTILUS_STATIC_LATENCY'] : ['NAUTILUS_MAKER_TAKER', 'NAUTILUS_POLYMARKET', 'POLYMARKET_V2_RECORDED_FEES'];
     if (model.schema_version !== 1 || typeof model.adapter_kind !== 'string' || !adapters.includes(model.adapter_kind)
       || !(model.adapter_kind.startsWith('POLYMARKET_')
-        ? model.native_version === '0.67.0'
-        : model.upstream_class === classes[model.adapter_kind] && model.upstream_version === '0.67.0')) throw new Error('strategy_simulation_model_invalid');
+        ? model.native_version === '0.68.0'
+        : model.upstream_class === classes[model.adapter_kind] && model.upstream_version === '0.68.0')) throw new Error('strategy_simulation_model_invalid');
     const modelFields = model.adapter_kind.startsWith('POLYMARKET_') ? ['schema_version', 'adapter_kind', 'native_version', 'parameters']
       : ['schema_version', 'adapter_kind', 'upstream_class', 'upstream_version', 'parameters'];
     if (Object.keys(model).some(key => !modelFields.includes(key))) throw new Error('strategy_simulation_model_invalid');
@@ -392,7 +391,7 @@ export function replayCatalog(data: JsonObject, request: JsonObject): string {
   for (const binding of sealed ? [sealed, data] : [data]) {
     const expected = normalizedRequest(binding);
     if (ensemble) expected.evaluation_start_ns = binding.validation_end_ns!;
-    if (canonical(withoutExecutionQuotas(expected)) === canonical(withoutExecutionQuotas(original))) {
+    if (canonical((expected)) === canonical((original))) {
       if (typeof binding.catalog !== 'string') throw new Error('catalog_required');
       return binding.catalog;
     }

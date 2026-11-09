@@ -1,10 +1,11 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { TranscriptContext } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -35,7 +36,7 @@ async function setup() {
   const models = createModels(); models.setProvider(faux.provider);
   const model = { provider: faux.provider.id, modelId: faux.getModel().id };
   return { directory, faux, models, database: join(directory, 'research.sqlite'),
-    input: { goal: 'Investigate a public factor hypothesis.', publicLiteratureQueries: ['momentum transaction costs', '  MOMENTUM   transaction costs ', 'new configured query'], model, data: { sealed: { private: 'HELDOUT_PRIVATE_SENTINEL' } }, policy: { max_trials: 1 } },
+    input: { goal: 'Investigate a public factor hypothesis.', publicLiteratureQueries: ['momentum transaction costs', '  MOMENTUM   transaction costs ', 'new configured query'], model, data: { sealed: { private: 'HELDOUT_PRIVATE_SENTINEL' } }, policy: { } },
     async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 
@@ -159,7 +160,7 @@ test('explicit retry retains the failed receipt and original-task reentry still 
   };
   const [searchTool] = literatureTools(search);
   const replay = defineExtension({ name: 'test-literature-reentry', tools: [defineTool({
-    name: 'original_search_reentry', description: 'TEST_ONLY reenter the original committed tool identity.', parameters: Type.Object({}), replay: 'safe',
+    name: 'original_search_reentry', description: 'TEST_ONLY reenter the original committed tool identity.', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       return searchTool.execute({ queryIndex: 0, retryFailed: true }, { ...api, taskId: originalId as TaskId }, ctx);
     },

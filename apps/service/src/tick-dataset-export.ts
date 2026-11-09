@@ -1,6 +1,5 @@
 import { constants, createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { withoutExecutionQuotas } from './science-binding.ts';
 import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatasetConfig } from './config.ts';
@@ -34,10 +33,10 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   if ((cache ? metadata.catalog_format !== `QZ_${full.input.representation}`
     : !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9'].includes(String(metadata.catalog_format)))
     || (cache ? metadata.representation !== full.input.representation : metadata.representation !== undefined)) throw new Error('tick_prepared_representation_mismatch');
-  if (canonical(withoutExecutionQuotas(full)) !== canonical(withoutExecutionQuotas(metadata.request!))) throw new Error('tick_prepared_request_mismatch');
+  if (canonical((full)) !== canonical((metadata.request!))) throw new Error('tick_prepared_request_mismatch');
   const research = validateNativeTickFactorRequest(metadata.research_request);
   const clipped = clipTickRegimeEvaluation(full, full.validation_end_ns);
-  if (canonical(withoutExecutionQuotas(research)) !== canonical(withoutExecutionQuotas(clipped)) || full.validation_end_ns === full.input.event_end_ns) throw new Error('tick_prepared_partitions_required');
+  if (canonical((research)) !== canonical((clipped)) || full.validation_end_ns === full.input.event_end_ns) throw new Error('tick_prepared_partitions_required');
   if (metadata.research_catalog !== 'research/catalog' || metadata.independent_catalog !== 'independent/catalog') throw new Error('tick_prepared_path_mismatch');
   const root = dirname(metadataPath); const primary = join(root, 'research/catalog'); const independent = join(root, 'independent/catalog');
   const observed = new Map<string, string>();

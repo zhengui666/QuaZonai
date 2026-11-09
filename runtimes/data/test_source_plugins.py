@@ -1,5 +1,7 @@
 """Offline orchestration tests. Stub native artifacts never establish actual conversion or admission."""
 
+from _source_test_fixtures import http_acquisition
+
 import contextlib
 from copy import deepcopy
 import hashlib
@@ -44,7 +46,7 @@ class RegistryTest(unittest.TestCase):
             self.assertIn("prepare", result[name]["capabilities"])
         for name, item in result.items():
             expected = [] if name in ("binance-vision-spot-klines", "cryptohftdata-hyperliquid") else (
-                ["download"] if name in providers.PROVIDERS else ["download", "plan"])
+                [] if name in providers.PROVIDERS else ["plan"])
             self.assertEqual(item["public_network_operations"], expected)
         for item in result.values():
             self.assertEqual(item["access"], "PUBLIC_FREE")
@@ -93,10 +95,10 @@ class RegistryTest(unittest.TestCase):
                 self.assertEqual(self.invoke(argv), {"original": True})
                 plan.assert_called_once_with("example/source", ["original/*.parquet"], COMMIT, 256, "original-license")
             argv[0] = "download"
-            with patch.object(snapshot, "plan", return_value={"original": True}) as plan, \
-                    patch.object(snapshot, "download", return_value={"frozen": True}) as download:
-                self.assertEqual(self.invoke(argv + ["--output", "/tmp/new-snapshot"]), {"frozen": True})
-                download.assert_called_once_with({"original": True}, Path("/tmp/new-snapshot"))
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                plugins.main(argv + ["--output", "/tmp/new-snapshot"])
+            self.assertEqual(error.exception.code, 2)
+
 
 
 class PreparationTest(unittest.TestCase):
@@ -114,7 +116,7 @@ class PreparationTest(unittest.TestCase):
         self.terms.write_text("Original source terms: offline test fixture only")
         self.acquisition = self.root / "acquisition"
         with patch.object(acquire, "fetch", return_value=(b'[[0,1,3,2,2,1],[60,1,3,2,2,1]]', OBSERVATION)):
-            acquire.acquire("coinbase-candles", providers.Selection("BTC-USD", 0, 120, 60),
+            http_acquisition("coinbase-candles", providers.Selection("BTC-USD", 0, 120, 60),
                             self.acquisition, self.terms)
         self.candles = SimpleNamespace(acquisition=self.acquisition / "acquisition.json",
             instruments=self.instruments, native_bin=self.binary, output=self.output)
@@ -137,7 +139,7 @@ class PreparationTest(unittest.TestCase):
             end_seconds=1785357900, bar_seconds=1)
 
     def base_report(self):
-        return {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
+        return {"schema_version": 1, "native_version": "0.68.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "limitations": ["Offline fixture; not qualified"]}
@@ -464,7 +466,7 @@ class CatalogPreparationTest(unittest.TestCase):
         self.selection.write_text('{"selection":{"decision_cutoff_ns":123456789},"settlements":[]}\n')
         self.metadata = self.declared | {"row_count": 2, "quality": {"native_fixture": True}}
         self.body = (json.dumps(self.metadata, indent=4) + "\n").encode()
-        self.report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
+        self.report = {"schema_version": 1, "native_version": "0.68.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "research_qualified": False,

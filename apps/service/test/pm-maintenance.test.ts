@@ -1,3 +1,4 @@
+import { readResearchAdmissions } from '../src/admissions.ts';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
@@ -39,7 +40,7 @@ test('maintenance preserves one monitor/gate epoch across restart and replays co
     await state.restart();
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: 'maintenance-monitor', goal: 'Preserve original budget-limited campaign', datasetId: 'controlled', model: state.model,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, maxTrials: 1 } });
+        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } } });
     assert.equal(response.statusCode, 202, response.body);
     const mandateId = response.json().mandate.id;
     const record = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[mandateId]!;
@@ -110,13 +111,13 @@ test('an HTTP admission already past its guard keeps drain open and cannot creat
     // original HTTP handler, workbench, storage and scheduler all still execute.
     t.mock.method(state.service.maintenance, 'beginRequest', async (id: string, reconcileOnly?: boolean) => { await begin(id, reconcileOnly); reached(); await released; });
     const pending = state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-      payload: { requestId: 'already-admitted', goal: 'Real request racing service maintenance', model: state.model, datasetId: 'controlled', maxTrials: 1 } });
+      payload: { requestId: 'already-admitted', goal: 'Real request racing service maintenance', model: state.model, datasetId: 'controlled' } });
     await admitted;
     await post(state, 'enter', { requestId: 'during-admission' });
     const draining = await read(state); assert.equal(draining.state, 'DRAINING'); assert.equal(draining.activeBusinessRequests, 1);
     release(); const response = await pending;
     assert.equal(response.statusCode, 503, response.body); assert.equal(response.json().error, 'service_maintenance');
-    assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests['already-admitted'], undefined);
+    assert.equal((await readResearchAdmissions(state.service.research))['already-admitted'], undefined);
     assert.equal((await until(() => read(state), value => value.state === 'QUIESCED')).activeBusinessRequests, 0);
   } finally { release(); await state.cleanup(); }
 });

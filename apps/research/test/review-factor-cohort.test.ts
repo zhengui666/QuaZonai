@@ -73,7 +73,7 @@ async function fixture() {
   const script=join(directory,'protocol.mjs');await writeFile(script,protocol);await writeFile(binary,`#!/bin/sh\nexec '${process.execPath}' '${script}' '${log}' "$@"\n`,{mode:0o700});
   const before=process.env.QZ_JOB_BINARY;process.env.QZ_JOB_BINARY=binary;
   const faux=fauxProvider({tokensPerSecond:100000});const models=createModels();models.setProvider(faux.provider);
-  const input:ResearchInput={goal:'TEST_ONLY immutable factor cohort',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:directory,request},policy:{max_trials:8,strategy:policy as unknown as JsonObject}};
+  const input:ResearchInput={goal:'TEST_ONLY immutable factor cohort',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:directory,request},policy:{strategy:policy as unknown as JsonObject}};
   const options={database:join(directory,'research.sqlite'),models,extensions:[defineExtension({name:'test.factor-cohort',tasks:[Probe]})]};
   const calls=async()=>{const data=await readFile(log,'utf8').catch(()=>'');return data.trim()?data.trim().split('\n').map(row=>JSON.parse(row) as {command:string;input:JsonObject}):[];};
   return {directory,log,input,options,calls,async close(){if(before===undefined)delete process.env.QZ_JOB_BINARY;else process.env.QZ_JOB_BINARY=before;await rm(directory,{recursive:true,force:true});}};

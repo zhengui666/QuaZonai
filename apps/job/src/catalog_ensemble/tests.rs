@@ -1,6 +1,6 @@
 //! Small actual official-engine replay; this is synthetic regression data.
 use contracts::{
-    catalog_ensemble::*, portfolio::*, recorded_fees::*, science::*, DbCounter, SchemaV1,
+    DbCounter, SchemaV1, catalog_ensemble::*, portfolio::*, recorded_fees::*, science::*,
 };
 use nautilus_model::{
     data::{Bar, BarType},
@@ -68,7 +68,7 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
             .unwrap();
     for token in ["100", "200"] {
         let kind =
-            BarType::from_str(&format!("{token}.POLYMARKET-1-MINUTE-LAST-EXTERNAL")).unwrap();
+            BarType::from_str(&format!("{token}.POLYMARKET-1-MINUTE-LAST-INTERNAL")).unwrap();
         let bars = (1..=4_u64)
             .map(|minute| {
                 let value = if token == "100" {
@@ -84,7 +84,7 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
                     price,
                     price,
                     Quantity::from("10000.000000"),
-                    (minute * MINUTE).into(),
+                    ((minute - 1) * MINUTE).into(),
                     (minute * MINUTE).into(),
                 )
                 .unwrap()
@@ -133,16 +133,18 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
             .unwrap();
         }
         let archive = root.join(format!("part-{index}.tar.zst"));
-        assert!(Command::new("tar")
-            .arg("--zstd")
-            .arg("-cf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&input)
-            .arg(".")
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("tar")
+                .arg("--zstd")
+                .arg("-cf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&input)
+                .arg(".")
+                .status()
+                .unwrap()
+                .success()
+        );
         parts.push(
             json!({ "source_start": format!("1970-01-01T00:{:02}:00+00:00", first - 1),
             "source_end_exclusive": format!("1970-01-01T00:{:02}:00+00:00", first + 1),
@@ -161,9 +163,9 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
 fn request() -> NativeCatalogEnsembleRequestV1 {
     NativeCatalogEnsembleRequestV1 {
         schema_version: SchemaV1,
-        event_start_ns: count(1),
+        event_start_ns: count(0),
         evaluation_start_ns: count(2 * MINUTE),
-        event_end_ns: count(4 * MINUTE + 1),
+        event_end_ns: count(4 * MINUTE),
         decision_cutoff_ns: count(4 * MINUTE + 1000),
         source: POLYMARKET_V2_SOURCE.into(),
         revision: "synthetic-regression".into(),
@@ -214,15 +216,21 @@ fn native_stream_retains_one_account_and_fees_while_dynamic_market_changes() {
         .fills;
     assert!(fills.iter().all(|fill| fill.bar_end_ns.get() >= 2 * MINUTE
         && fill.fill_ns.get() > fill.bar_end_ns.get() + 1));
-    assert!(fills
-        .iter()
-        .any(|fill| fill.instrument_id == "100.POLYMARKET" && fill.order_side == "BUY"));
-    assert!(fills
-        .iter()
-        .any(|fill| fill.instrument_id == "100.POLYMARKET" && fill.order_side == "SELL"));
-    assert!(fills
-        .iter()
-        .any(|fill| fill.instrument_id == "200.POLYMARKET" && fill.order_side == "BUY"));
+    assert!(
+        fills
+            .iter()
+            .any(|fill| fill.instrument_id == "100.POLYMARKET" && fill.order_side == "BUY")
+    );
+    assert!(
+        fills
+            .iter()
+            .any(|fill| fill.instrument_id == "100.POLYMARKET" && fill.order_side == "SELL")
+    );
+    assert!(
+        fills
+            .iter()
+            .any(|fill| fill.instrument_id == "200.POLYMARKET" && fill.order_side == "BUY")
+    );
     assert!(fills.iter().all(|fill| fill.commission.is_positive()));
 }
 
@@ -277,12 +285,14 @@ fn native_preview_from_catalog_ensemble_is_original_account_data() {
         .collect();
     assert!(preview.len() >= 2);
     for snapshot in &preview {
-        assert!(original
-            .iter()
-            .any(|point| point["ts_event"] == snapshot["ts_event"]
-                && point["ts_init"] == snapshot["ts_init"]
-                && point["account_id"] == snapshot["account_id"]
-                && point["total_equity"] == snapshot["total_equity"]));
+        assert!(
+            original
+                .iter()
+                .any(|point| point["ts_event"] == snapshot["ts_event"]
+                    && point["ts_init"] == snapshot["ts_init"]
+                    && point["account_id"] == snapshot["account_id"]
+                    && point["total_equity"] == snapshot["total_equity"])
+        );
     }
     let clock = |snapshot: &serde_json::Value| {
         snapshot["ts_event"]
@@ -324,12 +334,14 @@ fn long_modeled_lag_and_pending_order_keep_original_pool_across_source_partition
     let report = result.simulation.recorded_fee_replay.unwrap();
     assert!(report.allocation_rule.contains("source BAR"));
     assert!(!report.fills.is_empty());
-    assert!(report
-        .fills
-        .iter()
-        .all(|fill| fill.bar_end_ns == count(2 * MINUTE)
-            && fill.fill_ns.get() > 4 * MINUTE
-            && fill.instrument_id == "100.POLYMARKET"));
+    assert!(
+        report
+            .fills
+            .iter()
+            .all(|fill| fill.bar_end_ns == count(2 * MINUTE)
+                && fill.fill_ns.get() > 4 * MINUTE
+                && fill.instrument_id == "100.POLYMARKET")
+    );
 }
 
 #[test]
@@ -367,9 +379,11 @@ fn compact_account_preserves_existing_snapshot_and_tolerance_constraints() {
             &[],
         )
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("CATALOG_ENSEMBLE_CONDITIONAL_ACCOUNT"));
+        assert!(
+            error
+                .to_string()
+                .contains("CATALOG_ENSEMBLE_CONDITIONAL_ACCOUNT")
+        );
     }
 }
 
@@ -377,16 +391,18 @@ fn omit_source_market(root: &Path, part: usize) {
     let input = root.join(format!("part-{part}"));
     fs::remove_file(input.join("200.POLYMARKET.json")).unwrap();
     let archive = root.join(format!("part-{part}.tar.zst"));
-    assert!(Command::new("tar")
-        .arg("--zstd")
-        .arg("-cf")
-        .arg(archive)
-        .arg("-C")
-        .arg(input)
-        .arg(".")
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("tar")
+            .arg("--zstd")
+            .arg("-cf")
+            .arg(archive)
+            .arg("-C")
+            .arg(input)
+            .arg(".")
+            .status()
+            .unwrap()
+            .success()
+    );
     let manifest = root.join("original-cost-preparation.json");
     let mut value: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
@@ -410,9 +426,11 @@ fn entire_catalog_market_missing_from_self_consistent_source_is_rejected() {
     )
     .err()
     .expect("an omitted market was accepted");
-    assert!(error
-        .to_string()
-        .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE"));
+    assert!(
+        error
+            .to_string()
+            .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE")
+    );
 }
 
 #[test]
@@ -429,9 +447,11 @@ fn one_market_missing_only_one_source_period_is_rejected() {
     )
     .err()
     .expect("a missing market period was accepted");
-    assert!(error
-        .to_string()
-        .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE"));
+    assert!(
+        error
+            .to_string()
+            .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE")
+    );
 }
 
 #[test]
@@ -440,7 +460,7 @@ fn complete_source_scope_counts_boundary_groups_and_ignores_outside_window_serie
     let (catalog, manifest) = fixture(directory.path());
     let native =
         ParquetDataCatalog::from_uri(catalog.to_str().unwrap(), None, None, None, None).unwrap();
-    let kind = BarType::from_str("300.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let kind = BarType::from_str("300.POLYMARKET-1-MINUTE-LAST-INTERNAL").unwrap();
     let price = Price::from("0.500000");
     native
         .write_to_parquet(
@@ -451,7 +471,7 @@ fn complete_source_scope_counts_boundary_groups_and_ignores_outside_window_serie
                 price,
                 price,
                 Quantity::from("1.000000"),
-                (6 * MINUTE).into(),
+                (5 * MINUTE).into(),
                 (6 * MINUTE).into(),
             )
             .unwrap()],

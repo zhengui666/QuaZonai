@@ -132,7 +132,7 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     script(state, source);
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
       requestId: 'actual-cash-heavy-current', goal: 'Research predictive alpha from causal factors and compare matched net spot account evidence. No leverage.',
-      datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model, maxTrials: 12,
+      datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model,
       businessPreference: 'NET_RETURN', operatingAuthority: paper ? 'AUTHORIZED_TARGETS' : 'RESEARCH_ONLY' } });
     assert.equal(admitted.statusCode, 202, admitted.body); mandateId = admitted.json<PmMandateView>().mandate.id;
     const read = async () => { const response = await state.service.app.inject({ url: `/api/v3/mandates/${encodeURIComponent(mandateId!)}`, headers: state.headers });

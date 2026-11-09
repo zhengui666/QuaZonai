@@ -13,12 +13,11 @@ import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
 import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
-import { withoutExecutionQuotas } from './science-binding.ts';
 
 export interface PortfolioTaskInput {
-  review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; maximumScientificCalls?: number; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
+  review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
   id: string; dataDir: string; catalog: string; binary: NativeTarget;
-  // Original v1 single-evidence inputs keep their kernel, whole interval and default weight 1.
+  // Every source retains the strategy registered with its original research.
   capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: StrategyPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }
 
@@ -34,7 +33,7 @@ export function assertPortfolioIndependentContract(input: PortfolioTaskInput, da
   for (const source of Array.isArray(input.evidence) ? input.evidence : [input.evidence]) {
     const request = object(object(object(source.selected).result).request, 'reviewed_validation_request');
     const { selection, ...method } = object(request.forecast, 'reviewed_forecast');
-    if (canonical(withoutExecutionQuotas(method)) !== canonical(withoutExecutionQuotas(independentMethod))
+    if (canonical((method)) !== canonical((independentMethod))
       || canonical(object(selection).bar_types!) !== canonical(object(independentSelection).bar_types!)) throw new Problem('portfolio_independent_forecast_contract_changed', 422);
   }
   const currency = object(json(input.policy).simulationSettings).base_currency;
@@ -97,18 +96,14 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
         const sourceSelection = object(object(request.forecast, 'forecast_request').selection, 'validation_selection');
         if (typeof request.validation_end_ns !== 'string' || typeof sourceSelection.event_end_ns !== 'string' || BigInt(sourceSelection.event_end_ns) > BigInt(request.validation_end_ns)) throw new Problem('portfolio_validation_request_not_clipped');
       }
-      const originalPolicy = (studyInput.policy as JsonObject | undefined)?.strategy;
-      // Retain legacy consumer semantics only without original instrument/history bindings.
-      const bound = Array.isArray(input.evidence) || proposal.instrumentId !== undefined || proposal.allocations !== undefined || input.policy.instrumentIds !== undefined
-        || (originalPolicy as JsonObject | undefined)?.instrumentIds !== undefined || input.policy.evidenceMode !== undefined
-        || (originalPolicy as JsonObject | undefined)?.evidenceMode !== undefined;
-      if (bound && canonical(originalPolicy ?? null) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
-      const policy = resolveStrategyPolicy(proposal, bound ? object(originalPolicy, 'strategy_policy') : json(input.policy));
+      const originalPolicy = object(object(studyInput.policy, 'study_policy').strategy, 'strategy_policy');
+      if (canonical(originalPolicy) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
+      const policy = resolveStrategyPolicy(proposal, originalPolicy);
       const members = strategyMembers(proposal);
       // Forecast keeps the complete original prefix even when only HELDOUT is traded.
       const targets = await forecastMembers(input.binary, sourceCatalog, members, request, policy, input.currency, directory, context, false, partition ?? policy.evaluationPartition, proposal.members !== undefined);
       await update('FORECASTING', sourceIndex + 1, evidence.length);
-      if (selection && canonical(withoutExecutionQuotas(selection)) !== canonical(withoutExecutionQuotas(targets.selection))) throw new Problem('strategy_selection_mismatch');
+      if (selection && canonical((selection)) !== canonical((targets.selection))) throw new Problem('strategy_selection_mismatch');
       selection = targets.selection;
       memberRows.push(targets.points);
       const first = targets.components[0]!;

@@ -75,7 +75,7 @@ fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
             assert_eq!(metric.source_artifact_id, artifact);
             assert_eq!(metric.observation_count.get(), result.returns.len() as u64);
             assert_eq!(metric.frequency, "UTC_DAY");
-            assert_eq!(metric.method_version, "0.67.0");
+            assert_eq!(metric.method_version, "0.68.0");
             assert_eq!(metric.scope, "portfolio");
             assert!(metric.period_start < metric.period_end);
         }
@@ -227,7 +227,7 @@ fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
     // Daily account returns require snapshots across UTC dates, not 20 minutes.
     let (directory, request) = market("0", 2 * 1440 + 20);
     let result = simulate(directory.path(), &request).unwrap();
-    assert_eq!(result.native_version, "0.67.0");
+    assert_eq!(result.native_version, "0.68.0");
     assert_eq!(result.consumed_target_points.get(), 2);
     assert_eq!(
         result.summary.get("venues.total").map(String::as_str),
@@ -568,7 +568,7 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
             let (directory, mut request) = market::equity_market(fee, 20);
             request.settings.account_kind = kind;
             let result = simulate(directory.path(), &request).unwrap();
-            assert_eq!(result.native_version, "0.67.0");
+            assert_eq!(result.native_version, "0.68.0");
             assert_eq!(result.consumed_target_points.get(), 2);
             assert_eq!(result.summary["venues.total"], "1");
             assert_eq!(result.summary["account.SIM.type"], label);

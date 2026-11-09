@@ -4,6 +4,8 @@ use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use clarabel::{algebra::CscMatrix, solver::*};
 use contracts::{review_allocation::*, DecimalValue, SchemaV1};
+use ndarray::Array2;
+use ndarray_stats::CorrelationExt;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn decimal(value: &DecimalValue) -> Result<f64> {
@@ -42,6 +44,13 @@ pub fn allocate(
             member.observations.len() == samples
                 && member.observations.iter().all(|v| v.is_finite()),
             "REVIEW_ALLOCATION_PANEL_INVALID"
+        );
+        ensure!(
+            member
+                .observations
+                .iter()
+                .any(|value| *value != member.observations[0]),
+            "REVIEW_ALLOCATION_ZERO_RISK"
         );
     }
     ensure!(
@@ -110,30 +119,25 @@ pub fn allocate(
         );
         clusters.push((members, decimal(&cluster.maximum_weight)?));
     }
-    let means: Vec<_> = request
-        .members
-        .iter()
-        .map(|m| m.observations.iter().sum::<f64>() / samples as f64)
-        .collect();
+    let panel = Array2::from_shape_vec(
+        (n, samples),
+        request
+            .members
+            .iter()
+            .flat_map(|member| member.observations.iter().copied())
+            .collect(),
+    )?;
+    // Match the frozen sample estimator (ddof=1); no annualization or imputation.
+    let native_covariance = panel.cov(1.0)?;
     ensure!(
-        means.iter().all(|v| v.is_finite()),
-        "REVIEW_ALLOCATION_MEAN_RANGE"
+        native_covariance.iter().all(|value| value.is_finite()),
+        "REVIEW_ALLOCATION_COVARIANCE_RANGE"
     );
-    let mut covariance = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        for j in i..n {
-            let value = request.members[i]
-                .observations
-                .iter()
-                .zip(&request.members[j].observations)
-                .map(|(x, y)| (x - means[i]) * (y - means[j]))
-                .sum::<f64>()
-                / (samples - 1) as f64;
-            ensure!(value.is_finite(), "REVIEW_ALLOCATION_COVARIANCE_RANGE");
-            covariance[i][j] = value;
-            covariance[j][i] = value;
-        }
-    }
+    let mut covariance: Vec<Vec<f64>> = native_covariance
+        .rows()
+        .into_iter()
+        .map(|row| row.to_vec())
+        .collect();
     let deviations: Vec<_> = (0..n).map(|i| covariance[i][i].sqrt()).collect();
     ensure!(
         deviations.iter().all(|v| v.is_finite() && *v > 0.0),

@@ -55,7 +55,7 @@ for(const mode of ['COMPLETE','FAILED_COHORT','MISSING_INDEPENDENT_SOURCE'] as c
   const strategyPolicy={name:'TEST_ONLY_REFERENCE',kind:'factor-threshold',instrumentId:'TEST.SIM',threshold:0,investedWeight:'1',targetTtlNs:String(DAY),simulationSettings:{base_currency:'USD',starting_capital:'1000',fill_model:{adapter_kind:'NAUTILUS_DEFAULT_FILL',parameters:{prob_slippage:'0'}},latency_model:{adapter_kind:'NAUTILUS_STATIC_LATENCY',parameters:{base_latency_ns:'1'}}}};
   const review=createReviewPolicy('PORTFOLIO','TEST_ONLY_FROZEN_REVIEW','100');review.calibration={rootCount:30,endNs:'90',evidenceRefs:['TEST_ONLY_FROZEN_REFERENCE_COHORT']};
   const data:JsonObject={catalog,request,sealed:{catalog:heldout,request}};
-  const input:ResearchInput={goal:'TEST_ONLY full portfolio review to heldout protocol',model,data,policy:{max_trials:2,strategy:strategyPolicy,reviewPolicy:review as unknown as JsonObject}};
+  const input:ResearchInput={goal:'TEST_ONLY full portfolio review to heldout protocol',model,data,policy:{strategy:strategyPolicy,reviewPolicy:review as unknown as JsonObject}};
   const source=capture('VALIDATION',data);if(mode!=='MISSING_INDEPENDENT_SOURCE')source.independent=capture('HELDOUT',data.sealed as JsonObject);
   const host=await openResearch({database:join(directory,'research.sqlite'),models,extensions:[research,strategy]});let selected=0;let conversationId=0;
   try {

@@ -193,6 +193,8 @@ struct Report {
     selected_path_prefixes: Vec<String>,
     modality: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    generated_bar_semantics: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     representation: Option<String>,
     availability: String,
     source_manifest: serde_json::Value,
@@ -873,6 +875,8 @@ fn import(
         selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
         selected_path_prefixes: prefixes.clone(),
         modality: if options.trade_ticks || options.is_cache() { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
+        generated_bar_semantics: (bar_seconds.is_some() || bar_milliseconds.is_some())
+            .then(|| job::catalog::aggregation::CONVENTION.into()),
         representation: options.is_cache().then(|| match (options.received_time, options.cohort_flow_cache) {
             (true, true) => "RECEIVED_TIME_COHORT_FLOW_CACHE_V1",
             (true, false) => "RECEIVED_TIME_COHORT_CACHE_V1",
@@ -1819,8 +1823,10 @@ mod tests {
     fn source_cohort_cache_preserves_complete_events_and_original_archive() {
         for flow in [false, true] {
             let temp = tempfile::tempdir().unwrap();
-            let (manifest, instruments, csv) = tick_source(temp.path(),
-            "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600001,11.12,0.2234567890,T-2,S\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n");
+            let (manifest, instruments, csv) = tick_source(
+                temp.path(),
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600001,11.12,0.2234567890,T-2,S\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n",
+            );
             let original = fs::read(&csv).unwrap();
             let prefixes = vec!["perps/".into(), "spot/".into()];
             let output = temp.path().join("cohorts");
@@ -1868,8 +1874,10 @@ mod tests {
             ("T-3", "13.12", Some("TICK_CACHE_SOURCE_ID_CONFLICT")),
         ] {
             let temp = tempfile::tempdir().unwrap();
-            let (manifest, instruments, csv) = tick_source(temp.path(),
-                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n");
+            let (manifest, instruments, csv) = tick_source(
+                temp.path(),
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n",
+            );
             let source = manifest.parent().unwrap();
             fs::create_dir(source.join("spot")).unwrap();
             let next = source.join("spot/fills.csv");
@@ -1984,8 +1992,7 @@ mod tests {
                 "input":{"modality":"TRADE_TICK","instrument_ids":actual.files.iter().map(|file| &file.instrument_id).collect::<Vec<_>>(),
                     "event_start_ns":actual.event_start_ns,"event_end_ns":actual.event_end_ns,
                     "decision_cutoff_ns":actual.event_end_ns,"source_revision":actual.source_revision,
-                    "availability":"EVENT_TIME_PROXY_UNVERIFIED","representation":actual.representation,
-                    "maximum_source_rows":actual.trade_count},
+                    "availability":"EVENT_TIME_PROXY_UNVERIFIED","representation":actual.representation},
                 "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
                 "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
                 "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},

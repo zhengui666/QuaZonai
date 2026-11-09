@@ -701,18 +701,35 @@ fn rates_at(
                             None => mark(asset, at, age),
                         };
                         if let Some(price) = price {
-                            let amount = -p.quantity.as_decimal()
-                                * if p.side == nautilus_model::enums::PositionSide::Short {
-                                    -Decimal::ONE
-                                } else {
+                            // Native funding covers standard mark/settlement
+                            // terms. Preserve the venue's distinct oracle and
+                            // nominal quote-unit semantics in one thin extension.
+                            if contexts.is_some() {
+                                let side = if p.side == nautilus_model::enums::PositionSide::Short {
                                     Decimal::ONE
-                                }
-                                * price
-                                * decimal(&r.rate)?;
-                            ledger.queue_adjustment(
-                                at,
-                                Money::from_decimal(amount, Currency::USDC())?,
-                            )?;
+                                } else {
+                                    -Decimal::ONE
+                                };
+                                // Keep oracle precision through settlement in
+                                // the venue currency; native mark funding has
+                                // no oracle-price selector.
+                                let rate = decimal(&r.rate)?;
+                                let amount = p
+                                    .quantity
+                                    .as_decimal()
+                                    .checked_mul(price)
+                                    .and_then(|value| value.checked_mul(p.multiplier.as_decimal()))
+                                    .and_then(|value| value.checked_mul(side))
+                                    .and_then(|value| value.checked_mul(rate))
+                                    .context("TICK_ECONOMIC_ORACLE_FUNDING_RANGE")?;
+                                ledger.queue_adjustment(
+                                    at,
+                                    Money::from_decimal(
+                                        amount,
+                                        asset.instrument.settlement_currency(),
+                                    )?,
+                                )?;
+                            }
                         } else {
                             let cause = if let Some(context) = contexts.as_ref() {
                                 let last = context
@@ -730,6 +747,13 @@ fn rates_at(
                 native.push(NativeRate {
                     instrument_id: asset.instrument.id(),
                     rate: decimal(&r.rate)?,
+                    settlement_mark: if contexts.is_none() {
+                        mark(asset, at, age).and_then(|value| {
+                            asset.mark.map(|(source_event, _)| (source_event, value))
+                        })
+                    } else {
+                        None
+                    },
                 });
             }
         }
@@ -1908,7 +1932,7 @@ fn valuation_value(
                 }
                 return Ok(None);
             };
-            let pnl = position.try_calculate_pnl(position.avg_px_open, price, position.quantity)?;
+            let pnl = ledger.unrealized_pnl_at(position.instrument_id, price)?;
             ensure!(
                 pnl.currency == Currency::USDC() || pnl.currency == Currency::USD(),
                 "ECONOMIC_PERP_SETTLEMENT_UNSUPPORTED"
@@ -2247,7 +2271,13 @@ pub fn replay_models_with_funding_and_cores(
             decimal(&s.extra_cost_bps)?,
         )?)
     } else {
-        None
+        Some(NativeLedger::new_conversion_scenario(
+            assets[bridge].instrument.clone(),
+            Money::from_decimal(remaining, usdt0)?,
+            decimal(&s.spot_taker_fee_bps)?,
+            decimal(&s.extra_cost_bps)?,
+            s.execution_model.is_some(),
+        )?)
     };
     let mut converted = Decimal::ZERO;
     let mut reserve_usdc = Decimal::ZERO;
@@ -2592,8 +2622,11 @@ pub fn replay_models_with_funding_and_cores(
                 );
             } else if conversion_due.is_some_and(|at| event >= at) {
                 if let Some(ledger) = &mut conversion_ledger {
-                    let frame = snapshots.get(&bridge).unwrap();
-                    let capacity = frame.bid_depth * decimal(&s.participation_fraction)?;
+                    let capacity = if observed {
+                        snapshots[&bridge].bid_depth
+                    } else {
+                        finite(assets[bridge].previous.as_ref().unwrap().quantity)?
+                    } * decimal(&s.participation_fraction)?;
                     let quantity = conversion_quantity(
                         remaining,
                         capacity,
@@ -2601,15 +2634,29 @@ pub fn replay_models_with_funding_and_cores(
                         &assets[bridge].instrument,
                     )?;
                     if quantity > Decimal::ZERO {
-                        ledger.step_books(
-                            event,
-                            vec![NativeBook {
-                                snapshot: frame.deltas.clone(),
-                                capacity,
-                                target_quantity: Some(Decimal::ZERO),
-                            }],
-                            &[],
-                        )?;
+                        if observed {
+                            ledger.step_books(
+                                event,
+                                vec![NativeBook {
+                                    snapshot: snapshots[&bridge].deltas.clone(),
+                                    capacity,
+                                    target_quantity: Some(Decimal::ZERO),
+                                }],
+                                &[],
+                            )?;
+                        } else {
+                            ledger.step_batch(
+                                event,
+                                &[NativeMark {
+                                    instrument_id: assets[bridge].instrument.id(),
+                                    mark: price
+                                        .to_f64()
+                                        .context("ECONOMIC_CONVERSION_PRICE_RANGE")?,
+                                    capacity,
+                                    target_quantity: Some(Decimal::ZERO),
+                                }],
+                            )?;
+                        }
                         conversion_advanced = true;
                     }
                     remaining = ledger
@@ -2626,25 +2673,6 @@ pub fn replay_models_with_funding_and_cores(
                         .get("USDC")
                         .copied()
                         .unwrap_or(Decimal::ZERO);
-                } else {
-                    let capacity = finite(assets[bridge].previous.as_ref().unwrap().quantity)?
-                        * decimal(&s.participation_fraction)?;
-                    let quantity = conversion_quantity(
-                        remaining,
-                        capacity,
-                        price,
-                        &assets[bridge].instrument,
-                    )?;
-                    converted += quantity
-                        * price
-                        * (Decimal::ONE
-                            - (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                                / Decimal::from(10000));
-                    conversion_cost += quantity
-                        * price
-                        * (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                        / Decimal::from(10000);
-                    remaining -= quantity;
                 }
                 if converted > Decimal::ZERO
                     && conversion_quantity(remaining, remaining, price, &assets[bridge].instrument)?
@@ -2790,7 +2818,6 @@ pub fn replay_models_with_funding_and_cores(
             }
             if event >= next_grid {
                 let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
-                let maintenance_fraction = decimal(&s.maintenance_margin_fraction)?;
                 let mut maintenance = Some(Decimal::ZERO);
                 for p in m.positions() {
                     let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
@@ -2802,12 +2829,8 @@ pub fn replay_models_with_funding_and_cores(
                         maintenance = None;
                         break;
                     };
-                    maintenance = maintenance.map(|sum| {
-                        sum + p.quantity.as_decimal()
-                            * price
-                            * a.instrument.multiplier().as_decimal()
-                            * maintenance_fraction
-                    });
+                    let native_margin = m.maintenance_at(p.instrument_id, price)?;
+                    maintenance = maintenance.map(|sum| sum + native_margin.as_decimal());
                 }
                 if net
                     .zip(maintenance)
@@ -2935,6 +2958,10 @@ pub fn replay_models_with_funding_and_cores(
     if let Some(m) = margin.as_mut() {
         m.finish()?;
     }
+    let initial_conversion_evidence = conversion_ledger
+        .as_ref()
+        .map(NativeLedger::conversion_evidence)
+        .transpose()?;
     let (fills, rejections) = cash
         .iter()
         .chain(margin.iter())
@@ -2999,9 +3026,9 @@ pub fn replay_models_with_funding_and_cores(
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
             ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
-            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; native funding is disabled. Only acknowledged adjustments enter reported funding total.", age, context.description()) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
+            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
-            ("statistics".into(),"UTC daily total-wealth net returns; risk-free zero, sample-standard-deviation Sharpe times sqrt(365). Regime conditional annualization exp(365*mean(log(1+r)))-1, not concatenated-calendar CAGR; missing returns excluded and counted.".into()),
+            ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
             ("precision".into(),"Native USD-quoted perp PnL uses USD 2-decimal Money, explicitly swept in nominal quote units to USDC; no instrument rewrite. Full USD minor unit 0.01 times all perp fills conservatively bounds native PnL rounding, not VWAP/price precision or execution-model error.".into()),
         ]),
@@ -3023,6 +3050,11 @@ pub fn replay_models_with_funding_and_cores(
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if let Some(evidence) = initial_conversion_evidence {
+        result
+            .methods
+            .insert("initial_conversion_native_evidence".into(), evidence);
+    }
     if request.event_time_context_source.is_some()
         && !result
             .limitations
@@ -3074,7 +3106,7 @@ pub fn replay_models_with_funding_and_cores(
             result
                 .limitations
                 .push("PROVIDER_RECEIPT_CLOCK_NOT_LOCAL_NETWORK_OR_EXCHANGE_COMPLETENESS".into());
-            result.methods.insert("funding".into(), "Published settlement rates apply to own signed quantity times the latest nonfuture observed oracle, selected by provider receipt time and the registered age limit. Context observations value perpetual NAV at observed marks; missing settlement rates or oracle coverage make net equity unknown. Context rate samples are never substituted for settlement-rate history. Native funding is disabled; only acknowledged account adjustments enter the funding total.".into());
+            result.methods.insert("funding".into(), "Published settlement rates apply to own signed quantity times the latest nonfuture observed oracle, selected by provider receipt time and the registered age limit. Context observations value perpetual NAV at observed marks; missing settlement rates or oracle coverage make net equity unknown. Context rate samples are never substituted for settlement-rate history. The oracle extension books acknowledged account cash; native position realized PnL excludes this extension, and scientific performance uses account equity.".into());
         }
     }
     if wasms.len() > 1 {
@@ -3508,6 +3540,12 @@ fn metrics(
     days: &[NativeTickEconomicDayV1],
 ) -> Result<Vec<NativeTickEconomicMetricV1>> {
     use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
+    use nautilus_analysis::{
+        statistic::PortfolioStatistic,
+        statistics::{cagr::CAGR, sharpe_ratio::SharpeRatio},
+        Returns,
+    };
+    use nautilus_core::UnixNanos;
     let regimes = domain::ticks::evaluation_regimes(&request.research)?;
     let first = request.research.input.event_start_ns.get() / DAY * DAY;
     let mut reports = Vec::new();
@@ -3534,29 +3572,24 @@ fn metrics(
                             == regime
                 })
                 .collect::<Vec<_>>();
-            let returns = selected
+            // Preserve real UTC-day identities, including gaps between regime
+            // samples. Native CAGR annualizes the selected daily-bin count; it
+            // is a conditional regime statistic, not contiguous-calendar CAGR.
+            let returns: Returns = selected
                 .iter()
-                .filter_map(|d| d.net_return)
-                .collect::<Vec<_>>();
-            let n = returns.len();
-            let mean = if n > 0 {
-                returns.iter().sum::<f64>() / n as f64
-            } else {
-                0.0
-            };
-            let variance = if n > 1 {
-                returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1) as f64
-            } else {
-                0.0
-            };
-            let sharpe = (n > 1 && variance > 0.0)
-                .then(|| mean / variance.sqrt() * 365.0_f64.sqrt())
-                .filter(|v| v.is_finite());
-            let annualized = (n > 0 && returns.iter().all(|r| *r > -1.0))
-                .then(|| {
-                    (365.0 * returns.iter().map(|r| r.ln_1p()).sum::<f64>() / n as f64).exp_m1()
+                .filter_map(|day| {
+                    day.net_return
+                        .map(|value| (UnixNanos::from(day.day_start_ns.get()), value))
                 })
-                .filter(|v| v.is_finite());
+                .collect();
+            let n = returns.len();
+            let sharpe = SharpeRatio::new(Some(365))
+                .calculate_from_returns(&returns)
+                .filter(|value| value.is_finite());
+            let annualized = (n > 0 && returns.values().all(|value| *value > -1.0))
+                .then(|| CAGR::new(Some(365)).calculate_from_returns(&returns))
+                .flatten()
+                .filter(|value| value.is_finite());
             reports.push(NativeTickEconomicMetricV1 {
                 partition,
                 regime,

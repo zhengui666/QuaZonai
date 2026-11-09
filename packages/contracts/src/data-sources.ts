@@ -8,5 +8,12 @@ export interface DataSourceField {
 export interface DataSourceView {
   name: string; version: string | null; enabled: boolean; state: 'loaded' | 'disabled' | 'error';
   fields: DataSourceField[]; config: JsonObject; datasetIds: string[]; lastLoadedAt: string | null; error: string | null;
+  acquisition?: { manifestPath: string; planId: string };
 }
 export interface DataSourceUpdate { config: JsonObject; enabled: boolean }
+export interface DataSourceRefreshView {
+  taskId: number | null;
+  status: import('@earendil-works/pi-durable').TaskState<JsonObject, JsonObject>['status'] | 'idle';
+  outcome?: import('@earendil-works/pi-durable').TaskOutcome<JsonObject>['status'];
+  source: DataSourceView;
+}

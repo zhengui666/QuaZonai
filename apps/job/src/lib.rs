@@ -1,4 +1,15 @@
 //! Native research computations over registered inputs.
+pub const NAUTILUS_VERSION: &str = env!("QZ_NAUTILUS_VERSION");
+pub const NAUTILUS_REVISION: &str = env!("QZ_NAUTILUS_REVISION");
+
+pub fn build_identity() -> serde_json::Value {
+    serde_json::json!({
+        "nautilusVersion": NAUTILUS_VERSION,
+        "nautilusRevision": NAUTILUS_REVISION,
+        "precision": if cfg!(feature = "high-precision") { "high" } else { "standard" },
+        "jobVersion": env!("CARGO_PKG_VERSION"),
+    })
+}
 pub mod account_observation_cli;
 pub mod account_observer;
 pub mod bounded;

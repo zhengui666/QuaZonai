@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { bool, int, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { LiteratureNote, LiteratureSearchResult } from '../../../packages/contracts/src/literature.ts';
 import { publicLiteratureQueries } from '../../../packages/contracts/src/research.ts';
@@ -9,7 +9,7 @@ import { searchLiterature } from './literature-search.ts';
 type Search = (query: string, limit?: number, signal?: AbortSignal) => Promise<LiteratureSearchResult>;
 const queryKey = (query: string) => query.trim().replace(/\s+/g, ' ').toLowerCase();
 const failedSearch = (status: LiteratureSearchResult['status']) => status === 'partial' || status === 'unavailable';
-const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
+const text = (value: unknown) => ({ output: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 // Transaction document values are overlay proxies; detach saved JSON before
 // returning it beyond the official commit's lifetime.
 const detached = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -18,7 +18,7 @@ export function literatureTools(search: Search = searchLiterature) {
   return [defineTool({
     name: 'research_literature_search',
     description: 'Search academic metadata and abstracts using exactly one owner-configured public query selected by its zero-based queryIndex from research_brief. No model-supplied query text is accepted. Saves source results/errors; repeating a query reuses its receipt. retryFailed explicitly retries partial/unavailable results while preserving them. Completed/no-results receipts and original task replays never search again. Missing configured queries is unavailable, not a failed search or a scientific gate.',
-    parameters: Type.Object({ queryIndex: Type.Integer({ minimum: 0, maximum: 2 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })), retryFailed: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    parameters: obj({ queryIndex: int({ minimum: 0, maximum: 2 }), limit: opt(int({ minimum: 1, maximum: 8 })), retryFailed: opt(bool()) }, { open: false }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       if (Object.keys(args).some(key => !['queryIndex', 'limit', 'retryFailed'].includes(key))) throw new Error('literature_search_arguments_unsupported');
@@ -62,9 +62,9 @@ export function literatureTools(search: Search = searchLiterature) {
   }), defineTool({
     name: 'research_literature_note',
     description: 'Record a model-authored claim, relation and applicability limits against one paper from a saved search receipt. An optional excerpt must be an exact substring of its retrieved abstract. Notes do not certify a paper, establish full-text reading, change scientific trials or confer independent evidence.',
-    parameters: Type.Object({ searchId: Type.Integer({ minimum: 1 }), paperId: Type.String({ minLength: 1, maxLength: 500 }),
-      claim: Type.String({ minLength: 1, maxLength: 4000 }), relation: Type.Union([Type.Literal('supports'), Type.Literal('contradicts'), Type.Literal('background')]),
-      limitations: Type.String({ minLength: 1, maxLength: 4000 }), excerpt: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })) }),
+    parameters: obj({ searchId: int({ minimum: 1 }), paperId: str({ minLength: 1, maxLength: 500 }),
+      claim: str({ minLength: 1, maxLength: 4000 }), relation: union([lit('supports'), lit('contradicts'), lit('background')]),
+      limitations: str({ minLength: 1, maxLength: 4000 }), excerpt: opt(str({ minLength: 1, maxLength: 4000 })) }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const note = { searchId: args.searchId, paperId: args.paperId, claim: args.claim.trim(), relation: args.relation,
@@ -96,7 +96,7 @@ export function literatureTools(search: Search = searchLiterature) {
   }), defineTool({
     name: 'research_literature',
     description: 'Read this conversation\'s saved literature search receipts and model-authored notes without searching again, computing science or exposing held-out results. Retrieved metadata/abstracts and attributed model claims are distinct.',
-    parameters: Type.Object({}), replay: 'safe',
+    parameters: obj({}), replay: 'safe',
     async execute(_args, api, context) {
       return text(await api.snapshot(LiteratureDoc, api.conversationId, context) ?? { searches: [], notes: [] });
     },

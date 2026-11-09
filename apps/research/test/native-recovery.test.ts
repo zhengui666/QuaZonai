@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -5,7 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -33,7 +34,7 @@ test('actual WABT parser detail reaches model failure feedback and original-tria
   const model = '(module\n  (func (export "predict") (result f64)\n    unknown_instruction))';
   const data = { catalog: directory, request, nautilusTarget: { id: 'unused-compilation-source', url: 'http://127.0.0.1:1' } };
   const compute = defineExtension({ name: 'test.wat-failure', tasks: [FactorTask], tools: [defineTool({
-    name: 'compute', description: 'Controlled invalid WAT protocol', parameters: Type.Object({}), replay: 'safe',
+    name: 'compute', description: 'Controlled invalid WAT protocol', parameters: obj({}), replay: 'safe',
     execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model, hypothesis: 'Invalid original model' }, () => runFactor(api, ctx, model, data))); },
   })] });
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [research, compute] };
@@ -49,7 +50,7 @@ test('actual WABT parser detail reaches model failure feedback and original-tria
   ]);
   let host = await openResearch(options);
   try {
-    const input = { goal: 'Protocol-only invalid model', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
+    const input = { goal: 'Protocol-only invalid model', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { } };
     const receipt = await startLegacyResearch(host, 'original-wat-failure', input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(receipt.conversationId)).research!;
@@ -90,17 +91,17 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
 `, { mode: 0o700 });
   process.env.QZ_JOB_BINARY = binary;
   const compute = defineExtension({ name: 'test.factor-suspend', tasks: [FactorTask], tools: [defineTool({
-    name: 'compute', description: 'Native suspend protocol', parameters: Type.Object({}), replay: 'safe',
+    name: 'compute', description: 'Native suspend protocol', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       await evaluateTrial(api, ctx, { model, hypothesis: 'Original interrupted attempt' }, () => runFactor(api, ctx, model, data));
-      return { content: [{ type: 'text', text: 'Original task completed.' }], control: { terminate: true } };
+      return { output: [{ type: 'text', text: 'Original task completed.' }], control: { terminate: true } };
     },
   })] });
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [compute] };
   faux.setResponses([tool('compute')]);
   let host = await openResearch(options);
   try {
-    const input = { goal: 'Protocol-only native suspension', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
+    const input = { goal: 'Protocol-only native suspension', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { } };
     const receipt = await startLegacyResearch(host, 'original-interrupted-factor', input);
     let pid: number;
     const nativeStartDeadline = Date.now() + 5000;
@@ -132,7 +133,7 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
   }
 });
 
-for (const mode of ['legacy-quotas', 'changed-window', 'changed-market'] as const) test(`group finalization preserves original selections with ${mode}`, { timeout: 15_000 }, async () => {
+for (const mode of ['same-contract', 'changed-window', 'changed-market'] as const) test(`group finalization preserves original selections with ${mode}`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-group-decode-')); const binary = join(directory, 'job');
   const previous = process.env.QZ_JOB_BINARY;
   await writeFile(binary, `#!/bin/sh\nprintf '%s' '{"broken":'\n`, { mode: 0o700 });
@@ -140,26 +141,25 @@ for (const mode of ['legacy-quotas', 'changed-window', 'changed-market'] as cons
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const data = { catalog: directory, request: { ...request, forecast: { ...request.forecast,
     selection: { ...request.forecast.selection, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] } } } };
-  const prepare = defineTool({ name: 'prepare', description: 'Counted test-only selection protocol', parameters: Type.Object({}), replay: 'safe',
+  const prepare = defineTool({ name: 'prepare', description: 'Counted test-only selection protocol', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       const bound = await api.snapshot(Study, api.conversationId, ctx);
       await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original controlled selection' }, async () => ({ request: iterationRequest(bound!.input!.data) }));
-      return { content: [{ type: 'text', text: 'Original test-only selection recorded.' }], control: { terminate: true } };
+      return { output: [{ type: 'text', text: 'Original test-only selection recorded.' }], control: { terminate: true } };
     },
   });
   const options = { database: join(directory, 'original.sqlite'), models,
     extensions: [defineExtension({ name: 'test.group-decode', tasks: [FactorTask], tools: [prepare, finalizeGroup] })] };
   let host = await openResearch(options);
   try {
-    const input = { goal: 'Protocol-only grouped final', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
+    const input = { goal: 'Protocol-only grouped final', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { } };
     const originals = [];
     for (const id of ['group-first', 'group-second']) {
       faux.setResponses([tool('prepare')]);
       const boundInput = structuredClone(input) as unknown as import('../src/documents.ts').ResearchInput;
       for (const source of [boundInput.data, boundInput.data.sealed as JsonObject]) {
         const forecast = (source.request as JsonObject).forecast as JsonObject;
-        forecast.parameters = { total_fuel: id === 'group-first' ? '1' : '7' };
-        if (id === 'group-second') (forecast.selection as JsonObject).maximum_rows = 0;
+        forecast.parameters = { total_fuel: '1' };
         if (id === 'group-second' && mode === 'changed-market') (forecast.selection as JsonObject).bar_types = ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'];
       }
       if (id === 'group-second' && mode === 'changed-window') {
@@ -171,7 +171,7 @@ for (const mode of ['legacy-quotas', 'changed-window', 'changed-market'] as cons
       const study = (await host.state(receipt.conversationId)).research!;
       originals.push({ receipt, study, selection: { researchId: receipt.conversationId, trialId: Number(study.trials[0]!.taskId) } });
     }
-    faux.setResponses([tool('factor_finalize_group', { reason: 'Original selections precede the final protocol failure.', selections: originals.map(item => item.selection) }), ...(mode === 'legacy-quotas' ? [] : [(transcript: { messages: readonly unknown[] }) => {
+    faux.setResponses([tool('factor_finalize_group', { reason: 'Original selections precede the final protocol failure.', selections: originals.map(item => item.selection) }), ...(mode === 'same-contract' ? [] : [(transcript: { messages: readonly unknown[] }) => {
       assert.match(toolText(transcript, 'factor_finalize_group'), /heldout_group_window_mismatch/);
       return fauxAssistantMessage('The actual independent data binding differs; preserve every original selection.');
     }])]);
@@ -179,7 +179,7 @@ for (const mode of ['legacy-quotas', 'changed-window', 'changed-market'] as cons
     const submission = await conversation.submit({ type: 'input', requestId: 'original-group-final', content: 'Assess the original selected group.' }, context);
     await submission.wait(context);
     const first = (await host.harness.snapshot(Study, conversation.id, context))!;
-    if (mode !== 'legacy-quotas') {
+    if (mode !== 'same-contract') {
       assert.equal(first.final, null);
       for (const original of originals) assert.deepEqual((await host.state(original.receipt.conversationId)).research, original.study);
       assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context)).items.length, 0);

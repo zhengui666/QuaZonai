@@ -5,6 +5,8 @@ No external dataset, paid endpoint, or native runtime is used.
 """
 
 from copy import deepcopy
+from _source_test_fixtures import http_acquisition
+
 import hashlib
 import io
 import json
@@ -92,7 +94,7 @@ class UncappedDataTest(unittest.TestCase):
         selection = providers.Selection("BTC-USD", 0, 60, 60)
         body = b"[" + http_fixture.CANDLE + b"]"
         with patch.object(acquire, "fetch", return_value=(body, deepcopy(http_fixture.OBSERVATION))):
-            manifest = acquire.acquire("coinbase-candles", selection, output, terms)
+            manifest = http_acquisition("coinbase-candles", selection, output, terms)
         self.assertEqual(manifest["source_terms"]["file"]["size"], 129 * MIB)
         self.assertEqual(snapshot.file_hash(output / "source-terms.bin"), snapshot.file_hash(terms))
         self.assertEqual(acquire.verify(output)["record_count"], 1)
@@ -210,7 +212,7 @@ class UncappedDataTest(unittest.TestCase):
         output = self.root / "native"
         (output / "catalog").mkdir(parents=True)
         (output / "catalog/data.parquet").write_bytes(b"PAR1fixturePAR1")
-        report = {"schema_version": 1, "native_version": "0.67.0", "catalog_relative_path": "catalog",
+        report = {"schema_version": 1, "native_version": "0.68.0", "catalog_relative_path": "catalog",
                   "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
                   "registered_in_quazonai": False, "research_qualified": False,
                   "limitations": ["Fixture envelope only"], "instruments": 1_000_001,
@@ -232,7 +234,7 @@ class UncappedDataTest(unittest.TestCase):
         output = self.root / "public"
         body = b"[" + http_fixture.CANDLE + b"]"
         with patch.object(acquire, "fetch", return_value=(body, deepcopy(http_fixture.OBSERVATION))):
-            manifest = acquire.acquire("coinbase-candles", providers.Selection("BTC-USD", 0, 60, 60), output, terms)
+            manifest = http_acquisition("coinbase-candles", providers.Selection("BTC-USD", 0, 60, 60), output, terms)
         manifest["limits"] = {"max_response_bytes": 4 * MIB, "max_response_total_bytes": 32 * MIB,
                               "max_requests": 128, "max_records": 100_000, "max_output_bytes": 128 * MIB}
         path = output / "acquisition.json"

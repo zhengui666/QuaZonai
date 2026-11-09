@@ -1,10 +1,11 @@
+import { bool, obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -25,13 +26,13 @@ async function setup(reasoning = false) {
   return { directory, faux, models, model, database: join(directory, 'research.sqlite'), async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 
-const input = (model: { provider: string; modelId: string }) => ({ goal: 'Find predictive factors without target positions.', model, data: {}, policy: { max_trials: 3 } });
+const input = (model: { provider: string; modelId: string }) => ({ goal: 'Find predictive factors without target positions.', model, data: {}, policy: { } });
 
 test('official SQLite persists original identity, inputs, native view and submission replay', async () => {
   const setup_ = await setup(); let calls = 0;
   const plugin = defineExtension({ name: 'probe', tools: [defineTool({
-    name: 'probe', description: 'Read-only protocol probe', parameters: Type.Object({}), replay: 'safe',
-    async execute() { calls++; return { content: [{ type: 'text', text: 'observed' }] }; },
+    name: 'probe', description: 'Read-only protocol probe', parameters: obj({}), replay: 'safe',
+    async execute() { calls++; return { output: [{ type: 'text', text: 'observed' }] }; },
   })] });
   setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('probe', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('done')]);
   let host = await openResearch({ ...setup_, extensions: [plugin] });
@@ -45,7 +46,7 @@ test('official SQLite persists original identity, inputs, native view and submis
     assert.equal(calls, 1);
     const before = await host.view(receipt.conversationId);
     assert.deepEqual((await host.harness.snapshot(Requests, context))!.requests['request:same-request']!.input, input(setup_.model));
-    assert.deepEqual({ ...before.research!.input, policy: { max_trials: 3 } }, input(setup_.model));
+    assert.deepEqual({ ...before.research!.input, policy: { } }, input(setup_.model));
     assert.ok(before.research!.input!.policy.reviewPolicies);
     assert.ok(before.docs['pi.usage']);
     await host.close();
@@ -61,13 +62,13 @@ test('failed scientific trials stay in ledger and optional final selection ends 
   const setup_ = await setup();
   const plugin = defineExtension({ name: 'test-science', tools: [defineTool({
     name: 'evaluate', description: 'Trial ledger protocol test, not native science',
-    parameters: Type.Object({ fail: Type.Boolean() }), replay: 'safe',
+    parameters: obj({ fail: bool() }), replay: 'safe',
     async execute(args, api, ctx) {
       const result = await evaluateTrial(api, ctx, { fail: args.fail }, async () => {
         if (args.fail) throw new Error('native_input_missing');
         return { protocolOnly: true };
       });
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      return { output: [{ type: 'text', text: JSON.stringify(result) }] };
     },
   })] });
   setup_.faux.setResponses([
@@ -92,7 +93,7 @@ test('native abort joins the running tool; cancelling an observation does not ca
   let enter!: () => void;
   const entered = new Promise<void>((resolve) => { enter = resolve; });
   const plugin = defineExtension({ name: 'blocking-tool', tools: [defineTool({
-    name: 'block', description: 'Cancellation protocol probe', parameters: Type.Object({}),
+    name: 'block', description: 'Cancellation protocol probe', parameters: obj({}),
     async execute(_args, _api, ctx) {
       enter();
       await awaitWithContext(new Promise<void>(() => {}), ctx);
@@ -108,7 +109,7 @@ test('native abort joins the running tool; cancelling an observation does not ca
     let deliveries = 0;
     observer.start(async () => { deliveries++; });
     await observer.stop();
-    assert.equal((await observer.closed).reason, 'stopped');
+    assert.equal((await observer.closed).kind, 'stopped');
     const deliveredBeforeStop = deliveries;
     assert.equal((await host.submission(receipt.submissionId)).status, 'placed');
     assert.ok((await host.tasks()).tasks.length > 0);
@@ -123,13 +124,13 @@ test('native abort joins the running tool; cancelling an observation does not ca
 test('legacy zero trial allowance does not prevent scientific computation', async () => {
   const setup_ = await setup(); let computations = 0;
   const plugin = defineExtension({ name: 'budget-science', tools: [defineTool({
-    name: 'evaluate', description: 'Budget protocol probe', parameters: Type.Object({}), replay: 'safe',
+    name: 'evaluate', description: 'Budget protocol probe', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { hypothesis: 'budget check' }, async () => { computations++; return {}; })); },
   })] });
   setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('evaluate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Finished protocol probe')]);
   const host = await openResearch({ ...setup_, extensions: [plugin] });
   try {
-    const receipt = await host.start('zero-budget', { ...input(setup_.model), policy: { max_trials: 0 } });
+    const receipt = await host.start('zero-budget', { ...input(setup_.model), policy: { } });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(computations, 1);
@@ -193,7 +194,7 @@ for (const finalFirst of [true, false]) {
   test(`mixed final/read round is bounded (${finalFirst ? 'final first' : 'read first'}); later science cannot run`, async () => {
     const setup_ = await setup(); let computed = 0;
     const plugin = defineExtension({ name: 'mixed-science', tools: [defineTool({
-      name: 'evaluate', description: 'Scientific ledger protocol only', parameters: Type.Object({}), replay: 'safe', executionMode: 'sequential',
+      name: 'evaluate', description: 'Scientific ledger protocol only', parameters: obj({}), replay: 'safe', executionMode: 'sequential',
       async execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, {}, async () => { computed++; return {}; })); },
     })] });
     const calls = [fauxToolCall('research_finish', { reason: 'Requested stop' }), fauxToolCall('research_brief', {})];
@@ -219,11 +220,11 @@ test('native backoff checkpoint survives close/reopen; quota and auth fail witho
     const settings = researchSettings();
     assert.deepEqual(settings.retry, { enabled: true, maxRetries: 6, baseDelayMs: 2000, maxAgentDelayMs: 60000 });
     assert.equal(settings.progress!.partialIntervalMs, 250);
-    assert.equal(researchSettings({ stream: { timeoutMs: -1 } }).stream?.timeoutMs, undefined);
+    assert.throws(() => researchSettings({ stream: { timeoutMs: -1 } }), /invalid_settings_stream_timeoutMs/);
     const graph = await host.harness.watchTaskGraph(context);
     let ready!: (id: TaskId) => void;
     const backoff = new Promise<TaskId>((resolve) => { ready = resolve; });
-    graph.start(async (value) => { const task = Object.values(value.tasks).find((task) => 'phase' in task.state && task.state.phase === 'retry'); if (task) ready(task.id); });
+    graph.start(async (call) => { if (call.kind !== 'value') return; const value = call.value; const task = Object.values(value.tasks).find((task) => 'phase' in task.state && task.state.phase === 'retry'); if (task) ready(task.id); });
     setup_.faux.setResponses([(_transcript, options) => {
       assert.equal(options!.timeoutMs, undefined); assert.equal(options!.maxRetries, 0);
       return fauxAssistantMessage('', { stopReason: 'error', errorMessage: '503 service unavailable' });
@@ -237,7 +238,7 @@ test('native backoff checkpoint survives close/reopen; quota and auth fail witho
     const observer = await host.watch(receipt.conversationId);
     observer.start(async () => {});
     await graph.stop(); await host.close();
-    assert.equal((await observer.closed).reason, 'stopped');
+    assert.equal((await observer.closed).kind, 'stopped');
     await assert.rejects(host.start('after-close', input(setup_.model)), /research_closing/);
     setup_.faux.setResponses([() => { assert.ok(Date.now() >= checkpoint!.until); return fauxAssistantMessage('Recovered original submission'); }]);
     host = await openResearch({ ...setup_, settings: { retry: { baseDelayMs: 500 } } });

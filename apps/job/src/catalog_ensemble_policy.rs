@@ -1,9 +1,9 @@
 //! Causal full-universe scores from original fills and completed native BARs.
 //! One v2 model instance per member scans the canonical (availability,id) stream.
 use crate::{feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{recorded_fees::RecordedTradeFeeV1, science::*, DbCounter};
+use contracts::{DbCounter, recorded_fees::RecordedTradeFeeV1, science::*};
 use domain::execution::features::FeatureState;
 use nautilus_model::{data::Bar, identifiers::InstrumentId};
 use std::{
@@ -53,13 +53,13 @@ mod tests {
         let at = minute * MINUTE;
         let price = Price::from("0.500000");
         let bar = Bar::new_checked(
-            BarType::from_str(&format!("{id}-1-MINUTE-LAST-EXTERNAL")).unwrap(),
+            BarType::from_str(&format!("{id}-1-MINUTE-LAST-INTERNAL")).unwrap(),
             price,
             price,
             price,
             price,
             Quantity::from("1.000000"),
-            at.into(),
+            (at - MINUTE).into(),
             at.into(),
         )
         .unwrap();
@@ -115,18 +115,22 @@ mod tests {
                 .unwrap();
         let (bar, mut records) = observation("100", 1, true);
         records[0].quantity = "0.999999".parse().unwrap();
-        assert!(policy
-            .observe(bar, &records)
-            .unwrap_err()
-            .to_string()
-            .contains("BAR_QUANTITY"));
+        assert!(
+            policy
+                .observe(bar, &records)
+                .unwrap_err()
+                .to_string()
+                .contains("BAR_QUANTITY")
+        );
         let (bar, records) = observation("100", 1, true);
         policy.observe(bar, &records).unwrap();
-        assert!(policy
-            .observe(bar, &records)
-            .unwrap_err()
-            .to_string()
-            .contains("CANONICAL_ORDER"));
+        assert!(
+            policy
+                .observe(bar, &records)
+                .unwrap_err()
+                .to_string()
+                .contains("CANONICAL_ORDER")
+        );
         let definitions = feature_schema("original@revision", counter(20).unwrap());
         let mut state = FeatureState::new(&definitions).unwrap();
         let values = state.values(counter(1).unwrap()).unwrap();
@@ -251,7 +255,7 @@ impl CatalogEnsemblePolicy {
     pub fn observe(&mut self, bar: Bar, records: &[RecordedTradeFeeV1]) -> Result<u64> {
         crate::catalog::validate_price_bar(&bar, None)?;
         let id = bar.bar_type.instrument_id();
-        let end = bar.ts_event.as_u64();
+        let end = crate::catalog::right_open_bar_close_ns(&bar)?;
         ensure!(
             end >= MINUTE && end.is_multiple_of(MINUTE),
             "CATALOG_ENSEMBLE_MINUTE"
@@ -260,6 +264,7 @@ impl CatalogEnsemblePolicy {
             unreachable!("owned schema always declares modeled lag")
         };
         let available = end
+            .max(bar.ts_init.as_u64())
             .checked_add(lag_ns.get())
             .context("CATALOG_ENSEMBLE_CLOCK")?;
         ensure!(

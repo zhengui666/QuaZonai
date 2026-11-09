@@ -32,7 +32,7 @@ async function setup(extra: string[] = []) {
 }
 
 function input(model: { provider: string; modelId: string }) {
-  return { goal: 'Evaluate factors across two asset classes without targets. Select using validation IC, assess final unseen sample once and stop.', model, data: { ...fixture, sealed: fixture } as JsonObject, policy: { max_trials: 3, selection_metric: 'validation.pearson_ic' } };
+  return { goal: 'Evaluate factors across two asset classes without targets. Select using validation IC, assess final unseen sample once and stop.', model, data: { ...fixture, sealed: fixture } as JsonObject, policy: { selection_metric: 'validation.pearson_ic' } };
 }
 
 test('registered factor/evaluator additions run unattended on real multi-asset Nautilus data', { timeout: 120_000 }, async () => {
@@ -70,7 +70,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.deepEqual(study.trials.map((trial) => trial.status), ['COMPUTED', 'COMPUTED']);
     for (const trial of study.trials) {
       const result = trial.result as JsonObject;
-      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.67.0');
+      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.68.0');
       const validation = (result.partitions as JsonObject[])[1]!;
       assert.equal((validation.assets as JsonObject[]).length, 2);
       assert.equal(((validation.metric as JsonObject).pearson_ic as JsonObject).status, 'AVAILABLE');

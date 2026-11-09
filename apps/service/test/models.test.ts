@@ -102,7 +102,7 @@ test('settings retain supported reasoning and service tier before admission/repl
   const state = await setup(); const model = state.faux.getModel(); model.reasoning = true;
   const patch = (payload: object) => state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload });
   try {
-    await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json({ name: 'Historical', defaultModel: state.model, maxTrials: 77, taskTimeoutSeconds: 0.001, nativeTimeoutSeconds: 0.001 }); }, context);
+    await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json({ name: 'Historical', defaultModel: state.model, taskTimeoutSeconds: 0.001, nativeTimeoutSeconds: 0.001 }); }, context);
     assert.deepEqual(await state.service.work.getSettings(), { defaultModel: state.model, thinkingLevel: null, serviceTier: null, tickBookCores: 1 });
     assert.equal((await patch({ tickBookCores: 0 })).json().error, 'tick_book_cores_invalid');
     assert.equal((await patch({ tickBookCores: 8 })).statusCode, 200);
@@ -116,7 +116,7 @@ test('settings retain supported reasoning and service tier before admission/repl
     assert.equal((await patch({ defaultModel: state.model, thinkingLevel: 'unsupported' })).json().error, 'thinking_level_unsupported');
     assert.equal((await patch({ serviceTier: 'fast' })).json().error, 'invalid_service_tier');
     assert.equal((await patch({ serviceTier: 'priority' })).json().error, 'service_tier_unsupported');
-    const unsupported = { requestId: 'unsupported-tier', goal: 'Controlled model protocol', model: state.model, datasetId: 'controlled', maxTrials: 1, serviceTier: 'priority' };
+    const unsupported = { requestId: 'unsupported-tier', goal: 'Controlled model protocol', model: state.model, datasetId: 'controlled', serviceTier: 'priority' };
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: unsupported })).json().error, 'service_tier_unsupported');
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...unsupported, serviceTier: 'fast' } })).json().error, 'invalid_service_tier');
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...unsupported, serviceTier: null } })).json().error, 'invalid_service_tier');

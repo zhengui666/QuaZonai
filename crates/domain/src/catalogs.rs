@@ -133,7 +133,7 @@ pub fn instrument_version_at<'a>(
     Err(bad("instrument_definition.from_future"))
 }
 
-/// Match the supported single-base-currency venue to Nautilus 0.67.0 add_instrument.
+/// Match the supported single-base-currency venue to Nautilus 0.68.0 add_instrument.
 pub fn execution_account(
     class: &str,
     account: contracts::science::NativeAccountKind,
@@ -320,7 +320,7 @@ pub fn metadata(
         || value.available_through > observed_at + chrono::Duration::seconds(5)
         || value.row_count.get() == 0
         || value.data_kind != RuntimeDataKind::Bar
-        || value.quality.native_version != "nautilus-persistence/0.67.0"
+        || value.quality.native_version != "nautilus-persistence/0.68.0"
         || value.quality.datasets.len() != 1
         || value.quality.checked_at > observed_at + chrono::Duration::seconds(5)
         || value.quality.checked_at < value.available_through

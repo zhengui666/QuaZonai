@@ -60,18 +60,26 @@ print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocat
     assert.fail('controlled native process did not start');
   }
   return { directory, calls, options, request, started, get url() { return url; },
-    post(body: NativeExecutionRequest) { return fetch(`${url}/v1/execute`, { method: 'POST', headers, body: JSON.stringify(body) }); },
+    async post(body: NativeExecutionRequest) {
+      let response = await fetch(`${url}/v1/execute`, { method: 'POST', headers, body: JSON.stringify(body) });
+      if ((body.input as { wait?: boolean })?.wait || !response.ok) return response;
+      for (let attempt = 0; attempt < 500 && response.status === 202; attempt++) {
+        await response.body?.cancel(); await new Promise(resolve => setTimeout(resolve, 10));
+        response = await fetch(`${url}/v1/executions/${body.requestId}`, { headers });
+      }
+      return response;
+    },
     async restart() { await worker.close(); worker = await createNautilusWorker(options); url = await listen(); },
     async cleanup() { await worker.close(); await rm(directory, { recursive: true, force: true }); },
   };
 }
 
-test('tick command ignores legacy memory quotas and preserves original receipts', async () => {
-  const f = await fixture({ tickMaximumMemoryBytes: 1 });
+test('tick execution uses native process limits and preserves original receipts', async () => {
+  const f = await fixture();
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
     assert.ok(caps.commands.includes('evaluate-tick-factor'));
-    const body = f.request({ allocateBeyondLimit: true, tickMaximumMemoryBytes: 1 });
+    const body = f.request({ allocateBeyondLimit: true });
     const original = await (await f.post(body)).json();
     assert.equal(original.status, 'COMPLETED');
     const bar = await (await f.post(f.request({}, 'evaluate-factor'))).json();
@@ -99,13 +107,13 @@ test('tick capacity rejects before creating a receipt; exact replay and BAR oper
     assert.notEqual(bar.result.limits[1], 2 * 1024 ** 3, 'tick-only limit does not change BAR process limits');
     const cancelled = await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json();
     assert.equal(cancelled.status, 'CANCELLED'); assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-    assert.deepEqual(await (await first).json(), cancelled); assert.deepEqual(await (await duplicate).json(), cancelled);
+    assert.equal((await (await first).json()).status, 'RUNNING'); assert.equal((await (await duplicate).json()).status, 'RUNNING');
     assert.equal((await (await f.post(next)).json()).status, 'COMPLETED');
   } finally { await f.cleanup(); }
 });
 
-test('tick output exceeds legacy quota and keeps the completed receipt across retry', async () => {
-  const f = await fixture({ tickMaximumOutputBytes: 1024, tickMaximumMemoryBytes: 1 });
+test('large tick output keeps the completed receipt across retry', async () => {
+  const f = await fixture();
   try {
     const body = f.request({ large: true });
     const original = await (await f.post(body)).json();
@@ -120,7 +128,7 @@ test('worker capacity configuration still rejects nonpositive concurrency', asyn
   await assert.rejects(createNautilusWorker({ binary: '/does-not-exist', dataDir: '/does-not-exist', catalogRoots: [], maximumConcurrentTickExecutions: 0 }), /nautilus_tick_concurrency_invalid/);
 });
 
-test('explicit precision companions route tick-only and bind both native files without changing legacy identity', async () => {
+test('explicit precision companions route tick-only and bind both native files and preserve single-binary identity', async () => {
   const single = await fixture();
   try {
     const caps = await (await fetch(`${single.url}/v1/capabilities`)).json();
@@ -170,6 +178,6 @@ test('economic replay shares tick precision, mounted catalogs and admission slot
     const refused = await f.post(f.request({}));
     assert.equal(refused.status, 429); assert.equal((await refused.json()).admission, 'REJECTED');
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
-    assert.equal((await (await active).json()).status, 'CANCELLED');
+    assert.equal((await (await active).json()).status, 'RUNNING');
   } finally { await f.cleanup(); }
 });

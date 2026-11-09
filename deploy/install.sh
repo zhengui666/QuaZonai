@@ -181,7 +181,7 @@ json_read() {
     }
     if(mode!="latest" || kind[root]!="array") bad()
     latest=field
-    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz quazonai-image-database.tar.gz",required," ")
+    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz",required," ")
     for(i=1;i<=count[root];i++) {
       release=prop(root,i); tag=value[prop(release,"tag_name")]; assets=prop(release,"assets")
       if(kind[release]!="object" || kind[prop(release,"tag_name")]!="string" || !dev(tag) || kind[prop(release,"draft")]!="false" || kind[assets]!="array") continue

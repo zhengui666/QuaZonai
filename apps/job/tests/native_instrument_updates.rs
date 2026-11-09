@@ -421,5 +421,5 @@ fn stable_window_after_original_transition_uses_the_original_new_definition() {
         result.consumed_target_points.get(),
         request.target_points.len() as u64
     );
-    assert_eq!(result.native_version, "0.67.0");
+    assert_eq!(result.native_version, "0.68.0");
 }

@@ -9,7 +9,7 @@ import { object } from '../src/trials.ts';
 
 // Persistent original-study facts, keyed by native child ID and part index in the same official store.
 export const NativeEvidencePart = defineDocFamily<{ data: string }, null>({
-  kind: 'qz.native-evidence-part', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', family: true, initial: () => ({ data: '' }),
+  kind: 'qz.native-evidence-part', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', family: true, initial: () => ({ data: '' }),
 });
 const format = 'qz.native-evidence/gzip-json/v1';
 const partSize = 1024 * 1024;

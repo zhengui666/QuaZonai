@@ -12,7 +12,7 @@ if ($Version -eq ('@QUAZONAI_' + 'VERSION@') -or $Version -eq 'latest') {
         $Items = @(Invoke-RestMethod "$Repository/releases?per_page=100&page=$Page")
         $Releases += $Items; $Page++
     } while ($Items.Count -eq 100)
-    $Required = @('install.sh','install.ps1','release.json','quazonai-deploy.tar.gz','README.md','quazonai-cli-linux-x86_64.tar.gz','quazonai-cli-macos-x86_64.tar.gz','quazonai-cli-macos-aarch64.tar.gz','quazonai-cli-windows-x86_64.zip','quazonai-image-application.tar.gz','quazonai-image-runtime.tar.gz','quazonai-image-database.tar.gz')
+    $Required = @('install.sh','install.ps1','release.json','quazonai-deploy.tar.gz','README.md','quazonai-cli-linux-x86_64.tar.gz','quazonai-cli-macos-x86_64.tar.gz','quazonai-cli-macos-aarch64.tar.gz','quazonai-cli-windows-x86_64.zip','quazonai-image-application.tar.gz','quazonai-image-runtime.tar.gz')
     $Release = $Releases | Where-Object {
         $Names = @($_.assets | Where-Object { $_.state -eq 'uploaded' -and $_.size -gt 0 } | ForEach-Object name)
         -not $_.draft -and $_.tag_name -match '^v\d+\.\d+\.\d+-dev\.\d{14}\.\d+$' -and @($Required | Where-Object { $_ -notin $Names }).Count -eq 0

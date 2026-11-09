@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -7,7 +8,6 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { canonical, Study, Requests } from '../../research/src/documents.ts';
@@ -46,16 +46,16 @@ test('source evidence crosses original admission and repair with exact bytes and
     const sourceBinary = join(state.directory, 'source-job.mjs');
     await writeFile(sourceBinary, `#!${process.execPath}\nlet raw='';for await(const chunk of process.stdin)raw+=chunk;const input=JSON.parse(raw);if(process.argv[2]!=='review-source')throw new Error('unexpected_native_command');console.log(JSON.stringify({schema_version:1,method_version:'qz.review-source.v1',validated:true,metadata:input.metadata}));\n`, { mode: 0o700 });
     process.env.QZ_JOB_BINARY = sourceBinary;
-    state.options.extensions = [defineExtension({ name: 'test.source-admission', tools: [defineTool({ name: 'source_probe', description: 'Controlled source receipt consumer, no scientific claim.', parameters: Type.Object({}), replay: 'safe',
+    state.options.extensions = [defineExtension({ name: 'test.source-admission', tools: [defineTool({ name: 'source_probe', description: 'Controlled source receipt consumer, no scientific claim.', parameters: obj({}), replay: 'safe',
       async execute(_args, api, ctx) {
         const data = (await api.snapshot(Study, api.conversationId, ctx))!.input!.data;
         const evidence = await sourceReviewEvidence(api, ctx, data);
         assert.equal(evidence.checks.find(check => check.id === 'provenance')!.status, 'PASS');
-        return { content: [{ type: 'text', text: JSON.stringify(evidence) }], control: { terminate: true } };
+        return { output: [{ type: 'text', text: JSON.stringify(evidence) }], control: { terminate: true } };
       },
     })] })];
     await state.restart();
-    const body = { requestId: 'source-admission-original', goal: 'Source receipt protocol only.', model: state.model, datasetId: dataset.id, maxTrials: 1 };
+    const body = { requestId: 'source-admission-original', goal: 'Source receipt protocol only.', model: state.model, datasetId: dataset.id };
     const admit = (payload: object) => state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload });
     const answer = () => fauxAssistantMessage(fauxToolCall('source_probe', {}), { stopReason: 'toolUse' });
     state.faux.setResponses([answer()]);
@@ -73,25 +73,11 @@ test('source evidence crosses original admission and repair with exact bytes and
     await state.restart();
     assert.deepEqual(await state.service.research.harness.snapshot(ReviewSourceEvidence, receipt.conversationId, context), original);
     assert.deepEqual((await admit(body)).json(), receipt); assert.equal(state.faux.state.callCount, 1);
-    // Repair only an original service admission→native admission gap, preserving
-    // its captured source rather than re-reading current metadata files.
-    const gapBody = { ...body, requestId: 'source-admission-gap' };
-    await state.service.research.harness.commit(async tx => {
-      const app = await tx.doc(Application); const binding = json(app.researchRequests[`request:${body.requestId}`]!);
-      binding.original = json(gapBody); app.researchRequests[`request:${gapBody.requestId}`] = binding as unknown as (typeof app.researchRequests)[string];
-    }, context);
-    state.faux.setResponses([answer()]); await state.restart();
-    const gap = (await state.service.research.harness.snapshot(Requests, context))!.requests[`request:${gapBody.requestId}`]!;
-    const gapSubmission = (await state.service.research.submissionFor(gap.conversationId))!;
-    await (await state.service.research.harness.submission(gapSubmission.id, context))!.wait(context);
-    const repaired = await state.service.research.harness.snapshot(ReviewSourceEvidence, gap.conversationId, context);
-    assert.deepEqual(repaired!.captured, original!.captured); assert.notEqual(repaired!.taskId, original!.taskId);
-    assert.equal(repaired!.native!.validated, true); assert.equal(state.faux.state.callCount, 2);
     await writeFile(join(state.directory, 'metadata.json'), JSON.stringify({ ...metadata, origin: 'CHANGED' }));
     assert.deepEqual((await admit(body)).json(), receipt);
     const changed = await admit({ ...body, requestId: 'source-admission-new-after-mutation' });
     assert.equal(changed.statusCode, 400, changed.body); assert.match(changed.json().error, /source_manifest_file_(?:digest_)?mismatch/);
-    assert.equal(state.faux.state.callCount, 2);
+    assert.equal(state.faux.state.callCount, 1);
     // A later source-owner revocation is a current consumption fence. Its
     // changed files cannot rewrite the historical captured grant or receipt.
     await writeFile(join(state.directory, 'metadata.json'), JSON.stringify(metadata));
@@ -141,6 +127,6 @@ test('source evidence crosses original admission and repair with exact bytes and
     const revokedAdmission = await admit({ ...body, requestId: 'source-revoked-first-admission' });
     assert.equal(revokedAdmission.statusCode, 409, revokedAdmission.body);
     assert.match(revokedAdmission.json().error, /source.*authorization_inactive/);
-    assert.equal(state.faux.state.callCount, 2);
+    assert.equal(state.faux.state.callCount, 1);
   } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await state.cleanup(); if (receiver) await new Promise<void>((resolve, reject) => receiver!.close(error => error ? reject(error) : resolve())); }
 });

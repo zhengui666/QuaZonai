@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { ReviewCheck, ReviewMetric, ReviewPolicy, ReviewReport, ReviewTargetKind } from '../../../packages/contracts/src/review.ts';
@@ -86,7 +85,7 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
     try { const portfolio = Array.isArray(proposal?.members); const account = object(result.portfolio);
       const validAccount = account?.partition === 'VALIDATION' && object(account.provenance)?.account === 'ONE_NATIVE_SHARED_ACCOUNT';
       const partitions = result.partitions;
-      causalPrefix = canonical(withoutExecutionQuotas(raw)) === canonical(withoutExecutionQuotas(iterationRequest(input.data, portfolio)))
+      causalPrefix = canonical((raw)) === canonical((iterationRequest(input.data, portfolio)))
       && (portfolio && validAccount && partitions === undefined || Array.isArray(partitions) && (!portfolio || validAccount) && partitions.every(row => { const partition = object(row); if (['TRAIN', 'VALIDATION'].includes(String(partition?.partition))) return true; const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).every(value => value === 0 || value === '0') && object(object(partition?.metric)?.pearson_ic)?.value === null && (partition?.diagnostics === undefined || object(partition.diagnostics)?.observations === 0);  })); }
     catch { /* A missing or unsupported original request is not proof of causality. */ }
   }

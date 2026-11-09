@@ -211,7 +211,7 @@ fn two_wasm_factor_structures_keep_arbitrary_signed_scores_and_original_forecast
         assert_eq!(result.methods["ic"], "ndarray-stats.pearson_correlation");
         assert_eq!(result.native_versions["ndarray-stats"], "0.7.0");
         assert_eq!(result.native_versions["wasmi"], "2.0.0");
-        assert_eq!(result.native_versions["nautilus-model"], "0.67.0");
+        assert_eq!(result.native_versions["nautilus-model"], "0.68.0");
         // Every report matches the official raw calculation on precisely uncensored pairs.
         for partition in &result.partitions {
             let pairs = || {

@@ -1,3 +1,4 @@
+import { map, unknown } from '@earendil-works/pi-schema';
 import type { Context, JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolExecutionResult } from '@earendil-works/pi-durable';
 import { canonical, Study } from './documents.ts';
@@ -83,15 +84,18 @@ export function object(value: JsonValue | undefined, name: string): JsonObject {
   return value;
 }
 
-export async function trialFeedback(api: ToolExecutionApi, context: Context, evaluate: () => Promise<JsonObject>): Promise<ToolExecutionResult> {
+export const trialFeedbackSchema = map(unknown());
+
+export async function trialFeedback(api: ToolExecutionApi, context: Context, evaluate: () => Promise<JsonObject>, structured = false): Promise<ToolExecutionResult> {
   try {
     const result = await evaluate();
-    return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, ...modelFeedback(result) }) }] };
+    const feedback = { trialId: api.taskId, ...modelFeedback(result) };
+    return { output: [{ type: 'text', text: JSON.stringify(feedback) }], ...(structured ? { structuredOutput: feedback } : {}), details: { trialId: api.taskId } };
   } catch (error) {
     if (context.abortSignal?.aborted) throw error;
-    if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
+    if (error instanceof Error && error.message === 'research_already_final') return { isError: true, output: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
     if (!(error instanceof Error) || !['research_search_closed'].includes(error.message)) throw error;
     await closeResearch(api, context, error.message);
-    return { isError: true, content: [{ type: 'text', text: 'Research search closed. Original attempts, failures and deterministic candidate comparison are retained; independent results remain owner-only.' }], control: { terminate: true } };
+    return { isError: true, output: [{ type: 'text', text: 'Research search closed. Original attempts, failures and deterministic candidate comparison are retained; independent results remain owner-only.' }], control: { terminate: true } };
   }
 }

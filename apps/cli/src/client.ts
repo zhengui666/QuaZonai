@@ -9,6 +9,29 @@ export async function connect(profile: Profile) {
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0,
     connect: { timeout: 0, ...(profile.ca_certificate ? { ca: await readFile(profile.ca_certificate, 'utf8') } : {}) } });
   return {
+    async *events<T>(path: string, signal?: AbortSignal): AsyncGenerator<T> {
+      const response = await fetch(`${base}${API}${path}`, { dispatcher, redirect: 'error', signal,
+        headers: { accept: 'text/event-stream', 'x-quazonai-cli': '1', ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) } });
+      if (!response.ok) { await response.body?.cancel(); throw new CliError('event_stream_unavailable', response.status); }
+      if (!response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) {
+        await response.body?.cancel(); throw new CliError('invalid_event_stream');
+      }
+      const reader = response.body.getReader(); const decoder = new TextDecoder();
+      let pending = ''; let data: string[] = [];
+      try {
+        while (true) {
+          const next = await reader.read(); pending += decoder.decode(next.value, { stream: !next.done });
+          let end: number;
+          while ((end = pending.indexOf('\n')) >= 0) {
+            const line = pending.slice(0, end).replace(/\r$/, ''); pending = pending.slice(end + 1);
+            if (!line) {
+              if (data.length) { let value: T; try { value = JSON.parse(data.join('\n')) as T; } catch { throw new CliError('invalid_event_stream'); } data = []; yield value; }
+            } else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+          }
+          if (next.done) break;
+        }
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    },
     async request<T = unknown>(method: string, path: string, body?: string, signal?: AbortSignal): Promise<T> {
       let response;
       try {

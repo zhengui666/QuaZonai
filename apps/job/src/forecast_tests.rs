@@ -81,6 +81,37 @@ fn module(body: &str) -> Vec<u8> {
     .unwrap()
 }
 
+#[test]
+fn internal_right_open_features_and_labels_keep_close_receipt_availability() {
+    let (mut market, mut request) = fixture(6);
+    for series in &mut market.series {
+        let internal: BarType = format!("{}-1-MINUTE-LAST-INTERNAL", series.instrument.id())
+            .parse()
+            .unwrap();
+        series.bar_type = internal;
+        for bar in &mut series.bars {
+            bar.bar_type = internal;
+            // Source receipt may arrive after the official right-open close.
+            bar.ts_init = (bar.ts_event.as_u64() + 60_000_000_000 + 7).into();
+        }
+    }
+    request.selection.bar_types = market
+        .series
+        .iter()
+        .map(|series| series.bar_type.to_string())
+        .collect();
+    request.selection.decision_cutoff_ns = counter(8 * 60_000_000_000).unwrap();
+    let result = forecast_market(&market, &request, &module("f64.const 1")).unwrap();
+    let point = &result.points[2];
+    assert!(point.forecast.is_some());
+    assert_eq!(point.event_ns.get(), 3 * 60_000_000_000);
+    assert_eq!(point.available_ns.get(), 4 * 60_000_000_000 + 7);
+    assert_eq!(
+        point.label_available_ns.unwrap().get(),
+        6 * 60_000_000_000 + 7
+    );
+}
+
 fn same_failure(market: &NativeMarketData, request: &NativeForecastRequestV1, wasm: &[u8]) {
     let full = forecast_market(market, request, wasm)
         .err()

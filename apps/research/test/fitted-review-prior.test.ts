@@ -75,7 +75,7 @@ test('sourceFactorIds traverses the real Durable tool and frozen task to the nat
   try {
     faux.setResponses([fauxAssistantMessage(fauxToolCall('strategy_ensemble_fit', { hypothesis: 'Protocol-only admitted source IDs', sourceFactorIds: members.map(member => member.factorId) }), { stopReason: 'toolUse' }), fauxAssistantMessage('Protocol trace complete.')]);
     const receipt = await startLegacyResearch(host, 'historical-library-fit', { goal: 'Protocol-only cross-study fit, not scientific evidence', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data,
-      policy: { max_trials: 1, reviewedFactorSources: JSON.parse(JSON.stringify({ schemaVersion: 1, fitEndNs: '10', members })) } });
+      policy: { reviewedFactorSources: JSON.parse(JSON.stringify({ schemaVersion: 1, fitEndNs: '10', members })) } });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const state = await host.state(receipt.conversationId); const result = object(state.research!.trials[0]!.result, 'fit_result');
     assert.equal(object(result.reviewPrior, 'prior').status, 'APPLIED');

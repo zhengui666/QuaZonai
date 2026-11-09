@@ -61,7 +61,7 @@ test('PortfolioEvaluationTask persists complete 64-market native evidence beyond
     const faux = fauxProvider({ tokensPerSecond: 100_000, models: [{ id: 'native-evidence-size-test-only', contextWindow: 1_000_000 }] }); const models = createModels(); models.setProvider(faux.provider);
     const input = { goal: 'Synthetic native-evidence persistence regression only; no scientific or market-performance claim.',
       model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog, request, sealed: { catalog: sealed, request } },
-      policy: { max_trials: 1, strategy: originalPolicy } };
+      policy: { strategy: originalPolicy } };
     const clippedRequest = iterationRequest(input.data, true);
     const selection = simulationSelection(clippedRequest, 'VALIDATION', policy);
     const log = join(directory, 'calls.jsonl'); const binary = join(directory, 'job.mjs');

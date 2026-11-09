@@ -174,9 +174,11 @@ fn summaries_are_excluded_self_trades_retained_and_unselected_tokens_skipped() {
     for taker in EXCHANGES.iter().chain(v2::EXCHANGES_V2.iter()) {
         let source = replace(&row(10, 1, 'd'), "taker", Field::Str((*taker).into()));
         let mut quality = Quality::default();
-        assert!(fill(&source, &instruments("USDC.e"), &mut quality)
-            .unwrap()
-            .is_none());
+        assert!(
+            fill(&source, &instruments("USDC.e"), &mut quality)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(quality.exchange_summaries_excluded, 1);
     }
     let source = replace(
@@ -185,14 +187,18 @@ fn summaries_are_excluded_self_trades_retained_and_unselected_tokens_skipped() {
         Field::Str(format!("0x{}", "a".repeat(40))),
     );
     let mut quality = Quality::default();
-    assert!(fill(&source, &instruments("USDC.e"), &mut quality)
-        .unwrap()
-        .is_some());
+    assert!(
+        fill(&source, &instruments("USDC.e"), &mut quality)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(quality.self_trades, 1);
     let other = replace(&source, "taker_asset_id", Field::Str("456".into()));
-    assert!(fill(&other, &instruments("USDC.e"), &mut quality)
-        .unwrap()
-        .is_none());
+    assert!(
+        fill(&other, &instruments("USDC.e"), &mut quality)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

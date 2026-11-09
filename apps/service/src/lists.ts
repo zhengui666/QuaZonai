@@ -9,6 +9,8 @@ import type { ResearchSpecification, Metric, RecordedDataset } from '../../../pa
 import type { AllocationListItem, FactorListItem, ListCriterion, ListPage, PortfolioListItem, ResearchListItem, TickReplayListItem } from '../../../packages/contracts/src/lists.ts';
 import type { TickEconomicReplayStart, TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
 import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
+import { executionStatus, portfolioRuntime } from './runtime-views.ts';
+import { readResearchAdmissions } from './admissions.ts';
 import { Application, decimalUnits, portfolio, Problem } from './facts.ts';
 import type { ResearchAdmissions } from './facts.ts';
 import { factorReference, factorViews } from './factors.ts';
@@ -91,30 +93,33 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
     if (recorded.length) return recorded.every(name => name === recorded[0]) ? recorded[0]! : null;
     return config.datasets.find(dataset => dataset.id === id)?.name ?? null;
   };
-  const unsubscribe = host.harness.subscribeCommits(({ changes }) => {
+  const commits = host.harness.observeCommits({ advance({ changes }) {
     // Publication listeners must not call Session operations or perform blocking work.
     for (const change of changes) {
       if (change.type === 'conversation') { known.add(change.value.id); dirty.add(change.value.id); }
       else if (change.type === 'task') {
         dirty.add(change.value.conversationId);
+        if (change.value.kind === 'qz.portfolio') appDirty = true;
+        if (change.value.kind === 'qz.review-allocation') allocationsDirty = true;
         if (change.value.kind === 'qz.tick-economic-replay') { ticksDirty = true; dirtyTasks.add(change.value.id); }
       } else if (change.type === 'submission' && change.value.type === 'input') dirty.add(change.value.conversationId);
       else if (change.type === 'document' || change.type === 'document.copy') {
         const kind = change.record.kind;
         if (kind === 'qz.application') appDirty = true;
-        else if (kind === 'qz.research-requests') requestsDirty = true;
+        else if (kind === 'qz.research-requests') { requestsDirty = true; appDirty = true; }
         else if (kind === 'qz.tick-economic-replays') ticksDirty = true;
         else if (kind === 'qz.review-allocations') allocationsDirty = true;
         else if (change.conversationId !== undefined && ['qz.study', 'qz.review-ledger'].includes(kind)) dirty.add(change.conversationId);
       }
     }
-  });
+  }, end() {} });
+  const unsubscribe = () => commits.detach();
 
   async function refreshApplication() {
     appDirty = false;
     const app = await host.harness.snapshot(Application, context);
     const next: ResearchAdmissions = {};
-    for (const [key, admission] of Object.entries(app?.researchRequests ?? {})) {
+    for (const [key, admission] of Object.entries(await readResearchAdmissions(host))) {
       const original = admission.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : {};
       const dataset = admission.dataset;
       next[key] = { original: { ...(typeof original.datasetId === 'string' ? { datasetId: original.datasetId } : {}) }, input: {},
@@ -124,7 +129,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
     if (stamp !== admissionStamp) { admissionStamp = stamp; admissions = next; for (const id of known) dirty.add(id); ticksDirty = true; }
     portfolios.clear();
     for (const raw of Object.values(app?.portfolios ?? {})) {
-      const fact = portfolio(raw); if (fact.deletedAt) continue;
+      const fact = await portfolioRuntime(host, portfolio(raw)); if (fact.deletedAt) continue;
       const view = fact.view; const memberCount = view.factors?.length ?? view.researchIds.length;
       const evidenceResearchIds = fact.evidence.flatMap(row => typeof row.researchId === 'number' ? [row.researchId] : []);
       const item: PortfolioListItem = { id: view.id, name: view.name, status: view.status, datasetId: view.datasetId,
@@ -148,7 +153,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
   async function refreshRequests() {
     requestsDirty = false;
     const requests = await host.harness.snapshot(Requests, context);
-    const entries = Object.entries(requests?.requests ?? {}).filter(([, request]) => !request.recovery).map(([key, request]) => [request.conversationId, key.slice('request:'.length)] as const);
+    const entries = Object.entries(requests?.requests ?? {}).filter(([, request]) => !request.recovery && request.conversationId !== null).map(([key, request]) => [request.conversationId!, key.slice('request:'.length)] as const);
     const stamp = JSON.stringify(entries);
     if (stamp !== originalStamp) { originals = new Map(entries); originalStamp = stamp; for (const id of known) dirty.add(id); appDirty = true; ticksDirty = true; }
   }
@@ -202,9 +207,10 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const recordedName = datasetName(view.datasetId, sourceIds.map(Number));
       const stamp = JSON.stringify({ id: view.id, datasetId: view.datasetId, status: view.status, members, sourceNames, datasetName: recordedName });
       if (ticks.has(view.id) && tickStamps.get(view.id) === stamp && !taskIds.has(view.taskId)) continue;
-      const metadata = replayMetadata(fact, await host.harness.getTask(view.taskId as TaskId, context));
+      const task = await host.harness.getTask(view.taskId as TaskId, context);
+      const metadata = replayMetadata(fact, task);
       const item: TickReplayListItem = { id: view.id, name: sourceNames.length === 1 ? sourceNames[0]! : members.length > 1 ? '多因子逐笔回放' : '单因子逐笔回放',
-        datasetId: view.datasetId, datasetName: recordedName, status: view.status,
+        datasetId: view.datasetId, datasetName: recordedName, status: executionStatus(task, view.result ? 'COMPUTED' : view.status, 'QUEUED') as TickReplayListItem['status'],
         memberCount: members.length, memberType: members.length > 1 ? 'ensemble' : 'single-factor', scientificQualification: view.scientificQualification,
         createdAt: metadata.createdAt, progress: metadata.progress };
       ticks.set(item.id, { item, search: searchText(item.name, item.id, item.datasetName, ...sourceIds, ...sourceNames, ...members.map(member => member.factorId)),
@@ -223,7 +229,9 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const view = raw.view as unknown as ReviewAllocationView;
       const sources = (raw.sources ?? []) as unknown as { view: { id: string; name: string } }[];
       const sourceNames = view.portfolioIds.map(id => sources.find(source => source.view.id === id)?.view.name ?? portfolios.get(id)?.item.name ?? id);
-      const item: AllocationListItem = { id: view.id, name: view.name, status: view.status, memberCount: view.portfolioIds.length, reviewDecision: view.review?.decision ?? null, createdAt: view.createdAt };
+      const task = await host.harness.getTask(view.taskId as TaskId, context);
+      if (!task) throw new Problem('review_allocation_task_missing', 500);
+      const item: AllocationListItem = { id: view.id, name: view.name, status: executionStatus(task, 'COMPUTED', 'QUEUED') as AllocationListItem['status'], memberCount: view.portfolioIds.length, reviewDecision: view.review?.decision ?? null, createdAt: view.createdAt };
       allocations.set(item.id, { item, search: searchText(item.name, item.id, ...view.portfolioIds, ...sourceNames), filters: { status: one(item.status), reviewDecision: one(item.reviewDecision), source: view.portfolioIds },
         sort: { name: item.name, memberCount: item.memberCount, createdAt: item.createdAt }, labels: { source: Object.fromEntries(view.portfolioIds.map((id, i) => [id, sourceNames[i]!])) } });
     }

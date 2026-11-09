@@ -8,7 +8,7 @@ use contracts::{
 use nautilus_analysis::{
     statistic::PortfolioStatistic,
     statistics::{
-        returns_avg::ReturnsAverage, returns_volatility::ReturnsVolatility,
+        cagr::CAGR, returns_avg::ReturnsAverage, returns_volatility::ReturnsVolatility,
         sharpe_ratio::SharpeRatio,
     },
     Returns,
@@ -66,6 +66,7 @@ pub fn evaluate(
     let mean = ReturnsAverage {};
     let volatility = ReturnsVolatility::new(Some(365));
     let sharpe = SharpeRatio::new(Some(365));
+    let cagr = CAGR::new(Some(365));
     let statistics = [
         (mean.name(), mean.calculate_from_returns(&returns)),
         (
@@ -73,6 +74,7 @@ pub fn evaluate(
             volatility.calculate_from_returns(&returns),
         ),
         (sharpe.name(), sharpe.calculate_from_returns(&returns)),
+        (cagr.name(), cagr.calculate_from_returns(&returns)),
     ]
     .into_iter()
     .map(|(native_key, value)| {
@@ -90,7 +92,7 @@ pub fn evaluate(
     .collect();
     let result = NativeForwardResultV1 {
         schema_version: SchemaV1,
-        native_version: "0.67.0".into(),
+        native_version: crate::NAUTILUS_VERSION.into(),
         window: selected.view,
         statistics,
     };

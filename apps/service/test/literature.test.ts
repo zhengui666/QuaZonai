@@ -1,3 +1,4 @@
+import { readResearchAdmissions } from '../src/admissions.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LiteratureView, ResearchDetail } from '../../../packages/contracts/src/index.ts';
@@ -58,9 +59,9 @@ test('both research admission surfaces freeze approved public queries and replay
     const post = (payload: object) => state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload });
     for (const mode of ['raw', 'dataset'] as const) {
       const requestId = `literature-public-${mode}`;
-      const raw = { goal: 'Private controlled hypothesis', model: state.model, data: structuredClone(state.options.config.datasets[0]!.data), policy: { max_trials: 1 }, publicLiteratureQueries: queries };
+      const raw = { goal: 'Private controlled hypothesis', model: state.model, data: structuredClone(state.options.config.datasets[0]!.data), policy: { }, publicLiteratureQueries: queries };
       const payload = mode === 'raw' ? { requestId, input: raw }
-        : { requestId, goal: raw.goal, model: state.model, datasetId: 'controlled', maxTrials: 1, publicLiteratureQueries: queries };
+        : { requestId, goal: raw.goal, model: state.model, datasetId: 'controlled', publicLiteratureQueries: queries };
       state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
       const response = await post(payload);
       assert.equal(response.statusCode, 202, response.body);
@@ -98,18 +99,18 @@ test('invalid approved public queries are rejected before admission on both rese
   const state = await setup();
   try {
     const invalid: unknown[] = [[], ['one', 'two', 'three', 'four'], ['  '], ['x'.repeat(501)], ['query\nprivate'], ['query\u0000private'], 'query', null];
-    const originalFacts = (await state.service.research.harness.snapshot(Application, context))!.researchRequests;
+    const originalFacts = (await readResearchAdmissions(state.service.research));
     const originalRequests = await state.service.research.harness.snapshot(Requests, context);
     for (const mode of ['raw', 'dataset'] as const) {
       for (const [index, publicLiteratureQueries] of invalid.entries()) {
         const requestId = `invalid-literature-public-${mode}-${index}`;
-        const raw = { goal: 'Private controlled hypothesis', model: state.model, data: structuredClone(state.options.config.datasets[0]!.data), policy: { max_trials: 1 }, publicLiteratureQueries };
+        const raw = { goal: 'Private controlled hypothesis', model: state.model, data: structuredClone(state.options.config.datasets[0]!.data), policy: { }, publicLiteratureQueries };
         const payload = mode === 'raw' ? { requestId, input: raw }
-          : { requestId, goal: raw.goal, model: state.model, datasetId: 'controlled', maxTrials: 1, publicLiteratureQueries };
+          : { requestId, goal: raw.goal, model: state.model, datasetId: 'controlled', publicLiteratureQueries };
         const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload });
         assert.equal(response.statusCode, 400, `${mode} query ${index}: ${response.body}`);
         assert.equal(state.faux.state.callCount, 0);
-        assert.deepEqual((await state.service.research.harness.snapshot(Application, context))!.researchRequests, originalFacts);
+        assert.deepEqual((await readResearchAdmissions(state.service.research)), originalFacts);
         assert.deepEqual(await state.service.research.harness.snapshot(Requests, context), originalRequests);
       }
     }

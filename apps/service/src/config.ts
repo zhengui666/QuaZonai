@@ -31,7 +31,6 @@ export interface ServiceConfig {
   nautilus?: { backtest?: BacktestConfig };
   name: string; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; jobBinary: string;
   passwordHash?: string; secureCookies: boolean; staticDir?: string;
-  archiveDatabase?: string;
 }
 export interface ServiceOptions {
   config: ServiceConfig;

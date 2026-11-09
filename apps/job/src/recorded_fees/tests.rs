@@ -12,6 +12,24 @@ use nautilus_model::{
 
 const ID: &str = "123.POLYMARKET";
 
+pub(super) fn write_source(root: &Path, source: &RecordedTradeFeesV1) {
+    std::fs::create_dir_all(root.join("recorded-fees")).unwrap();
+    let ids = source
+        .records
+        .iter()
+        .map(|record| record.instrument_id.clone())
+        .collect::<BTreeSet<_>>();
+    for id in ids {
+        let mut part = source.clone();
+        part.records.retain(|record| record.instrument_id == id);
+        std::fs::write(
+            root.join("recorded-fees").join(format!("{id}.json")),
+            serde_json::to_vec(&part).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
 pub(super) fn market() -> NativeMarketData {
     let instrument = InstrumentAny::CurrencyPair(
         CurrencyPair::builder()
@@ -28,7 +46,7 @@ pub(super) fn market() -> NativeMarketData {
             .build()
             .unwrap(),
     );
-    let bar_type = BarType::from_str(&format!("{ID}-1-MINUTE-LAST-EXTERNAL")).unwrap();
+    let bar_type = BarType::from_str(&format!("{ID}-1-MINUTE-LAST-INTERNAL")).unwrap();
     let bars = [MINUTE_NS, 2 * MINUTE_NS]
         .into_iter()
         .map(|end| {
@@ -39,7 +57,7 @@ pub(super) fn market() -> NativeMarketData {
                 Price::from("0.5000"),
                 Price::from("0.5000"),
                 Quantity::from("10.000000"),
-                end.into(),
+                (end - MINUTE_NS).into(),
                 end.into(),
             )
         })
@@ -140,10 +158,12 @@ fn original_records_are_allocated_once_not_averaged_into_a_rate() {
     );
     assert_eq!(report.fills[0].allocations[1].original.id, "b");
     assert_eq!(report.fills[1].allocations.len(), 1);
-    assert!(charge(&model, "0.000001")
-        .unwrap_err()
-        .to_string()
-        .contains("QUANTITY_EXHAUSTED"));
+    assert!(
+        charge(&model, "0.000001")
+            .unwrap_err()
+            .to_string()
+            .contains("QUANTITY_EXHAUSTED")
+    );
 }
 
 #[test]
@@ -156,10 +176,12 @@ fn actual_fill_clock_selects_recorded_zero_and_unmatched_clock_is_not_zero() {
     );
     assert_eq!(model.report().fills[0].allocations[0].original.id, "c");
     set_time(&clock, 3 * MINUTE_NS + 1);
-    assert!(charge(&model, "2.000000")
-        .unwrap_err()
-        .to_string()
-        .contains("FILL_CLOCK_UNMATCHED"));
+    assert!(
+        charge(&model, "2.000000")
+            .unwrap_err()
+            .to_string()
+            .contains("FILL_CLOCK_UNMATCHED")
+    );
     assert_eq!(model.report().fills.len(), 1);
 }
 
@@ -260,8 +282,8 @@ pub(super) fn native_scenario() -> (
     source.records[2].fee_usdc = "0.10".parse().unwrap();
     for index in 3..=6 {
         let mut bar = data.series[0].bars[0];
-        bar.ts_event = (index * MINUTE_NS).into();
-        bar.ts_init = bar.ts_event;
+        bar.ts_event = ((index - 1) * MINUTE_NS).into();
+        bar.ts_init = (index * MINUTE_NS).into();
         data.series[0].bars.push(bar);
         source.records.push(record(
             &format!("later-{index}"),
@@ -285,16 +307,17 @@ pub(super) fn native_scenario() -> (
     catalog
         .write_to_parquet(&data.series[0].bars, None, None, None)
         .unwrap();
+    std::fs::create_dir(directory.path().join("recorded-fees")).unwrap();
     std::fs::write(
-        directory.path().join(RECORDED_FEES_FILE),
+        directory.path().join("recorded-fees/123.POLYMARKET.json"),
         serde_json::to_vec(&source).unwrap(),
     )
     .unwrap();
     let settings: NativeSimulationSettingsV1 = serde_json::from_value(serde_json::json!({
         "schema_version":1,"base_currency":"pUSD","starting_capital":"3000","account_kind":"MARGIN","leverage":"1",
-        "fee_model":{"schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_FEES","native_version":"0.67.0","parameters":{}},
-        "fill_model":{"schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL","upstream_class":"nautilus_execution::models::fill::DefaultFillModel","upstream_version":"0.67.0","parameters":{"prob_fill_on_limit":"1","prob_slippage":"0","random_seed":"1"}},
-        "latency_model":{"schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY","upstream_class":"nautilus_execution::models::latency::StaticLatencyModel","upstream_version":"0.67.0","parameters":{"base_latency_ns":"1","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}},
+        "fee_model":{"schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_FEES","native_version":"0.68.0","parameters":{}},
+        "fill_model":{"schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL","upstream_class":"nautilus_execution::models::fill::DefaultFillModel","upstream_version":"0.68.0","parameters":{"prob_fill_on_limit":"1","prob_slippage":"0","random_seed":"1"}},
+        "latency_model":{"schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY","upstream_class":"nautilus_execution::models::latency::StaticLatencyModel","upstream_version":"0.68.0","parameters":{"base_latency_ns":"1","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}},
         "snapshot_interval_ms":60000,"exposure_tolerance":"0.00001","fee_rates":[{"instrument_id":ID,"maker":"0","taker":"0"}]
     })).unwrap();
     let end = DbCounter::new(7 * MINUTE_NS).unwrap();
@@ -322,7 +345,7 @@ pub(super) fn native_scenario() -> (
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,
             bar_types: vec![data.series[0].bar_type.to_string()],
-            event_start_ns: DbCounter::new(MINUTE_NS).unwrap(),
+            event_start_ns: DbCounter::ZERO,
             event_end_ns: end,
             decision_cutoff_ns: end,
             maximum_rows: 6,
@@ -350,14 +373,45 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
         assert!(error.to_string().contains("RECORDED_FEES_BACKTEST_ONLY"));
     }
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let projection: serde_json::Value =
+        serde_json::from_str(&result.summary["qz.source_runtime_bar_projection"]).unwrap();
+    assert_eq!(
+        projection[0]["source_type"],
+        data.series[0].bar_type.to_string()
+    );
+    assert_eq!(
+        projection[0]["runtime_type"],
+        crate::catalog::runtime_bar_type(data.series[0].bar_type).to_string()
+    );
+    assert_eq!(
+        projection[0]["source_event_clock"],
+        "RIGHT_OPEN_INTERVAL_START"
+    );
+    assert_eq!(
+        projection[0]["runtime_event_clock"],
+        "THEORETICAL_INTERVAL_CLOSE"
+    );
+    assert_eq!(
+        projection[0]["availability_clock"],
+        "UNCHANGED_SOURCE_TS_INIT"
+    );
+    let original = crate::catalog::load_catalog(directory.path(), &request.selection).unwrap();
+    assert!(original.series[0].bar_type.is_internally_aggregated());
+    assert_eq!(original.series[0].bars[0].ts_event.as_u64(), 0);
+    assert_eq!(
+        serde_json::to_value(&original.series[0].bars).unwrap(),
+        serde_json::to_value(&data.series[0].bars).unwrap()
+    );
     let report = result.recorded_fee_replay.unwrap();
     assert_eq!(report.fills.len(), 2);
     assert!(report.fills[0].fill_ns.get() < 4 * MINUTE_NS);
     assert!(report.fills[1].fill_ns.get() >= 4 * MINUTE_NS);
-    assert!(report
-        .fills
-        .iter()
-        .all(|fill| fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS));
+    assert!(
+        report
+            .fills
+            .iter()
+            .all(|fill| fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS)
+    );
     let allocated: BigDecimal = report
         .fills
         .iter()
@@ -385,12 +439,14 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
         BigDecimal::from_str(&balance.as_decimal().to_string()).unwrap(),
         BigDecimal::from(3000) - allocated
     );
-    std::fs::remove_file(directory.path().join(RECORDED_FEES_FILE)).unwrap();
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &request).unwrap_err()
-    )
-    .contains("RECORDED_FEE_FILE_REQUIRED"));
+    std::fs::remove_file(directory.path().join("recorded-fees/123.POLYMARKET.json")).unwrap();
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &request).unwrap_err()
+        )
+        .contains("RECORDED_FEE_FILE_REQUIRED")
+    );
 }
 
 #[test]
@@ -420,7 +476,7 @@ fn repeating_quantity_ratio_remains_exact_until_one_currency_rounding() {
 fn native_source_audit_precision_does_not_change_fees_quantities_or_account_balance() {
     let (directory, _, request) = native_scenario();
     let baseline = crate::simulation::simulate(directory.path(), &request).unwrap();
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut original: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let consumed_id = &baseline.recorded_fee_replay.as_ref().unwrap().fills[0].allocations[0]
@@ -498,7 +554,7 @@ fn native_shared_account_retains_original_fee_precision_before_booking() {
     let baseline = crate::simulation::simulate(directory.path(), &request).unwrap();
     let before = baseline.recorded_fee_replay.as_ref().unwrap();
     let consumed_id = &before.fills[0].allocations[0].original.id;
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut original: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     let record = original

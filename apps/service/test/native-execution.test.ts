@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { TaskId } from '@earendil-works/pi-durable';
 import { computePortfolio, nativeJob } from '../src/native.ts';
-import { Problem } from '../src/facts.ts';
+import { json, Problem } from '../src/facts.ts';
 import { classifyExecutionError, ExecutionFailure } from '../../research/src/execution-errors.ts';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -39,7 +39,7 @@ test('simulate decoding metadata survives both service wrappers and the original
     const binary = state.options.config.jobBinary;
     await writeFile(binary, `#!/bin/sh\nif [ "$1" = simulate ]; then printf '%s' '{"broken":'; else exec '${process.execPath}' '${new URL('./controlled-job.mjs', import.meta.url).pathname}' "$@"; fi\n`, { mode: 0o700 });
     const dataset = state.options.config.datasets[0]!;
-    const evidence = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
+    const evidence = { input: { data: dataset.data, policy: { strategy: json(dataset.strategy!) } }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
     const original = { id: 'decode-protocol', dataDir: state.directory, catalog: String(dataset.data.catalog), binary,
       capital: '1000', currency: 'USD', evidence, policy: dataset.strategy! };
     for (const compute of [
@@ -75,6 +75,7 @@ test('simulate decoding metadata survives both service wrappers and the original
 
 
 test('remote live observation reads the original attached invocation and preview failure cannot fail final science', { timeout: 10_000 }, async () => {
+  const host = await setup();
   const directory = await mkdtemp(join(tmpdir(), 'qz-live-remote-')); const binary = join(directory, 'job'); const script = join(directory, 'job.mjs');
   const snapshot = { ts_event: '1790000000000000001', total_equity: ['1000.000000000000000001 USD'] };
   let worker;
@@ -90,12 +91,12 @@ setTimeout(()=>console.log(JSON.stringify({completed:true})),1800);`);
     const result = await withNativeProgress(async snapshots => {
       assert.equal(completed, false); assert.deepEqual(snapshots, [snapshot]); observations++;
       throw new Error('optional preview unavailable');
-    }, () => nativeJob(target, 'simulate', {}, [], directory, BACKGROUND_CONTEXT));
+    }, () => host.service.research.withNativeHost(() => nativeJob(target, 'simulate', {}, [], directory, BACKGROUND_CONTEXT)));
     completed = true; assert.deepEqual(result, { completed: true }); assert.ok(observations > 0);
     // The local explicit test executable uses the same optional observation policy.
     observations = 0;
     assert.deepEqual(await withNativeProgress(async () => { observations++; throw new Error('optional preview unavailable'); },
       () => nativeJob(binary, 'simulate', {}, [], directory, BACKGROUND_CONTEXT)), { completed: true });
     assert.ok(observations > 0);
-  } finally { await worker?.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await worker?.close(); await host.cleanup(); await rm(directory, { recursive: true, force: true }); }
 });

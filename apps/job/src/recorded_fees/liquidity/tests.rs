@@ -1,5 +1,5 @@
 use super::*;
-use crate::recorded_fees::tests::{charge, market, model, native_scenario, set_time};
+use crate::recorded_fees::tests::{charge, market, model, native_scenario, set_time, write_source};
 use nautilus_model::{identifiers::InstrumentId, orders::OrderTestBuilder};
 
 fn ioc(side: OrderSide, quantity: &str) -> OrderAny {
@@ -108,10 +108,12 @@ fn preview_is_read_only_and_actual_fee_callbacks_share_one_pool_across_sides() {
         Some(Quantity::from("10.000000"))
     );
     set_time(&clock, 3 * MINUTE_NS);
-    assert!(preview(&mut model, &buy)
-        .unwrap_err()
-        .to_string()
-        .contains("RECORDED_LIQUIDITY_CLOCK_UNMATCHED"));
+    assert!(
+        preview(&mut model, &buy)
+            .unwrap_err()
+            .to_string()
+            .contains("RECORDED_LIQUIDITY_CLOCK_UNMATCHED")
+    );
     // Later failures cannot replace the original callback failure.
     assert_eq!(model.observer().check().unwrap_err().to_string(), error);
 }
@@ -126,10 +128,12 @@ fn unsupported_orders_are_errors_not_empty_books_or_default_liquidity() {
         .quantity(Quantity::from("1.000000"))
         .time_in_force(TimeInForce::Gtc)
         .build();
-    assert!(preview(&mut fill, &order)
-        .unwrap_err()
-        .to_string()
-        .contains("RECORDED_LIQUIDITY_MARKET_IOC_REQUIRED"));
+    assert!(
+        preview(&mut fill, &order)
+            .unwrap_err()
+            .to_string()
+            .contains("RECORDED_LIQUIDITY_MARKET_IOC_REQUIRED")
+    );
     assert!(fill.observer().check().is_err());
 }
 
@@ -157,7 +161,7 @@ fn seeded_official_probability_sequence_is_preserved_without_pre_slipping_books(
 fn recorded_settings(request: &mut contracts::science::NativeSimulationRequestV1) {
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_LIQUIDITY",
-        "native_version":"0.67.0",
+        "native_version":"0.68.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
@@ -191,10 +195,12 @@ fn native_oversized_ioc_is_partial_with_one_adverse_tick_and_exact_native_accoun
     assert_eq!(report.fills[1].fill_quantity, "10".parse().unwrap());
     assert_eq!(report.fills[0].fill_price, "0.5001".parse().unwrap());
     assert_eq!(report.fills[1].fill_price, "0.4999".parse().unwrap());
-    assert!(report
-        .fills
-        .iter()
-        .all(|fill| { fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS }));
+    assert!(
+        report
+            .fills
+            .iter()
+            .all(|fill| { fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS })
+    );
     let allocated: BigDecimal = report
         .fills
         .iter()
@@ -222,28 +228,34 @@ fn native_oversized_ioc_is_partial_with_one_adverse_tick_and_exact_native_accoun
         BigDecimal::from_str(&balance.as_decimal().to_string()).unwrap(),
         BigDecimal::from(3000) - allocated - BigDecimal::from_str("0.002").unwrap()
     );
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.open" && v == "0"));
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.inflight" && v == "0"));
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.open" && v == "0")
+    );
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.inflight" && v == "0")
+    );
     // The legacy policy still refuses its synthetic oversized fill. No old
     // request silently acquires the new IOC/source-liquidity semantics.
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL",
         "upstream_class":"nautilus_execution::models::fill::DefaultFillModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &request).unwrap_err()
-    )
-    .contains("RECORDED_FEE_QUANTITY_EXHAUSTED"));
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &request).unwrap_err()
+        )
+        .contains("RECORDED_FEE_QUANTITY_EXHAUSTED")
+    );
 }
 
 #[test]
@@ -337,13 +349,22 @@ fn native_swallowed_liquidity_callback_is_observed_without_default_fallback() {
                 strategy_id: Some(StrategyId::from("DOUBLE-001")),
                 ..Default::default()
             }),
-            kind: data.series[0].bar_type,
+            kind: crate::catalog::runtime_bar_type(data.series[0].bar_type),
             submitted: false,
         })
         .unwrap();
     engine
         .add_data(
-            data.series[0].bars.iter().copied().map(Data::Bar).collect(),
+            data.series[0]
+                .bars
+                .iter()
+                .copied()
+                .map(crate::catalog::runtime_bar)
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .into_iter()
+                .map(Data::Bar)
+                .collect(),
             None,
             true,
             true,
@@ -352,11 +373,13 @@ fn native_swallowed_liquidity_callback_is_observed_without_default_fallback() {
     // Upstream logs and swallows the second callback failure. This is precisely
     // why the production wrapper must check its shared observer after run.
     engine.run(None, None, None, false).unwrap();
-    assert!(observed
-        .check()
-        .unwrap_err()
-        .to_string()
-        .contains("RECORDED_LIQUIDITY_EXHAUSTED"));
+    assert!(
+        observed
+            .check()
+            .unwrap_err()
+            .to_string()
+            .contains("RECORDED_LIQUIDITY_EXHAUSTED")
+    );
     let report = fees.report();
     assert_eq!(report.fills.len(), 1);
     assert_eq!(report.fills[0].fill_quantity, "10".parse().unwrap());
@@ -368,7 +391,7 @@ fn native_partial_reduction_cancels_the_remainder_without_assuming_a_full_exit()
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     for record in &mut source.records {
@@ -401,14 +424,18 @@ fn native_partial_reduction_cancels_the_remainder_without_assuming_a_full_exit()
     assert_eq!(report.fills[0].fill_quantity, "10".parse().unwrap());
     assert_eq!(report.fills[1].fill_quantity, "1".parse().unwrap());
     assert_eq!(report.fills[1].order_side, "SELL");
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.open" && v == "0"));
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.inflight" && v == "0"));
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.open" && v == "0")
+    );
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.inflight" && v == "0")
+    );
 }
 
 #[test]
@@ -421,7 +448,7 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"60000000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -441,7 +468,7 @@ fn native_ioc_fills_at_declared_positive_latency_not_the_next_bar() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"1000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -461,9 +488,9 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
     let gap = 2 * 86_400_000_000_000;
     for bar in data.series[0].bars.iter_mut().skip(1) {
         bar.ts_init = (bar.ts_init.as_u64() + gap).into();
-        bar.ts_event = bar.ts_init;
+        bar.ts_event = (bar.ts_event.as_u64() + gap).into();
     }
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     for record in &mut source.records {
@@ -498,10 +525,12 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
     assert_eq!(report.fills[1].fill_ns.get(), 4 * MINUTE_NS + gap + 1);
     assert_eq!(report.fills[0].allocations[0].original.id, "a");
     assert_eq!(report.fills[1].bar_end_ns.get(), 4 * MINUTE_NS + gap);
-    assert!(report
-        .fills
-        .iter()
-        .all(|fill| fill.fill_quantity == "10".parse().unwrap()));
+    assert!(
+        report
+            .fills
+            .iter()
+            .all(|fill| fill.fill_quantity == "10".parse().unwrap())
+    );
 }
 
 #[test]
@@ -516,18 +545,24 @@ fn native_final_bar_reduction_settles_before_the_running_strategy_stops() {
     assert_eq!(report.fills[1].order_side, "SELL");
     assert_eq!(report.fills[1].fill_ns.get(), 6 * MINUTE_NS + 1);
     assert_eq!(report.fills[1].bar_end_ns.get(), 6 * MINUTE_NS);
-    assert!(report
-        .fills
-        .iter()
-        .all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get()));
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.open" && v == "0"));
-    assert!(result
-        .summary
-        .iter()
-        .any(|(k, v)| k == "orders.inflight" && v == "0"));
+    assert!(
+        report
+            .fills
+            .iter()
+            .all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get())
+    );
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.open" && v == "0")
+    );
+    assert!(
+        result
+            .summary
+            .iter()
+            .any(|(k, v)| k == "orders.inflight" && v == "0")
+    );
 }
 
 #[test]
@@ -556,18 +591,20 @@ fn native_open_position_does_not_add_daily_zero_returns_in_an_empty_tail() {
 }
 
 #[test]
-fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
+fn recorded_fees_reject_availability_before_native_bar_close() {
     let (directory, mut data, _) = native_scenario();
-    data.series[0].bars[0].ts_init = (8 * MINUTE_NS).into();
+    data.series[0].bars[0].ts_init = (MINUTE_NS - 1).into();
     let source: RecordedTradeFeesV1 = serde_json::from_reader(
-        std::fs::File::open(directory.path().join(RECORDED_FEES_FILE)).unwrap(),
+        std::fs::File::open(directory.path().join("recorded-fees/123.POLYMARKET.json")).unwrap(),
     )
     .unwrap();
     let (_, clock) = model();
     let error = RecordedFeeModel::new(source, &data, clock).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("RECORDED_FEE_BAR_CLOCK_MISMATCH"));
+    assert!(
+        error
+            .to_string()
+            .contains("RECORDED_FEE_BAR_CLOCK_MISMATCH")
+    );
 }
 
 #[test]
@@ -577,7 +614,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
     let id = InstrumentId::from("456.POLYMARKET");
-    let kind = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let kind = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-INTERNAL").unwrap();
     let mut second = data.series.remove(0);
     let InstrumentAny::CurrencyPair(pair) = &mut second.instrument else {
         unreachable!();
@@ -607,7 +644,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     catalog
         .write_to_parquet(&second.bars, None, None, None)
         .unwrap();
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     let second_records = source
@@ -625,7 +662,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
         })
         .collect::<Vec<_>>();
     source.records.extend(second_records);
-    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    write_source(directory.path(), &source);
     request.selection.bar_types.push(kind.to_string());
     request.selection.maximum_rows = 12;
     request.target_points.truncate(1);
@@ -675,14 +712,14 @@ fn cross_market_scenario() -> (
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0","parameters":{
+        "upstream_version":"0.68.0","parameters":{
             "base_latency_ns":"1000000","insert_latency_ns":"0",
             "update_latency_ns":"0","cancel_latency_ns":"0"
         }
     }))
     .unwrap();
     let source: RecordedTradeFeesV1 = serde_json::from_reader(
-        std::fs::File::open(original.path().join(RECORDED_FEES_FILE)).unwrap(),
+        std::fs::File::open(original.path().join("recorded-fees/123.POLYMARKET.json")).unwrap(),
     )
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -716,7 +753,7 @@ fn cross_market_scenario() -> (
         };
         pair.id = id;
         pair.raw_symbol = Symbol::new(name.split('.').next().unwrap());
-        series.bar_type = format!("{name}-1-MINUTE-LAST-EXTERNAL").parse().unwrap();
+        series.bar_type = format!("{name}-1-MINUTE-LAST-INTERNAL").parse().unwrap();
         series
             .bars
             .retain(|bar| clocks.contains(&(bar.ts_init.as_u64() / MINUTE_NS)));
@@ -724,11 +761,7 @@ fn cross_market_scenario() -> (
             bar.bar_type = series.bar_type;
             let minute = bar.ts_init.as_u64() / MINUTE_NS;
             let price = if minute == 6 {
-                if index == 0 {
-                    "0.6000"
-                } else {
-                    "0.8000"
-                }
+                if index == 0 { "0.6000" } else { "0.8000" }
             } else if index == 1 && minute >= 3 {
                 "0.6000"
             } else {
@@ -770,11 +803,7 @@ fn cross_market_scenario() -> (
             records.push(record);
         }
     }
-    std::fs::write(
-        directory.path().join(RECORDED_FEES_FILE),
-        serde_json::to_vec(&RecordedTradeFeesV1 { records, ..source }).unwrap(),
-    )
-    .unwrap();
+    write_source(directory.path(), &RecordedTradeFeesV1 { records, ..source });
     request.selection.maximum_rows = 8;
     request.target_points = [
         (1, vec!["123.POLYMARKET"], ["0.1", "0"], "0.9"),
@@ -871,9 +900,11 @@ fn native_cross_market_scopes_share_3000_preserve_ioc_sources_and_residual_marks
         "6".parse().unwrap()
     );
     assert_eq!(fills[0].commission, "0.16".parse().unwrap());
-    assert!(fills[1..]
-        .iter()
-        .all(|fill| fill.commission == "0.1".parse().unwrap()));
+    assert!(
+        fills[1..]
+            .iter()
+            .all(|fill| fill.commission == "0.1".parse().unwrap())
+    );
     let orders = result.canonical_result["orders"].as_array().unwrap();
     assert_eq!(orders.len(), 6);
     let cores: Vec<_> = orders
@@ -1008,18 +1039,22 @@ fn native_cross_market_invalid_scope_missing_observation_sum_and_expiry_fail() {
     }
     let mut invalid = request.clone();
     invalid.target_points[0].cash_weight = "0.900001".parse().unwrap();
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &invalid).unwrap_err()
-    )
-    .contains("SIMULATION_CAPITAL_OR_LEVERAGE"));
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &invalid).unwrap_err()
+        )
+        .contains("SIMULATION_CAPITAL_OR_LEVERAGE")
+    );
     let mut invalid = request.clone();
     invalid.target_points[0].valid_until_ns = DbCounter::new(MINUTE_NS + 500_000).unwrap();
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &invalid).unwrap_err()
-    )
-    .contains("SIMULATION_TARGET_EXPIRES_BEFORE_INSERT"));
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &invalid).unwrap_err()
+        )
+        .contains("SIMULATION_TARGET_EXPIRES_BEFORE_INSERT")
+    );
     #[cfg(feature = "native-paper")]
     {
         let error = crate::simulation::paper_target_strategy(
@@ -1043,10 +1078,12 @@ fn native_cross_market_legacy_omission_still_waits_for_synchronized_assets() {
     request.target_points.truncate(1);
     request.target_points[0].rebalance_instrument_ids = None;
     request.target_points[0].valid_until_ns = request.selection.event_end_ns;
-    assert!(serde_json::to_value(&request.target_points[0])
-        .unwrap()
-        .get("rebalance_instrument_ids")
-        .is_none());
+    assert!(
+        serde_json::to_value(&request.target_points[0])
+            .unwrap()
+            .get("rebalance_instrument_ids")
+            .is_none()
+    );
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
     let fills = result.recorded_fee_replay.unwrap().fills;
     assert_eq!(fills.len(), 1);
@@ -1056,11 +1093,11 @@ fn native_cross_market_legacy_omission_still_waits_for_synchronized_assets() {
 #[test]
 fn native_cross_market_retains_zero_exposure_market_without_in_window_bars() {
     let (directory, mut request) = cross_market_scenario();
-    request.selection.event_start_ns = DbCounter::new(5 * MINUTE_NS).unwrap();
-    request.selection.event_end_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    request.selection.event_start_ns = DbCounter::new(4 * MINUTE_NS).unwrap();
+    request.selection.event_end_ns = DbCounter::new(5 * MINUTE_NS).unwrap();
     request.selection.decision_cutoff_ns = request.selection.event_end_ns;
     request.target_points = vec![request.target_points[4].clone()];
-    // B has original metadata/training data, but no real BAR in [5,6).
+    // B has original metadata/training data, but no real source BAR in [4,5); A closes at minute 5.
     // Its expired desired signal is cash, not a manufactured mark or liquidation.
     request.target_points[0].targets[0].weight = "0.1".parse().unwrap();
     request.target_points[0].targets[1].weight = "0".parse().unwrap();
@@ -1081,16 +1118,20 @@ fn native_cross_market_retains_zero_exposure_market_without_in_window_bars() {
     assert_eq!(fills[0].fill_quantity, "10".parse().unwrap());
     let mut legacy = request.clone();
     legacy.target_points[0].rebalance_instrument_ids = None;
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &legacy).unwrap_err()
-    )
-    .contains("CATALOG_EMPTY_SELECTION"));
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &legacy).unwrap_err()
+        )
+        .contains("CATALOG_EMPTY_SELECTION")
+    );
     let mut unobserved = request;
     unobserved.target_points[0].rebalance_instrument_ids = Some(vec!["456.POLYMARKET".into()]);
-    assert!(format!(
-        "{:#}",
-        crate::simulation::simulate(directory.path(), &unobserved).unwrap_err()
-    )
-    .contains("NATIVE_TARGETS_NOT_CONSUMED"));
+    assert!(
+        format!(
+            "{:#}",
+            crate::simulation::simulate(directory.path(), &unobserved).unwrap_err()
+        )
+        .contains("NATIVE_TARGETS_NOT_CONSUMED")
+    );
 }

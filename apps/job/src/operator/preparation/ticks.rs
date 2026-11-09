@@ -368,7 +368,7 @@ mod tests {
             "schema_version":1,
             "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
                 "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80",
-                "maximum_rows":100,"source_revision":"native-test-source",
+                "source_revision":"native-test-source",
                 "availability":"EVENT_TIME_PROXY_UNVERIFIED"},
             "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
             "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
@@ -681,9 +681,6 @@ mod tests {
             } else {
                 contracts::ticks::NativeTickRepresentationV1::EventTimeCohortCacheV1
             });
-            cohort_request.input.maximum_rows = None;
-            cohort_request.input.maximum_source_rows =
-                Some(contracts::DbCounter::new(100).unwrap());
             let prefix = if flow { "cohort-flow" } else { "cohort" };
             let create = if flow {
                 crate::ticks::cohort_cache::Builder::new_flow

@@ -37,7 +37,7 @@ async function pmFixture() {
 function mandateInput(state: Awaited<ReturnType<typeof pmFixture>>, requestId: string): PmMandateStart {
   return { requestId, goal: 'Compare complete net daily return paths, losses, costs and feasible capital; retain unresolved tradeoffs.',
     datasetId: 'controlled', funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000.000000000000000001', currency: 'USD' } },
-    model: state.model, maxTrials: 1, operatingAuthority: 'RESEARCH_ONLY' };
+    model: state.model, operatingAuthority: 'RESEARCH_ONLY' };
 }
 async function start(state: Awaited<ReturnType<typeof pmFixture>>, input: PmMandateStart) {
   const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: input });
@@ -174,7 +174,7 @@ test('PM HTTP intake: an unsupported market-making mandate cannot quietly become
         model: '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))' }),
       call('research_finish', { reason: 'The admitted strategy requires unsupported market-making data and execution capabilities.' }),
     ]);
-    const admitted = await start(state, { ...mandateInput(state, 'unsupported-market-making'), goal, maxTrials: 6, businessPreference: 'NET_RETURN' });
+    const admitted = await start(state, { ...mandateInput(state, 'unsupported-market-making'), goal, businessPreference: 'NET_RETURN' });
     let view = admitted;
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
@@ -298,7 +298,7 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       const admitted = await start(state, { ...mandateInput(state, 'pm-native-supported-path'),
         goal: 'Research predictive alpha from causal bar features and compare complete daily net account outcomes with cash.',
         funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } },
-        businessPreference: 'NET_RETURN', maxTrials: 12 });
+        businessPreference: 'NET_RETURN' });
       let view = admitted;
       const deadline = Date.now() + 100_000;
       while (Date.now() < deadline) {
@@ -537,7 +537,7 @@ test('PM native source: a disjoint automatic data revision refits original panel
       preserveLegacyPmAdmission(state.service); scriptNativeResearch(state, sources[0]);
       const admitted = await start(state, { ...mandateInput(state, 'native-two-revision-lifecycle'),
         goal: 'Continuously research causal predictive alpha when new bar data arrives; compare matched daily net account outcomes with cash.',
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, businessPreference: 'NET_RETURN', maxTrials: 32 });
+        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, businessPreference: 'NET_RETURN' });
       async function completedRevision(expectedCampaigns: number) {
         let view = await read(state, admitted.mandate.id); const waited = new Set<number>(); const deadline = Date.now() + 150_000;
         while (Date.now() < deadline) {

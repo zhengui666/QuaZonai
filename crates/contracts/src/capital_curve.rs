@@ -1,15 +1,11 @@
-//! Measured native replays at automatically selected capital points.
-//! A tested point is evidence, never an interval or an economic capacity claim.
+//! Capital planning and independently owned native replay evidence.
+//! A plan never executes a point or claims economic capacity.
 use crate::{
     science::{NativeSimulationRequestV1, NativeSimulationResultV1},
     DbCounter, DecimalValue, Id, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-fn legacy_elapsed_allowance() -> DbCounter {
-    DbCounter::ZERO
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -26,10 +22,6 @@ pub struct NativeCapitalCurveBudgetV1 {
     /// Number of method sampling points, not a cumulative execution allowance.
     #[schema(minimum = 1)]
     pub maximum_simulations: u32,
-    /// Legacy execution allowance, retained in original request evidence and ignored.
-    /// The official task/process owner retains cancellation authority.
-    #[serde(default = "legacy_elapsed_allowance")]
-    pub maximum_elapsed_ms: DbCounter,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

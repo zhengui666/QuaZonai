@@ -34,7 +34,7 @@ test('large cross-market brief and all original training-market pages read compl
   const input = { goal: 'TEST ONLY original training-market paging; not market strategy evidence.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
     data: { catalog: '/test-only-primary', request, trainingMarkets: ids.map((instrumentId, index) => ({ instrumentId, observedCalendarDays: 70, barRows: String(index + 1), final_private_marker: 'NEVER_RETURN_FINAL_MARKET_FIELDS' })),
       sealed: { catalog: '/test-only-final', secret: 'FINAL_VALUES_NEVER_RETURN' } },
-    policy: { max_trials: 1, strategy: { name: 'original-wide-market-pool', kind: 'cross-market-threshold', instrumentIds: ids, threshold: 0, investedWeight: '1', targetTtlNs: '5',
+    policy: { strategy: { name: 'original-wide-market-pool', kind: 'cross-market-threshold', instrumentIds: ids, threshold: 0, investedWeight: '1', targetTtlNs: '5',
       simulationSettings: { base_currency: 'pUSD', starting_capital: '3000', fee_rates: rates } } } };
   const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
   const read = (transcript: { messages: readonly unknown[] }, name: string): JsonObject => {

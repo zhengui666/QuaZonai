@@ -6,7 +6,6 @@ import re
 import subprocess
 
 REPOSITORY = "zhengui666/QuaZonai"
-DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
 BUNDLE_FILES = {"manage.sh", "json.awk", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
@@ -32,8 +31,8 @@ def version_precedence(value: str) -> tuple:
     return (*core, 1 if prerelease is None else 0, identifiers)
 
 def validate_manifest(value: dict, *, published: bool = False) -> dict:
-    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 4:
-        raise ValueError("This installer requires a schema-4 prebuilt Node deployment bundle.")
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 5:
+        raise ValueError("This installer requires a schema-5 prebuilt Node deployment bundle.")
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")
@@ -47,8 +46,6 @@ def validate_manifest(value: dict, *, published: bool = False) -> dict:
             or (not published and re.fullmatch(r"sha256:[0-9a-f]{64}", reference))
         ):
             raise ValueError(f"{field} must identify the prebuilt {repository} image by digest.")
-    if value["database_image"] != DATABASE_IMAGE:
-        raise ValueError("This installer requires the release's supported PostgreSQL/PGMQ image.")
     return value
 
 def run(args: list[str], *, capture: bool = False, env=None, output=None) -> str:

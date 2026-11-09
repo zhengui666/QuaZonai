@@ -16,6 +16,40 @@ const BRIDGE: &str = "USDT0-USDC-SPOT.HYPERLIQUID";
 const SPOT: &str = "BTC-USDC-SPOT.HYPERLIQUID";
 const LATE: &str = "ETH-USD-PERP.HYPERLIQUID";
 
+fn assert_native_initial_conversion(result: &NativeTickEconomicResultV1) {
+    let evidence: serde_json::Value =
+        serde_json::from_str(&result.methods["initial_conversion_native_evidence"]).unwrap();
+    assert_eq!(
+        evidence["authority"],
+        "OFFICIAL_NATIVE_ORDERS_AND_ACCOUNT_BALANCES"
+    );
+    assert_eq!(evidence["native_fill_count"], "1");
+    let first: nautilus_model::events::OrderFilled =
+        serde_json::from_value(evidence["first_native_fill"].clone()).unwrap();
+    let last: nautilus_model::events::OrderFilled =
+        serde_json::from_value(evidence["last_native_fill"].clone()).unwrap();
+    assert_eq!(first.instrument_id, InstrumentId::from(BRIDGE));
+    assert_eq!(first.order_side, OrderSide::Sell);
+    assert_eq!(first.last_qty.as_decimal(), Decimal::from(3000));
+    assert_eq!(first, last, "the original native conversion has one fill, even after its completed order leaves the cache");
+    let balances: Vec<Money> =
+        serde_json::from_value(evidence["final_native_balances"].clone()).unwrap();
+    assert_eq!(
+        balances
+            .iter()
+            .find(|balance| balance.currency == Currency::USDC())
+            .unwrap()
+            .as_decimal(),
+        decimal(result.initial_usdc_after_cost.as_ref().unwrap()).unwrap()
+    );
+    let fee: Decimal = evidence["fees_by_currency"]["USDC"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(fee, decimal(&result.initial_conversion_cost_usdc).unwrap());
+}
+
 fn definitions() -> Vec<InstrumentAny> {
     let usdt0 = Currency::try_from_str("USDT0").unwrap_or_else(|| {
         let currency = Currency::new("USDT0", 8, 0, "USDT0", CurrencyType::Crypto);
@@ -210,7 +244,12 @@ fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fak
             .as_ref()
             .is_some_and(|equity| decimal(equity).unwrap() == Decimal::from(3000))
     }));
-    assert_eq!(result.native_fills.get(), 2);
+    assert_native_initial_conversion(&result);
+    assert_eq!(
+        result.native_fills.get(),
+        3,
+        "native initial conversion plus two strategy fills"
+    );
     assert_eq!(decimal(&result.funding_usdc).unwrap(), Decimal::ZERO);
 }
 
@@ -284,10 +323,40 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
         8,
     )
     .unwrap();
-    assert_eq!(
-        serde_json::to_value(&result).unwrap(),
-        serde_json::to_value(&parallel).unwrap()
-    );
+    assert_native_initial_conversion(&result);
+    assert_native_initial_conversion(&parallel);
+    // Financial output remains deterministic across reader parallelism. Raw
+    // original receipts deliberately keep each fresh native session's identity.
+    let evidence = |result: &NativeTickEconomicResultV1| -> serde_json::Value {
+        serde_json::from_str(&result.methods["initial_conversion_native_evidence"]).unwrap()
+    };
+    let (first, second) = (evidence(&result), evidence(&parallel));
+    for key in [
+        "purpose",
+        "environment",
+        "authority",
+        "native_version",
+        "execution_data",
+        "native_fill_count",
+        "fees_by_currency",
+        "final_native_balances",
+    ] {
+        assert_eq!(
+            first[key], second[key],
+            "native conversion financial evidence differs: {key}"
+        );
+    }
+    let mut first = serde_json::to_value(&result).unwrap();
+    let mut second = serde_json::to_value(&parallel).unwrap();
+    first["methods"]
+        .as_object_mut()
+        .unwrap()
+        .remove("initial_conversion_native_evidence");
+    second["methods"]
+        .as_object_mut()
+        .unwrap()
+        .remove("initial_conversion_native_evidence");
+    assert_eq!(first, second);
     assert_eq!(result.model, "SEGREGATED_OBSERVED_L2_IOC_V1");
     assert_eq!(
         decimal(result.initial_usdc_after_cost.as_ref().unwrap()).unwrap(),
@@ -320,10 +389,11 @@ fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_p
         let result = replay(&prepared.join("independent/catalog"), &request, &wasm).unwrap();
         assert_eq!(result.assets.len(), 3);
         assert_eq!(result.days.len(), 3);
+        assert_native_initial_conversion(&result);
         assert_eq!(
             result.native_fills.get(),
-            2,
-            "one delayed native buy and one delayed native close"
+            3,
+            "native initial conversion, one delayed native buy and one delayed native close"
         );
         assert_eq!(result.native_rejections.get(), 0);
         if result.target_asof_ns.is_none() {
@@ -892,10 +962,11 @@ fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
         let close_at = close_hour * HOUR + 45 * 60 * SECOND;
         let (prepared, request, wasm) = source(directory.path(), 0, Some(close_at), include_rate);
         let result = replay(&prepared.join("independent/catalog"), &request, &wasm).unwrap();
+        assert_native_initial_conversion(&result);
         assert_eq!(
             result.native_fills.get(),
-            4,
-            "actual native spot and perp open/close fills"
+            5,
+            "native initial conversion plus actual native spot and perp open/close fills"
         );
         let cause = result
             .limitations
@@ -2269,7 +2340,12 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         "entry decision20s -> deadline80s -> actual exit100s"
     );
     assert!(diagnostics.remaining_positions.is_empty());
-    assert_eq!(result.native_fills.get(), 3, "native quote bridge buy, native alpha buy, native alpha sell; initial wealth conversion is separate");
+    assert_native_initial_conversion(&result);
+    assert_eq!(
+        result.native_fills.get(),
+        4,
+        "native initial conversion, quote bridge buy, alpha buy and alpha sell"
+    );
     assert!(result
         .fees_by_currency
         .values()
@@ -2572,7 +2648,7 @@ fn quote_zero_capacity_does_not_reuse_prior_unused_size() {
 }
 
 #[test]
-fn quote_ioc_same_timestamp_funding_uses_previous_position() {
+fn native_mark_funding_settles_after_same_timestamp_closing_commands() {
     let directory = tempfile::tempdir().unwrap();
     let (assets, mut request) = small_assets(directory.path());
     request.scenario.execution_model =
@@ -2632,7 +2708,8 @@ fn quote_ioc_same_timestamp_funding_uses_previous_position() {
         .unwrap();
     assert!(margin.as_ref().unwrap().positions().is_empty());
     assert_eq!(
-        margin.as_ref().unwrap().summary().adjustment_totals["USDC"],
-        Decimal::from(-1)
+        margin.as_ref().unwrap().summary().adjustments_applied,
+        0,
+        "official native funding observes the flat position after same-timestamp order settlement"
     );
 }

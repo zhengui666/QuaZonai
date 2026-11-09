@@ -45,7 +45,7 @@ async function setup(universe = false) {
     parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
   const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
   const input = { goal: 'Protocol-only ensemble selection; no scientific or market performance claim.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-    data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } }, policy: { max_trials: 2, strategy: { name: 'original-policy', kind: 'factor-threshold', instrumentId: universe ? 'BASE.SIM' : 'TEST.SIM', ...(universe ? { instrumentIds: ['BASE.SIM', 'TEST.SIM'] } : {}), threshold: 0,
+    data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } }, policy: { strategy: { name: 'original-policy', kind: 'factor-threshold', instrumentId: universe ? 'BASE.SIM' : 'TEST.SIM', ...(universe ? { instrumentIds: ['BASE.SIM', 'TEST.SIM'] } : {}), threshold: 0,
       investedWeight: '0.25', targetTtlNs: '5', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY',
         ...(universe ? { fee_rates: [{ instrument_id: 'BASE.SIM', maker: '0.004000', taker: '0.006000' }, { instrument_id: 'TEST.SIM', maker: '0.001234567890123456', taker: '0.009876543210987654' }] } : {}) } } } };
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [research, strategy] };
@@ -125,7 +125,7 @@ test('one ensemble trial retains members/weights, validation-only account feedba
 });
 
 test('invalid ensemble attempts remain recorded without a legacy trial limit', async () => {
-  const state = await setup(); state.input.policy.max_trials = 1;
+  const state = await setup();
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Invalid complete proposal.', members: [{ model: positive, weight: '0.7' }] }),
     tool('strategy_portfolio_evaluate', { hypothesis: 'Second invalid complete proposal.', members: [{ model: positive, weight: '0.7' }] }),
@@ -155,7 +155,7 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
     train_end_ns: '10', validation_end_ns: '20', catalog_ensemble_request: originalRequest,
     sealed: { catalog: state.input.data.sealed.catalog, catalog_partitions: join(state.directory, 'private-final-manifest.json'), train_end_ns: '10', validation_end_ns: '20',
       catalog_ensemble_request: { ...originalRequest, event_end_ns: '30', decision_cutoff_ns: '30' } } },
-    policy: { max_trials: 2, strategy: { name: 'all-catalog-causal-ensemble', kind: 'catalog-ensemble', evaluationPartition: 'HELDOUT' } } };
+    policy: { strategy: { name: 'all-catalog-causal-ensemble', kind: 'catalog-ensemble', evaluationPartition: 'HELDOUT' } } };
   const proposed = [{ model, weight: '0.25' }, { model, weight: '0.25' }, { model, weight: '0.5' }];
   state.faux.setResponses([
     tool('catalog_input', {}),
@@ -279,7 +279,7 @@ test('an allowed non-base instrument stays in the original proposal and resolved
 });
 
 for (const universe of [false, true]) test(`outside ${universe ? 'declared universe' : 'legacy base instrument'} durably fails and retains every attempt`, async () => {
-  const state = await setup(universe); state.input.policy.max_trials = 1;
+  const state = await setup(universe);
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Not an admitted instrument.', members, instrumentId: 'OUTSIDE.SIM' }),
     tool('strategy_portfolio_evaluate', { hypothesis: 'Second inadmissible instrument.', members, instrumentId: 'OUTSIDE.SIM' }),
@@ -305,7 +305,7 @@ for (const universe of [false, true]) test(`outside ${universe ? 'declared unive
 });
 
 for (const explicit of [false, true]) for (const duplicate of [false, true]) test(`${explicit ? 'explicit choice' : 'implicit base'} with ${duplicate ? 'duplicate' : 'missing'} original fee entries durably consumes an attempt`, async () => {
-  const state = await setup(true); state.input.policy.max_trials = 1;
+  const state = await setup(true);
   const selected = explicit ? 'TEST.SIM' : 'BASE.SIM';
   const settings = state.input.policy.strategy.simulationSettings;
   const fee = settings.fee_rates!.find((rate) => rate.instrument_id === selected)!;
@@ -398,7 +398,7 @@ test('exact proposals, half-open target filtering and original sealed catalog ma
   assert.equal(request.forecast.parameters.total_fuel, null);
 });
 
-test('catalog replay binds unmetered native echoes to the original sealed data and rejects changed science', () => {
+test('catalog replay requires exact scientific fuel and row echoes for the sealed data', () => {
   const request: JsonObject = { train_end_ns: '10', validation_end_ns: '20', forecast: {
     selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' },
     parameters: { total_fuel: '1', fast_period: 1, slow_period: 2 } } };
@@ -407,8 +407,6 @@ test('catalog replay binds unmetered native echoes to the original sealed data a
     sealed: { catalog: '/original-sealed', request } };
   const original = structuredClone(data);
   const echoed = structuredClone(request); const forecast = echoed.forecast as JsonObject;
-  delete (forecast.parameters as JsonObject).total_fuel;
-  (forecast.selection as JsonObject).maximum_rows = 0;
   assert.equal(replayCatalog(data, echoed), '/original-sealed');
   for (const selection of [{ ...forecast.selection as JsonObject, event_end_ns: '31' },
     { ...forecast.selection as JsonObject, decision_cutoff_ns: '41' },
@@ -547,7 +545,7 @@ test('explicit history can reassess another stopped studys original iteration ex
 });
 
 test('large ensemble feedback and original-trial reads deliver the same account scalars without recomputation', async () => {
-  const state = await setup(); state.input.policy.max_trials = 1;
+  const state = await setup();
   await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', diagnostic_assets: 24 }));
   const ensemble = ['0.4', '0.25', '0.25', '0.1'].map((weight) => ({ model: positive, weight }));
   const host = await openResearch(state.options);
@@ -604,7 +602,7 @@ test('large ensemble feedback and original-trial reads deliver the same account 
 });
 
 test('large historical ledger pages disclose every trial and read failures without consuming remaining trials', async () => {
-  const state = await setup(); state.input.policy.max_trials = 4;
+  const state = await setup();
   await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', diagnostic_assets: 24 }));
   const host = await openResearch(state.options); let ids: number[]; let firstPage: number[];
   state.faux.setResponses([

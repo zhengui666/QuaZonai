@@ -166,7 +166,7 @@ pub struct NativeForwardResultV1 {
     pub schema_version: SchemaV1,
     pub native_version: String,
     pub window: ForwardWindowViewV1,
-    #[schema(min_items = 3, max_items = 3)]
+    #[schema(min_items = 4, max_items = 4)]
     pub statistics: Vec<crate::science::NativeStatisticV1>,
 }
 

@@ -40,7 +40,7 @@ export function researchCapital(value: unknown): CapitalAssumptions {
 
 export function researchInstructions(input: { goal: string; specification?: ResearchSpecification }): string {
   if (!input.specification) return input.goal;
-  return `Original structured research mandate (authoritative; do not replace with prose):\n${JSON.stringify(input.specification)}\nUse research_brief for captured data, policy and the cumulative trial ledger. Only original registered partitions and supported tools are permitted. Final selection ends search; legacy budget fields impose no execution quota. Capital assumptions do not establish profitability or executable depth.`;
+  return `Original structured research mandate (authoritative; do not replace with prose):\n${JSON.stringify(input.specification)}\nUse research_brief for captured data, policy and the cumulative trial ledger. Only original registered partitions and supported tools are permitted. Final selection ends search. Explicit native scientific sandbox limits remain authoritative. Capital assumptions do not establish profitability or executable depth.`;
 }
 
 /** Compare only the named partition's actual metric; component diagnostics are not account evidence. */

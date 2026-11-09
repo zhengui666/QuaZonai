@@ -16,7 +16,7 @@ test('HTTP calibration resolves retained reports and never accepts caller-author
     const forged = createReviewPolicy('FACTOR', 'caller-forged-calibration', '1000');
     forged.calibration = { rootCount: 30, endNs: '90', evidenceRefs: ['caller:invented-reference'] };
     const input = { goal: 'Calibration authority protocol only.', model: state.model, data: state.options.config.datasets[0]!.data,
-      policy: { max_trials: 1, reviewPolicy: forged } };
+      policy: { reviewPolicy: forged } };
     const post = (path: string, payload: object, authenticated = true) => state.service.app.inject({ method: 'POST', url: `/api/v3${path}`, ...(authenticated ? { headers: state.headers } : {}), payload });
     const blocked = await post('/research', { requestId: 'forged-profile', input });
     assert.equal(blocked.statusCode, 422, blocked.body); assert.equal(blocked.json().error, 'review_policy_not_registered');

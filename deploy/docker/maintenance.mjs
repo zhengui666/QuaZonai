@@ -54,7 +54,7 @@ export async function requireIdle(configPath) {
           const original = quiesced ? maintenance.parked[String(task.id)] : undefined;
           const common = quiesced && task.version === 1 && task.background === true && task.abortRequested === false;
           const gate = common && task.id === maintenance.barrierTaskId && task.kind === 'qz.maintenance.gate'
-            && task.input?.epoch === maintenance.epoch && status === 'running' && checkpoint?.phase === 'hold';
+            && task.input?.epoch === maintenance.epoch && ['pending', 'running'].includes(status) && checkpoint?.phase === 'hold';
           const parked = common && original?.taskId === task.id && original.kind === task.kind && original.epoch === maintenance.epoch
             && parkKinds.has(task.kind) && status === 'waiting' && task.state.policy === 'allSettled'
             && task.state.on.length === 1 && task.state.on[0] === maintenance.barrierTaskId

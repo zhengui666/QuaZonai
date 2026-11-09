@@ -21,6 +21,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Exact upstream source and precision of this binary.
+    BuildIdentity,
     /// Observe bounded public Polymarket native events; no execution client or orders.
     #[cfg(feature = "native-node-observer")]
     PolymarketDataProbe(job::polymarket_data_probe::Arguments),
@@ -52,14 +54,12 @@ enum Operation {
     ApplyEnsemble,
     /// Verify original fit evidence and emit frozen native study calibrations.
     FreezeEnsembleCalibrations,
-    /// Rerun the original account at automatically selected real capital points.
+    /// Plan capital points; the durable owner runs each as an independent native task.
     CapitalCurve {
         #[arg(long)]
         catalog: PathBuf,
         #[arg(long, value_parser = parse_id)]
         dataset_revision_id: Option<contracts::Id>,
-        #[arg(long)]
-        plan_only: bool,
     },
     /// Blend explicit aligned native target rows using exact decimal member weights.
     BlendTargets,
@@ -272,6 +272,10 @@ fn model_bytes(path: &Path) -> Result<Vec<u8>> {
 
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        Operation::BuildIdentity => {
+            serde_json::to_writer(std::io::stdout(), &job::build_identity())?;
+            Ok(())
+        }
         #[cfg(feature = "native-node-observer")]
         Operation::PolymarketDataProbe(args) => job::polymarket_data_probe::run(args),
         #[cfg(feature = "native-paper")]
@@ -304,14 +308,13 @@ fn run(operation: Operation) -> Result<()> {
         Operation::CapitalCurve {
             catalog,
             dataset_revision_id,
-            plan_only,
         } => {
             let request = input()?;
-            output(&if plan_only {
-                job::capital_curve::plan_only(&catalog, &request, dataset_revision_id)?
-            } else {
-                job::capital_curve::evaluate(&catalog, &request, dataset_revision_id)?
-            })
+            output(&job::capital_curve::plan_only(
+                &catalog,
+                &request,
+                dataset_revision_id,
+            )?)
         }
         Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
         Operation::AssessCapacity { catalog } => {

@@ -10,6 +10,7 @@ export interface NativeCapabilities {
   schemaVersion: 1;
   implementationDigest: string;
   commands: string[];
+  buildIdentity?: NativeJson;
 }
 export interface NativeExecutionRequest {
   schemaVersion: 1;

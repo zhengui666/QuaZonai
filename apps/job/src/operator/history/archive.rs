@@ -1,8 +1,8 @@
 //! Public vendor schemas stop at this operator boundary. Scientific jobs stay offline.
-use super::{epoch_ns, historical_instrument, NativeArchive};
-use anyhow::{bail, ensure, Context, Result};
+use super::{NativeArchive, epoch_ns, historical_instrument};
+use crate::catalog::aggregation::HistoricalTradeBars;
+use anyhow::{Context, Result, bail, ensure};
 use chrono::{DateTime, Utc};
-use nautilus_data::aggregation::BarBuilder;
 use nautilus_model::{
     data::{Bar, BarType, BookOrder, OrderBookDelta, QuoteTick, TradeTick},
     enums::{AggressorSide, BookAction, OrderSide, RecordFlag},
@@ -508,17 +508,9 @@ fn book(
     }
     archive.deltas.last_mut().context("BOOK_EMPTY")?.flags |= RecordFlag::F_LAST as u8;
     match (sides[0].first(), sides[1].first()) {
-        (Some((bid, bid_size)), Some((ask, ask_size))) => {
+        (Some((bid, _)), Some((ask, _))) => {
             ensure!(bid <= ask, "SOURCE_BOOK_CROSSED");
-            archive.quotes.push(QuoteTick::new(
-                instrument.id(),
-                *bid,
-                *ask,
-                *bid_size,
-                *ask_size,
-                at,
-                at,
-            ));
+            // Quotes are produced once by the native DataEngine during replay.
         }
         (None, None) => quality.empty_books += 1,
         _ => quality.one_sided_books += 1,
@@ -567,34 +559,18 @@ fn aggregate_series(
     let step = interval / divisor;
     let id = trades[0].instrument_id;
     let internal = BarType::from_str(&format!("{id}-{step}-{unit}-LAST-INTERNAL"))?;
-    let external = BarType::from_str(&format!("{id}-{step}-{unit}-LAST-EXTERNAL"))?;
-    let mut builder = BarBuilder::new(internal, price_precision, size_precision);
-    let interval_ns = u64::from(interval) * 1_000_000_000;
+    let mut aggregator = HistoricalTradeBars::new(internal)?;
     let mut bars = Vec::new();
-    // Iterate only nonempty buckets. No native carry-forward/zero-volume bars.
-    for bucket in trades
-        .chunk_by(|a, b| a.ts_event.as_u64() / interval_ns == b.ts_event.as_u64() / interval_ns)
-    {
-        let mut volume = Quantity::zero(size_precision);
-        for trade in bucket {
-            volume = volume.checked_add(trade.size).context("BAR_VOLUME_RANGE")?;
-            builder.update(trade.price, trade.size, trade.ts_event);
+    for trade in trades {
+        ensure!(
+            trade.price.precision <= price_precision && trade.size.precision <= size_precision,
+            "SOURCE_PRECISION_MISMATCH"
+        );
+        if let Some(bar) = aggregator.update(trade)? {
+            bars.push(bar);
         }
-        let end = (bucket[0].ts_event.as_u64() / interval_ns + 1)
-            .checked_mul(interval_ns)
-            .context("BAR_TIMESTAMP_RANGE")?;
-        let available = bucket
-            .iter()
-            .map(|t| t.ts_init.as_u64())
-            .max()
-            .unwrap()
-            .max(end);
-        let bar = builder.build(end.into(), available.into());
-        bars.push(Bar {
-            bar_type: external,
-            ..bar
-        });
     }
+    bars.extend(aggregator.finish()?);
     Ok(bars)
 }
 
@@ -836,6 +812,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     }
     archive.source_metadata = serde_json::json!({
         "format": args.format,
+        "bar_semantics": args.bar_seconds.map(|_| crate::catalog::aggregation::CONVENTION),
         "chain_evidence": chain.as_ref().map(chain::Evidence::metadata),
         "selection": {"start_seconds": args.start_seconds, "end_seconds": args.end_seconds, "bar_seconds": args.bar_seconds},
         "quality": quality,
@@ -1391,20 +1368,24 @@ mod tests {
         args.end_seconds = 120;
         assert_eq!(prepare(&args).unwrap().trades.len(), 1);
         args.end_seconds = 86_460;
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
         args.start_seconds = 0;
         args.end_seconds = 120;
         alter_selection(&args, |value| {
             value["plan"]["request"]["start_date"] = "1970-01-02".into();
             value["plan"]["request"]["end_date"] = "1970-01-03".into();
         });
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
     }
 
     #[test]
@@ -1480,12 +1461,14 @@ mod tests {
                     let end = bytes.len() - 4;
                     bytes[4..end].fill(0);
                     fs::write(&cached, bytes).unwrap();
-                    assert!(hf_selection::load(
-                        args.selection.as_ref().unwrap(),
-                        args.start_seconds,
-                        args.end_seconds
-                    )
-                    .is_ok());
+                    assert!(
+                        hf_selection::load(
+                            args.selection.as_ref().unwrap(),
+                            args.start_seconds,
+                            args.end_seconds
+                        )
+                        .is_ok()
+                    );
                     assert!(SerializedFileReader::new(fs::File::open(&cached).unwrap()).is_err());
                 }
                 "reordered" => {
@@ -1564,10 +1547,12 @@ mod tests {
             let moved = directory.path().join("original");
             fs::rename(&target, &moved).unwrap();
             symlink(&moved, &target).unwrap();
-            assert!(prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("SELECTION_SYMLINK"));
+            assert!(
+                prepare(&args)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SELECTION_SYMLINK")
+            );
             assert!(!args.output.exists());
         }
     }
@@ -1603,8 +1588,8 @@ mod tests {
         assert_eq!(archive.bars[0].open, Price::from("0.4200"));
         assert_eq!(archive.bars[0].close, Price::from("0.5000"));
         assert_eq!(archive.bars[0].volume, Quantity::from("2.000000"));
-        assert_eq!(archive.bars[0].ts_event.as_u64(), 60_000_000_000);
-        assert_eq!(archive.bars[1].ts_event.as_u64(), 180_000_000_000);
+        assert_eq!(archive.bars[0].ts_event.as_u64(), 0);
+        assert_eq!(archive.bars[1].ts_event.as_u64(), 120_000_000_000);
         assert_eq!(archive.source_metadata["quality"]["duplicate_rows"], 1);
         assert!(archive.source_metadata.get("selection_manifest").is_none());
         assert!(archive.source_metadata.get("clock_basis").is_none());
@@ -1647,15 +1632,19 @@ mod tests {
             directory.path(),
             &[row("137_1_1", 10, "420000"), row("137_1_1", 10, "500000")],
         );
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("CONFLICTING_SOURCE_EVENT"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("CONFLICTING_SOURCE_EVENT")
+        );
         args.start_seconds = 1;
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("FULL_BAR_INTERVALS_REQUIRED"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("FULL_BAR_INTERVALS_REQUIRED")
+        );
         args.start_seconds = 0;
         fs::write(
             directory
@@ -1664,10 +1653,12 @@ mod tests {
             b"corrupted",
         )
         .unwrap();
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SOURCE_CHECKSUM_MISMATCH"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SOURCE_CHECKSUM_MISMATCH")
+        );
         assert!(!args.output.exists());
     }
 
@@ -1731,8 +1722,7 @@ mod tests {
         assert_eq!(archive.source_metadata["quality"]["selected_rows"], 3);
         assert_eq!(archive.source_metadata["quality"]["one_sided_books"], 1);
         assert_eq!(archive.source_metadata["quality"]["empty_books"], 1);
-        assert_eq!(archive.quotes.len(), 1);
-        assert_eq!(archive.quotes[0].bid_size, Quantity::from("2.000000"));
+        assert!(archive.quotes.is_empty());
         assert_eq!(archive.deltas.len(), 7);
         assert_eq!(archive.deltas[0].ts_event.as_u64(), 60_000_000_000);
         assert_eq!(
@@ -1745,7 +1735,7 @@ mod tests {
         );
         let source = serde_json::from_value(serde_json::to_value(&archive).unwrap()).unwrap();
         let report = super::super::import(source, &args.output).unwrap();
-        assert_eq!((report.deltas, report.quotes), (7, 1));
+        assert_eq!((report.deltas, report.quotes), (7, 0));
         let mut catalog =
             nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
                 args.output.join("catalog").to_str().unwrap(),
@@ -1773,14 +1763,16 @@ mod tests {
                 .map(nautilus_model::data::Data::from)
                 .collect::<Vec<_>>()
                 .len(),
-            1
+            0
         );
-        assert!(book(
-            &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
-            &instrument(),
-            &mut archive,
-            &mut Quality::default()
-        )
-        .is_err());
+        assert!(
+            book(
+                &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
+                &instrument(),
+                &mut archive,
+                &mut Quality::default()
+            )
+            .is_err()
+        );
     }
 }

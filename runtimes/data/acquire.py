@@ -182,54 +182,6 @@ def record_bytes(accumulated):
     return b"".join(json_bytes(accumulated[key]) for key in sorted(accumulated))
 
 
-def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BYTES):
-    selection_plan = plan(provider_id, selection, max_bytes)
-    if selection.end_seconds > int(time.time()):
-        raise ValueError("historical selection cannot include an unfinished future interval")
-    terms = local_bytes(terms_file, MAX_TERMS_BYTES)
-    if not terms.strip():
-        raise ValueError("preserve a nonempty original source-terms file")
-    root = Path(os.path.abspath(output))
-    safe_local(root, "acquisition.json")
-    root.mkdir(parents=True, exist_ok=False)  # Never reuse a mutable API observation directory.
-    provider = provider_by_id(provider_id)
-    terms_record = {"path": "source-terms.bin", "size": len(terms)}
-    publish_bytes(safe_local(root, terms_record["path"]), terms)
-    (root / "raw").mkdir()
-    responses, accumulated = [], {}
-    raw_size = 0
-    previous_retrieved = None
-    for index, request in enumerate(selection_plan["requests"]):
-        if index:
-            time.sleep(0.35)  # Sequential supplier-page requests, not a real-time poller.
-        body, observation = fetch(request["url"], None)
-        previous_retrieved = check_observation(observation, selection, previous_retrieved)
-        raw_size += len(body)
-        path = f"raw/{index:04d}.json"
-        # Preserve the complete original body even when source interpretation fails.
-        # Without the final manifest this directory remains explicitly unpublished.
-        publish_bytes(safe_local(root, path), body)
-        rows, counts = decoded_page(provider, body, selection, request, observation, path)
-        collect_rows(accumulated, rows)
-        responses.append({"request": request, "observation": observation,
-                          "file": {"path": path, "size": len(body)}, "counts": counts})
-    records = record_bytes(accumulated)
-    records_record = {"path": "records.jsonl", "size": len(records)}
-    manifest = {**selection_plan, "created_at": now(),
-                "source_terms": {"file": terms_record, "reference": provider.descriptor["terms_reference"],
-                                 "evidence_status": "OPERATOR_SUPPLIED_NOT_INDEPENDENTLY_VERIFIED"},
-                "responses": responses, "records": records_record,
-                "record_count": len(accumulated), "raw_response_bytes": raw_size,
-                "observation_status": "OBSERVED" if accumulated else "NO_OBSERVATIONS"}
-    if utc_clock(manifest["created_at"]) < previous_retrieved:
-        raise ValueError("publication clock precedes source retrieval")
-    manifest_body = json_bytes(manifest)
-    publish_bytes(safe_local(root, "records.jsonl"), records)
-    # Final publication marker only after every original response and derived row validates.
-    publish_bytes(safe_local(root, "acquisition.json"), manifest_body)
-    return manifest
-
-
 def checked_file(root, item, expected_path, limit):
     # Older acquisitions may carry a checksum; it is retained as source metadata,
     # never calculated or treated as evidence of source authenticity.
@@ -310,7 +262,7 @@ def main(argv=None):
     commands.add_parser("providers", help="list capabilities and unsupported native handoffs")
     checking = commands.add_parser("verify", help="offline source-record and clock reconstruction; not research admission")
     checking.add_argument("--output", type=Path, required=True)
-    for command in ("plan", "download"):
+    for command in ("plan",):
         sub = commands.add_parser(command)
         sub.add_argument("--provider", choices=sorted(PROVIDERS), required=True)
         sub.add_argument("--instrument", required=True, help="explicit provider token/product ID")
@@ -319,10 +271,6 @@ def main(argv=None):
         sub.add_argument("--interval-seconds", type=int, required=True)
         sub.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
                          help="legacy option accepted for compatibility; downloads are not byte-budgeted")
-        if command == "download":
-            sub.add_argument("--output", type=Path, required=True, help="new output directory")
-            sub.add_argument("--terms-file", type=Path, required=True,
-                             help="original applicable source terms; storing them is not a permission grant")
     args = parser.parse_args(argv)
     try:
         if args.command == "providers":
@@ -331,10 +279,7 @@ def main(argv=None):
             result = verify(args.output)
         else:
             selection = Selection(args.instrument, args.start_seconds, args.end_seconds, args.interval_seconds)
-            if args.command == "plan":
-                result = plan(args.provider, selection, args.max_bytes)
-            else:
-                result = acquire(args.provider, selection, args.output, args.terms_file, args.max_bytes)
+            result = plan(args.provider, selection, args.max_bytes)
         print(json.dumps(result, indent=2))
         return 0
     except urllib.error.HTTPError as error:

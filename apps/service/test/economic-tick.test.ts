@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,13 +28,14 @@ test('owner API binds a retained unselected computed factor through the actual r
   const republishedIndependent = join(directory, 'republished-independent'); await mkdir(republishedIndependent);
   const binary = join(directory, 'controlled-job'); const calls = join(directory, 'calls');
   await writeFile(binary, `#!/usr/bin/python3
-import json, os, sys
+import json, os, sys, time
 request=json.load(sys.stdin)
 assert sys.argv[1]=='replay-tick-economic'
 models=[sys.argv[i+1] for i,arg in enumerate(sys.argv) if arg=='--model']
 assert all(os.path.isfile(model) for model in models)
 assert len(models)==len(request.get('signal_weights',['1']))
 with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
+if request['scenario']['random_seed']=='44': time.sleep(3)
 print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','models':str(len(models)),'catalog':sys.argv[sys.argv.index('--catalog')+1],'funding_catalog':sys.argv[sys.argv.index('--funding-catalog')+1]},
 'coverage':{'modality':'TRADE_TICK','source_revision':request['research']['input']['source_revision']},
 'assets':[{'instrument_id':'BTC.SIM','native_kind':'CryptoPerpetual','cohorts':'2','decisions':'1','execution_attempts':'0'}],
@@ -50,7 +50,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
   worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening');
   const target = { id: 'test-economic-worker', url: `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}` };
   const full = { schema_version: 1 as const, input: { modality: 'TRADE_TICK' as const, instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000',
-    representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' as const, maximum_source_rows: '2', source_revision: 'controlled-original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' as const },
+    representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' as const, source_revision: 'controlled-original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' as const },
     sampling: { kind: 'EVENT_TIME_COHORT_V1' as const, maximum_cohort_rows: 100 }, target: { kind: 'FIXED_EVENT_TIME' as const, horizon_ns: '10000000000' },
     parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '259200000000000', validation_end_ns: '432000000000000' };
   const research = { ...full, input: { ...full.input, event_end_ns: full.validation_end_ns } };
@@ -68,29 +68,29 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.deepEqual((await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json(), []);
     for (const id of ['missing', '__proto__']) assert.equal((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${id}`, headers })).statusCode, 404);
     const observedPhases: string[] = [];
-    const unsubscribe = service.research.harness.subscribeCommits(({ changes }) => {
+    const commits = service.research.harness.observeCommits({ advance({ changes }) {
       for (const change of changes) if (change.type === 'task' && change.value.kind === TickEconomicReplay.definition.name) {
-        const checkpoint = change.value.state.checkpoint;
+        const checkpoint = 'checkpoint' in change.value.state ? change.value.state.checkpoint : null;
         if (checkpoint && typeof checkpoint === 'object' && !Array.isArray(checkpoint)) {
           const progress = checkpoint.progress;
           if (progress && typeof progress === 'object' && !Array.isArray(progress) && typeof progress.phase === 'string') observedPhases.push(progress.phase);
         }
       }
-    });
+    }, end() {} });
+    const unsubscribe = () => commits.detach();
     const researchId = await service.research.harness.commit(async tx => {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-      const input = { goal: 'Controlled retained factor protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: json(data), policy: { maxTrials: 100 } };
+      const input = { goal: 'Controlled retained factor protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: json(data), policy: {} };
       const study = await tx.doc(Study, conversation.id); study.input = input;
       study.trials.push({ taskId: 77, proposal: { hypothesis: 'Controlled retained version', model: '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))' }, status: 'COMPUTED',
         result: { request: iterationRequest(json(data)), native_versions: { 'nautilus-model': 'controlled-protocol' }, coverage: { modality: 'TRADE_TICK', source_revision: full.input.source_revision, trade_count: '2' } } });
-      (await tx.doc(Requests)).requests['request:original'] = { input, conversationId: conversation.id };
-      (await tx.doc(Application)).researchRequests['request:original'] = { original: { datasetId: 'ticks' }, input, dataset: json(dataset) };
+      (await tx.doc(Requests)).requests['request:original'] = { input, conversationId: conversation.id, metadata: { original: { datasetId: 'ticks' }, dataset: json(dataset) } };
       return conversation.id;
     }, context);
     // Republishing the registry must not redirect the retained factor's frozen inputs.
     service.config.datasets[0]!.data = { ...service.config.datasets[0]!.data, catalog: republishedPrimary,
       sealed: { ...json(service.config.datasets[0]!.data.sealed), catalog: republishedIndependent } };
-    const { maximum_source_rows: _legacyRows, ...unlimitedInput } = research.input;
+    const unlimitedInput = research.input;
     const request = validateNativeTickEconomicRequest({ schema_version: 1, research: { ...research, input: unlimitedInput }, scenario: { initial_usdt: '3000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '0.02', participation_fraction: '0.01',
       perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
       fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl', context_source: 'context-prices.manifest.json' });
@@ -160,86 +160,33 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
       payload: { ...payload, requestId: 'unregistered-window', request: { ...request, research: { ...request.research, input: { ...request.research.input, event_end_ns: '604800000000000' } } } } })).statusCode, 409);
     const references = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(view.taskId), context))!.requests;
-    const originalReference = references[0]!;
-    for (const completed of [true, false]) {
-      const id = completed ? 'recovered-original' : 'uncertain-original';
-      const taskId = await service.research.harness.commit(async tx => {
-        const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir, catalog, fundingCatalog: republishedPrimary, target, request,
-          model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: { ...payload, requestId: id }, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
-        (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId,
-          requestId: completed ? originalReference.requestId! : '0'.repeat(64), status: 'PENDING' });
-        return taskId;
-      }, context);
-      await service.research.harness.waitForTask(taskId, context);
-      const recovered = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${id}`, headers })).json();
-      assert.equal(recovered.status, completed ? 'COMPUTED' : 'FAILED');
-      assert.equal(recovered.fundingCatalog, republishedPrimary);
-      if (completed) { assert.deepEqual(recovered.result, result.result); assert.equal(recovered.result.methods.funding_catalog, republishedPrimary); }
-      else {
-        const unknown = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(taskId), context))!.requests[0]!;
-        assert.equal(unknown.requestId, '0'.repeat(64)); assert.equal(unknown.status, 'UNKNOWN');
-      }
+    assert.equal(references.length, 1); assert.equal(references[0]!.status, 'COMPLETED');
+    const originalTask = await service.research.harness.getTask(view.taskId as TaskId, context);
+    const originalGraph = await service.research.harness.commit(tx => tx.scanTasks({ conversationId: researchId }, 100), context);
+    const ownedNative = originalGraph.items.filter(task => task.kind === 'qz.native.execution' && task.owner === originalTask!.id);
+    assert.equal(ownedNative.length, 1); assert.equal(ownedNative[0]!.state.status, 'terminal');
+    assert.equal((ownedNative[0]!.input as { requestId: string }).requestId, references[0]!.requestId);
+    // Stop the service while the actual worker process is still running. The
+    // original native child must recover its checkpoint and GET its receipt.
+    const restartRequest = { ...request, scenario: { ...request.scenario, random_seed: '44' } };
+    const restarting = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
+      payload: { ...payload, requestId: 'economic-real-restart', request: restartRequest } });
+    assert.equal(restarting.statusCode, 202, restarting.body);
+    const restartView = restarting.json(); const deadline = Date.now() + 5000;
+    while ((await readFile(calls, 'utf8')).trim().split('\n').length < 3) {
+      assert.ok(Date.now() < deadline, 'the real worker must accept the third invocation');
+      await new Promise(resolve => setTimeout(resolve, 10));
     }
-    let recoveryGets = 0; let recoveryPosts = 0; let terminal: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'COMPLETED'; let holdRecovery = false; let onRecoveryRead: (() => void) | undefined;
-    const recovering = createServer((message, response) => {
-      if (message.method !== 'GET') recoveryPosts++;
-      assert.equal(message.url, `/v1/executions/${originalReference.requestId}`);
-      recoveryGets++; onRecoveryRead?.(); response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ schemaVersion: 1, requestId: originalReference.requestId,
-        ...(holdRecovery || recoveryGets < 3 ? { status: 'RUNNING' } : terminal === 'COMPLETED' ? { status: terminal, result: result.result } : terminal === 'FAILED' ? { status: terminal, error: 'controlled_failure' } : { status: terminal }) }));
-    });
-    recovering.listen(0, '127.0.0.1'); await once(recovering, 'listening');
-    try {
-      const recoveryTarget = { id: 'controlled-original-recovery', url: `http://127.0.0.1:${(recovering.address() as AddressInfo).port}` };
-      for (const status of ['COMPLETED', 'FAILED', 'CANCELLED'] as const) {
-        terminal = status; recoveryGets = 0; const id = `running-original-${status}`;
-        const taskId = await service.research.harness.commit(async tx => {
-          const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir,
-            catalog, target: recoveryTarget, request, model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-          (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
-          (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId, target: recoveryTarget, status: 'PENDING' });
-          return taskId;
-        }, context);
-        await service.research.harness.waitForTask(taskId, context);
-        const recovered = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${id}`, headers })).json();
-        assert.equal(recovered.status, status === 'COMPLETED' ? 'COMPUTED' : 'FAILED');
-        if (status === 'COMPLETED') assert.deepEqual(recovered.result, result.result);
-        const reference = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(taskId), context))!.requests[0]!;
-        assert.equal(reference.status, status); assert.equal(recoveryGets, 3); assert.equal(recoveryPosts, 0);
-      }
-      holdRecovery = true; recoveryGets = 0;
-      const firstRead = new Promise<void>(resolve => { onRecoveryRead = resolve; });
-      const stoppedTaskId = await service.research.harness.commit(async tx => {
-        const id = 'locally-stopped-original';
-        const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir,
-          catalog, target: recoveryTarget, request, model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
-        (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId, target: recoveryTarget, status: 'PENDING' });
-        return taskId;
-      }, context);
-      await firstRead;
-      const active = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/locally-stopped-original', headers })).json();
-      const activeTask = await service.research.harness.getTask(stoppedTaskId, context);
-      assert.equal(active.status, 'RUNNING'); assert.equal(active.createdAt, null);
-      assert.equal(active.executionModel, 'SEGREGATED_COHORT_MARK_ESTIMATE_V1');
-      assert.deepEqual(active.progress, (activeTask!.state.checkpoint as { progress: unknown }).progress);
-      assert.equal(active.progress.phase, 'RECONCILING'); assert.ok(Number.isFinite(Date.parse(active.progress.updatedAt)));
-      assert.equal(active.progress.completed, undefined); assert.equal(active.progress.total, undefined);
-      const activeRows = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json();
-      assert.deepEqual(activeRows.find((row: { id: string }) => row.id === active.id).progress, active.progress);
-      await service.research.harness.abortTask(stoppedTaskId, context);
-      await service.research.harness.waitForTask(stoppedTaskId, context);
-      const stopped = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/locally-stopped-original', headers })).json();
-      assert.equal(stopped.status, 'STOPPED'); assert.equal(stopped.error, 'tick_economic_local_stop_remote_receipt_unsettled');
-      const retained = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(stoppedTaskId), context))!.requests[0]!;
-      assert.equal(retained.requestId, originalReference.requestId); assert.equal(retained.status, 'PENDING'); assert.equal(recoveryPosts, 0);
-    } finally { recovering.closeAllConnections(); await new Promise<void>(resolve => recovering.close(() => resolve())); }
-    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun', 'recovery only reads the retained original receipt; it never POSTs another native run');
+    const restartReference = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(restartView.taskId), context))!.requests[0]!;
     await service.close(); service = await createService(options);
+    await service.research.harness.waitForTask(restartView.taskId as TaskId, context);
+    const restored = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${restartView.id}`, headers })).json();
+    assert.equal(restored.status, 'COMPUTED', JSON.stringify(restored)); assert.deepEqual(restored.result.request, restartRequest);
+    const restoredReference = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(restartView.taskId), context))!.requests[0]!;
+    assert.equal(restoredReference.requestId, restartReference.requestId); assert.equal(restoredReference.status, 'COMPLETED');
+    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun\nrun', 'service reopen must not launch the original physical invocation twice');
     assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json(), result);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json().find((row: { id: string }) => row.id === view.id), summaries[0]);
-    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun');
     const addMember = (differentTarget = false) => service.research.harness.commit(async tx => {
       const original = (await tx.doc(Study, researchId)).input!;
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
@@ -248,8 +195,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const trial = json((await tx.doc(Study, researchId)).trials[0]!);
       study.trials.push({ ...trial, taskId: 78 });
       const key = `request:member-${conversation.id}`;
-      (await tx.doc(Requests)).requests[key] = { input, conversationId: conversation.id };
-      (await tx.doc(Application)).researchRequests[key] = { original: { datasetId: 'ticks' }, input, dataset: json(dataset) };
+      (await tx.doc(Requests)).requests[key] = { input, conversationId: conversation.id, metadata: { original: { datasetId: 'ticks' }, dataset: json(dataset) } };
       return conversation.id;
     }, context);
     const secondResearchId = await addMember();
@@ -265,13 +211,6 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.deepEqual(combinedView.sources, [researchId, secondResearchId].map((id, index) => ({ factorId: members[index]!.factorId, researchId: id, trialId: index ? 78 : 77, memberIndex: 0, sourceRevision: full.input.source_revision })));
     const combinedSummary = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json().find((row: { id: string }) => row.id === combinedView.id);
     assert.deepEqual(combinedSummary.members, members); assert.equal(Object.hasOwn(combinedSummary, 'result'), false);
-    await service.research.harness.commit(async tx => {
-      (await tx.doc(TickEconomicReplays)).runs['legacy-missing-task'] = json({ original: payload,
-        view: { ...view, id: 'legacy-missing-task', taskId: 99999999, status: 'QUEUED' } });
-    }, context);
-    const unavailable = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/legacy-missing-task', headers })).json();
-    assert.equal(unavailable.createdAt, null); assert.equal(unavailable.progress, null); assert.equal(unavailable.status, 'QUEUED');
-    assert.equal(unavailable.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
     assert.equal((await service.research.harness.snapshot(Study, researchId, context))!.trials.length, 1);
     assert.equal((await service.research.harness.snapshot(Study, secondResearchId, context))!.trials.length, 1);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: combination })).json().id, combinedView.id);
@@ -291,6 +230,6 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal(differentTarget.json().error, 'tick_economic_member_binding_mismatch');
     await service.close(); service = await createService(options);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${combinedView.id}`, headers })).json(), combinedView);
-    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun\nrun', 'fixed combinations retain one original invocation');
+    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun\nrun\nrun', 'fixed combinations retain one original invocation');
   } finally { await service.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

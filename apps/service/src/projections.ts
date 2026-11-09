@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { DailyReturn, EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
+import { readResearchAdmissions } from './admissions.ts';
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
 import { submissionView } from '../../research/src/recovery.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
@@ -83,31 +84,38 @@ function taskView(record: TaskRecord<Json, Json, Json>): TaskView {
 }
 
 export function researchTaskViews(host: ResearchHost) {
-  const cache = new Map<number, TaskView[]>(); const loading = new Map<number, Promise<void>>();
-  host.harness.subscribeCommits(({ changes }) => {
-    for (const change of changes) {
-      if (change.type !== 'task') continue;
-      const record = change.value; const tasks = cache.get(record.conversationId);
-      if (tasks) cache.set(record.conversationId, [taskView(record), ...tasks.filter(task => task.id !== record.id)].sort((a, b) => b.id - a.id).slice(0, 100));
+  // Only immutable terminal metadata is cached. Live state comes from the official graph.
+  const history = new Map<number, TaskView[]>(); const loading = new Map<number, Promise<TaskView[]>>();
+  host.harness.observeCommits({ advance({ changes }) {
+    for (const change of changes) if (change.type === 'task' && change.value.state.status === 'terminal') {
+      const record = change.value; const rows = history.get(record.conversationId);
+      if (rows) history.set(record.conversationId, [taskView(record), ...rows.filter(row => row.id !== record.id)].sort((a, b) => b.id - a.id).slice(0, 100));
     }
-  });
-  return async (id: number): Promise<TaskView[]> => {
-    if (cache.has(id)) return cache.get(id)!;
+  }, end() { history.clear(); loading.clear(); } });
+  async function terminalViews(id: number) {
+    if (history.has(id)) return history.get(id)!;
     let pending = loading.get(id);
     if (!pending) {
-      // shortcut: the official scan reads full receipts once per conversation after restart; replace when upstream offers metadata scans.
       pending = host.harness.commit(async tx => {
-        const tasks: TaskView[] = []; let cursor: Cursor | undefined;
+        const rows: TaskView[] = []; let cursor: Cursor | undefined;
         do {
-          const page = await tx.scanTasks({ conversationId: id as ConversationId, order: 'descending' }, 10, cursor);
-          tasks.push(...page.items.map(taskView)); cursor = page.next;
-        } while (cursor && tasks.length < 100);
-        cache.set(id, tasks);
+          const page = await tx.scanTasks({ conversationId: id as ConversationId, status: 'terminal', order: 'descending' }, 10, cursor);
+          rows.push(...page.items.map(taskView)); cursor = page.next;
+        } while (cursor && rows.length < 100);
+        history.set(id, rows); return rows;
       }, BACKGROUND_CONTEXT);
       loading.set(id, pending);
     }
-    try { await pending; return cache.get(id)!; }
-    finally { if (loading.get(id) === pending) loading.delete(id); }
+    try { return await pending; } finally { if (loading.get(id) === pending) loading.delete(id); }
+  }
+  return async (id: number): Promise<TaskView[]> => {
+    const graph = await host.harness.watchTaskGraph(BACKGROUND_CONTEXT);
+    try {
+      const live = Object.values(graph.value.tasks).filter(task => task.conversationId === id).map(task => ({
+        id: task.id, name: task.kind, status: task.state.status, error: null,
+      }));
+      return [...new Map([...live, ...await terminalViews(id)].map(row => [row.id, row])).values()].sort((a, b) => b.id - a.id).slice(0, 100);
+    } finally { await graph.stop(); }
   };
 }
 
@@ -131,7 +139,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
   const view = await host.state(id); const study = view.research;
   if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const tasks = await readTasks(id); const final = study.final;
-  const admissions = (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
+  const admissions = await readResearchAdmissions(host);
   return {
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)

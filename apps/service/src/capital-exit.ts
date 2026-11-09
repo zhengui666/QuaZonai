@@ -209,8 +209,7 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
       }
     },
     async wait(task, runtime, context) {
-      await runtime.sleep(task.state.checkpoint.wakeAt ?? runtime.now(), context);
-      await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'reconcile' } }), context);
+      await runtime.sleepUntil(task.state.checkpoint.wakeAt ?? runtime.now(), { phase: 'reconcile' }, context);
     },
   },
   async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },

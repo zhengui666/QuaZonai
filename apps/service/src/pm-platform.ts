@@ -1,5 +1,6 @@
+import { readResearchAdmissions } from './admissions.ts';
 import { ReviewLedger, latestTrialReview } from '../../research/src/review-documents.ts';
-import { boundScienceTarget, pmScienceData, withoutExecutionQuotas } from './science-binding.ts';
+import { boundScienceTarget, pmScienceData } from './science-binding.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -20,7 +21,7 @@ import { captureAccount } from './pm-account.ts';
 import { admitCampaignAccount, campaignAccount, freezeCampaignAccount } from './pm-campaign-account.ts';
 import { retirementAccountFlat } from './pm-account-native.ts';
 import { captureDataset } from './pm-datasets.ts';
-import { PmDocument, assertPmNotDeleted, visiblePmRecord, currentStrategy, digest, ensureRevision, fact, gap, identity, pmRecord, pmState, revise, retireResearchQuotaGaps } from './pm-facts.ts';
+import { PmDocument, assertPmNotDeleted, visiblePmRecord, currentStrategy, digest, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
 import type { PmRecord, PmState } from './pm-facts.ts';
 import { assessStage, PM_CAPABILITY_ID, pmMetricDefinitions, selectionRule } from './pm-registry.ts';
 import { pmView } from './pm-view.ts';
@@ -49,7 +50,7 @@ import { verifyOriginalPrefix } from './pm-science.ts';
 const context = BACKGROUND_CONTEXT;
 type Work = ReturnType<typeof workbench>;
 type Dependencies = { host: ResearchHost; work: Work };
-const supportedKeys = new Set(['requestId', 'goal', 'datasetId', 'funding', 'model', 'thinkingLevel', 'serviceTier', 'maxTrials', 'operatingAuthority', 'businessPreference']);
+const supportedKeys = new Set(['requestId', 'goal', 'datasetId', 'funding', 'model', 'thinkingLevel', 'serviceTier', 'operatingAuthority', 'businessPreference']);
 // One method invocation compares its declared capital points and matched baseline.
 // This is an execution plan, independent of legacy owner trial quotas.
 const downstreamTrialCount = 4;
@@ -241,7 +242,6 @@ export function createPmPlatform(config: ServiceConfig) {
           // Native science is admitted before execution; failures consume the same identities.
           await runtime.commit(async tx => {
             const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
-            retireResearchQuotaGaps(record);
             record.artifacts[originalEvidenceId] = { kind: 'PM_ORIGINAL_NATIVE_EVIDENCE_REFERENCE', conversationId: source.conversationId, taskId: source.id };
             record.evidence[originalEvidenceId] = { id: originalEvidenceId, sourceKind: 'NATIVE_RESULT', role: 'SELECTION', runtime: { conversationId: source.conversationId, taskId: source.id },
               objectKey: originalEvidenceId, contentDigest: null, mediaType: 'application/json', sourceRevision: cycle.basisRevision, eventInterval: null,
@@ -397,7 +397,6 @@ export function createPmPlatform(config: ServiceConfig) {
         let suspended = false;
         await runtime.commit(async tx => {
           const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
-          retireResearchQuotaGaps(stored);
           if (stored.deletedAt) { suspended = true; return { status: 'terminal', outcome: { status: 'completed', result: null } }; }
           if (Object.values(stored.retirements).some(item => item.strategyVersionId === stored.latestStrategyId)) { suspended = true; return { status: 'running', checkpoint: { phase: 'observe' } }; }
           const app = await tx.doc(Application); const maintenance = maintenanceState(app);
@@ -439,14 +438,13 @@ export function createPmPlatform(config: ServiceConfig) {
             ...(record.input.serviceTier !== undefined ? { serviceTier: record.input.serviceTier } : {}),
             policy: { ...configured.policy, ...(configured.strategy ? { strategy: configured.strategy } : {}) }, campaign: binding,
           } });
-          const [application, native] = await Promise.all([runtime.snapshot(Application, ctx), runtime.snapshot(Requests, ctx)]);
+          const native = await runtime.snapshot(Requests, ctx);
           const key = `request:${requestId}`;
-          // A prior release may have admitted this same request before the monitor
-          // persisted its conversation. Replay its complete immutable body; only
-          // genuinely new admissions use the current quota-free construction.
-          const retained = application?.researchRequests[key]?.original
+          // Intake can commit before the monitor records its conversation.
+          // Reuse that exact original request when this phase resumes.
+          const retained = native?.requests[key]?.metadata?.original
             ?? (native?.requests[key] ? json({ requestId, input: native.requests[key]!.input }) : null);
-          if (retained && canonical(withoutExecutionQuotas(retained)) !== canonical(withoutExecutionQuotas(proposed))) throw new Problem('request_id_conflict', 409);
+          if (retained && canonical((retained)) !== canonical((proposed))) throw new Problem('request_id_conflict', 409);
           const receipt = await work.startResearch(retained ?? proposed, typeof target === 'string' ? undefined : target);
           await runtime.commit(async tx => {
             const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const current = stored.campaigns[campaign.id]!;
@@ -468,7 +466,6 @@ export function createPmPlatform(config: ServiceConfig) {
         let parked = false; let maintenanceOnly = false;
         await runtime.commit(async tx => {
           const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
-          retireResearchQuotaGaps(stored);
           if (stored.deletedAt) { parked = true; return { status: 'terminal', outcome: { status: 'completed', result: null } }; }
           const maintenance = maintenanceState(await tx.doc(Application));
           maintenanceOnly = !!maintenance && maintenance.state !== 'RUNNING';
@@ -518,7 +515,6 @@ export function createPmPlatform(config: ServiceConfig) {
         const original = campaign.runtime.conversationId !== record.conversationId ? await host.state(campaign.runtime.conversationId) : null;
         await runtime.commit(async tx => {
           const latest = pmState(await tx.doc(PmDocument)); const stored = pmRecord(latest, task.input.mandateId);
-          retireResearchQuotaGaps(stored);
           if (stored.deletedAt) return { status: 'terminal', outcome: { status: 'completed', result: null } };
           const current = stored.campaigns[campaign.id]!;
           // An owner clarification may replace the campaign while this task was
@@ -583,8 +579,7 @@ export function createPmPlatform(config: ServiceConfig) {
               for (const missing of scientific.intake.missingCapabilities) gap(stored, missing, missing, ['owner_boundary_normalization_required', 'pm_account_consumer_not_requested'].includes(missing) ? 'CLARIFY_INTENT' : 'UNSUPPORTED');
             }
           }
-          if (!maintenanceOnly && research?.final && current.state !== 'PAUSED' && stored.artifacts[`strategy-control:${stored.latestStrategyId}`]?.action !== 'pause' && !retired && (!scientific?.binding || scientific.state === 'CONCLUDED')) {
-            if (!scientific?.binding) { current.state = 'CONCLUDED'; current.conclusionReason = 'legacy_research_has_no_pm_comparison'; }
+          if (!maintenanceOnly && research?.final && scientific?.binding && scientific.state === 'CONCLUDED' && current.state !== 'PAUSED' && stored.artifacts[`strategy-control:${stored.latestStrategyId}`]?.action !== 'pause' && !retired) {
             const source = identity('research-evidence', [campaign.runtime.conversationId, research.trials, research.final]);
             await enqueue(tx, latest, stored, { id: identity('event', source), kind: 'RESEARCH_EVIDENCE', sourceRevisionRef: source,
               availableAtNs: nowNs(), affectedMandateIds: [stored.mandate.id], supersedesEventId: null });
@@ -682,8 +677,7 @@ export function createPmPlatform(config: ServiceConfig) {
           return { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } };
         }, ctx);
       },
-      async wait(task, runtime, ctx) { await runtime.sleep(task.state.checkpoint.wakeAt, ctx); await runtime.commit(async tx => pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).deletedAt
-        ? { status: 'terminal', outcome: { status: 'completed', result: null } } : { status: 'running', checkpoint: { phase: 'observe' } }, ctx); },
+      async wait(task, runtime, ctx) { await runtime.sleepUntil(task.state.checkpoint.wakeAt, { phase: 'observe' }, ctx); },
       async maintenance(task, runtime, ctx) { await runtime.commit(async tx => pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).deletedAt
         ? { status: 'terminal', outcome: { status: 'completed', result: null } } : resumeMaintenance(tx, runtime.taskId, 'qz.pm.mandate-monitor', task.state.checkpoint), ctx); },
     },

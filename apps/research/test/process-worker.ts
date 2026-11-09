@@ -1,11 +1,13 @@
+import { obj } from '@earendil-works/pi-schema';
 // A real process crash probe using official model/storage/tool execution.
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { configure, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { evaluateTrial } from '../src/trials.ts';
+import { ResearchIntakeTask } from '../src/intake.ts';
 import { Requests, Study } from '../src/documents.ts';
 
 const directory = process.argv[2]!;
@@ -15,7 +17,7 @@ const faux = fauxProvider({ models: [{ id: 'crash-probe' }], tokensPerSecond: 10
 const models = createModels(); models.setProvider(faux.provider);
 faux.setResponses([fauxAssistantMessage(fauxToolCall('crash_probe', {}, { id: 'original-call' }), { stopReason: 'toolUse' })]);
 const plugin = defineExtension({ name: 'crash-probe', tools: [defineTool({
-  name: 'crash_probe', description: 'Protocol test only', parameters: Type.Object({}), replay,
+  name: 'crash_probe', description: 'Protocol test only', parameters: obj({}), replay,
   async execute(_args, api, context) {
     if (failed) {
       try {
@@ -34,22 +36,15 @@ const plugin = defineExtension({ name: 'crash-probe', tools: [defineTool({
 })] });
 const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [plugin] });
 if (process.argv[3] === 'admission') {
-  const input = { goal: 'Recover the original admitted objective', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { max_trials: 3 } };
-  const ids = await host.harness.commit(async (tx) => {
-    const requests = await tx.doc(Requests);
-    const ids = [];
-    for (const requestId of ['admission-gap', 'stopped-gap', 'final-gap']) {
-      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-      await configure(tx, conversation.id, { model: input.model, instructions: input.goal });
-      const study = await tx.doc(Study, conversation.id); study.input = input;
-      if (requestId !== 'admission-gap') study.final = { status: requestId === 'stopped-gap' ? 'STOPPED' : 'COMPUTED', reason: requestId };
-      requests.requests[`request:${requestId}`] = { conversationId: conversation.id, input };
-      ids.push(conversation.id);
-    }
-    return ids;
-  }, BACKGROUND_CONTEXT);
-  setInterval(() => {}, 1000); // Keep the crash probe alive; parent kills at the committed stdout boundary.
-  process.stdout.write(`${JSON.stringify({ entered: true, ids, input })}\n`);
+  const input = { goal: 'Recover the original admitted objective', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { } };
+  const create = ResearchIntakeTask.definition.phases.create;
+  Object.defineProperty(ResearchIntakeTask.definition.phases, 'create', { value: async (...args: Parameters<typeof create>) => {
+    await create(...args);
+    const request = (await host.harness.snapshot(Requests, BACKGROUND_CONTEXT))!.requests['request:admission-gap']!;
+    process.stdout.write(`${JSON.stringify({ entered: true, ids: [request.conversationId], input })}\n`);
+    await awaitWithContext(new Promise<void>(() => {}), args[2]);
+  } });
+  void host.start('admission-gap', input);
   await new Promise<void>(() => {});
 }
 const receipt = await host.start('original-request', { goal: 'Crash recovery protocol test', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });

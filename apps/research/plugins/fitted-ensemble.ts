@@ -1,8 +1,8 @@
+import { arr, int, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { nativeTargetForData } from '../src/native-execution.ts';
-import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Study } from '../src/documents.ts';
-import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.ts';
+import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { resolvePortfolioPolicy } from '../src/strategy.ts';
 import { checkExposure } from './native-exposure.ts';
 import { FittedEnsembleTask, runFittedEnsemble } from './fitted-ensemble-task.ts';
@@ -11,8 +11,8 @@ import { iterationRequest } from './native-wasm.ts';
 import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 
 export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsembleTask], tools: [defineTool({
-  name: 'strategy_ensemble_fit', description: 'Fit calibrated nonnegative signal weights from at least two original COMPUTED Wasm factor trials or service-admitted historical factor IDs in policy.reviewedFactorSources. Use exactly one of sourceTrialIds/sourceFactorIds. Native TRAIN-only expanding folds fit calibration and weights; unavailable full prediction panels fail explicitly. No user/model supplied weights. Consumes one ENSEMBLE_FIT attempt, including failure. This fit is not account validation.',
-  parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), sourceTrialIds: Type.Optional(Type.Array(Type.Integer(), { minItems: 2 })), sourceFactorIds: Type.Optional(Type.Array(Type.String(), { minItems: 2 })) }), replay: 'safe', executionMode: 'sequential',
+  name: 'strategy_ensemble_fit', structuredOutputSchema: trialFeedbackSchema, description: 'Fit calibrated nonnegative signal weights from at least two original COMPUTED Wasm factor trials or service-admitted historical factor IDs in policy.reviewedFactorSources. Use exactly one of sourceTrialIds/sourceFactorIds. Native TRAIN-only expanding folds fit calibration and weights; unavailable full prediction panels fail explicitly. No user/model supplied weights. Consumes one ENSEMBLE_FIT attempt, including failure. This fit is not account validation.',
+  parameters: obj({ hypothesis: str(), hypothesisId: opt(str()), sourceTrialIds: opt(arr(int(), { minItems: 2 })), sourceFactorIds: opt(arr(str(), { minItems: 2 })) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context); const study = await api.snapshot(Study, api.conversationId, context);
     if (isTickResearchInput(input.data)) throw new Error('tick_ensemble_unsupported');
@@ -32,11 +32,11 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
     return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
       return runFittedEnsemble(api, context, { mode: 'FIT', data: input.data, members: sources, binary: nativeTargetForData(input.data) });
-    }));
+    }), true);
   },
 }), defineTool({
-  name: 'strategy_ensemble_evaluate', description: 'Jointly replay one original native fitted ensemble on VALIDATION in one shared account. Reuses the frozen calibration and exact native weights; never refits or averages individual PnLs. Consumes a separate JOINT_REPLAY attempt including failure.',
-  parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), fitTrialId: Type.Integer(), instrumentId: Type.Optional(Type.String()), allocations: Type.Optional(Type.Union([Type.Literal('ALL_EQUAL'), Type.Array(Type.Object({ instrumentId: Type.String(), weight: Type.String() }))])) }), replay: 'safe', executionMode: 'sequential',
+  name: 'strategy_ensemble_evaluate', structuredOutputSchema: trialFeedbackSchema, description: 'Jointly replay one original native fitted ensemble on VALIDATION in one shared account. Reuses the frozen calibration and exact native weights; never refits or averages individual PnLs. Consumes a separate JOINT_REPLAY attempt including failure.',
+  parameters: obj({ hypothesis: str(), hypothesisId: opt(str()), fitTrialId: int(), instrumentId: opt(str()), allocations: opt(union([lit('ALL_EQUAL'), arr(obj({ instrumentId: str(), weight: str() }))])) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context); const study = await api.snapshot(Study, api.conversationId, context);
     if (isTickResearchInput(input.data)) throw new Error('tick_ensemble_unsupported');
@@ -52,6 +52,6 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
       if (policy.kind === 'catalog-ensemble') throw new Error('ensemble_full_prediction_panel_required');
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
       return runFittedEnsemble(api, context, { mode: 'REPLAY', data: input.data, fitTaskId: fit.evidenceTaskId as number, policy, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
-    }));
+    }), true);
   },
 })] });

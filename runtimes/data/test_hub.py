@@ -1,11 +1,13 @@
 import datetime
 import json
+import io
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from hub import acquire, relative_path, select_files
+from hub import relative_path, select_files
+from _source_test_fixtures import hub_acquisition
 
 
 class PublicSelectionTests(unittest.TestCase):
@@ -51,25 +53,26 @@ class PublicSelectionTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 select_files(profile, inventory, start, end, ["trades"], invalid)
 
-    def test_additive_profile_hint_preserves_existing_default_acquisition(self):
+    def test_frozen_profile_changes_require_distinct_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "fills.parquet").write_bytes(b"raw")
-            selection = {"profile": {"repository": "fixture/source", "revision": "fixed", "streams": []},
-                         "revision": "fixed", "files": [{"path": "fills.parquet", "size": 3}], "missing": []}
-            previous = selection | {"retrieved_at": "2026-01-01T00:00:00Z"}
-            manifest = root / "market-data.json"
-            manifest.write_text(json.dumps(previous))
+            revision = "a" * 40
+            selection = {"schema_version": 1, "repository": "fixture/source", "revision": revision,
+                         "license": "FIXTURE", "total_bytes": 3, "profile": {"streams": []},
+                         "files": [{"path": "fills.parquet", "size": 3,
+                                    "url": f"https://huggingface.co/datasets/fixture/source/resolve/{revision}/fills.parquet"}]}
+            output, cache = root / "output", root / "cache"
+            with patch("hub.urllib.request.urlopen", return_value=io.BytesIO(b"raw")):
+                previous = hub_acquisition(selection, cache, output)
+            manifest = output / "market-data.json"
             original = manifest.read_bytes()
-            updated = selection | {"profile": selection["profile"] | {"research_trade_path_prefixes": ["perps/", "spot/"]}}
-            with patch("hub.urllib.request.urlopen", side_effect=AssertionError("existing files must not download")):
-                self.assertEqual(acquire(updated, root), previous)
+            updated = selection | {"profile": {"streams": [], "research_trade_path_prefixes": ["perps/", "spot/"]}}
+            with patch("hub.urllib.request.urlopen", side_effect=AssertionError("completed units must not download")):
+                self.assertEqual(hub_acquisition(selection, cache, output), previous)
+                with self.assertRaisesRegex(ValueError, "another plan"):
+                    hub_acquisition(updated, cache, output)
             self.assertEqual(manifest.read_bytes(), original)
-            for changed in (updated | {"selected_path_prefixes": ["perps/"]},
-                            updated | {"profile": updated["profile"] | {"streams": [{"name": "different"}]}}):
-                with self.assertRaises(ValueError):
-                    acquire(changed, root)
-            self.assertEqual((root / "fills.parquet").read_bytes(), b"raw")
+            self.assertEqual(Path(previous["source_root"]).joinpath("fills.parquet").read_bytes(), b"raw")
 
 
 if __name__ == "__main__":

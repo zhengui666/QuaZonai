@@ -17,6 +17,8 @@ export function validateNumbers(value: unknown): void {
 
 export function researchInput(value: unknown): ResearchInput {
   const input = record(value, 'research_input');
+  const fields = new Set(['goal', 'specification', 'publicLiteratureQueries', 'campaign', 'model', 'thinkingLevel', 'serviceTier', 'data', 'policy']);
+  if (Object.keys(input).some(key => !fields.has(key))) throw new Error('research_input_fields_unsupported');
   validateNumbers(input);
   const model = record(input.model, 'model');
   if (typeof input.goal !== 'string' || !input.goal.trim()) throw new Error('research_goal_required');
@@ -30,6 +32,7 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  if (['max_trials', 'maxTrials', 'maximumScientificCalls', 'maximumTrials', 'maximumModelTurns', 'nativeComputeSeconds', 'modelSpend', 'dataBytes'].some(key => Object.hasOwn(policy, key))) throw new Error('research_policy_fields_unsupported');
   if (policy.reviewPolicy !== undefined) validateReviewPolicy(policy.reviewPolicy);
   if (policy.reviewPolicies !== undefined) {
     const reviews = record(policy.reviewPolicies, 'review_policies');

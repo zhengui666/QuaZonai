@@ -195,7 +195,7 @@ export const PmTargetTask = defineTask<{ mandateId: string; commandId: string; r
         }, context);
       }
     },
-    async wait(task, runtime, context) { await runtime.sleep(task.state.checkpoint.wakeAt, context); await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'reconcile' } }), context); },
+    async wait(task, runtime, context) { await runtime.sleepUntil(task.state.checkpoint.wakeAt, { phase: 'reconcile' }, context); },
   },
   async abort(task, runtime, context) { await runtime.commit(async tx => {
     const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const command = record.commands[task.input.commandId]!;

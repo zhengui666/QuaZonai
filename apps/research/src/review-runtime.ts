@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonical } from './documents.ts';
-import { configure, defineDoc, defineTask } from '@earendil-works/pi-durable';
-import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
+import { configure, defineDoc, defineTask, LiveDoc } from '@earendil-works/pi-durable';
+import type { ConversationId, JsonObject, TaskId, SubmissionId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import type { ReviewCheck, ReviewMetric, ReviewPolicy, ReviewReport, ReviewTarget } from '../../../packages/contracts/src/review.ts';
 import { scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
@@ -19,57 +19,61 @@ export interface IndependentReviewInput {
   evidence: JsonObject; checks: ReviewCheck[]; metrics: ReviewMetric[]; createdAt: string;
 }
 const json = (value: unknown): JsonObject => JSON.parse(JSON.stringify(value)) as JsonObject;
-const Binding = defineDoc<{ conversationId: ConversationId | null; submissionId: number | null; nativeTasks: Record<string, TaskId<JsonObject>> }>({
-  kind: 'qz.review-task', version: 1, scope: 'task', initial: () => ({ conversationId: null, submissionId: null, nativeTasks: {} }),
-});
 const Child = defineDoc<{ bindings: Record<string, { taskId: TaskId<JsonObject>; digest: string }> }>({
-  kind: 'qz.review-child', version: 1, scope: 'task', initial: () => ({ bindings: {} }),
+  kind: 'qz.review-child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ bindings: {} }),
 });
 
 /** Shared by research closure and optional portfolio consumers. All input is host-resolved evidence. */
-export const IndependentReviewTask = defineTask<IndependentReviewInput, { phase: 'review' }, JsonObject>({
-  name: 'qz.review.independent', version: 1, initial: () => ({ phase: 'review' }),
-  phases: { async review(task, runtime, context) {
-    let reviewer: ConversationId | undefined;
-    try {
+type ReviewCheckpoint = { phase: 'create' }
+  | { phase: 'science'; reviewer: ConversationId; nativeTasks: TaskId<JsonObject>[] }
+  | { phase: 'complete'; reviewer: ConversationId; submissionId: SubmissionId };
+export const IndependentReviewTask = defineTask<IndependentReviewInput, ReviewCheckpoint, JsonObject>({
+  name: 'qz.review.independent', version: 1, initial: () => ({ phase: 'create' }),
+  phases: {
+    async create(task, runtime, context) {
       await runtime.commit(async tx => {
-        const binding = await tx.doc(Binding, task.id);
-        if (binding.conversationId !== null) { reviewer = binding.conversationId; return undefined; }
         const conversation = await tx.createConversation({ ownership: { kind: 'task', taskId: task.id } });
-        reviewer = conversation.id;
-        await configure(tx, reviewer, { model: task.input.model, thinkingLevel: task.input.thinkingLevel,
+        await configure(tx, conversation.id, { model: task.input.model, thinkingLevel: task.input.thinkingLevel,
           extensions: [reviewExtension], tools: null, instructions: reviewInstructions });
-        const session = await tx.doc(ReviewSession, reviewer);
+        const session = await tx.doc(ReviewSession, conversation.id);
         session.binding = json({ target: task.input.target, policy: task.input.policy, evidenceRefs: task.input.target.sourceEvidenceRefs });
         session.evidence = json(task.input.evidence);
-        binding.conversationId = reviewer;
-        return undefined;
+        const nativeTasks: TaskId<JsonObject>[] = [];
+        for (const plan of task.input.sciencePlans ?? []) nativeTasks.push(await tx.createTask(ReviewNativeTask, plan, { ownership: { kind: 'task', taskId: task.id } }));
+        const checkpoint = { phase: 'science' as const, reviewer: conversation.id, nativeTasks };
+        return nativeTasks.length ? { status: 'waiting', checkpoint, on: nativeTasks, policy: 'allSettled' } : { status: 'running', checkpoint };
       }, context);
-      for (const plan of task.input.sciencePlans ?? []) {
-        let nativeId!: TaskId<JsonObject>;
-        await runtime.commit(async tx => {
-          const binding = await tx.doc(Binding, task.id);
-          binding.nativeTasks[plan.kind] ??= await tx.createTask(ReviewNativeTask, plan, { ownership: { kind: 'task', taskId: task.id } });
-          nativeId = binding.nativeTasks[plan.kind]!;
-          return undefined;
-        }, context);
-        const native = await runtime.waitForTask(nativeId, context);
-        await runtime.commit(async tx => {
-          const session = await tx.doc(ReviewSession, reviewer!);
+    },
+    async science(task, runtime, context) {
+      const { reviewer, nativeTasks } = task.state.checkpoint;
+      const native = await runtime.outcomes(nativeTasks, context);
+      const handle = await runtime.conversation(reviewer, context);
+      if (!handle) throw new Error('review_conversation_missing');
+      await runtime.commit(async tx => {
+        const submissionId = await handle.submit(tx, { type: 'input', requestId: `review:${task.id}`,
+          content: 'Review this immutable candidate. Read each of the six evidence tools and finish with the evidence-cited mechanism checklist, findings and narrative. Unsupported checks must remain explicit.' });
+        const session = await tx.doc(ReviewSession, reviewer);
+        for (const [index, plan] of (task.input.sciencePlans ?? []).entries()) {
+          const outcome = native[index]!;
+          const result = outcome.status === 'completed' ? outcome.result : null;
           const section = plan.kind === 'SELECTION' ? 'selection' : plan.kind === 'PORTFOLIO' ? 'portfolio' : 'factor';
-          const result = native.state.outcome.status === 'completed' ? native.state.outcome.result : null;
           session.evidence![section] = result ? { status: 'COMPLETE', result, evidenceRef: plan.evidenceRef }
             : { status: 'INCOMPLETE', reason: 'review_science_unavailable', evidenceRef: plan.evidenceRef };
-          if (result && !session.nativeResults.some(row => row.kind === plan.kind)) session.nativeResults.push({ kind: plan.kind, ...result });
-          return undefined;
-        }, context);
-      }
-      const handle = await runtime.conversation(reviewer!, context);
-      if (!handle) throw new Error('review_conversation_missing');
-      const submission = await handle.submit({ type: 'input', requestId: `review:${task.id}`,
-        content: 'Review this immutable candidate. Read each of the six evidence tools and finish with the evidence-cited mechanism checklist, findings and narrative. Unsupported checks must remain explicit.' }, context);
-      await runtime.commit(async tx => { (await tx.doc(Binding, task.id)).submissionId = submission.id; return undefined; }, context);
-      await submission.wait(context);
+          if (result) session.nativeResults.push({ kind: plan.kind, ...result });
+        }
+        const checkpoint = { phase: 'complete' as const, reviewer, submissionId };
+        const generation = (await tx.doc(LiveDoc, reviewer)).run?.taskId;
+        return generation ? { status: 'waiting', checkpoint, on: [generation], policy: 'allSettled' } : { status: 'running', checkpoint };
+      }, context);
+    },
+    async complete(task, runtime, context) {
+      const reviewer = task.state.checkpoint.reviewer;
+      try {
+        const live = await runtime.snapshot(LiveDoc, reviewer, context);
+        if (live?.run) {
+          await runtime.commit(() => ({ status: 'waiting', checkpoint: task.state.checkpoint, on: [live.run!.taskId], policy: 'allSettled' }), context);
+          return;
+        }
       const session = await runtime.snapshot(ReviewSession, reviewer!, context);
       const checks = structuredClone(task.input.checks); const metrics = structuredClone(task.input.metrics);
       for (const native of session?.nativeResults ?? []) if (Array.isArray(native.metrics)) {

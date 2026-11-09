@@ -1,6 +1,6 @@
 //! Operator-only historical data preparation. Not a scientific job or trading client.
 //! Native clients own HTTP, pagination, asset parsing and market-data serialization.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use contracts::SchemaV1;
@@ -26,7 +26,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const NATIVE_VERSION: &str = "0.67.0";
+const NATIVE_VERSION: &str = "0.68.0";
 
 #[path = "history/archive.rs"]
 mod archive;
@@ -350,8 +350,7 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         )?;
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
         ensure!(
-            bar.bar_type.is_externally_aggregated()
-                && bar.bar_type.spec().price_type == PriceType::Last,
+            !bar.bar_type.is_composite() && bar.bar_type.spec().price_type == PriceType::Last,
             "ONLY_NATIVE_LAST_BARS"
         );
         ensure!(

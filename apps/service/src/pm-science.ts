@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -60,7 +59,7 @@ export interface PmAccountScienceResult {
 
 export async function implementationIdentity(binary: NativeTarget, context?: Context): Promise<string> {
   if (typeof binary !== 'string') return (await remoteNativeCapabilities(binary, context?.abortSignal)).implementationDigest;
-  if (process.env.QZ_REQUIRE_REMOTE_NAUTILUS === '1') throw new Error('legacy_local_nautilus_task_requires_migration');
+  if (process.env.QZ_REQUIRE_REMOTE_NAUTILUS === '1') throw new Error('local_nautilus_target_disabled');
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(binary)) hash.update(chunk);
   return `sha256:${hash.digest('hex')}`;
@@ -74,7 +73,7 @@ export async function verifyOriginalPrefix(source: JsonObject, catalog: string, 
   const expected = object(source.catalogPrefix, 'original_fit_catalog_prefix_evidence');
   const selection = object(object(object(source.request).forecast).selection, 'original_fit_prefix_selection');
   if (expected.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || typeof expected.content_sha256 !== 'string'
-    || !/^[0-9a-f]{64}$/.test(expected.content_sha256) || canonical(withoutExecutionQuotas(expected.selection!)) !== canonical(withoutExecutionQuotas(selection))) throw new Error('pm_original_catalog_prefix_evidence_invalid');
+    || !/^[0-9a-f]{64}$/.test(expected.content_sha256) || canonical((expected.selection!)) !== canonical((selection))) throw new Error('pm_original_catalog_prefix_evidence_invalid');
   const root = join(dataDir, 'scratch'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'pm-source-prefix-'));
   try {
@@ -206,7 +205,7 @@ export async function evaluatePmIndependent(input: PmIndependentInput, context: 
   const selectedData = object(input.source.data, 'original_fit_source_data');
   if (typeof selectedData.catalog !== 'string' || typeof input.heldoutData.catalog !== 'string') throw new Error('pm_original_catalog_binding_missing');
   const request = object(input.source.request, 'selected_factor_request');
-  if (canonical(withoutExecutionQuotas(iterationRequest(input.heldoutData, true))) !== canonical(withoutExecutionQuotas(request))) throw new Error('pm_independent_training_contract_mismatch');
+  if (canonical((iterationRequest(input.heldoutData, true))) !== canonical((request))) throw new Error('pm_independent_training_contract_mismatch');
   const heldoutRequest = normalizedRequest(input.heldoutData);
   const forecastRequest = object(heldoutRequest.forecast, 'independent_forecast_request');
   const selected = object(forecastRequest.selection, 'independent_selection');
@@ -319,7 +318,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     for (const [index, member] of sourceMembers.entries()) {
       const fitted = fittedMembers[index]!; const report = reports[index]!;
       if (typeof member.model !== 'string' || member.factorVersionId !== fitted.factor_version_id || member.factorVersionId !== report.factor_version_id
-        || fitted.source_evidence_ref !== report.source_evidence_ref || canonical(withoutExecutionQuotas(object(report.report).request!)) !== canonical(withoutExecutionQuotas(request))) throw new Error('pm_factor_report_model_binding_mismatch');
+        || fitted.source_evidence_ref !== report.source_evidence_ref || canonical((object(report.report).request!)) !== canonical((request))) throw new Error('pm_factor_report_model_binding_mismatch');
       const reportId = await put(object(report.report));
       frozenMembers.push({ factor_version_id: fitted.factor_version_id!, report_artifact_id: reportId, report: report.report! });
     }
@@ -367,7 +366,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
       : await retained('capital-plan', () => executeNative(input.binary, 'capital-curve', { schema_version: 1,
       simulation: { ...original, settings }, capital_basis: { currency: input.currency, equity: input.capital.amount, reserved: '0', owner_liquidity_reserve: '0' },
       // Planning only: this admission clock does not install an execution deadline.
-      budget: { maximum_simulations: maximumPoints } }, ['--catalog', input.catalog, '--plan-only',
+      budget: { maximum_simulations: maximumPoints } }, ['--catalog', input.catalog,
         ...(account ? ['--dataset-revision-id', String(account.bridge.id)] : [])], directory, context));
     if ((!independent && planned.termination !== 'PLANNED_ONLY') || !Array.isArray(object(planned.generation).planned_capitals)) throw new Error('pm_capital_planner_result_invalid');
     const capitalPoints = object(planned.generation).planned_capitals as string[];

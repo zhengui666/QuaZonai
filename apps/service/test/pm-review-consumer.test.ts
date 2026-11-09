@@ -1,8 +1,8 @@
+import { obj, str } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -84,7 +84,7 @@ for (const mode of ['complete', 'missing', 'negative'] as const) test(`PM consum
     let produced: ReviewReport | undefined;
     const producer = defineExtension({ name: 'test.pm-controlled-review-producer', tasks: [SourceTask], tools: [defineTool({
       name: 'test_reviewed_fitted_trial', description: 'TEST_ONLY reviewed producer fixture, not market/PIT/model evidence.',
-      parameters: Type.Object({ hypothesisId: Type.String() }), replay: 'safe', executionMode: 'sequential',
+      parameters: obj({ hypothesisId: str() }), replay: 'safe',
       async execute(args, api, ctx) {
         const input = (await api.snapshot(Study, api.conversationId, ctx))!.input!;
         const original = { ...source, ...object(replay.evidence), fitRequest: source.fitRequest!, data: json(input.data), fixtureProvenance: 'TEST_ONLY_CONTROLLED_REVIEW_PRODUCER' };
@@ -111,7 +111,7 @@ for (const mode of ['complete', 'missing', 'negative'] as const) test(`PM consum
             metrics, narrative: 'TEST_ONLY producer fixture for PM consumer protocol. No market/PIT/model quality or profitability is established.', createdAt: '2026-11-02T00:00:00Z' });
           (await tx.doc(ReviewLedger, api.conversationId)).records[version] = { trialId: api.taskId, version, policyId: policy.id, status: 'COMPLETED', report: json(produced), fixture: 'TEST_ONLY_CONTROLLED_PRODUCER' };
         }, ctx);
-        return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, fixture: 'TEST_ONLY_CONTROLLED_PRODUCER' }) }] };
+        return { output: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, fixture: 'TEST_ONLY_CONTROLLED_PRODUCER' }) }] };
       },
     })] });
     state.options.extensions = [research, producer]; await state.restart();
@@ -126,7 +126,7 @@ for (const mode of ['complete', 'missing', 'negative'] as const) test(`PM consum
     ]);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: `TEST_ONLY_PM_REVIEW_${mode}`, goal: 'TEST_ONLY portfolio account capital decision consumer protocol; compare original native shared account with cash.',
-        datasetId: dataset.id, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model, businessPreference: 'NET_RETURN', maxTrials: 12 } });
+        datasetId: dataset.id, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model, businessPreference: 'NET_RETURN' } });
     assert.equal(response.statusCode, 202, response.body); const id = response.json<Pm.PmMandateView>().mandate.id;
     const deadline = Date.now() + 210_000;
     let record = pmRecord(pmState(await state.service.pm.snapshot()), id);

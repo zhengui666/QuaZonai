@@ -13,7 +13,7 @@ import { context, setup } from './support.ts';
 // Source/receipt protocol only. These controlled records grant no strategy,
 // scientific, native-engine or execution qualification. The test persists the
 // actual outcome consumer through official SQLite commits and service restart.
-const Probe = defineDoc<JsonObject>({ kind: 'test.pm-outcome-heartbeats', version: 1, scope: 'session', initial: () => ({ value: {} }) });
+const Probe = defineDoc<JsonObject>({ kind: 'test.pm-outcome-heartbeats', version: 1, scope: 'session', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, initial: () => ({ value: {} }) });
 function fixture() {
   const f = accountSourceFixture(); const original = f.capture();
   const observed = f.application.observations[f.connection.id]!;

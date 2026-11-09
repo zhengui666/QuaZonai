@@ -87,7 +87,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
         },
         quality: NativeDataQualityReportV1 {
             schema_version: SchemaV1,
-            native_version: "nautilus-persistence/0.67.0".into(),
+            native_version: "nautilus-persistence/0.68.0".into(),
             checked_at: instant(301),
             datasets: vec![NativeDatasetQualityV1 {
                 settlements: Vec::new(),

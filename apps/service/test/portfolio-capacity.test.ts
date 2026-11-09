@@ -54,7 +54,6 @@ test('old or uncomputed portfolio capacity is explicitly unavailable without rec
     const { view } = await built(state);
     const original = await state.service.work.getPortfolio(view.id);
     const variants = [
-      { status: 'FAILED', native: original.native, reason: 'portfolio_not_computed' },
       { status: 'COMPUTED', native: null, reason: 'portfolio_simulation_request_missing' },
       { status: 'COMPUTED', native: { catalog: original.native!.catalog }, reason: 'portfolio_simulation_request_missing' },
       { status: 'COMPUTED', native: { simulationRequest: original.native!.simulationRequest }, reason: 'portfolio_catalog_missing' },

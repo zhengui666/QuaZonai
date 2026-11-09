@@ -27,7 +27,9 @@ test('CryptoHFTData conversion stays in the remote native image', async () => {
   const context = await readFile(new URL('./Dockerfile.dockerignore', import.meta.url), 'utf8');
   const application = docker.split('FROM scratch AS application-source\n')[1].split('\nFROM application-source AS nautilus-source')[0];
   const native = docker.split('FROM application-source AS nautilus-source\n')[1].split('\nFROM node AS execution-base')[0];
-  assert.doesNotMatch(application, /runtimes\/data\/(?:hub\.py|sources\/hyperliquid\.json)/);
+  assert.doesNotMatch(application, /runtimes\/data\/cryptohftdata\.py/);
+  for (const name of ['source_units.py', 'hub.py', 'acquire.py', 'providers.py', 'snapshot.py', 'hf_dataset.py']) assert.ok(application.includes(`runtimes/data/${name}`));
+  assert.match(docker, /QZ_SOURCE_UNIT_TOOL=\/opt\/quazonai\/operator\/source_units\.py/);
   assert.ok(native.includes('runtimes/data/cryptohftdata.py'));
   assert.ok(context.includes('!runtimes/data/*.py'));
 });

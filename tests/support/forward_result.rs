@@ -50,12 +50,13 @@ pub async fn complete(
     };
     let result = NativeForwardResultV1 {
         schema_version: SchemaV1,
-        native_version: "0.67.0".into(),
+        native_version: "0.68.0".into(),
         window: request.window.clone(),
         statistics: [
             "Average (Return)",
             "Returns Volatility (365 days)",
             "Sharpe Ratio (365 days)",
+            "CAGR (365 days)",
         ]
         .into_iter()
         .map(|key| NativeStatisticV1 {

@@ -1,6 +1,6 @@
 import { defineDoc } from '@earendil-works/pi-durable';
 import type { JsonValue } from '@earendil-works/chord';
-import type { JsonObject, ConversationId } from '@earendil-works/pi-durable';
+import type { JsonObject, ConversationId, SubmissionId, TaskId } from '@earendil-works/pi-durable';
 
 export type ResearchInput = JsonObject & {
   goal: string;
@@ -24,16 +24,19 @@ export const Study = defineDoc<{
   deletedFactors?: Record<string, string>;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
 }>({
-  kind: 'qz.study', version: 1, scope: 'conversation', history: 'rewindable',
+  kind: 'qz.study', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'rewindable',
   fork: 'current', initial: () => ({ input: null, trials: [], final: null }),
 });
 
 export const Requests = defineDoc<{ requests: Record<string, {
-  input: JsonValue; conversationId: ConversationId;
+  input: JsonValue; inputDigest?: string; conversationId: ConversationId | null;
+  taskId?: TaskId<import('./intake.ts').ResearchAdmission>;
+  submissionId?: SubmissionId | null;
+  metadata?: JsonObject;
   sourceEvidence?: JsonObject;
   recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' };
 }> }>({
-  kind: 'qz.research-requests', version: 1, scope: 'session',
+  kind: 'qz.research-requests', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session',
   initial: () => ({ requests: {} }),
 });
 

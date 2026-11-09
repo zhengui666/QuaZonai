@@ -30,27 +30,3 @@ test('external allocation results are checked against exact caps and turnover be
   invalid.members[0].weight = '0.56'; invalid.members[1].weight = '0.44';
   assert.throws(() => validateReviewAllocationWeights(invalid, structuredClone(policy) as any), /turnover_violated/);
 });
-test('stage receipts survive restart and permit calls beyond a legacy quota', async () => {
-  const { reserveReviewStage } = await import('../src/review-allocation.ts');
-  const state = { reservedCalls: 0, reservations: {} };
-  reserveReviewStage(state, 'joint-replay', 1, 1);
-  const restored = JSON.parse(JSON.stringify(state));
-  reserveReviewStage(restored, 'joint-replay', 1, 1);
-  assert.equal(restored.reservedCalls, 1);
-  reserveReviewStage(restored, 'another-replay', 1, 1);
-  assert.equal(restored.reservedCalls, 2);
-  reserveReviewStage(restored, 'without-quota', 3);
-  assert.equal(restored.reservedCalls, 5);
-  assert.throws(() => reserveReviewStage(restored, 'joint-replay', 2, 3), /identity_conflict/);
-});
-
-test('retiring legacy research quota gaps preserves unrelated funding and scientific gaps', async () => {
-  const { retireResearchQuotaGaps } = await import('../src/pm-facts.ts');
-  const quota = { id: 'old-quota', revision: '1', state: 'OPEN', requiredCapability: 'shared_research_budget', reasonCode: 'shared_trial_budget_exhausted', resolutionEvidenceRefs: [] };
-  const funding = { id: 'funding', revision: '1', state: 'OPEN', requiredCapability: 'capital_basis', reasonCode: 'capital_basis_unavailable', resolutionEvidenceRefs: [] };
-  const record = { gaps: { quota, funding } } as any;
-  retireResearchQuotaGaps(record);
-  assert.equal(quota.state, 'RESOLVED'); assert.equal(quota.reasonCode, 'shared_trial_budget_exhausted');
-  assert.equal(funding.state, 'OPEN');
-  const revision = quota.revision; retireResearchQuotaGaps(record); assert.equal(quota.revision, revision);
-});

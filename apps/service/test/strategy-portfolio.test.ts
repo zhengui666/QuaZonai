@@ -14,7 +14,7 @@ import { computePortfolio } from '../src/native.ts';
 import type { ServiceOptions } from '../src/config.ts';
 
 // Actual durable/HTTP orchestration with a labelled wire probe; no numerical/market-performance claim.
-for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'legacy'} selected ensemble consumer retains original sealed binding and replays HELDOUT only`, async () => {
+for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'single-instrument'} selected ensemble consumer retains original sealed binding and replays HELDOUT only`, async () => {
   const state = await setup(); const previous = process.env.QZ_JOB_BINARY;
   try {
     await state.service.close();
@@ -55,7 +55,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'leg
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Selection precedes final exposure.' }), { stopReason: 'toolUse' });
       },
     ]);
-    const receipt = await state.service.work.startResearch({ requestId: 'ensemble-original', goal: 'Protocol-only selected ensemble.', model: state.model, datasetId: dataset.id, maxTrials: 1 });
+    const receipt = await state.service.work.startResearch({ requestId: 'ensemble-original', goal: 'Protocol-only selected ensemble.', model: state.model, datasetId: dataset.id });
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const original = (await state.service.research.view(receipt.conversationId)).research!;
     assert.equal(original.final!.status, 'COMPUTED', JSON.stringify(original.final));
@@ -125,14 +125,21 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'leg
   } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await state.cleanup(); }
 });
 
-test('legacy v1 single-evidence replay retains the consumer policy and whole original interval', async () => {
+test('a single source requires its original registered strategy and preserves the original interval when bound', async () => {
   const state = await setup();
   try {
     const dataset = state.options.config.datasets[0]!;
-    const policy = { ...dataset.strategy!, name: 'legacy-consumer-policy', threshold: -1 };
-    const evidence = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
-    const result = await computePortfolio({ id: 'legacy-v1', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
-      capital: '3000', currency: 'USD', evidence, policy }, context);
+    assert.ok(dataset.strategy && dataset.strategy.kind !== 'catalog-ensemble');
+    const policy = { ...dataset.strategy, name: 'registered-consumer-policy', threshold: -1 };
+    const evidence: JsonObject = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
+    const captured = { id: 'registered-single-source', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
+      capital: '3000', currency: 'USD', evidence, policy };
+    await assert.rejects(computePortfolio(captured, context), /study_policy_required/);
+    evidence.input = { data: dataset.data, policy: {} };
+    await assert.rejects(computePortfolio(captured, context), /strategy_policy_required/);
+    evidence.input = { data: dataset.data, policy: { strategy: structuredClone(policy) } };
+    await assert.rejects(computePortfolio({ ...captured, policy: { ...policy, threshold: 0 } }, context), /strategy_policy_mismatch/);
+    const result = await computePortfolio(captured, context);
     assert.deepEqual(object(result.native.simulationRequest).selection, object(object(dataset.data.request).forecast).selection);
     assert.deepEqual(object((result.native.sources as JsonObject[])[0]).policy, policy);
     assert.ok(result.target);
@@ -170,13 +177,13 @@ test('native curve sorts exact clocks while retaining same-clock observations an
   assert.deepEqual(snapshots, original);
 });
 
-test('legacy single-evidence replay cannot remove the original historical classification', async () => {
+test('a single-source replay cannot remove the original historical classification', async () => {
   const state = await setup();
   try {
     const dataset = state.options.config.datasets[0]!;
     const original = { ...dataset.strategy!, evidenceMode: 'HISTORICAL_REASSESSMENT' as const };
     const evidence = { input: { data: dataset.data, policy: { strategy: original } }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
-    await assert.rejects(computePortfolio({ id: 'historical-v1-no-relabel', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
+    await assert.rejects(computePortfolio({ id: 'historical-no-relabel', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
       capital: '3000', currency: 'USD', evidence, policy: dataset.strategy! }, context), /strategy_policy_mismatch/);
   } finally { await state.cleanup(); }
 });
@@ -248,7 +255,7 @@ test('cross-market owner portfolio command accepts the originally admitted polic
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Protocol-only original selection before independent assessment.' }), { stopReason: 'toolUse' });
       },
     ]);
-    const receipt = await state.service.work.startResearch({ requestId: 'multi-market-owner-original', goal: 'Owner multi-market shared-account protocol.', model: state.model, datasetId: dataset.id, maxTrials: 1 });
+    const receipt = await state.service.work.startResearch({ requestId: 'multi-market-owner-original', goal: 'Owner multi-market shared-account protocol.', model: state.model, datasetId: dataset.id });
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     assert.equal((await state.service.research.view(receipt.conversationId)).research!.final!.status, 'COMPUTED');
     const input = { requestId: 'multi-market-owner-portfolio', name: 'Original shared-account markets', datasetId: dataset.id, researchIds: [receipt.conversationId], capital: '3000' };

@@ -11,6 +11,11 @@ import { context, requireIdle } from './maintenance.mjs';
 const require = createRequire(new URL('../../apps/service/package.json', import.meta.url));
 const { openNodeSqliteStorage } = await import(require.resolve('@earendil-works/pi-durable/storage/sqlite/node'));
 
+async function writeStorage(storage, writes, context) {
+  const result = await storage.commit([writes], () => {}, context);
+  assert.equal(result.stored, 1); assert.equal(result.refused, undefined);
+}
+
 async function fixture(t) {
   const root = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-pm-maintenance-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -22,7 +27,7 @@ async function fixture(t) {
     mandate: { id: 'mandate:original', revision: '7', capital: '3000.000000000000000001' },
     commands: {}, outcomes: {}, retirements: {},
   } }, datasets: {}, commands: { 'request:original': { mandateId: 'mandate:original', resourceId: 'cycle:original' } } };
-  await storage.commit([{ type: 'document.create', record: { id, kind: 'qz.pm', scope: { kind: 'session' } }, content: { kind: 'base', version: 1, value } }], context);
+  await writeStorage(storage, [{ type: 'document.create', record: { id, kind: 'qz.pm', scope: { kind: 'session' } }, content: { kind: 'base', version: 1, value } }], context);
   await storage.close(context);
   async function read() {
     const storage = await openNodeSqliteStorage(database);
@@ -31,7 +36,7 @@ async function fixture(t) {
   }
   async function replace(value) {
     const storage = await openNodeSqliteStorage(database);
-    try { await storage.commit([{ type: 'document.change', id, content: { kind: 'base', version: 1, value } }], context); }
+    try { await writeStorage(storage, [{ type: 'document.change', id, content: { kind: 'base', version: 1, value } }], context); }
     finally { await storage.close(context); }
   }
   return { root, config, database, id, value, read, replace };
@@ -53,12 +58,12 @@ async function quiescedFixture(t, monitorCount = 1) {
     maintenance.parked[String(id)] = { taskId: id, kind, epoch: maintenance.epoch, resumeCheckpoint };
   }
   const application = { observations: {}, accountControls: {}, maintenance };
-  await storage.commit([{ type: 'conversation', value: { id: conversationId } }, { type: 'task', value: gate }, ...tasks.map(value => ({ type: 'task', value })),
+  await writeStorage(storage, [{ type: 'conversation', value: { id: conversationId } }, { type: 'task', value: gate }, ...tasks.map(value => ({ type: 'task', value })),
     { type: 'document.create', record: { id: appId, kind: 'qz.application', scope: { kind: 'session' } }, content: { kind: 'base', version: 1, value: application } }], context);
   await storage.close(context);
   async function replace(application, gate, tasks) {
     const storage = await openNodeSqliteStorage(state.database);
-    try { await storage.commit([{ type: 'document.change', id: appId, content: { kind: 'base', version: 1, value: application } },
+    try { await writeStorage(storage, [{ type: 'document.change', id: appId, content: { kind: 'base', version: 1, value: application } },
       { type: 'task', value: gate }, ...tasks.map(value => ({ type: 'task', value }))], context); }
     finally { await storage.close(context); }
   }
@@ -119,6 +124,10 @@ test('only formally quiesced original monitor tasks with an exact epoch, gate an
   const state = await quiescedFixture(t);
   const original = await state.readQuiesced(); await requireIdle(state.config);
   assert.deepEqual(await state.readQuiesced(), original);
+  const recovered = structuredClone(original); recovered.gate.state.status = 'pending';
+  await state.updateQuiesced(recovered.application, recovered.gate, recovered.tasks);
+  await requireIdle(state.config); // Official reopen resumes the exact held gate as pending.
+  await state.updateQuiesced(original.application, original.gate, original.tasks);
   const changes = [
     ['draining', value => { value.application.maintenance.state = 'DRAINING'; }],
     ['running intent', value => { value.application.maintenance.state = 'RUNNING'; }],
@@ -159,7 +168,7 @@ test('a formally quiesced monitor cannot discard an original queued submission',
   const state = await quiescedFixture(t); const storage = await openNodeSqliteStorage(state.database);
   const id = await storage.mintId();
   const submission = { id, conversationId: state.gate.conversationId, requestId: 'original-queued-request', type: 'input', status: 'queued' };
-  try { await storage.commit([{ type: 'submission', value: submission }], context); }
+  try { await writeStorage(storage, [{ type: 'submission', value: submission }], context); }
   finally { await storage.close(context); }
   await assert.rejects(requireIdle(state.config), /Unresolved research submission/);
   const reopened = await openNodeSqliteStorage(state.database);
@@ -188,19 +197,16 @@ test('stopped PM SQLite and referenced artifact restore preserve original docume
   const originalArtifact = '{"basisRevision":"basis:original","capital":"3000.000000000000000001"}\n';
   await writeFile(artifact, originalArtifact);
   const image = `sha256:${'a'.repeat(64)}`;
-  const installation = { schema_version: 4, version: 'v0.0.0-ci.1', revision: 'b'.repeat(40), root: state.root,
-    uid: process.getuid(), project: 'pm-restore-test', password: 'test-only', image, runtime_image: image, database_image: image, bundle };
+  const installation = { schema_version: 5, version: 'v0.0.0-ci.1', revision: 'b'.repeat(40), root: state.root,
+    uid: process.getuid(), project: 'pm-restore-test', image, runtime_image: image, bundle };
   await writeFile(join(bundle, 'release.json'), JSON.stringify(installation));
   await writeFile(join(state.root, 'installation.json'), JSON.stringify(installation));
-  // SQLite, tar archives, recovery markers and replacement are real. Docker/PG
+  // SQLite, tar archives, recovery markers and replacement are real. Docker
   // process calls and app activation are fixtures, not a deployed-image claim.
   const shell = (body, backup = '') => spawnSync('bash', ['-c', `source "$1"
 ROOT=$2; QZ_WORK="$ROOT/work"
 qz_stop() { :; }; qz_idle() { :; }; qz_start() { :; }
-qz_compose() { case " $* " in
- *" pg_dump "*) printf 'isolated test-only PG boundary';;
- *" pg_restore "*) cat >/dev/null;;
- *) return 1;; esac; }
+qz_compose() { return 1; }
 ${body}`, 'qz-pm-restore', fileURLToPath(new URL('./manage.sh', import.meta.url)), state.root, backup], { encoding: 'utf8', timeout: 20_000 });
   await requireIdle(state.config);
   let result = shell('qz_backup "$ROOT/installation.json"; printf %s "$QZ_BACKUP" > "$ROOT/selected-backup"');

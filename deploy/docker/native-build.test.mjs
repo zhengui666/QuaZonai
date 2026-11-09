@@ -20,7 +20,11 @@ for value in "$@"; do
 done
 mkdir -p "$CARGO_TARGET_DIR/$profile/examples"
 for binary in job source-tools catalog-prepare market-history examples/browser_catalog_fixture; do
-  printf '%s:%s\\n' "$precision" "$binary" > "$CARGO_TARGET_DIR/$profile/$binary"
+  cat > "$CARGO_TARGET_DIR/$profile/$binary" <<EOF
+#!/bin/sh
+# $precision:$binary
+printf '%s\\n' '{"nautilusVersion":"test","nautilusRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","precision":"$precision","jobVersion":"test"}'
+EOF
   chmod +x "$CARGO_TARGET_DIR/$profile/$binary"
 done
 `, { mode: 0o700 });
@@ -32,12 +36,17 @@ done
       });
       assert.equal(result.status, 0, result.stderr);
       for (const binary of ['job', 'source-tools', 'catalog-prepare', 'browser_catalog_fixture']) {
-        const expected = binary === 'browser_catalog_fixture' ? `standard:examples/${binary}\n` : `standard:${binary}\n`;
-        assert.equal(await readFile(join(destination, binary), 'utf8'), expected);
+        const expected = binary === 'browser_catalog_fixture' ? `standard:examples/${binary}` : `standard:${binary}`;
+        assert.ok((await readFile(join(destination, binary), 'utf8')).includes(expected));
       }
       for (const [name, binary] of [['job-high-precision', 'job'], ['catalog-prepare-high-precision', 'catalog-prepare'], ['market-history', 'market-history']]) {
-        assert.equal(await readFile(join(destination, name), 'utf8'), `high:${binary}\n`);
+        assert.ok((await readFile(join(destination, name), 'utf8')).includes(`high:${binary}`));
       }
+      const manifest = JSON.parse(await readFile(join(destination, 'native-manifest.json'), 'utf8'));
+      assert.equal(manifest.nautilusRevision, 'a'.repeat(40));
+      assert.equal(manifest.binaries.job.precision, 'standard');
+      assert.equal(manifest.binaries['job-high-precision'].precision, 'high');
+      assert.notEqual(manifest.binaries.job.digest, manifest.binaries['job-high-precision'].digest);
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

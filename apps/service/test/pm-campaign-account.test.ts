@@ -30,7 +30,7 @@ test('campaign account: real current source 503 stays unknown while original his
     }, context);
     const admission = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: 'frozen-account-start', goal: 'Test historical source isolation, no financial performance evidence.', datasetId: dataset.id,
-        funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model, maxTrials: 1 } });
+        funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model } });
     assert.equal(admission.statusCode, 202, admission.body); const view = admission.json<Pm.PmMandateView>();
     const campaignId = view.campaigns[0]!.id; const id = view.mandate.id; const key = campaignAccountKey(campaignId);
     let record = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;

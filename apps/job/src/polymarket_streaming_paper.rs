@@ -524,7 +524,7 @@ impl PolymarketStreamingPaper {
         let mut report = json!({
             "schema_version": 1,
             "mode": "PUBLIC_DATA_DRIVEN_NATIVE_PAPER_SIMULATION",
-            "native_version": "0.67.0",
+            "native_version": "0.68.0",
             "native_account_id": "POLYMARKET-001",
             "native_trader_id": result.trader_id,
             "native_session_id": result.instance_id,

@@ -18,7 +18,7 @@ NODE_VERSION = '22.19.0'
 CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suffix in (
     ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
     ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
-IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime', 'database')}
+IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime')}
 NOTICES = {'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
 REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
@@ -165,8 +165,8 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())
     identity(manifest['version'], manifest['revision'])
-    if manifest['schema_version'] != 4:
-        raise ValueError('Node deployment requires schema version 4.')
+    if manifest['schema_version'] != 5:
+        raise ValueError('Node deployment requires schema version 5.')
     return manifest
 
 def readme(manifest: dict) -> str:
@@ -187,10 +187,9 @@ The application listens at http://localhost:8081 by default; perform initial
 password setup in the browser. Configure original datasets and provider env;
 installation does not perform model inference or qualify evidence.
 
-Preserve the installation root, configuration, SQLite, keys, PostgreSQL,
-modules, journals and backups. Automatic migration of legacy Rust/PG Workers
-is explicitly unsupported until their active science/downstream work and auth
-archive have a reviewed cutover. No old service or data is silently replaced.
+Preserve the installation root, configuration, SQLite, keys, modules, journals
+and backups. This release requires a fresh schema-5 installation; earlier
+installation and database formats are not migrated.
 See the deployment bundle README for stopped backup/restore and update commands.
 '''
 

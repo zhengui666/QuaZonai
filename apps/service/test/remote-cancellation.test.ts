@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -5,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import { defineExtension, defineTask, defineTool, MemoryStorage } from '@earendil-works/pi-durable';
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { openResearch } from '../../research/src/host.ts';
@@ -30,6 +31,10 @@ async function peer(handler: (request: IncomingMessage, response: ServerResponse
   const target: RemoteNativeTarget = { id: 'controlled-capital-science', url: `http://127.0.0.1:${address.port}` };
   return { target, failures, async close() { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
+async function explicitHost(directory: string) {
+  const models = createModels(); models.setProvider(fauxProvider().provider);
+  return openResearch({ database: join(directory, 'memory.sqlite'), models, storage: new MemoryStorage() });
+}
 async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => {
@@ -39,6 +44,7 @@ async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T>
 
 test('PM implementation identity and capital validation interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-helper-capabilities-abort-'));
+  const host = await explicitHost(directory);
   try {
     for (const helper of ['implementation', 'capital']) {
       const accepted = signal(); const requests: string[] = []; const controller = new AbortController();
@@ -47,8 +53,8 @@ test('PM implementation identity and capital validation interrupt a connected ca
         // Connected, but no headers/body: a connect timeout cannot end this wait.
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
-      const operation = helper === 'implementation' ? implementationIdentity(source.target, context)
-        : validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'REQUEST', {}, context);
+      const operation = host.withNativeHost(() => helper === 'implementation' ? implementationIdentity(source.target, context)
+        : validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'REQUEST', {}, context));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {
         await bounded(accepted.promise);
@@ -59,7 +65,7 @@ test('PM implementation identity and capital validation interrupt a connected ca
         assert.deepEqual(source.failures, []);
       } finally { await source.close(); await settled; }
     }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('capital validation forwards task abort and cancels only the accepted original request', { timeout: 10_000 }, async () => {
@@ -72,17 +78,21 @@ test('capital validation forwards task abort and cancels only the accepted origi
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
     reply(response, { schemaVersion: 1, requestId: original!.requestId, status: 'CANCELLED' });
   });
-  const operation = validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'VIEW', { amount: '9007199254740993.0001' }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT));
+  const host = await explicitHost(directory);
+  const operation = host.withNativeHost(() => validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'VIEW', { amount: '9007199254740993.0001' }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
   const settled = operation.then(() => ({ error: null }), error => ({ error }));
   try {
     await bounded(accepted.promise); controller.abort(new Error('owner_stop_capital_validation'));
     const outcome = await bounded(settled);
     assert.match(outcome.error?.message ?? '', /owner_stop_capital_validation/);
+    assert.equal(requests.some(value => value.startsWith('DELETE')), false, 'an observer abort does not cancel owned work');
+    const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0]!;
+    await host.harness.abortTask(task.id, BACKGROUND_CONTEXT); await host.harness.waitForTask(task.id, BACKGROUND_CONTEXT);
     assert.equal(original!.command, 'validate-capital-exit');
     assert.deepEqual(original!.input, { kind: 'VIEW', value: { amount: '9007199254740993.0001' } });
     assert.deepEqual(requests, ['GET /v1/capabilities', 'POST /v1/execute', `DELETE /v1/executions/${original!.requestId}`]);
     assert.deepEqual(source.failures, []);
-  } finally { await source.close(); await settled; await rm(directory, { recursive: true, force: true }); }
+  } finally { await host.close(); await source.close(); await settled; await rm(directory, { recursive: true, force: true }); }
 });
 
 test('unanswered capital cancellation retains the original reference through Durable stop and reopen', { timeout: 15_000 }, async t => {
@@ -112,7 +122,7 @@ test('unanswered capital cancellation retains the original reference through Dur
     async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
   });
   const extension = defineExtension({ name: 'test.capital-remote-stop', tasks: [validation], tools: [defineTool({
-    name: 'validate_capital', description: 'Controlled capital validation transport', parameters: Type.Object({}), replay: 'safe',
+    name: 'validate_capital', description: 'Controlled capital validation transport', parameters: obj({}), replay: 'safe',
     async execute(_args, api, context) {
       const id = await api.commit(tx => tx.createTask(validation, { target: source.target }, { ownership: { kind: 'task', taskId: api.taskId } }), context);
       await api.waitForTask(id, context); return {};
@@ -129,7 +139,7 @@ test('unanswered capital cancellation retains the original reference through Dur
     assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
     assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1); assert.ok(deadlines.includes(15_000));
     const receipt = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-    assert.deepEqual(receipt, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'PENDING', error: 'nautilus_execution_unknown' }] });
+    assert.deepEqual(receipt, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'UNKNOWN', error: 'nautilus_cancellation_unknown' }] });
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), receipt);
     assert.equal(posts, 1); assert.deepEqual(source.failures, []);

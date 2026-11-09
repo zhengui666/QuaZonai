@@ -1,8 +1,8 @@
 //! Exact published market rows and complete L2 snapshots shared by import and replay.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::{BookOrder, Data, OrderBookDelta, OrderBookDeltas, QuoteTick},
+    data::{BookOrder, Data, OrderBookDelta, OrderBookDeltas},
     enums::{BookAction, OrderSide, RecordFlag},
     identifiers::InstrumentId,
     instruments::{Instrument, InstrumentAny},
@@ -10,7 +10,7 @@ use nautilus_model::{
 };
 use parquet::{
     file::reader::SerializedFileReader,
-    record::{reader::RowIter, Field, Row},
+    record::{Field, Row, reader::RowIter},
 };
 use rust_decimal::Decimal;
 use std::{collections::BTreeMap, fs::File, path::Path};
@@ -145,7 +145,6 @@ pub fn parquet_file_rows(file: File, format: &str) -> Result<RowIter<'static>> {
 
 pub struct BookSnapshot {
     pub deltas: OrderBookDeltas,
-    pub quote: Option<QuoteTick>,
     pub empty: bool,
     pub one_sided: bool,
 }
@@ -156,7 +155,6 @@ impl BookSnapshot {
             .deltas
             .into_iter()
             .map(Data::BookDelta)
-            .chain(self.quote.map(Data::Quote))
             .collect()
     }
 }
@@ -187,18 +185,13 @@ pub fn snapshot(
         }
     }
     deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
-    let quote = match (sides[0].first(), sides[1].first()) {
-        (Some((bid, bid_size)), Some((ask, ask_size))) => {
-            ensure!(bid <= ask, "BOOK_CROSSED");
-            Some(QuoteTick::new_checked(
-                id, *bid, *ask, *bid_size, *ask_size, at, init,
-            )?)
-        }
-        _ => None,
-    };
+    if let (Some((bid, _)), Some((ask, _))) = (sides[0].first(), sides[1].first()) {
+        ensure!(bid <= ask, "BOOK_CROSSED");
+    }
+    // Only native book deltas are published. The consuming DataEngine owns
+    // BBO derivation via emit_quotes_from_book, so one update has one producer.
     Ok(BookSnapshot {
         deltas: OrderBookDeltas::new_checked(id, deltas)?,
-        quote,
         empty: sides[0].is_empty() && sides[1].is_empty(),
         one_sided: sides[0].is_empty() != sides[1].is_empty(),
     })

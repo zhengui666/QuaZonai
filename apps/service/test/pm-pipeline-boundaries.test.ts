@@ -75,7 +75,6 @@ test('PM owner boundary: unsupported no-borrow and loss promises preserve capabi
     const cycle = { id: 'original-cycle', strategyVersionId: 'original-strategy', datasetRevisionIds: ['original-dataset'], runtime: { conversationId: 1, taskId: 2 },
       basisRevision: 'original-basis', asOfNs: '300', availableCutoffNs: '300', accountBasis: null, dependencyRevisionRefs: [] } as unknown as Pm.DecisionCycle;
     const sourceRequest = structuredClone(iterationRequest(data, true));
-    (sourceRequest.forecast as { selection: { maximum_rows?: number } }).selection.maximum_rows = 0; // Native serde echo for an omitted legacy field.
     const record = { mandate: { id: 'original-mandate', allowedUniverseRef: 'original-universe', capitalSource: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, ownerBoundaries: [boundary] },
       policy: { id: 'original-policy' }, gaps: {}, artifacts: { [cycle.id]: { maximumTrials: 2, research: { input: { data } },
         configured: { data, revision: { id: 'original-dataset', availableThroughNs: '300' }, strategy: {} },

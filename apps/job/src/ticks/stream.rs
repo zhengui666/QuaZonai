@@ -686,7 +686,7 @@ pub(super) fn evaluate(
     let regime_partitions = groups.map(|groups| groups.finish(request)).transpose()?;
     let mut result = NativeTradeTickFactorEvaluationResultV1 {
         schema_version: SchemaV1, request: request.clone(),
-        native_versions: BTreeMap::from([("nautilus-model".into(), "0.67.0".into()), ("nautilus-persistence".into(), "0.67.0".into()), ("nautilus-indicators".into(), "0.67.0".into()), ("wasmi".into(), "2.0.0".into())]),
+        native_versions: BTreeMap::from([("nautilus-model".into(), "0.68.0".into()), ("nautilus-persistence".into(), "0.68.0".into()), ("nautilus-indicators".into(), "0.68.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
             ("input".into(), format!("{}: derived complete sampling-clock cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
             ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), feature_schema(&request.input).into()),
@@ -764,8 +764,6 @@ mod tests {
     fn flow_stream_refuses_missing_or_invalid_flow_even_during_warmup() {
         let mut request = request();
         request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
-        request.input.maximum_rows = None;
-        request.input.maximum_source_rows = Some(counter(7).unwrap());
         let original = super::super::cohorts(&series()["AUD/USD.SIM"], 100).unwrap();
         let module = SignalModule::new(&model(7), false).unwrap();
         for (signed, expected) in [
@@ -955,8 +953,6 @@ mod tests {
         request.train_end_ns = counter(33 * day).unwrap();
         request.validation_end_ns = counter(35 * day).unwrap();
         request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
-        request.input.maximum_rows = None;
-        request.input.maximum_source_rows = Some(counter(100).unwrap());
         request.parameters.total_fuel = Some(counter(1_000_000).unwrap());
         request.input.instrument_ids = vec![
             "AUD/USD.SIM".into(),

@@ -1,5 +1,5 @@
 //! Local native files, fixed Arrow batches, and the official typed decoders.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use arrow_native::{Array, BooleanArray, RecordBatch, TimestampNanosecondArray};
 use nautilus_model::data::{
     Bar, DataBatch, FundingRateUpdate, IndexPriceUpdate, InstrumentClose, MarkPriceUpdate,
@@ -10,13 +10,13 @@ use nautilus_persistence::{
     catalog::types::{CatalogAsOf, CatalogQuery},
 };
 use nautilus_serialization::arrow::{
-    is_nautilus_legacy_schema, timestamp_data_type, DecodeFromRecordBatch,
+    DecodeFromRecordBatch, is_nautilus_legacy_schema, timestamp_data_type,
 };
 use parquet::arrow::{
+    ProjectionMask,
     arrow_reader::{
         ArrowPredicateFn, ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder, RowFilter,
     },
-    ProjectionMask,
 };
 use std::{collections::HashMap, fs::File, ops::Range, path::PathBuf};
 

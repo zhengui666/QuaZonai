@@ -163,7 +163,7 @@ jobs:
       - name: Retain the exact tested native binaries, not a second build
         run: |
           git rev-parse HEAD > "$RUNNER_TEMP/native-artifacts/tested-revision"
-          tar -czf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts" job source-tools catalog-prepare browser_catalog_fixture job-high-precision catalog-prepare-high-precision market-history tested-revision
+          tar -czf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts" job source-tools catalog-prepare browser_catalog_fixture job-high-precision catalog-prepare-high-precision market-history native-manifest.json tested-revision
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-${{ env.TEST_REVISION }}

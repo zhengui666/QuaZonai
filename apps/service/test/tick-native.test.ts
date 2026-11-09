@@ -81,13 +81,13 @@ for (const { representation, legacy } of cases) test(legacy
           },
         ] : []),
       ]);
-      const original = { requestId: 'actual-tick-native-http', goal: 'Controlled high-precision tick pipeline', model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: dataset.id, maxTrials: 2 };
+      const original = { requestId: 'actual-tick-native-http', goal: 'Controlled high-precision tick pipeline', model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: dataset.id };
       // Legacy cases reconstruct a pre-review native protocol fixture. This source has
       // EVENT_TIME_PROXY_UNVERIFIED coverage, not modern Review qualification.
       // Prebuild the original admission gap without starting a model or trial;
       // the unchanged HTTP request below captures its body and submits it.
       const input = researchInput({ goal: original.goal, model: original.model, data: config.datasets[0]!.data,
-        policy: { ...config.datasets[0]!.policy, max_trials: original.maxTrials } });
+        policy: { ...config.datasets[0]!.policy,  } });
       assert.equal(input.policy.reviewPolicy, undefined); assert.equal(input.policy.reviewPolicies, undefined);
       const frozenConversationId = legacy ? await service.research.harness.commit(async tx => {
         const requests = await tx.doc(Requests); const key = `request:${original.requestId}`;

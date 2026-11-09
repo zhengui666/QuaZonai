@@ -20,7 +20,9 @@ export async function pmMandateTasks(tx: Tx, record: import('./pm-facts.ts').PmR
     const page = await tx.scanTasks({}, 100, cursor);
     for (const task of page.items) {
       const input = task.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input : null;
-      if (conversations.has(task.conversationId) || input?.mandateId === record.mandate.id) tasks.push(task);
+      const research = input?.input && typeof input.input === 'object' && !Array.isArray(input.input) ? input.input : null;
+      const campaign = research?.campaign && typeof research.campaign === 'object' && !Array.isArray(research.campaign) ? research.campaign : null;
+      if (conversations.has(task.conversationId) || input?.mandateId === record.mandate.id || campaign?.mandateRevisionId === record.mandate.id) tasks.push(task);
     }
     cursor = page.next;
   } while (cursor);
@@ -62,7 +64,7 @@ export async function deletePmMandate(tx: Tx, state: PmState, id: string): Promi
   const conversations = new Set([record.conversationId, ...Object.values(record.campaigns).map(item => item.runtime.conversationId)]);
   const requests = await tx.doc(Requests);
   for (const [key, request] of Object.entries(requests.requests)) {
-    if (!conversations.has(request.conversationId)) continue;
+    if (request.conversationId === null || !conversations.has(request.conversationId)) continue;
     const submission = await tx.submissionByRequest(request.conversationId, key.slice('request:'.length));
     if (submission && ['queued', 'placed'].includes(submission.status)
       || !submission && !(await tx.doc(Study, request.conversationId)).final) throw new Problem('pm_delete_tasks_active', 409);

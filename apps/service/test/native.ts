@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import { startLegacyResearch } from '../../research/test/legacy-study.ts';
 import assert from 'node:assert/strict';
 import './capital-native.ts';
@@ -23,7 +24,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { v7 as uuidv7 } from 'uuid';
 import { tmpdir } from 'node:os';
 import Fastify from 'fastify';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject, SettledTask, TaskId } from '@earendil-works/pi-durable';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -196,7 +197,7 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
 }
 
 function nativeTestSettings(capital: string) {
-  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.67.0', parameters });
+  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.68.0', parameters });
   return json({ schema_version: 1, base_currency: 'USD', starting_capital: capital, account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60_000,
     fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
     fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel', {}),
@@ -213,8 +214,8 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } };
   const data = { catalog: fixture.catalog_root, catalog_scan_request: request };
   const hold = defineExtension({ name: 'test.native-selection-hold', tools: [defineTool({
-    name: 'hold_original_selection', description: 'End this test invocation, leaving the original selection available for joint final.', parameters: Type.Object({}),
-    async execute() { return { content: [{ type: 'text', text: 'Original selection held; no final result read.' }], control: { terminate: true } }; },
+    name: 'hold_original_selection', description: 'End this test invocation, leaving the original selection available for joint final.', parameters: obj({}),
+    async execute() { return { output: [{ type: 'text', text: 'Original selection held; no final result read.' }], control: { terminate: true } }; },
   })] });
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [hold], modules: ['research', 'catalog-input', 'factor-wasm', 'heldout-wasm'].map(name => resolve('../research/plugins', `${name}.ts`)) };
   const host = await openResearch(options);
@@ -226,7 +227,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
         fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'First frozen kernel control', model: wat }), { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxToolCall('hold_original_selection', {}), { stopReason: 'toolUse' }),
       ]);
-      const receipt = await startLegacyResearch(host, 'catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
+      const receipt = await startLegacyResearch(host, 'catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { } });
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.state(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -250,7 +251,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
         }), { stopReason: 'toolUse' });
       },
     ]);
-    const original = { goal: 'Full-catalog native control; no market/PIT/model-quality claim', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
+    const original = { goal: 'Full-catalog native control; no market/PIT/model-quality claim', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { } };
     const receipt = await startLegacyResearch(host, 'catalog-kernel-control', original); id = receipt.conversationId;
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(id)).research!;
@@ -258,7 +259,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     assert.ok(study.final, JSON.stringify({ trials: study.trials, final: study.final }));
     assert.equal(study.final.status, 'COMPUTED', JSON.stringify(study.final));
     const result = object(study.final.result);
-    assert.equal(object(result.native_versions)['nautilus-model'], '0.67.0');
+    assert.equal(object(result.native_versions)['nautilus-model'], '0.68.0');
     assert.equal(object(result.coverage).observations, '3');
     assert.equal(object(result.request).event_end_ns, request.event_end_ns);
     assert.equal('points' in result || 'portfolio' in result || 'simulation' in result, false);
@@ -325,10 +326,10 @@ test('two original studies → native target blending → one fee-affected share
       // retained science/HTTP path rather than new Review qualification.
       const source = config.datasets[0]!;
       const original = { goal: 'Late-arrival native control, not historical PIT', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-        data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+        data: source.data, policy: { ...source.policy, strategy: json(source.strategy!) } };
       const frozen = await startLegacyResearch(service.research, `native-idea-${index}`, original);
       receipts.push(frozen); // The second model response binds this exact study.
-      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: original.goal, model: original.model, datasetId: 'late-native-fixture', maxTrials: 1 } });
+      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: original.goal, model: original.model, datasetId: 'late-native-fixture' } });
       assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); assert.deepEqual(receipt, frozen);
       await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await service.research.view(receipt.conversationId)).research!;
@@ -340,7 +341,7 @@ test('two original studies → native target blending → one fee-affected share
       const failures = (await service.research.tasks()).records.items.flatMap((record) => record.state.status === 'terminal' && 'error' in record.state.outcome ? [record.state.outcome.error] : []);
       assert.ok(study.final, JSON.stringify(failures));
       assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
-      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.67.0');
+      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.68.0');
       const detail = (await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json();
       assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: `native-idea-${receipts.indexOf(receipt)}` });
     }
@@ -370,7 +371,7 @@ test('two original studies → native target blending → one fee-affected share
     }
     assert.deepEqual(object(native.simulationRequest).target_points, combined);
     assert.ok(sources.every((source) => !('simulation' in source))); // There is only the combined shared account, never two equity curves.
-    assert.equal(simulation.native_version, '0.67.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
+    assert.equal(simulation.native_version, '0.68.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
     assert.ok(fact.view.curve.length); assert.equal(fact.view.targets[0]!.weight, '0.0625');
     assert.ok(BigInt(String(simulation.orders)) > 0n); assert.ok(BigInt(String(simulation.positions)) > 0n);
     assert.ok(fact.view.curve.some((point) => point.value !== null && decimalUnits(point.value) !== decimalUnits('1000')), 'blended target must affect the native account, including original fees');
@@ -511,10 +512,10 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
     // The service still captures and replays the original simplified owner body.
     const source = config.datasets[0]!;
     const original = { goal: 'Native ensemble isolation control; synthetic data only.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-      data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+      data: source.data, policy: { ...source.policy, strategy: json(source.strategy!) } };
     const frozen = await startLegacyResearch(service.research, 'native-ensemble', original);
     const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: original.goal,
-      model: original.model, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+      model: original.model, datasetId: 'ensemble-native-fixture' });
     assert.deepEqual(receipt, frozen);
     await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await service.research.view(receipt.conversationId)).research!;
@@ -540,7 +541,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
       for (const component of evidence.components as JsonObject[]) {
         assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, crossMarket ? selectedBars : request.forecast.selection.bar_types);
       }
-      assert.equal(object(evidence.simulation).native_version, '0.67.0');
+      assert.equal(object(evidence.simulation).native_version, '0.68.0');
       assert.ok(BigInt(String(object(evidence.simulation).orders)) > 0n);
       assert.ok(BigInt(String(object(evidence.simulation).positions)) > 0n);
       if (crossMarket) {

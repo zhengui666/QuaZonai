@@ -47,8 +47,7 @@ const options = {
   origin: { type: 'string' as const }, name: { type: 'string' as const }, replace: { type: 'boolean' as const },
   'development-http': { type: 'boolean' as const }, 'ca-certificate': { type: 'string' as const },
   file: { type: 'string' as const }, goal: { type: 'string' as const }, dataset: { type: 'string' as const },
-  // Preserve legacy flag request bodies for receipt replay; the service ignores the quota.
-  model: { type: 'string' as const }, 'max-trials': { type: 'string' as const }, 'request-id': { type: 'string' as const },
+  model: { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
   'tick-book-cores': { type: 'string' as const },
@@ -108,7 +107,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (group === 'research' && action === 'start') {
     let submission: ResearchStart;
     if (values.file) {
-      if (values.goal || values.dataset || values.model || values['max-trials']) throw new CliError('file_or_goal_required');
+      if (values.goal || values.dataset || values.model) throw new CliError('file_or_goal_required');
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       submission = file.body as unknown as ResearchStart; body = file.bytes;
       const input = object('input' in submission ? submission.input : submission); const specification = input.specification;
@@ -119,9 +118,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     } else {
       const match = /^([^:]+):(.+)$/.exec(values.model ?? '');
       if (!values.goal || !values.dataset || !match || !values['request-id']) throw new CliError('goal_dataset_model_request_id_required');
-      const maximum = values['max-trials'] === undefined ? undefined : Number(values['max-trials']);
-      if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < 0)) throw new CliError('legacy_max_trials_invalid');
-      submission = { requestId: values['request-id'], goal: values.goal, datasetId: values.dataset, model: { provider: match[1]!, modelId: match[2]! }, ...(maximum === undefined ? {} : { maxTrials: maximum }) };
+      submission = { requestId: values['request-id'], goal: values.goal, datasetId: values.dataset, model: { provider: match[1]!, modelId: match[2]! } };
       body = JSON.stringify(submission);
     }
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);

@@ -13,7 +13,7 @@ import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '.
 import { canonical } from '../src/documents.ts';
 
 export const CatalogScopes = defineDoc<{ roots: JsonObject[] }>({
-  kind: 'qz.catalog-scopes', version: 1, scope: 'session', initial: () => ({ roots: [] }),
+  kind: 'qz.catalog-scopes', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session', initial: () => ({ roots: [] }),
 });
 
 async function readScope(catalog: string, context: Context, binary: NativeTarget): Promise<string[]> {
@@ -57,7 +57,7 @@ export const CatalogScopeTask = defineTask<{ catalog: string; binary?: NativeTar
 });
 
 const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.catalog-scope-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
+  kind: 'qz.catalog-scope-child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 
 export async function readCatalogScope(runtime: Pick<TaskRuntime<unknown, unknown, unknown, object>, 'getTask' | 'snapshot' | 'snapshotAsOf'>, reference: JsonObject, context: Context): Promise<JsonObject> {

@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import { createHash } from 'node:crypto';
 import type { ReviewedFactorSources } from '../../../packages/contracts/src/reviewed-factors.ts';
 import { scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
@@ -17,7 +16,7 @@ import type { StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
 
 async function readCatalogPrefix(binary: NativeTarget, catalog: string, selection: JsonObject, directory: string, context: Context): Promise<JsonObject> {
   const prefix = await executeNative(binary, 'catalog-prefix-digest', selection, ['--catalog', catalog], directory, context);
-  if (prefix.schema_version !== 1 || prefix.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || canonical(withoutExecutionQuotas(prefix.selection!)) !== canonical(withoutExecutionQuotas(selection))
+  if (prefix.schema_version !== 1 || prefix.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || canonical((prefix.selection!)) !== canonical((selection))
     || typeof prefix.content_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(prefix.content_sha256)) throw new Error('native_catalog_prefix_evidence_invalid');
   return prefix;
 }
@@ -96,10 +95,10 @@ export async function fitNativeEnsemble(input: { data: JsonObject; members: Fitt
     for (const [index, member] of input.members.entries()) {
       const model = join(directory, `factor-${index}.wasm`); await writeFile(model, compileWasm(member.model));
       const report = await executeNative(input.binary, 'evaluate-factor', request, ['--catalog', input.data.catalog, '--model', model], directory, context);
-      if (canonical(withoutExecutionQuotas(report.request!)) !== canonical(withoutExecutionQuotas(request))) throw new Error('ensemble_report_request_mismatch');
+      if (canonical((report.request!)) !== canonical((request))) throw new Error('ensemble_report_request_mismatch');
       reports.push({ factor_version_id: member.factorVersionId, source_evidence_ref: `${input.evidenceIdentity}:panel:${index}`, report });
     }
-    if (canonical(withoutExecutionQuotas(await readCatalogPrefix(input.binary, input.data.catalog, prefixSelection, directory, context))) !== canonical(withoutExecutionQuotas(catalogPrefix))) throw new Error('catalog_prefix_changed_during_fit');
+    if (canonical((await readCatalogPrefix(input.binary, input.data.catalog, prefixSelection, directory, context))) !== canonical((catalogPrefix))) throw new Error('catalog_prefix_changed_during_fit');
     const prior = input.reviewPriorBinding ?? { prior: null, reason: 'historical_pass_review_missing' };
     const fitRequest = { schema_version: 1, fit_end_ns: request.train_end_ns!, folds: expandingTrainingFolds(request), members: reports,
       ...(prior.prior ? { review_prior: prior.prior } : {}) };
@@ -128,7 +127,7 @@ export async function replayFittedEnsemble(input: { data: JsonObject; members: F
   try {
     const prefixSelection = object(input.catalogPrefix.selection, 'original_fit_catalog_prefix_selection');
     const verifyOriginalPrefix = async () => {
-      if (canonical(withoutExecutionQuotas(await readCatalogPrefix(input.binary, input.data.catalog as string, prefixSelection, directory, context))) !== canonical(withoutExecutionQuotas(input.catalogPrefix))) throw new Error('ensemble_replay_original_catalog_prefix_mismatch');
+      if (canonical((await readCatalogPrefix(input.binary, input.data.catalog as string, prefixSelection, directory, context))) !== canonical((input.catalogPrefix))) throw new Error('ensemble_replay_original_catalog_prefix_mismatch');
     };
     await verifyOriginalPrefix();
     const forecasts: JsonObject[] = [];

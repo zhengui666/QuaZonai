@@ -42,7 +42,7 @@ else {
   const parameters = { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null };
   const scan = { schema_version: 1, event_start_ns: '0', event_end_ns: '40', decision_cutoff_ns: '40', train_end_ns: '10', validation_end_ns: '40', maximum_rows: 100, parameters };
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [research, factor, heldout] };
-  const input = { goal: 'Controlled full-scope persistence protocol, not market research', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog, catalog_scan_request: scan }, policy: { max_trials: 2 } };
+  const input = { goal: 'Controlled full-scope persistence protocol, not market research', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog, catalog_scan_request: scan }, policy: { } };
   let host = await openResearch(options);
   try {
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Protocol A', model }), tool('factor_evaluate', { hypothesis: 'Protocol B', model }), tool('research_finish', { reason: 'End the bounded protocol, without scientific qualification.' })]);
@@ -83,7 +83,7 @@ else {
       // Reconstruct the pre-upgrade frozen study for this legacy exposure regression.
       await host.harness.commit(async tx => {
         const requests = await tx.doc(Requests);
-        const study = await tx.doc(Study, requests.requests['request:copied-legacy-protocol']!.conversationId);
+        const study = await tx.doc(Study, requests.requests['request:copied-legacy-protocol']!.conversationId!);
         delete study.input!.policy.reviewPolicies;
       }, context);
       return tool('factor_finalize', { trialId, reason: 'Must reject a suffix already exposed through full-catalog feedback.' });

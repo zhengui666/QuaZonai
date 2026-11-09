@@ -538,7 +538,7 @@ mod tests {
             "schema_version": 1,
             "input": {"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
                 "event_start_ns":"10","event_end_ns":"40","decision_cutoff_ns":"50",
-                "maximum_rows":100,"source_revision":"0123456789012345678901234567890123456789",
+                "source_revision":"0123456789012345678901234567890123456789",
                 "availability":"EVENT_TIME_PROXY_UNVERIFIED"},
             "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
             "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
@@ -670,14 +670,10 @@ mod tests {
     fn native_query_preserves_trade_id_reuse_at_distinct_event_times() {
         let original = vec![tick(10, 10, "reused"), tick(20, 20, "reused")];
         let temp = native_fixture(original.clone());
-        for legacy_limit in [None, Some(0), Some(1)] {
-            let mut request = request();
-            request.input.maximum_rows = legacy_limit;
-            assert_eq!(
-                load(temp.path(), &request).unwrap()["AUD/USD.SIM"],
-                original
-            );
-        }
+        assert_eq!(
+            load(temp.path(), &request()).unwrap()["AUD/USD.SIM"],
+            original
+        );
     }
 
     #[test]

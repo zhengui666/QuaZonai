@@ -1,9 +1,10 @@
+import { readResearchAdmissions } from '../src/admissions.ts';
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import Fastify from 'fastify';
 import { syncBuiltinESMExports } from 'node:module';
-import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
@@ -75,7 +76,7 @@ test('research deletion hides its factors without erasing admissions or trials a
     assert.deepEqual(stored.trials, original.trials); assert.deepEqual(stored.final, original.final); assert.deepEqual(stored.input, original.input);
     assert.equal(stored.deletedAt, deleted.deletedAt);
     assert.ok((await state.service.research.harness.snapshot(Requests, context))!.requests[`request:${input.requestId}`]);
-    assert.deepEqual((await state.service.work.snapshot())!.researchRequests[`request:${input.requestId}`]!.original, input);
+    assert.deepEqual((await readResearchAdmissions(state.service.research))[`request:${input.requestId}`]!.original, input);
     await state.restart();
     assert.deepEqual((await remove(state, 'research', id)).json(), deleted);
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: input }), 409, 'research_deleted');
@@ -130,14 +131,14 @@ test('deletes require owner authentication and reject invalid/nonexistent identi
 test('running native submission rejects deletion and remains running until the distinct owner stop completes', { timeout: 15_000 }, async () => {
   const state = await setup();
   let entered!: () => void; const running = new Promise<void>(resolve => { entered = resolve; });
-  const blocker = defineExtension({ name: 'test.deletion-blocker', tools: [defineTool({ name: 'deletion_block', description: 'TEST_ONLY active native submission', parameters: Type.Object({}),
+  const blocker = defineExtension({ name: 'test.deletion-blocker', tools: [defineTool({ name: 'deletion_block', description: 'TEST_ONLY active native submission', parameters: obj({}),
     async execute(_args, _api, ctx) { entered(); await awaitWithContext(new Promise<void>(() => {}), ctx); return {}; },
   })] });
   try {
     state.options.extensions.push(blocker); await state.restart();
     state.faux.setResponses([fauxAssistantMessage(fauxToolCall('deletion_block', {}), { stopReason: 'toolUse' })]);
     const start = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
-      payload: { requestId: 'running-deletion', goal: 'Controlled active task', model: state.model, datasetId: 'controlled', maxTrials: 1 } });
+      payload: { requestId: 'running-deletion', goal: 'Controlled active task', model: state.model, datasetId: 'controlled' } });
     assert.equal(start.statusCode, 202, start.body); const { conversationId } = start.json(); await running;
     await expectError(await remove(state, 'research', conversationId), 409, 'research_delete_tasks_active');
     assert.equal((await state.service.research.state(conversationId)).submission!.status, 'placed');
@@ -241,7 +242,7 @@ test('observation final admission rechecks a portfolio deleted during the real d
 test('legacy portfolio freezes only its selected trial and does not prevent deletion of an unused trial factor', async () => {
   const state = await setup();
   const firstTrial = defineExtension({ name: 'test.unselected-factor', tools: [defineTool({
-    name: 'controlled_unselected_trial', description: 'TEST_ONLY unused original trial', parameters: Type.Object({}), replay: 'safe',
+    name: 'controlled_unselected_trial', description: 'TEST_ONLY unused original trial', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       // Reconstruct the first trial of a pre-review selected-factor fixture.
       await api.commit(async tx => { delete (await tx.doc(Study, api.conversationId)).input!.policy.reviewPolicies; }, ctx);
@@ -249,7 +250,7 @@ test('legacy portfolio freezes only its selected trial and does not prevent dele
       await evaluateTrial(api, ctx, { hypothesis: 'Original candidate which is not selected', model: wat }, async () => ({
         request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }],
       }));
-      return { content: [{ type: 'text', text: 'Original nonselected trial recorded; no final selection yet.' }] };
+      return { output: [{ type: 'text', text: 'Original nonselected trial recorded; no final selection yet.' }] };
     },
   })] });
   try {
@@ -259,7 +260,7 @@ test('legacy portfolio freezes only its selected trial and does not prevent dele
       fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' }),
     ]);
     const started = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
-      payload: { requestId: 'two-trial-dependency', goal: 'Select one of two original protocol candidates', model: state.model, datasetId: 'controlled', maxTrials: 2 } });
+      payload: { requestId: 'two-trial-dependency', goal: 'Select one of two original protocol candidates', model: state.model, datasetId: 'controlled' } });
     assert.equal(started.statusCode, 202, started.body);
     const receipt = started.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);

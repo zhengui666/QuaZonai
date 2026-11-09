@@ -10,7 +10,7 @@ export const Continuation = defineDoc<{
   yields: number; noProgress: number; trials: number; taskId: TaskId | null; continue: boolean; stopReason: string | null;
   evidenceSignature?: string;
 }>({
-  kind: 'qz.research-continuation', version: 1, scope: 'conversation', history: 'latest', fork: 'current',
+  kind: 'qz.research-continuation', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'current',
   initial: () => ({ yields: 0, noProgress: 0, trials: 0, taskId: null, continue: false, stopReason: null }),
 });
 

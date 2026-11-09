@@ -14,7 +14,7 @@ import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilu
 import { createNautilusWorker } from '../../nautilus/src/server.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { compileWasm, evaluateWasm } from '../../research/plugins/native-wasm.ts';
-import { remoteNativeCapabilities, unmeteredNativeInput } from '../../research/src/native-execution.ts';
+import { remoteNativeCapabilities } from '../../research/src/native-execution.ts';
 import { object } from '../src/facts.ts';
 
 // Run only in the native gate, after check-science exports its original
@@ -72,7 +72,7 @@ test('actual remote Nautilus preserves factor, forecast and shared-account resul
     const localFactor = await executeNative(binary, 'evaluate-factor', request, args, scratch, BACKGROUND_CONTEXT);
     const remoteFactor = await executeNative(first.target, 'evaluate-factor', request, args, scratch, BACKGROUND_CONTEXT);
     assert.deepEqual(remoteFactor, localFactor, 'Transferred WASM and native JSON must preserve complete original factor evidence');
-    assert.deepEqual(remoteFactor.request, unmeteredNativeInput(request));
+    assert.deepEqual(remoteFactor.request, request);
     assert.deepEqual(request, frozenRequest, 'Execution cannot mutate the frozen factor request or its historical fuel field');
     const summary = await evaluateWasm(model, { catalog, request }, BACKGROUND_CONTEXT, undefined, first.target);
     assert.equal(Object.hasOwn(summary, 'points'), false);
@@ -88,7 +88,7 @@ test('actual remote Nautilus preserves factor, forecast and shared-account resul
     for (const key of ['native_version', 'events', 'orders', 'positions', 'consumed_target_points', 'statistics', 'returns_kind', 'returns_status', 'returns_reason', 'returns', 'settled_replay_ns']) {
       assert.deepEqual(normalizeSignedZero(remoteAccount[key]), normalizeSignedZero(localAccount[key]), `Native account field ${key} must agree across the HTTP boundary`);
     }
-    assert.equal(remoteAccount.native_version, '0.67.0');
+    assert.equal(remoteAccount.native_version, '0.68.0');
     assert.ok(BigInt(String(remoteAccount.consumed_target_points)) > 0n);
     assert.ok(BigInt(String(remoteAccount.orders)) > 0n, 'The fixture must exercise native orders, not an empty account response');
     assert.ok(remoteAccount.canonical_result);
@@ -117,7 +117,7 @@ test('actual remote forward calculation transfers original model/calibration obj
     const local = await executeNative(binary, 'build-observed-spot', request, args, scratch, BACKGROUND_CONTEXT);
     const remote = await executeNative(instance.target, 'build-observed-spot', request, args, scratch, BACKGROUND_CONTEXT);
     assert.deepEqual(remote, local, 'WASM/calibration UUID objects are transported with their exact bytes and original identifiers');
-    assert.equal(remote.kind, 'OBSERVED_SPOT_FORWARD_BUILD'); assert.deepEqual(remote.request, unmeteredNativeInput(request));
+    assert.equal(remote.kind, 'OBSERVED_SPOT_FORWARD_BUILD'); assert.deepEqual(remote.request, request);
     assert.deepEqual(request, frozenRequest, 'Execution cannot mutate the frozen forward request or member fuel history');
     assert.equal(object(remote.valuation).total, '1499.3');
     assert.ok(remote.target); assert.equal(remote.target_block_reason, null);

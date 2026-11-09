@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -5,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { openResearch } from '../src/host.ts';
@@ -67,7 +68,7 @@ test('maintenance closes new admissions, drains an admitted request and keeps na
   const toolEntering = new Promise<void>((done) => { toolEntered = done; });
   const toolReleased = new Promise<void>((done) => { releaseTool = done; });
   const extension = defineExtension({ name: 'maintenance-probe', tools: [defineTool({
-    name: 'maintenance_probe', description: 'Protocol-only active native task.', parameters: Type.Object({}), replay: 'unsafe',
+    name: 'maintenance_probe', description: 'Protocol-only active native task.', parameters: obj({}), replay: 'unsafe',
     async execute() { toolEntered(); await toolReleased; return {}; },
   })] });
   faux.setResponses([fauxAssistantMessage(fauxToolCall('maintenance_probe', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Maintenance protocol completed.')]);

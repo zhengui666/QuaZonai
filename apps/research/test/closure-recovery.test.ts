@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import { closeResearch } from '../src/closure.ts';
 import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
@@ -6,7 +7,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { evaluateTrial, trialFeedback } from '../src/trials.ts';
@@ -30,7 +31,7 @@ console.log(JSON.stringify({ request: JSON.parse(input), protocolOnly: true }));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const request = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' }, parameters: {} } };
   const data = { catalog: directory, request, sealed: { catalog: directory, request } };
-  const trial = defineExtension({ name: 'test.closure-source', tasks: [FactorTask], tools: [defineTool({name:'close_selection',description:'TEST_ONLY original selection closure',parameters:Type.Object({}),replay:'safe',async execute(_args,api,ctx){await closeResearch(api,ctx,'owner_selection_complete');return {control:{terminate:true}};}}), defineTool({ name: 'candidate', description: 'Protocol-only registered candidate; no market evidence claim', parameters: Type.Object({}), replay: 'safe',
+  const trial = defineExtension({ name: 'test.closure-source', tasks: [FactorTask], tools: [defineTool({name:'close_selection',description:'TEST_ONLY original selection closure',parameters:obj({}),replay:'safe',async execute(_args,api,ctx){await closeResearch(api,ctx,'owner_selection_complete');return {control:{terminate:true}};}}), defineTool({ name: 'candidate', description: 'Protocol-only registered candidate; no market evidence claim', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original protocol candidate' }, async () => ({ request: iterationRequest(data),
       partitions: [{ partition: 'VALIDATION', metric: { pearson_ic: { status: 'AVAILABLE', value: 0.5 } } }] }))); },
@@ -39,7 +40,7 @@ console.log(JSON.stringify({ request: JSON.parse(input), protocolOnly: true }));
   let host = await openResearch(options);
   try {
     faux.setResponses([fauxAssistantMessage(fauxToolCall('candidate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage(fauxToolCall('close_selection', {}), { stopReason: 'toolUse' })]);
-    const input = { goal: 'Recovery protocol only; not model-quality or performance evidence', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1, selection_metric: 'validation.pearson_ic' } };
+    const input = { goal: 'Recovery protocol only; not model-quality or performance evidence', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { selection_metric: 'validation.pearson_ic' } };
     const receipt = await startLegacyResearch(host, 'original', input);
     for (;;) {
       try { if (Number(await readFile(pidPath, 'utf8')) > 0) break; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }

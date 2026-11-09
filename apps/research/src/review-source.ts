@@ -18,14 +18,19 @@ export interface CapturedReviewSource {
   receivedAt: string; validationStartNs: string; validationEndNs: string;
   independent?: CapturedReviewSource;
 }
+/** Capture time records the first admission; source bytes and grants define identity. */
+export function reviewSourceCaptureIdentity(source: CapturedReviewSource): JsonObject {
+  const { receivedAt: _receivedAt, independent, ...identity } = source;
+  return JSON.parse(JSON.stringify({ ...identity, ...(independent ? { independent: reviewSourceCaptureIdentity(independent) } : {}) })) as JsonObject;
+}
 /** Only the service's source consumer writes captured; model tools never have a write route. */
 export const ReviewSourceEvidence = defineDoc<{ captured: JsonObject | null; native: JsonObject | null; taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.review-source-evidence', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  kind: 'qz.review-source-evidence', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ captured: null, native: null, taskId: null }),
 });
-const SourceSnapshots = defineDoc<{ digests: Record<string, string> }>({ kind: 'qz.review-source-snapshots', version: 1, scope: 'session', initial: () => ({ digests: {} }) });
+const SourceSnapshots = defineDoc<{ digests: Record<string, string> }>({ kind: 'qz.review-source-snapshots', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session', initial: () => ({ digests: {} }) });
 export const ReviewIndependentSourceEvidence = defineDoc<{ captured: JsonObject | null; native: JsonObject | null; taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.review-independent-source-evidence', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  kind: 'qz.review-independent-source-evidence', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ captured: null, native: null, taskId: null }),
 });
 const object = (value: unknown): JsonObject | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;

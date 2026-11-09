@@ -695,8 +695,8 @@ mod tests {
         if failure == "protocol_missing" {
             market.as_object_mut().unwrap().remove("version");
         }
-        if failure == "protocol_v2" {
-            market["version"] = serde_json::json!("v2");
+        if failure == "protocol_v3" {
+            market["version"] = serde_json::json!("v3");
         }
         if failure == "fees" {
             market.as_object_mut().unwrap().remove("feeSchedule");
@@ -990,10 +990,12 @@ mod tests {
             START * 1_000_000_000 + 2_005_000_000
         );
         assert_eq!(archive.closes.len(), 2);
-        assert!(archive
-            .closes
-            .iter()
-            .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000));
+        assert!(
+            archive
+                .closes
+                .iter()
+                .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000)
+        );
         assert_eq!(
             archive.instruments[0].ts_init().as_u64(),
             (START - 10) * 1_000_000_000
@@ -1072,7 +1074,7 @@ mod tests {
     fn rejects_missing_or_contradictory_capture_evidence() {
         for failure in [
             "protocol_missing",
-            "protocol_v2",
+            "protocol_v3",
             "fees",
             "date",
             "metadata",
@@ -1090,15 +1092,17 @@ mod tests {
             let args = fixture(root.path(), failure);
             let error = prepare(&args).expect_err(failure).to_string();
             match failure {
-                "protocol_missing" | "protocol_v2" => {
+                "protocol_missing" | "protocol_v3" => {
                     let protocol = if failure == "protocol_missing" {
                         "missing"
                     } else {
-                        "v2"
+                        "v3"
                     };
                     assert_eq!(
                         error,
-                        format!("Unsupported Polymarket market protocol {protocol}; only v1 CTF markets are supported")
+                        format!(
+                            "Unsupported Polymarket data protocol {protocol}; expected v1 or v2"
+                        )
                     );
                 }
                 "same_transaction"

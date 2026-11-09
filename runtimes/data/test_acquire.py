@@ -1,5 +1,7 @@
 """Offline acquisition boundary tests; no network, account or market-data qualification."""
 
+from _source_test_fixtures import http_acquisition
+
 import contextlib
 from copy import deepcopy
 from decimal import Decimal
@@ -125,7 +127,7 @@ class AcquisitionTest(unittest.TestCase):
         self.addCleanup(patch.stopall)
 
     def download(self, **kwargs):
-        return acquire.acquire("coinbase-candles", self.selection, self.output, self.terms, **kwargs)
+        return http_acquisition("coinbase-candles", self.selection, self.output, self.terms, **kwargs)
 
     def rewrite_manifest(self, manifest):
         (self.output / "acquisition.json").write_bytes(acquire.json_bytes(manifest))
@@ -150,9 +152,9 @@ class AcquisitionTest(unittest.TestCase):
         self.assertFalse(manifest["admission"]["research_qualified"])
 
     def test_source_records_are_checked_without_calculating_legacy_checksums(self):
+        manifest = self.download()  # Plan identity hashes are distinct from source integrity claims.
         with patch("hashlib.sha256", side_effect=AssertionError("No source checksum calculation")), \
                 patch("hashlib.sha1", side_effect=AssertionError("No substitute checksum")):
-            manifest = self.download()
             for record in [manifest["records"], manifest["source_terms"]["file"],
                            *(response["file"] for response in manifest["responses"])]:
                 self.assertEqual(set(record), {"path", "size"})
@@ -171,17 +173,16 @@ class AcquisitionTest(unittest.TestCase):
     def test_no_overwrite_or_resume_even_when_previous_output_is_incomplete(self):
         self.output.mkdir()
         (self.output / "private.txt").write_text("keep")
-        with self.assertRaises(FileExistsError):
+        with self.assertRaisesRegex(ValueError, "completed publication"):
             self.download()
         self.fetch.assert_not_called()
         self.assertEqual((self.output / "private.txt").read_text(), "keep")
 
-    def test_existing_snapshot_cannot_be_refreshed_or_reused(self):
+    def test_completed_unit_publication_is_reused_without_refetch(self):
         self.download()
         before = (self.output / "acquisition.json").read_bytes()
         self.fetch.reset_mock()
-        with self.assertRaises(FileExistsError):
-            self.download()
+        self.assertEqual(self.download(), json.loads(before))
         self.fetch.assert_not_called()
         self.assertEqual((self.output / "acquisition.json").read_bytes(), before)
 
@@ -190,7 +191,7 @@ class AcquisitionTest(unittest.TestCase):
         self.fetch.side_effect = [(b'[' + CANDLE + b']', deepcopy(OBSERVATION)), OSError("interrupted")]
         with self.assertRaises(OSError):
             self.download()
-        self.assertTrue((self.output / "raw/0000.json").is_file())
+        self.assertTrue(list(self.root.glob(".acquisition-units/*/units/00000000/response.bin")))
         self.assertFalse((self.output / "acquisition.json").exists())
         self.assertFalse(list(self.output.rglob("*.partial")))
 
@@ -201,7 +202,7 @@ class AcquisitionTest(unittest.TestCase):
             self.fetch.return_value = (body, deepcopy(OBSERVATION))
             with self.assertRaises(ValueError):
                 self.download()
-            self.assertEqual((self.output / "raw/0000.json").read_bytes(), body)
+            self.assertFalse(self.output.exists())
             self.assertFalse((self.output / "records.jsonl").exists())
             self.assertFalse((self.output / "acquisition.json").exists())
 
@@ -215,7 +216,7 @@ class AcquisitionTest(unittest.TestCase):
 
     def test_polymarket_marks_use_same_runner_and_are_never_fabricated_candles(self):
         self.fetch.return_value = (b'{"history":[{"t":10,"p":0.12345678901234567890123456789}]}', deepcopy(OBSERVATION))
-        manifest = acquire.acquire("polymarket-prices", Selection("123", 0, 60, 60), self.output, self.terms)
+        manifest = http_acquisition("polymarket-prices", Selection("123", 0, 60, 60), self.output, self.terms)
         row = json.loads((self.output / "records.jsonl").read_bytes())
         self.assertEqual(row["kind"], "PRICE_MARK")
         self.assertEqual(row["price"], "0.12345678901234567890123456789")
@@ -353,8 +354,8 @@ class AcquisitionTest(unittest.TestCase):
                  "retrieved_at": "2026-09-30T00:00:03Z"}
         self.fetch.side_effect = [(b'[]', deepcopy(OBSERVATION)), (b'[]', later)]
         self.download(max_bytes=100)
-        self.assertIsNone(self.fetch.call_args_list[-2].args[1])
-        self.assertIsNone(self.fetch.call_args_list[-1].args[1])
+        self.assertEqual(len(self.fetch.call_args_list[-2].args), 1)
+        self.assertEqual(len(self.fetch.call_args_list[-1].args), 1)
 
 
 class Response(io.BytesIO):

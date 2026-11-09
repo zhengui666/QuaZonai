@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawn } from 'node:child_process';
@@ -7,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { SubmissionId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -41,7 +42,7 @@ for (const replay of ['safe', 'unsafe', 'failed'] as const) {
       const models = createModels(); models.setProvider(faux.provider);
       faux.setResponses([fauxAssistantMessage('Recovered the original research.')]);
       const plugin = defineExtension({ name: 'crash-probe', tools: [defineTool({
-        name: 'crash_probe', description: 'Protocol test only', parameters: Type.Object({}), replay: replay === 'unsafe' ? 'unsafe' : 'safe',
+        name: 'crash_probe', description: 'Protocol test only', parameters: obj({}), replay: replay === 'unsafe' ? 'unsafe' : 'safe',
         async execute(_args, api, context) {
           const compute = async () => {
             resumedCalls++;
@@ -50,7 +51,7 @@ for (const replay of ['safe', 'unsafe', 'failed'] as const) {
           };
           if (replay === 'failed') await evaluateTrial(api, context, { hypothesis: 'Original scientific failure' }, compute);
           else await compute();
-          return { content: [{ type: 'text', text: 'Original computation recovered' }] };
+          return { output: [{ type: 'text', text: 'Original computation recovered' }] };
         },
       })] });
       const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [plugin] });
@@ -77,7 +78,7 @@ for (const replay of ['safe', 'unsafe', 'failed'] as const) {
   });
 }
 
-test('SIGKILL after admission is repaired automatically on reopen, without replaying final/stopped studies', { timeout: 15_000 }, async () => {
+test('SIGKILL between official intake phases resumes the original conversation and admits input once', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-admission-crash-'));
   const child = spawn(process.execPath, ['--experimental-strip-types', fileURLToPath(new URL('./process-worker.ts', import.meta.url)), directory, 'admission'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let errors = ''; child.stderr.on('data', (part) => { errors += part; });
@@ -92,16 +93,18 @@ test('SIGKILL after admission is repaired automatically on reopen, without repla
     const models = createModels(); models.setProvider(faux.provider); faux.setResponses([fauxAssistantMessage('Original admission recovered.')]);
     let host = await openResearch({ database: join(directory, 'research.sqlite'), models });
     try {
-      const repaired = (await host.submissionFor(original.ids[0]!))!;
+      const admission = await host.start('admission-gap', original.input);
+      assert.equal(admission.conversationId, original.ids[0]);
+      const repaired = (await host.submissionFor(admission.conversationId))!;
       assert.equal((await (await host.harness.submission(repaired.id, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT)).status, 'done');
       assert.equal(repaired.requestId, 'admission-gap');
-      assert.deepEqual((await host.view(original.ids[0]!)).research!.input, original.input);
-      assert.equal(await host.submissionFor(original.ids[1]!), null); assert.equal(await host.submissionFor(original.ids[2]!), null);
+      assert.deepEqual((await host.view(admission.conversationId)).research!.input!.model, original.input.model);
+      const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.intake' }, 10), BACKGROUND_CONTEXT);
+      assert.equal(tasks.items.length, 1); assert.equal(tasks.items[0]!.state.status, 'terminal');
       assert.equal(faux.state.callCount, 1);
       await host.close(); host = await openResearch({ database: join(directory, 'research.sqlite'), models });
-      assert.deepEqual(await host.start('admission-gap', original.input), { conversationId: original.ids[0], submissionId: repaired.id });
+      assert.deepEqual(await host.start('admission-gap', original.input), admission);
       assert.equal(faux.state.callCount, 1);
-      await assert.rejects(host.start('stopped-gap', original.input), /research_already_final/);
     } finally { await host.close(); }
   } finally { child.kill('SIGKILL'); await rm(directory, { recursive: true, force: true }); }
 });

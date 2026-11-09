@@ -76,6 +76,13 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname.slice('/api/v3'.length); const method = request.method();
     const reply = (json: unknown, status = 200) => route.fulfill({ status, json });
     if (method !== 'GET') writes.push({ path, method, raw: request.postData() });
+    const stream = /^\/(research|portfolios)\/([^/]+)\/events$/.exec(path);
+    if (stream) {
+      const value = stream[1] === 'research' ? detail(Number(stream[2])) : portfolios.find(item => item.id === decodeURIComponent(stream[2]!));
+      if (!value) return reply({ error: 'not_found' }, 404);
+      return route.fulfill({ contentType: 'text/event-stream', body: `event: ${stream[1] === 'research' ? 'research' : 'portfolio'}\ndata: ${JSON.stringify(value)}\n\n` });
+    }
+
     if (path === '/session') { if (method === 'DELETE') { session = { setupRequired: false, authenticated: false }; return route.fulfill({ status: 204 }); } return reply(session); }
     if (path === '/session/setup' || path === '/session/login') { session = { setupRequired: false, authenticated: true }; return reply(session); }
     if (path === '/workspace') return reply(workspace);
@@ -964,7 +971,7 @@ function tickReplay(id: string, status: TickEconomicReplayDetail['status'] = 'CO
   const result: NativeTickEconomicResult = {
     schema_version: 1,
     request: { schema_version: 1, research: { schema_version: 1,
-      input: { modality: 'TRADE_TICK', instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000', representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '2', source_revision: 'CONTROLLED_UI_ONLY', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+      input: { modality: 'TRADE_TICK', instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000', representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', source_revision: 'CONTROLLED_UI_ONLY', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
       sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '10000000000' }, parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '259200000000000', validation_end_ns: '432000000000000' },
       scenario: { execution_model: 'SYNTHETIC_QUOTE_IOC_V1', initial_usdt: '1000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '1', participation_fraction: '0.01', perp_taker_fee_bps: '5', spot_taker_fee_bps: '5', extra_cost_bps: '0', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '1', base_latency_ns: '0', jitter_min_ns: '0', jitter_max_ns: '0', random_seed: '0', maximum_mark_age_ns: '1' },
       fx_instrument_ids: [], funding_source: 'CONTROLLED_UI_ONLY' },
