@@ -49,9 +49,17 @@ export function restoreListNavigation(route: Route, settled = false) {
   const position = listPositions.get(location.hash);
   if (!position) return false;
   window.scrollTo(position.x, position.y);
-  tableScrollers().forEach((element, index) => { element.scrollLeft = position.tables[index] ?? 0; });
-  const target = position.target ? [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].find(anchor => anchor.getAttribute('href') === position.target) : undefined;
-  if (target) { target.focus({ preventScroll: true }); window.scrollTo(position.x, position.y); listPositions.delete(location.hash); }
-  else if (settled) { document.getElementById('main-content')?.focus({ preventScroll: true }); listPositions.delete(location.hash); }
+  if (settled) {
+    const key = location.hash;
+    // AntD measures and initializes its scroll containers after the collection mounts.
+    // Restore after that layout work, retaining the position through the initial route effect.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (location.hash !== key || listPositions.get(key) !== position) return;
+      const target = position.target ? [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].find(anchor => anchor.getAttribute('href') === position.target) : undefined;
+      (target ?? document.getElementById('main-content'))?.focus({ preventScroll: true });
+      tableScrollers().forEach((element, index) => { element.scrollLeft = position.tables[index] ?? 0; });
+      window.scrollTo(position.x, position.y); listPositions.delete(key);
+    }));
+  }
   return true;
 }

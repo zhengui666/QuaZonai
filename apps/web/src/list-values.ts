@@ -40,6 +40,13 @@ export function changeListParameters(params: URLSearchParams, patch: Record<stri
     if (value === undefined || value === '') result.delete(key);
     else result.set(key, String(value));
   }
+  const currency = result.get('currency');
+  if (!currency || currency.includes(',') || currency === 'unknown') {
+    if (result.get('sort') === 'capital') { result.delete('sort'); result.delete('order'); }
+    result.delete('capitalMin'); result.delete('capitalMax');
+  }
+  const metric = result.get('metric');
+  if (result.get('sort') === 'criterionValue' && (!metric || metric.includes(',') || metric === 'unknown')) { result.delete('sort'); result.delete('order'); }
   if (resetPage) result.delete('page');
   return result;
 }

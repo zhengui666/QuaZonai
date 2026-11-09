@@ -6,7 +6,7 @@ import type { DatasetView, PortfolioView } from '../../../packages/contracts/src
 import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
 import { useResource } from './data-hooks';
-import { href, navigate, type Route } from './router';
+import { currentRoute, href, navigate, type Route } from './router';
 import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import type { AllocationListItem } from '../../../packages/contracts/src/lists.ts';
 import { DraftNotice, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, Timestamp } from './ui';
@@ -29,7 +29,8 @@ export function PortfolioAllocations({ route = { page: 'portfolios', creating: f
     removeDraft('review-allocation'); setOpen(false); initialized.current = false;
     cache.setQueryData([`/review-allocations/${encodeURIComponent(value.id)}`], value);
     void cache.invalidateQueries({ queryKey: ['/review-allocations'] });
-    navigate(list.detailPath(value.id, { view: 'allocations' }));
+    const active = currentRoute();
+    if (active.page === 'portfolios' && active.params.get('view') === 'allocations' && !active.id && !active.creating && !active.unknown) navigate(list.detailPath(value.id, { view: 'allocations' }));
   });
   const ids = Form.useWatch('portfolioIds', form) as string[] | undefined;
   const eligible = portfolios.filter(portfolioAllocationEligible);

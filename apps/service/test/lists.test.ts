@@ -127,3 +127,43 @@ test('list projections follow Durable commits, recover a failed read, avoid repe
     assert.equal((await get(state, 'research/list?q=Updated')).total, 0);
   } finally { await state.cleanup(); }
 });
+
+test('renamed dataset IDs retain each portfolio and replay source admission name', async () => {
+  const state = await setup();
+  try {
+    const ids = await seed(state, 2);
+    await state.service.research.harness.commit(async tx => {
+      const app = await tx.doc(Application); const replays = await tx.doc(TickEconomicReplays);
+      for (const [index, name] of ['Dataset Alpha', 'Dataset Beta'].entries()) {
+        app.researchRequests[`request:record-${index}`]!.dataset!.name = name;
+        const id = `portfolio-${index}`; app.portfolios[id] = json(fact(id, `Portfolio ${index}`, ids[index]!));
+        const factorId = `r${ids[index]}.t${1000 + index}.m0`;
+        replays.runs[`replay-${index}`] = json({ original: { datasetId: 'controlled', factorId, request: { scenario: {} } },
+          view: { id: `replay-${index}`, requestId: `request-${index}`, datasetId: 'controlled', factorId, taskId: 123456 + index,
+            status: 'COMPUTED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null } });
+      }
+      app.portfolios['unrecorded'] = json(fact('unrecorded', 'Unrecorded source', 999999));
+      const mixed = fact('mixed', 'Mixed source names', ids[0]!);
+      mixed.evidence.push({ researchId: ids[1]!, input: { goal: 'Second frozen original source' } });
+      mixed.view.researchIds.push(ids[1]!); app.portfolios['mixed'] = json(mixed);
+    }, context);
+    for (const collection of ['research', 'factors', 'portfolios', 'tick-economic-replays']) {
+      for (const name of ['Dataset Alpha', 'Dataset Beta']) {
+        const result = await get(state, `${collection}/list?q=${encodeURIComponent(name)}`);
+        assert.equal(result.total, 1, `${collection} ${name}`); assert.equal(result.items[0].datasetName, name);
+      }
+    }
+    const portfolioRows = (await get(state, 'portfolios/list')).items;
+    assert.equal(portfolioRows.find((row: { id: string }) => row.id === 'unrecorded').datasetName, 'Protocol dataset');
+    assert.equal(portfolioRows.find((row: { id: string }) => row.id === 'mixed').datasetName, null);
+    await state.restart();
+    for (const collection of ['portfolios', 'tick-economic-replays']) assert.equal((await get(state, `${collection}/list?q=Beta`)).items[0].datasetName, 'Dataset Beta');
+    await state.service.research.harness.commit(async tx => {
+      delete (await tx.doc(Application)).researchRequests['request:record-1']!.dataset!.name;
+    }, context);
+    for (const collection of ['portfolios', 'tick-economic-replays']) {
+      assert.equal((await get(state, `${collection}/list?q=Beta`)).total, 0);
+      assert.equal((await get(state, `${collection}/list?q=${collection === 'portfolios' ? 'portfolio-1' : 'replay-1'}`)).items[0].datasetName, null);
+    }
+  } finally { await state.cleanup(); }
+});

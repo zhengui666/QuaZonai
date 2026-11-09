@@ -67,16 +67,16 @@ function StrategyPortfolios({ route }: { route: Route }) {
     { key: 'createdFrom', label: '创建日期起', kind: 'date', advanced: true }, { key: 'createdTo', label: '创建日期止', kind: 'date', advanced: true },
     { key: 'source', label: '来源因子或研究', advanced: true },
   ]} /><ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
-    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<PortfolioListItem> {...list.tableProps} rowKey="id" dataSource={list.items} scroll={{ x: 1440 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的策略组合' : '尚无策略组合'} /> }} columns={[
-      { title: '组合名称', key: 'name', width: 220, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_value, row) => <a className="record-link" {...list.linkProps(row.id)}>{shortTitle(row.name, undefined, '组合')}</a> },
-      { title: '执行状态', width: 145, render: (_value, row) => <div><Status plain value={row.status} /><PortfolioListProgress value={row} /></div> },
-      { title: '评审结论', width: 105, render: (_value, row) => <ReviewDecision value={row.reviewDecision} /> },
-      { title: '数据集', key: 'datasetName', width: 160, ellipsis: true, ...list.sortColumn('datasetName'), render: (_value, row) => row.datasetName ?? '名称未记录' },
-      { title: <Tooltip title="原子因子数量；历史组合为原始研究成员数量。"><span>成员数</span></Tooltip>, key: 'memberCount', width: 90, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
-      { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 150, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
-      { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 105, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
-      { title: <Tooltip title="完整 UTC 日收益的几何年化收益率，沿用原回测年化天数。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 135, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
-      { title: <Tooltip title="本次原生账户日收益的最大回撤，显示正的损失幅度，越小越好。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 125, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<PortfolioListItem> {...list.tableProps} rowKey="id" dataSource={list.items} scroll={{ x: 1340 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的策略组合' : '尚无策略组合'} /> }} columns={[
+      { title: '组合名称', key: 'name', width: 200, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_value, row) => <a className="record-link" {...list.linkProps(row.id)}>{shortTitle(row.name, undefined, '组合')}</a> },
+      { title: '执行状态', width: 130, render: (_value, row) => <div><Status plain value={row.status} /><PortfolioListProgress value={row} /></div> },
+      { title: '评审结论', width: 95, render: (_value, row) => <ReviewDecision value={row.reviewDecision} /> },
+      { title: '数据集', key: 'datasetName', width: 150, ellipsis: true, ...list.sortColumn('datasetName'), render: (_value, row) => row.datasetName ?? '名称未记录' },
+      { title: <Tooltip title="原子因子数量；历史组合为原始研究成员数量。"><span>成员数</span></Tooltip>, key: 'memberCount', width: 80, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
+      { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 140, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
+      { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
+      { title: <Tooltip title="完整 UTC 日收益的几何年化收益率，沿用原回测年化天数。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
+      { title: <Tooltip title="本次原生账户日收益的最大回撤，显示正的损失幅度，越小越好。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
       { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
     ]} />}
   </section>;

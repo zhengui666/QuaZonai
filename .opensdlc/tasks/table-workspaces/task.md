@@ -56,15 +56,18 @@ Local validation:
 - `make check-ts`: passed. Optional external/native fixture checks retain their
   existing skip conditions; this is not market or live-account evidence.
 - `make check-web`: passed (typecheck, unit tests, production build).
-- New real HTTP/Durable list checks: 3 passed, including 105 research records,
-  full-collection filtering/sorting, precise capital, cache recovery and restart.
+- New real HTTP/Durable list checks: 4 passed, including 105 research records,
+  full-collection filtering/sorting, precise capital, cache recovery, restart and
+  renamed dataset IDs retaining each source's frozen name.
 - Original native scalar projection checks: 5 passed, including spot CASH report
   ownership, 252/365 conventions, complete loss and missing evidence.
-- Real-service browser acceptance: full-collection queries, independent details,
-  return state, actual Durable reopen, mobile and axe passed with controlled data.
+- Real-service browser acceptance: all 6 checks passed, including full-collection
+  queries, independent details, return state, actual Durable reopen, original
+  request recovery, deletion, target receipts, mobile and axe with controlled data.
 - Independent reviewers found and verified fixes for source-name initialization,
   failed-read retry, spot-report statistics and original metric detail, old
-  research bookmarks, new-tab focus, and long names in detail.
+  research bookmarks, new-tab focus, long names in detail, and late allocation
+  responses after leaving the page.
 
 Final browser regressions, final-Head CI and GitHub review are tracked on the PR.
 The private project board currently cannot be reached from this environment:

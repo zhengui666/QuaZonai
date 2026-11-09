@@ -79,9 +79,17 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
   let appDirty = true; let requestsDirty = true; let ticksDirty = true; let allocationsDirty = true;
   let initialized = false; let refreshing: Promise<void> | undefined;
   const tickStamps = new Map<string, string>();
-  const datasetName = (id: string) => {
-    const recorded = Object.values(admissions).find(admission => admission.dataset?.id === id)?.dataset?.name;
-    return typeof recorded === 'string' ? recorded : config.datasets.find(dataset => dataset.id === id)?.name ?? null;
+  const datasetName = (id: string, sourceResearchIds: number[]) => {
+    // A configured ID may have been renamed since admission. Only this object's
+    // original sources can supply its frozen name; another study is not provenance.
+    const recorded = [...new Set(sourceResearchIds)].flatMap(researchId => {
+      const admission = admissions[`request:${originals.get(researchId) ?? ''}`];
+      const original = admission?.original as { datasetId?: string } | undefined;
+      if ((admission?.dataset?.id ?? original?.datasetId) !== id) return [];
+      return [typeof admission?.dataset?.name === 'string' ? admission.dataset.name : null];
+    });
+    if (recorded.length) return recorded.every(name => name === recorded[0]) ? recorded[0]! : null;
+    return config.datasets.find(dataset => dataset.id === id)?.name ?? null;
   };
   const unsubscribe = host.harness.subscribeCommits(({ changes }) => {
     // Publication listeners must not call Session operations or perform blocking work.
@@ -118,8 +126,9 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
     for (const raw of Object.values(app?.portfolios ?? {})) {
       const fact = portfolio(raw); if (fact.deletedAt) continue;
       const view = fact.view; const memberCount = view.factors?.length ?? view.researchIds.length;
+      const evidenceResearchIds = fact.evidence.flatMap(row => typeof row.researchId === 'number' ? [row.researchId] : []);
       const item: PortfolioListItem = { id: view.id, name: view.name, status: view.status, datasetId: view.datasetId,
-        datasetName: datasetName(view.datasetId), memberCount, memberType: memberCount > 1 ? 'ensemble' : 'single-factor',
+        datasetName: datasetName(view.datasetId, evidenceResearchIds.length ? evidenceResearchIds : view.researchIds), memberCount, memberType: memberCount > 1 ? 'ensemble' : 'single-factor',
         capital: view.capital, currency: view.currency, createdAt: view.createdAt, reviewDecision: view.review?.decision ?? null,
         progress: view.progress ? { phase: view.progress.phase, updatedAt: view.progress.updatedAt, ...(view.progress.completed !== undefined ? { completed: view.progress.completed } : {}), ...(view.progress.total !== undefined ? { total: view.progress.total } : {}) } : null,
         performance: portfolioPerformance(fact) };
@@ -141,7 +150,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
     const requests = await host.harness.snapshot(Requests, context);
     const entries = Object.entries(requests?.requests ?? {}).filter(([, request]) => !request.recovery).map(([key, request]) => [request.conversationId, key.slice('request:'.length)] as const);
     const stamp = JSON.stringify(entries);
-    if (stamp !== originalStamp) { originals = new Map(entries); originalStamp = stamp; for (const id of known) dirty.add(id); }
+    if (stamp !== originalStamp) { originals = new Map(entries); originalStamp = stamp; for (const id of known) dirty.add(id); appDirty = true; ticksDirty = true; }
   }
   async function refreshResearch(ids: number[]) {
     const active = new Set((await host.harness.inspect(context)).tasks.map(task => task.record.conversationId as number));
@@ -190,7 +199,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const members = view.members ?? (view.factorId ? [{ factorId: view.factorId, weight: '1' }] : []);
       const sourceIds = [...new Set(members.map(member => String(factorReference(member.factorId).researchId)))];
       const sourceNames = sourceIds.map(id => researchNames.get(Number(id)) ?? '研究名称未记录');
-      const recordedName = datasetName(view.datasetId);
+      const recordedName = datasetName(view.datasetId, sourceIds.map(Number));
       const stamp = JSON.stringify({ id: view.id, datasetId: view.datasetId, status: view.status, members, sourceNames, datasetName: recordedName });
       if (ticks.has(view.id) && tickStamps.get(view.id) === stamp && !taskIds.has(view.taskId)) continue;
       const metadata = replayMetadata(fact, await host.harness.getTask(view.taskId as TaskId, context));

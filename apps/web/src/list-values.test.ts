@@ -27,6 +27,26 @@ describe('collection navigation parameters', () => {
   it('canonicalizes equivalent API cache identities', () => {
     expect(listQuery(new URLSearchParams('status=FAILED&q=x'))).toBe(listQuery(new URLSearchParams('q=x&status=FAILED')));
   });
+  it.each([undefined, '', 'USD,USDT', 'unknown'])('removes amount bounds and sorting when a currency chip becomes %s', currency => {
+    const source = new URLSearchParams('page=3&currency=USD&capitalMin=100&capitalMax=999&sort=capital&order=asc&view=strategies');
+    const result = changeListParameters(source, { currency });
+    for (const key of ['capitalMin', 'capitalMax', 'sort', 'order', 'page']) expect(result.has(key)).toBe(false);
+    expect(result.get('view')).toBe('strategies');
+  });
+  it.each([undefined, '', 'pearson_ic,Sharpe Ratio (365 days)', 'unknown'])('removes criterion sorting when a metric chip becomes %s', metric => {
+    const result = changeListParameters(new URLSearchParams('metric=pearson_ic&sort=criterionValue&order=desc&page=3'), { metric });
+    for (const key of ['sort', 'order', 'page']) expect(result.has(key)).toBe(false);
+  });
+  it('clears dependent sorts atomically through the same path used by clear-all', () => {
+    for (const source of [new URLSearchParams('q=x&currency=USD&capitalMin=1&sort=capital&order=asc&page=2'), new URLSearchParams('q=x&metric=pearson_ic&sort=criterionValue&order=desc&page=2')]) {
+      const patch = Object.fromEntries([...filterEntries(source).map(([key]) => [key, undefined]), ['q', undefined]]);
+      expect(changeListParameters(source, patch).toString()).toBe('');
+    }
+  });
+  it('preserves valid single-currency and single-metric sorting when changing unrelated filters', () => {
+    expect(changeListParameters(new URLSearchParams('currency=USD&capitalMin=1&sort=capital&order=asc'), { q: 'test' }).get('sort')).toBe('capital');
+    expect(changeListParameters(new URLSearchParams('metric=pearson_ic&sort=criterionValue&order=desc'), { q: 'test' }).get('sort')).toBe('criterionValue');
+  });
   it.each([['进行中', 'RUNNING,STARTED,QUEUED'], ['已计算', 'COMPUTED'], ['失败', 'FAILED'], ['已停止', 'STOPPED'], ['待处理', 'IDLE'], ['全部状态', null]])('keeps legacy %s bookmarks searchable', (state, status) => {
     const result = normalizeResearchState(new URLSearchParams({ q: '中文', state, page: '3' }));
     expect(result.get('status')).toBe(status);

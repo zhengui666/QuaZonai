@@ -216,7 +216,7 @@ main { max-width: 1360px; margin: 0 auto; padding: 32px 40px 48px; }
 .workspace-table .ant-table-thead > tr > th { white-space: nowrap; font-size: 12px; color: var(--secondary); }
 .workspace-table .ant-table-tbody > tr > td { font-size: 13px; }
 .workspace-table .ant-pagination { flex-wrap: wrap; }
-.list-record-name, .list-cell-text { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-record-name, .list-cell-text, .workspace-table .record-link { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-record-name { color: var(--accent); text-decoration: none; font-weight: 500; }
 .list-record-name:hover { text-decoration: underline; }
 .list-back { display: inline-flex; min-height: 32px; }

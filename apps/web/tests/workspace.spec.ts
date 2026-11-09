@@ -144,6 +144,7 @@ test('multi-portfolio allocation preserves explicit constraints and the original
   };
   let portfolios = [source('first', '配置来源一'), source('second', '配置来源二')];
   const writes: string[] = []; let record: ReviewAllocationView | null = null;
+  let releaseReplay!: () => void; const replayHeld = new Promise<void>(resolve => { releaseReplay = resolve; });
   await page.route('**/api/v3/portfolios', route => route.fulfill({ json: portfolios }));
   await page.route('**/api/v3/portfolios/list?*', route => route.fulfill({ json: listFixture(route, 'portfolios', portfolios) }));
   await page.route('**/api/v3/review-allocations/list?*', route => route.fulfill({ json: listFixture(route, 'review-allocations', record ? [record] : []) }));
@@ -153,6 +154,7 @@ test('multi-portfolio allocation preserves explicit constraints and the original
     if (writes.length === 1) return route.abort('failed');
     const body = route.request().postDataJSON();
     record = { id: 'new-allocation', requestId: body.requestId, name: body.name, status: 'RUNNING', portfolioIds: body.portfolioIds, taskId: 99, consumedScientificCalls: 3, weights: null, review: null, error: null, createdAt: '2026-11-02T10:00:00Z' };
+    await replayHeld;
     return route.fulfill({ json: record, status: 202 });
   });
   await page.route('**/api/v3/review-allocations/new-allocation', route => route.fulfill({ json: record }));
@@ -179,7 +181,14 @@ test('multi-portfolio allocation preserves explicit constraints and the original
   expect(JSON.parse(writes[0]!)).toEqual({ requestId: expect.any(String), name: '质量风险配置', portfolioIds: ['first', 'second'], memberCaps: [{ id: 'first', maximumWeight: '0.700000000000000001' }, { id: 'second', maximumWeight: '0.6' }], currentWeights: [{ id: 'first', weight: '0' }, { id: 'second', weight: '0' }], clusterCaps: [{ id: '共同风险', members: ['first', 'second'], maximumWeight: '1' }], maximumTurnover: '1' });
   portfolios = []; await page.reload(); await page.getByRole('button', { name: '核对原配置提交', exact: true }).click();
   await expect(form.getByLabel('配置名称', { exact: true })).toHaveValue('质量风险配置'); await expect(form.getByLabel('配置名称', { exact: true })).toBeDisabled();
-  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect(page.locator('.portfolio-result')).toContainText('质量风险配置');
+  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect.poll(() => writes.length).toBe(2);
+  await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '研究', exact: true, level: 1 })).toBeVisible();
+  const reconciled = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v3/review-allocations' && response.request().method() === 'POST');
+  releaseReplay(); await reconciled; await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page).toHaveURL(/#\/research$/);
+  await page.goto('/#/portfolios?view=allocations'); await page.getByRole('link', { name: '质量风险配置', exact: true }).click();
+  await expect(page.locator('.portfolio-result')).toContainText('质量风险配置');
   expect(writes).toEqual([writes[0], writes[0]]); await expect(page.locator('.portfolio-result')).toContainText('尚无评审报告');
 });
 
@@ -1022,9 +1031,10 @@ test('tick collection errors are isolated, manual refresh discovers later admiss
 test('portfolio table shows all three performance metrics and sends sortable fields through the list query', async ({ page }, info) => {
   const state = await contract(page); const reads: URLSearchParams[] = [];
   const longName = '名称很长的组合'.repeat(15);
+  const basis = { sharpe: 'NATIVE_ACCOUNT_DAILY_RETURNS', maxDrawdown: 'NATIVE_ACCOUNT_DAILY_RETURNS', annualizedReturn: 'COMPLETE_UTC_DAYS_GEOMETRIC', expectedDays: 30, observedDays: 30, partialDays: 0, startNs: null, endNs: null };
   const rows = [
-    { ...state.portfolio, id: 'metric-a', name: longName, performance: { sharpe: -1.23456, annualizedReturn: -0.123456, maxDrawdown: 0.25, annualizationDays: 365 } },
-    { ...state.portfolio, id: 'metric-b', name: '缺少表现的历史组合', performance: { sharpe: null, annualizedReturn: null, maxDrawdown: null, annualizationDays: null } },
+    { ...state.portfolio, id: 'metric-a', name: longName, performance: { sharpe: -1.23456, annualizedReturn: -0.123456, maxDrawdown: 0.25, annualizationDays: 365, basis } },
+    { ...state.portfolio, id: 'metric-b', name: '缺少表现的历史组合', performance: { sharpe: null, annualizedReturn: null, maxDrawdown: null, annualizationDays: null, basis } },
   ];
   await page.route('**/api/v3/portfolios/list?*', route => { reads.push(new URL(route.request().url()).searchParams); return route.fulfill({ json: listFixture(route, 'portfolios', rows) }); });
   await page.route('**/api/v3/portfolios/metric-a', route => route.fulfill({ json: rows[0] }));
@@ -1041,11 +1051,11 @@ test('portfolio table shows all three performance metrics and sends sortable fie
     await expect(page).toHaveURL(new RegExp(`sort=${key}`));
   }
   await page.reload(); await expect.poll(() => reads.at(-1)?.get('sort')).toBe('memberCount');
-  const scroller = table.locator('.ant-table-content'); await scroller.evaluate(element => { element.scrollLeft = 200; });
-  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(200);
+  const scroller = table.locator('.ant-table-content'); await scroller.evaluate(element => { element.scrollLeft = 100; });
+  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(100);
   await measured.getByRole('link').click(); await expect(page.getByRole('heading', { name: shortTitle(longName), exact: true, level: 1 })).toBeVisible();
   await page.locator('.back-link').click(); await expect(measured.getByRole('link')).toBeVisible();
-  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(200);
+  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(100);
   await scroller.evaluate(element => { element.scrollLeft = 0; });
   for (const mode of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: mode as 'light' | 'dark' });
@@ -1077,4 +1087,30 @@ test('legacy research status links normalize to visible canonical filters', asyn
   await expect(page.getByLabel('当前筛选')).toContainText('失败');
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: '清除全部', exact: true }).click(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
+});
+
+test('opening a research detail in another tab does not let polling steal the search focus', async ({ page }) => {
+  const state = await contract(page); await page.clock.install(); await page.goto('/#/research');
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
+  const opened = page.context().waitForEvent('page');
+  await page.getByRole('link', { name: '测试 · 低波动与动量', exact: true }).click({ modifiers: ['Control'] });
+  const popup = await opened; await popup.close(); await page.bringToFront();
+  const search = page.getByLabel('搜索研究', { exact: true }); await search.focus();
+  state.idle(); await page.clock.runFor(5000);
+  await expect(page.locator('.workspace-table .ant-table-row').filter({ hasText: '测试 · 低波动与动量' })).toContainText('当前无执行');
+  await expect(search).toBeFocused(); await expect(page).toHaveURL(/#\/research$/);
+});
+
+test('clearing a metric or currency scope also clears its dependent sorting and ranges', async ({ page }) => {
+  await contract(page);
+  await page.goto('/#/portfolios?currency=CNY&capitalMin=100&sort=capital&order=desc');
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1);
+  await page.getByRole('button', { name: '清除全部', exact: true }).click();
+  await expect(page).not.toHaveURL(/currency=|capitalMin=|sort=capital/);
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1);
+  await page.goto('/#/research?metric=pearson_ic&sort=criterionValue&order=desc');
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
+  await page.getByRole('button', { name: '清除全部', exact: true }).click();
+  await expect(page).not.toHaveURL(/metric=|sort=criterionValue/);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });

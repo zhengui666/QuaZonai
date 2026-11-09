@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Select, Tag, type TableColumnType, type TableProps } from 'antd';
 import { MagnifyingGlassIcon, SlidersHorizontalIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import type { ListPage } from '../../../packages/contracts/src/lists.ts';
 import { api } from './api';
-import { changeListParameters, filterEntries, isPlainNavigationClick, listParameters, listQuery } from './list-values';
-import { href, navigate, rememberListNavigation, restoreListNavigation, type Route } from './router';
+import { changeListParameters, filterEntries, listParameters, listQuery } from './list-values';
+import { href, navigate, restoreListNavigation, type Route } from './router';
 
 export function listPathFor(route: Route) {
   const params = listParameters(route.params);
@@ -20,11 +20,6 @@ export function useListWorkspace<T>(route: Route, collection: string, defaultSor
     enabled: !route.id && !route.creating, refetchInterval: 5000, refetchIntervalInBackground: false });
   const update = (patch: Record<string, string | number | undefined>, resetPage = true) => {
     const next = changeListParameters(params, patch, resetPage);
-    if (next.get('sort') === 'criterionValue' && (!next.get('metric') || next.get('metric') === 'unknown' || next.get('metric')!.includes(','))) { next.delete('sort'); next.delete('order'); }
-    if (!next.get('currency') || next.get('currency')!.includes(',')) {
-      if (next.get('sort') === 'capital') { next.delete('sort'); next.delete('order'); }
-      if ('currency' in patch) { next.delete('capitalMin'); next.delete('capitalMax'); }
-    }
     navigate(`/${route.page}${next.size ? `?${next}` : ''}`, true);
   };
   const entries = filterEntries(params);
@@ -53,7 +48,7 @@ export function useListWorkspace<T>(route: Route, collection: string, defaultSor
   };
   return { query, data: query.data, items: query.data?.items ?? [], params, value: (key: string) => params.get(key) ?? '', update, clear,
     activeFilters: entries, hasFilters: !!params.get('q') || entries.length > 0, listPath: listPathFor(route), detailPath,
-    linkProps: (id: string | number, extra: Record<string, string> = {}) => ({ href: href(detailPath(id, extra)), 'data-record-id': String(id), onClick: (event: MouseEvent<HTMLAnchorElement>) => { if (isPlainNavigationClick(event)) rememberListNavigation(href(detailPath(id, extra))); } }),
+    linkProps: (id: string | number, extra: Record<string, string> = {}) => ({ href: href(detailPath(id, extra)), 'data-record-id': String(id) }),
     sortColumn, tableProps };
 }
 
