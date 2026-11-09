@@ -117,7 +117,7 @@ export const tickEconomicExtension = defineExtension({ name: 'qz.tick-economic-r
 function timestamp(value: unknown): string | null {
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 }
-function replayMetadata(stored: ReplayFact, task: TaskRecord<unknown, unknown, unknown> | undefined): TickEconomicReplayMetadata {
+export function replayMetadata(stored: ReplayFact, task: TaskRecord<unknown, unknown, unknown> | undefined): TickEconomicReplayMetadata {
   const input = task?.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input as Record<string, unknown> : null;
   const linked = task?.kind === TickEconomicReplay.definition.name && input?.id === stored.view.id;
   const state = linked ? task.state : null;

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Form, Input, Select, Table, Tabs } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, CaretRightIcon, ChartLineUpIcon, CheckIcon, DatabaseIcon, DotsThreeIcon, FlaskIcon, MagnifyingGlassIcon, PlusIcon, SlidersHorizontalIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, CaretRightIcon, ChartLineUpIcon, CheckIcon, DatabaseIcon, DotsThreeIcon, FlaskIcon, PlusIcon, SlidersHorizontalIcon } from '@phosphor-icons/react';
+import type { ResearchListItem } from '../../../packages/contracts/src/lists.ts';
 import type { DatasetView, ModelCatalog, ModelRef, ResearchDetail, ResearchReceipt, ResearchSpecification, ServiceTier, SettingsView, TaskView, TrialView } from '../../../packages/contracts/src/index.ts';
 import { api } from './api';
 import { Mandate } from './mandate';
@@ -9,9 +10,10 @@ import { CapitalFields, capitalInput } from './capacity';
 import { datasetResearchSettings, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { labelHorizon, NativeInputFacts } from './native-input';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
-import { useResource, useStudies } from './data-hooks';
+import { useResource } from './data-hooks';
+import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import { currentRoute, href, navigate, type Route } from './router';
-import { Copy, DraftNotice, Empty, ErrorNotice, EvidenceMetrics, Facts, Loading, MetricLabel, Metrics, PendingCommand, Status, Timestamp, useConfirm } from './ui';
+import { Copy, DraftNotice, Empty, ErrorNotice, EvidenceMetrics, Exact, Facts, Loading, MetricLabel, Metrics, PendingCommand, Status, Timestamp, useConfirm } from './ui';
 import { RecordTitle, TextDisclosure } from './disclosure';
 import { shortTitle } from './titles';
 import { partitionLabel } from './metric-glossary';
@@ -23,26 +25,34 @@ import { ReviewReportPanel } from './review-report';
 
 const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
-export default function Research({ route }: { route: Route }) { return route.creating ? <NewStudy route={route} /> : <ResearchWorkspace route={route} />; }
+const criterionLabels: Record<string, string> = { met: '达到标准', not_met: '未达到标准', computed: '已计算（未设阈值）', insufficient: '证据不足', failed: '计算失败' };
+const scopeLabels: Record<string, string> = { 'single-factor': '单因子', ensemble: '组合研究' };
+export default function Research({ route }: { route: Route }) {
+  if (route.creating) return <NewStudy route={route} />;
+  return route.id ? <StudyDocument route={route} back={listPathFor(route)} /> : <ResearchWorkspace route={route} />;
+}
 function ResearchWorkspace({ route }: { route: Route }) {
-  const studies = useStudies(); const datasets = useResource<DatasetView[]>('/datasets');
-  const query = route.params.get('q') ?? ''; const filter = route.params.get('state') ?? '全部状态';
-  const listPath = () => { const params = new URLSearchParams(); if (query) params.set('q', query); if (filter !== '全部状态') params.set('state', filter); return `/research${params.size ? `?${params}` : ''}`; };
-  const detailPath = (id: number) => listPath().replace('/research', `/research/${id}`);
-  const updateFilter = (q: string, state: string) => { const params = new URLSearchParams(route.params); if (q) params.set('q', q); else params.delete('q'); if (state !== '全部状态') params.set('state', state); else params.delete('state'); navigate(`/research${route.id ? `/${encodeURIComponent(route.id)}` : ''}${params.size ? `?${params}` : ''}`, true); };
-  const stateMatches = (status: string) => filter === '全部状态' || (filter === '进行中' ? ['RUNNING', 'STARTED', 'QUEUED'].includes(status) : filter === '已计算' ? status === 'COMPUTED' : filter === '失败' ? status === 'FAILED' : filter === '已停止' ? status === 'STOPPED' : status === 'IDLE');
-  const visible = studies.items.filter(item => stateMatches(item.status) && `${item.title} ${item.model}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-  return <div className={`research-layout ${route.id ? 'has-selection' : ''}`}>
-    <section className="collection" aria-label="研究列表"><header className="collection-heading"><div>{route.id ? <h2>研究</h2> : <h1>研究</h1>}<span>{studies.items.length}</span></div><Button type="primary" className="new-study-button" icon={<PlusIcon size={15} />} onClick={() => navigate('/research/new')}>新建研究</Button></header>
-      <div className="collection-tools"><label className="sr-only" htmlFor="research-search">搜索已加载研究</label><Input id="research-search" prefix={<MagnifyingGlassIcon size={16} />} value={query} allowClear placeholder="搜索研究" onChange={event => updateFilter(event.target.value, filter)} /><Select aria-label="研究状态" value={filter} onChange={value => updateFilter(query, value)} suffixIcon={<CaretDownIcon size={12} />} options={['全部状态', '进行中', '已计算', '失败', '已停止', '待处理'].map(value => ({ value }))} /></div>
-      <div className="collection-scope"><span>已加载 {studies.items.length} 条{query || filter !== '全部状态' ? ` / 匹配 ${visible.length} 条` : ''}</span>{visible.length > 0 && (query || filter !== '全部状态') && <button className="text-link" onClick={() => updateFilter('', '全部状态')}>清除筛选</button>}</div>
-      {studies.isPending ? <Loading /> : <><ErrorNotice error={studies.error} retry={() => { void studies.refetch(); }} /><div className="study-list">{visible.map(item => <article className={`study-row ${String(item.id) === route.id ? 'active' : ''}`} key={item.id}><a className="study-entry-link" data-study-id={item.id} href={href(detailPath(item.id))} aria-current={String(item.id) === route.id ? 'true' : undefined}><div className="study-row-top"><code>#{item.id}</code><Status plain value={item.status} /></div><h3>{shortTitle(item.title)}</h3></a><div className="study-meta"><MetricLabel metricKey="trials" label={`${item.trials} 次试验`} /></div></article>)}</div>
-      {!visible.length && !studies.error && <Empty title={query || filter !== '全部状态' ? '没有匹配的研究' : '尚无研究'} action={query || filter !== '全部状态' ? <Button type="text" onClick={() => updateFilter('', '全部状态')}>清除筛选</Button> : undefined} />}
-      {studies.hasNextPage && <Button className="load-more" block loading={studies.isFetchingNextPage} onClick={() => { void studies.fetchNextPage(); }}>加载更多</Button>}</>}
-      {datasets.data && <div className="collection-bottom"><DatabaseIcon size={15} /><span>{datasets.data.length} 个已登记数据集</span><a aria-label="查看数据" href={href('/settings?section=data')}><ArrowUpRightIcon size={15} /></a></div>}
-    </section>
-    {route.id ? <StudyDocument route={route} back={listPath()} /> : <div className="study-document"><Empty title={studies.items.length ? '选择一项研究' : '从一个研究问题开始'} /></div>}
-  </div>;
+  const list = useListWorkspace<ResearchListItem>(route, '/research');
+  const metric = list.value('metric');
+  const canSortCriterion = !!metric && metric !== 'unknown' && !metric.includes(',');
+  return <section className="list-workspace" aria-label="研究列表">
+    <header className="list-heading"><h1>研究</h1><Button type="primary" className="new-study-button" icon={<PlusIcon size={15} />} onClick={() => navigate(list.detailPath('new'))}>新建研究</Button></header>
+    <ListTools list={list} searchLabel="搜索研究" placeholder="搜索研究名称、问题、依据或数据集" filters={[
+      { key: 'status', label: '研究状态' }, { key: 'scope', label: '研究类型' }, { key: 'datasetId', label: '研究数据集' },
+      { key: 'criterionStatus', label: '验收结果', advanced: true }, { key: 'metric', label: '评价指标', advanced: true },
+      { key: 'modality', label: '输入类型', advanced: true }, { key: 'model', label: '研究模型', advanced: true },
+    ]} />
+    <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<ResearchListItem> {...list.tableProps} rowKey="id" size="small" scroll={{ x: 1120 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的研究' : '尚无研究'} /> }} columns={[
+      { title: '研究名称', key: 'title', width: 240, ellipsis: { showTitle: false }, ...list.sortColumn('title'), render: (_value, row) => <a className="list-record-name" {...list.linkProps(row.id)}>{shortTitle(row.title, undefined, '未命名研究')}</a> },
+      { title: '研究类型', key: 'scope', width: 110, render: (_value, row) => row.scope ? scopeLabels[row.scope] ?? '未记录' : <span className="quiet">未记录</span> },
+      { title: '数据集', key: 'datasetName', width: 190, ellipsis: { showTitle: false }, ...list.sortColumn('datasetName'), render: (_value, row) => <span className="list-cell-text">{row.datasetName ? shortTitle(row.datasetName) : '未记录'}</span> },
+      { title: '执行状态', key: 'status', width: 130, render: (_value, row) => <Status plain value={row.status} label={row.status === 'STARTED' ? '独立评估中' : undefined} /> },
+      { title: '验收结果', key: 'criterionStatus', width: 180, render: (_value, row) => row.criterion ? criterionLabels[row.criterion.status] ?? '未评价' : <span className="quiet">未评价</span> },
+      { title: '独立评价指标', key: 'criterionValue', width: 270, align: 'right', ...(canSortCriterion ? list.sortColumn('criterionValue') : {}), render: (_value, row) => row.criterion ? <span className="list-metric"><MetricLabel metricKey={row.criterion.metric} /> <Exact value={row.criterion.value} missing="不可用" /></span> : <span className="quiet">未提供</span> },
+      { title: '试验数', key: 'trials', width: 90, align: 'right', ...list.sortColumn('trials'), render: (_value, row) => <span className="table-metric">{row.trials}</span> },
+    ]} />}
+  </section>;
 }
 function StudyDocument({ route, back }: { route: Route; back: string }) {
   const cache = useQueryClient(); const query = useResource<ResearchDetail>(`/research/${encodeURIComponent(route.id!)}`, { poll: 2000 });
@@ -57,7 +67,7 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
   const records = [...detail.trialRecords].reverse();
   const originalSubmission = detail.originalSubmission ?? detail.submission;
   const nativeSettings = datasetResearchSettings(detail.input.data);
-  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="mobile-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active && (!detail.final || detail.final.status === 'STARTED') ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
+  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active && (!detail.final || detail.final.status === 'STARTED') ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
       <RecordTitle name={detail.input.specification?.name} text={detail.title} fallback="研究" />
       <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span><span><FlaskIcon size={14} /><MetricLabel metricKey="trials" /><code>{detail.trials}</code></span></div></header>
       <ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
@@ -98,8 +108,10 @@ function TrialLedger({ records, selected, openId, onOpen }: { records: TrialView
 function NewStudy({ route }: { route: Route }) {
   const cache = useQueryClient(); const catalog = useResource<ModelCatalog>('/models'); const datasets = useResource<DatasetView[]>('/datasets'); const settings = useResource<SettingsView>('/settings');
   const [form] = Form.useForm(); const [draft] = useState(() => readDraft<Record<string, unknown>>('research')); const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted('research')); const initialized = useRef(false);
-  const command = useCommand<ResearchReceipt>('research', result => { removeDraft('research'); void cache.invalidateQueries({ queryKey: ['/research'] }); if (currentRoute().page === 'research' && currentRoute().creating) navigate(`/research/${result.conversationId}`); });
-  const origin = route.params.get('from') === 'data' ? { path: '/settings?section=data', label: '数据' } : { path: '/research', label: '研究' };
+  const listParams = new URLSearchParams(route.params); listParams.delete('from'); listParams.delete('dataset');
+  const returnPath = listPathFor({ ...route, params: listParams });
+  const command = useCommand<ResearchReceipt>('research', result => { removeDraft('research'); void cache.invalidateQueries({ queryKey: ['/research'] }); if (currentRoute().page === 'research' && currentRoute().creating) navigate(returnPath.replace('/research', `/research/${result.conversationId}`)); });
+  const origin = route.params.get('from') === 'data' ? { path: '/settings?section=data', label: '数据' } : { path: returnPath, label: '研究' };
   const [thinkingChanged, setThinkingChanged] = useState(false);
   const thinkingLevel = Form.useWatch('thinkingLevel', form) as string | undefined;
   const serviceTier = Form.useWatch('serviceTier', form) as ServiceTier | undefined;

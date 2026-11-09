@@ -8,6 +8,7 @@ import { FactLabel, MetricLabel } from './metric-label';
 export { MetricLabel } from './metric-label';
 
 const labels: Record<string, string> = {
+  REVIEW_BLOCKED: '评审未放行',
   PLANNED: '计划中', SEARCHING: '研究中', CLOSING: '形成结论', EVALUATING_INDEPENDENT: '独立评估中', CONCLUDED: '已结项', PAUSED: '已暂停',
   CAPTURING: '汇集当前依据', COMPUTING: '计算中', EVALUATING: '比较决策', SUPERSEDED: '已由新依据取代', WAITING_EVIDENCE: '等待证据',
   AVAILABLE: '证据可用', INSUFFICIENT: '证据不足', UNAVAILABLE: '尚不可用', STALE: '依据过期', INCOMPARABLE: '口径不可比较', AMBIGUOUS: '证据存在歧义', INVALID: '证据无效',

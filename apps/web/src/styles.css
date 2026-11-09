@@ -196,6 +196,46 @@ main { max-width: 1360px; margin: 0 auto; padding: 32px 40px 48px; }
 .index-page .ant-table-wrapper { overflow: hidden; }
 .index-page .ant-table-thead > tr > th { font-size: 11px; font-weight: 450; }
 .index-page .ant-table-tbody > tr > td { font-size: 13px; }
+.list-workspace { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 27px 30px 16px; box-shadow: var(--surface-shadow); }
+.list-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.list-heading h1 { font-size: 24px; line-height: 34px; font-weight: 600; }
+.workspace-tools { margin-bottom: 16px; min-width: 0; }
+.workspace-primary-tools, .workspace-advanced-tools { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.workspace-primary-tools > .ant-btn { margin-bottom: 0; }
+.workspace-search { flex: 1 1 240px; min-width: 180px; max-width: 440px; }
+.workspace-filter { display: flex; flex: 1 1 150px; flex-direction: column; gap: 5px; min-width: 130px; max-width: 220px; }
+.workspace-filter > label { color: var(--secondary); font-size: 12px; }
+.workspace-filter > .ant-select, .workspace-filter > .ant-input { width: 100%; min-width: 0; }
+.workspace-advanced-tools { margin-top: 16px; padding: 16px; background: var(--inset); border-radius: 10px; }
+.workspace-list-scope { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; margin-top: 10px; color: var(--secondary); font-size: 12px; }
+.workspace-filter-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.workspace-filter-tags .ant-tag { display: inline-flex; align-items: center; max-width: 100%; margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.workspace-filter-tags .ant-tag-close-icon { flex-shrink: 0; }
+.workspace-table { min-width: 0; }
+.workspace-table .ant-table-content { overscroll-behavior-x: contain; }
+.workspace-table .ant-table-thead > tr > th { white-space: nowrap; font-size: 12px; color: var(--secondary); }
+.workspace-table .ant-table-tbody > tr > td { font-size: 13px; }
+.workspace-table .ant-pagination { flex-wrap: wrap; }
+.list-record-name, .list-cell-text, .workspace-table .record-link { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-record-name { color: var(--accent); text-decoration: none; font-weight: 500; }
+.list-record-name:hover { text-decoration: underline; }
+.list-back { display: inline-flex; min-height: 32px; }
+.list-record-cell { min-width: 0; max-width: 100%; }
+.list-record-note { color: var(--secondary); font-size: 11px; white-space: nowrap; }
+.list-metric { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+@media (max-width: 767px) {
+  .list-workspace { padding: 0; border: 0; background: none; border-radius: 0; box-shadow: none; }
+  .list-heading { align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+  .list-heading h1 { font-size: 23px; }
+  .workspace-primary-tools, .workspace-advanced-tools { gap: 10px; }
+  .workspace-search { flex-basis: 100%; min-width: 0; max-width: none; }
+  .workspace-filter { flex: 1 1 calc(50% - 10px); min-width: 0; max-width: none; }
+  .workspace-primary-tools > .ant-btn { min-height: 44px; }
+  .workspace-filter > .ant-select, .workspace-filter > .ant-input, .workspace-search { min-height: 44px; }
+  .workspace-advanced-tools { padding: 12px; }
+  .workspace-table .ant-table-pagination { gap: 5px; }
+  .list-back { min-height: 44px; }
+}
 .dataset-name { display: flex; align-items: center; gap: 13px; }
 .dataset-symbol { display: inline-flex; align-items: center; justify-content: center; width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 9px; background: var(--inset); color: var(--secondary); flex-shrink: 0; }
 .dataset-name strong { display: block; font-size: 13px; font-weight: 500; }

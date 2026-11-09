@@ -30,7 +30,7 @@ async function owner(page: Page, url: string) {
   await page.getByLabel('密码', { exact: true }).fill('browser-owner-test-only'); await page.getByLabel('确认密码', { exact: true }).fill('browser-owner-test-only'); await page.getByRole('button', { name: '创建密码' }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
 }
 async function start(page: Page, url: string, goal: string) {
-  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByLabel('研究名称', { exact: true }).fill(goal); await page.getByLabel('研究问题', { exact: true }).fill(goal); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled HTTP hypothesis; protocol coverage, not scientific qualification.');
+  await page.goto(`${url}/#/research`); await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByRole('textbox', { name: /研究名称$/ }).fill(goal); await page.getByLabel('研究问题', { exact: true }).fill(goal); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled HTTP hypothesis; protocol coverage, not scientific qualification.');
   await page.getByLabel('数据集', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol dataset / USD', exact: true }).click();
   const catalog = await (await page.request.get(`${url}/api/v3/models`)).json() as ModelCatalog;
   const model = catalog.models.find(model => model.provider === 'faux')!; expect(model).toBeTruthy();
@@ -140,7 +140,7 @@ test('object deletion confirms the original resource, reconciles a lost response
     await page.getByRole('button', { name: '删除组合', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
     await expect(page).toHaveURL(`${url}/#/portfolios`); await expect(page.getByRole('heading', { name: '尚无策略组合', exact: true })).toBeVisible();
     await page.goto(`${url}/#/factors/${factor.id}`); await page.getByRole('button', { name: '删除因子', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
-    await expect(page).toHaveURL(`${url}/#/factors`); await expect(page.getByRole('heading', { name: '尚无匹配原子因子', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(`${url}/#/factors`); await expect(page.getByRole('heading', { name: '尚无原子因子', exact: true })).toBeVisible();
     const deletes: string[] = [];
     await page.route(`${url}/api/v3/research/${study.id}`, async route => {
       if (route.request().method() !== 'DELETE') return route.continue();
@@ -234,6 +234,62 @@ test('settings configures independent remote instances through real HTTP and pre
     await expect(page.locator('.extension-list')).toBeVisible();
     await page.goto(`${url}/#/extensions`); await expect(page.getByRole('heading', { name: '设置', exact: true, level: 1 })).toBeVisible();
     await expect(page.locator('.extension-list')).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally { await state.close(); }
+});
+
+test('real full-collection tables search older records, sort before pagination and preserve detail return state', async ({ page }, info) => {
+  test.setTimeout(120_000);
+  const state = await service(); const url = state.url;
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  try {
+    await owner(page, url);
+    const models = await (await page.request.get(`${url}/api/v3/research/models`)).json() as ModelCatalog['models'];
+    const model = models.find(item => item.provider === 'faux')!;
+    const datasets = await (await page.request.get(`${url}/api/v3/datasets`)).json() as { id: string }[];
+    // Original admitted facts, without page.route or synthetic list responses.
+    for (let index = 0; index < 22; index++) {
+      const goal = index === 0 ? 'Target-oldest searchable question' : `Row-${String(index).padStart(2, '0')}`;
+      const response = await page.request.post(`${url}/api/v3/research`, { data: {
+        requestId: `TEST_ONLY-list-${index}`, goal,
+        model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id, maxTrials: 1,
+      } });
+      expect(response.status()).toBe(202);
+    }
+    const initialResponse = await page.request.get(`${url}/api/v3/research/list?pageSize=20`);
+    expect(initialResponse.status()).toBe(200);
+    const initial = await initialResponse.json(); expect(initial.total).toBe(22); expect(initial.items).toHaveLength(20);
+    expect(initial.items.some((row: { title: string }) => row.title === 'Target-oldest searchable question')).toBe(false);
+    await page.goto(`${url}/#/research`);
+    await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(20);
+    await expect(page.getByRole('link', { name: 'Target-oldest searchable question', exact: true })).toHaveCount(0);
+    await page.getByLabel('搜索研究', { exact: true }).fill('oldest');
+    const target = page.getByRole('link', { name: 'Target-oldest searchable question', exact: true });
+    await expect(target).toBeVisible();
+    await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1);
+    await expect(page).toHaveURL(/q=oldest/);
+    const filteredUrl = page.url();
+    await target.click(); await expect(page.getByRole('heading', { name: 'Target-oldest searchable question', exact: true, level: 1 })).toBeVisible();
+    await expect(page.locator('.workspace-table')).toHaveCount(0);
+    await page.getByRole('link', { name: '研究列表', exact: true }).click();
+    await expect(page).toHaveURL(filteredUrl); await expect(target).toBeVisible(); await expect(target).toBeFocused();
+    await page.getByRole('button', { name: '清除全部', exact: true }).click();
+    await page.getByRole('columnheader', { name: '研究名称', exact: false }).click();
+    await expect(page).toHaveURL(/sort=title/);
+    await expect(page).toHaveURL(/order=asc/);
+    await expect(page.locator('.workspace-table .ant-table-row').first()).toContainText('Row-01');
+    const sortedUrl = page.url(); await page.reload(); await expect(page).toHaveURL(sortedUrl);
+    await expect(page.locator('.workspace-table .ant-table-row').first()).toContainText('Row-01');
+    const sortedResponse = await page.request.get(`${url}/api/v3/research/list?sort=title&order=asc&page=2&pageSize=20`);
+    const sorted = await sortedResponse.json(); expect(sorted.total).toBe(22); expect(sorted.items.map((row: { title: string }) => row.title)).toEqual(['Row-21', 'Target-oldest searchable question']);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(20);
+      expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+      await page.screenshot({ path: info.outputPath(`actual-list-${width}.png`), fullPage: true });
+    }
+    await state.restart(); await page.reload(); await expect(page.locator('.workspace-table .ant-table-row').first()).toContainText('Row-01');
     expect(errors).toEqual([]);
   } finally { await state.close(); }
 });

@@ -7,6 +7,7 @@ import { submissionView } from '../../research/src/recovery.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import type { ObservationFact, PortfolioFact, ResearchAdmissions } from './facts.ts';
 import { classifyExecutionError } from '../../research/src/execution-errors.ts';
+import { portfolioMetrics, portfolioPerformance } from './portfolio-performance.ts';
 
 function publicExecutionError(value: unknown, fallback: 'scientific_execution_failed' | 'backtest_failed', operation: string, stored?: unknown) {
   const context = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
@@ -153,7 +154,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
 }
 
 export function portfolioView(fact: PortfolioFact): PortfolioView {
-  return { ...fact.view, ...publicExecutionError(fact.view.error, 'backtest_failed', 'portfolio-backtest', fact.view.errorDetail), ...(fact.weights && !fact.input.factors ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
+  return { ...fact.view, metrics: portfolioMetrics(fact), performance: portfolioPerformance(fact), ...publicExecutionError(fact.view.error, 'backtest_failed', 'portfolio-backtest', fact.view.errorDetail), ...(fact.weights && !fact.input.factors ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
     targetExpiresAt: typeof fact.target?.valid_until_ns === 'string' ? nsTime(fact.target.valid_until_ns) : null,
     ...(typeof fact.target?.valid_until_ns === 'string' ? { targetExpired: BigInt(counter(fact.target.valid_until_ns, 'expiry')) <= BigInt(nowNs()) } : {}) };
 }

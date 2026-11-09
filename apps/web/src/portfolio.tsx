@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Button, Form, Input, Select, Table } from 'antd';
+import { Button, Form, Input, Select, Table, Tabs, Tooltip } from 'antd';
 import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, ChartLineUpIcon, FlaskIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { CapitalAssumptions, DatasetView, PortfolioView, ResearchDetail } from '../../../packages/contracts/src/index.ts';
@@ -17,23 +17,78 @@ import { DeleteRecord } from './delete-record';
 import { BacktestProgress } from './backtest-progress';
 import { ReviewReportPanel } from './review-report';
 import { PortfolioAllocations } from './review-allocations';
-import { TickEconomicReplays } from './tick-economic-replays';
+import { TickEconomicReplays, TickReplayDetail } from './tick-economic-replays';
+import { AllocationDetail } from './review-allocations';
+import type { PortfolioListItem } from '../../../packages/contracts/src/lists.ts';
+import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
+import type { PortfolioPerformanceSummary } from '../../../packages/contracts/src/portfolio-performance.ts';
 const EquityPlot = lazy(() => import('./equity-plot'));
-export default function Portfolios({ route }: { route: Route }) { return route.creating ? (route.params.has('research') ? <PortfolioBuilder route={route} /> : <AtomicPortfolioBuilder route={route} />) : route.id ? <PortfolioDetail id={route.id} /> : <PortfolioList />; }
-function PortfolioList() {
-  const query = useResource<PortfolioView[]>('/portfolios', { poll: 5000 });
-  return <div className="index-page"><header className="page-heading"><h1>组合回测</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/portfolios/new')}>创建组合</Button></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !query.data?.length ? !query.error && <Empty title="尚无策略组合" action={<a className="text-link" href={href('/research')}>查看研究 <ArrowUpRightIcon size={14} /></a>} /> : <Table<PortfolioView> rowKey="id" dataSource={query.data} pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 700 }} columns={[
-    { title: '组合名称', render: (_value, row) => <><a className="record-link" href={href(`/portfolios/${encodeURIComponent(row.id)}`)}>{shortTitle(row.name, undefined, '组合')}</a>{shortTitle(row.name) !== row.name && <TextDisclosure label="完整组合名称" value={row.name} collapsed />}</> }, { title: '状态', render: (_value, row) => <><Status plain value={row.status} /><BacktestProgress portfolio={row} compact /></> },
-    { title: '数据集', dataIndex: 'datasetId' }, { title: <MetricLabel metricKey="members" />, align: 'right', render: (_value, row) => `${row.factors?.length ?? row.researchIds.length}${(row.factors?.length ?? row.researchIds.length) === 1 ? '（单因子配置）' : ''}` }, { title: <MetricLabel metricKey="capital" />, align: 'right', render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> }, { title: '创建时间', render: (_value, row) => <Timestamp value={row.createdAt} /> },
-  ]} />}<TickEconomicReplays /><PortfolioAllocations portfolios={query.data ?? []} /></div>;
+export default function Portfolios({ route }: { route: Route }) {
+  if (route.creating) return route.params.has('research') ? <PortfolioBuilder route={route} /> : <AtomicPortfolioBuilder route={route} />;
+  const view = route.params.get('view') ?? 'strategies';
+  if (route.id) return view === 'tick' ? <TickReplayDetail key={route.id} id={route.id} route={route} /> : view === 'allocations' ? <AllocationDetail key={route.id} id={route.id} route={route} /> : <PortfolioDetail id={route.id} route={route} />;
+  return <div className="index-page"><header className="page-heading"><h1>组合回测</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/portfolios/new')}>创建组合</Button></header>
+    <Tabs destroyOnHidden activeKey={['tick', 'allocations'].includes(view) ? view : 'strategies'} onChange={key => navigate(`/portfolios?view=${key}`)} items={[
+      { key: 'strategies', label: '策略组合', children: <StrategyPortfolios route={route} /> },
+      { key: 'tick', label: 'Tick 经济回放', children: <TickEconomicReplays route={route} /> },
+      { key: 'allocations', label: '多组合资金配置', children: <PortfolioAllocations route={route} /> },
+    ]} />
+  </div>;
 }
-function PortfolioDetail({ id }: { id: string }) {
+const reviewLabels: Record<string, string> = { PASS: '通过评审', REJECT: '不予放行', INCONCLUSIVE: '证据不足' };
+function ReviewDecision({ value }: { value: string | null }) { return <span>{value ? reviewLabels[value] ?? '未识别结论' : '未评审'}</span>; }
+const progressLabels: Record<string, string> = { QUEUED: '等待回测', FORECASTING: '生成成员预测', SIMULATING: '账户回测', CAPACITY: '评估容量', COMPLETED: '回测完成', FAILED: '回测失败', STOPPED: '回测已停止' };
+function PortfolioListProgress({ value }: { value: PortfolioListItem }) {
+  if (['COMPUTED', 'FAILED', 'STOPPED'].includes(value.status) || !value.progress) return null;
+  const { phase, completed, total } = value.progress;
+  const percentage = typeof completed === 'number' && typeof total === 'number' && total > 0 ? Math.min(100, Math.max(0, completed / total * 100)) : undefined;
+  return <span className="quiet">{progressLabels[phase] ?? '回测进行中'}{percentage !== undefined ? ` ${percentage.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : ''}</span>;
+}
+function PerformanceValue({ value, percent = false }: { value: number | null | undefined; percent?: boolean }) {
+  return <span>{value == null || !Number.isFinite(value) ? '—' : percent ? `${(value * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })}</span>;
+}
+function PerformanceSummary({ value }: { value?: PortfolioPerformanceSummary }) {
+  if (!value) return null;
+  return <section className="result-section"><h3>回测表现</h3><Facts items={[
+    ['Sharpe（夏普比率）', <PerformanceValue value={value.sharpe} />],
+    ['年化收益率', <PerformanceValue value={value.annualizedReturn} percent />],
+    ['最大回撤（损失幅度）', <PerformanceValue value={value.maxDrawdown} percent />],
+    ['年化天数', value.annualizationDays ?? '未记录'],
+  ]} /><p className="quiet">Sharpe 与最大回撤来自本次原生账户日收益；年化收益率来自完整 UTC 日的几何日收益。指标缺失时保留为空，完整口径见原始回测指标。</p><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', '完整 UTC 日的几何年化收益'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
+}
+function StrategyPortfolios({ route }: { route: Route }) {
+  const list = useListWorkspace<PortfolioListItem>(route, '/portfolios', 'createdAt');
+  const currency = list.value('currency');
+  return <section aria-label="策略组合列表"><ListTools list={list} searchLabel="搜索组合" placeholder="搜索组合、数据集或来源" filters={[
+    { key: 'status', label: '执行状态' }, { key: 'reviewDecision', label: '评审结论' }, { key: 'datasetId', label: '数据集' },
+    { key: 'memberType', label: '成员数量', advanced: true, options: [{ value: 'single-factor', label: '单成员' }, { value: 'ensemble', label: '多成员' }] },
+    { key: 'currency', label: '币种', advanced: true }, { key: 'capitalMin', label: '最低本金', kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
+    { key: 'capitalMax', label: '最高本金', kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
+    { key: 'createdFrom', label: '创建日期起', kind: 'date', advanced: true }, { key: 'createdTo', label: '创建日期止', kind: 'date', advanced: true },
+    { key: 'source', label: '来源因子或研究', advanced: true },
+  ]} /><ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<PortfolioListItem> {...list.tableProps} rowKey="id" dataSource={list.items} scroll={{ x: 1340 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的策略组合' : '尚无策略组合'} /> }} columns={[
+      { title: '组合名称', key: 'name', width: 200, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_value, row) => <a className="record-link" {...list.linkProps(row.id)}>{shortTitle(row.name, undefined, '组合')}</a> },
+      { title: '执行状态', width: 130, render: (_value, row) => <div><Status plain value={row.status} /><PortfolioListProgress value={row} /></div> },
+      { title: '评审结论', width: 95, render: (_value, row) => <ReviewDecision value={row.reviewDecision} /> },
+      { title: '数据集', key: 'datasetName', width: 150, ellipsis: true, ...list.sortColumn('datasetName'), render: (_value, row) => row.datasetName ?? '名称未记录' },
+      { title: <Tooltip title="原子因子数量；历史组合为原始研究成员数量。"><span>成员数</span></Tooltip>, key: 'memberCount', width: 80, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
+      { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 140, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
+      { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
+      { title: <Tooltip title="完整 UTC 日收益的几何年化收益率，沿用原回测年化天数。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
+      { title: <Tooltip title="本次原生账户日收益的最大回撤，显示正的损失幅度，越小越好。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
+      { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
+    ]} />}
+  </section>;
+}
+function PortfolioDetail({ id, route }: { id: string; route: Route }) {
   const query = useResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, { poll: 3000 }); const value = query.data;
-  return <div className="portfolio-result"><a className="text-link back-link" href={href('/portfolios')}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} /></>}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
+  return <div className="portfolio-result"><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} back={listPathFor(route)} /></>}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
     <ExecutionFailure error={value.error} detail={value.errorDetail} identity={`组合 ${value.id}${value.taskId !== null ? ` / 计算任务 #${value.taskId}` : ''}`} title="回测未完成" />
     <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
     {value.factors && <section className="result-section"><h3>原子因子与权重</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: '因子来源', render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}
     {!value.factors && <section className="result-section"><h3>研究与权重（历史方式）</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: '原始研究', render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>研究 #{row.researchId}</a> }, { title: <MetricLabel metricKey="weight" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} missing="未记录" /> }]} /></section>}
+    <PerformanceSummary value={value.performance} />
     <BacktestProgress portfolio={value} />
     <ReviewReportPanel report={value.review} />
     <PortfolioCapacity key={value.id} portfolio={value} />
