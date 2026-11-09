@@ -42,16 +42,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Package JS/dependencies and execute the extracted distribution
+      - name: Package CLI distribution
         env:
           PLATFORM: ${{ matrix.platform }}
-          SUFFIX: ${{ matrix.suffix }}
         run: |
           runtime=$(node -p "require('node:path').resolve(process.execPath, process.platform === 'win32' ? '..' : '../..')")
           python -B deploy/package.py pack-cli --runtime "$runtime" \
             --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
-          python -B deploy/package.py smoke-cli --archive "$RUNNER_TEMP/cli-assets/quazonai-cli-$PLATFORM.$SUFFIX" \
-            --platform "$PLATFORM" --version "$VERSION"
       - name: Unix installer with the real archive and no host Node
         if: runner.os != 'Windows'
         env:

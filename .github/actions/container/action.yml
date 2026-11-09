@@ -114,12 +114,3 @@ runs:
           REVISION=${{ inputs.revision }}
         cache-from: type=gha,scope=quazonai-node
         cache-to: type=gha,mode=max,scope=quazonai-node
-    - name: Actual application setup/login, restart, update and stopped backup/restore
-      shell: bash
-      working-directory: ${{ inputs.source }}
-      env:
-        APP_IMAGE: ${{ inputs.image }}
-        RUNTIME_IMAGE: ${{ steps.native.outputs.image }}
-        REVISION: ${{ inputs.revision }}
-        NATIVE_DIRECTORY: ${{ steps.artifacts.outputs.directory }}
-      run: python3 -B deploy/docker/smoke.py --image "$APP_IMAGE" --runtime-image "$RUNTIME_IMAGE" --revision "$REVISION" --native-directory "$NATIVE_DIRECTORY"

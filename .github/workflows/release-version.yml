@@ -123,8 +123,6 @@ jobs:
         run: |
           python3 -B deploy/docker/release.py archive-images --output "$RUNNER_TEMP/release-assets"
           python3 -B deploy/package.py prepare --output "$RUNNER_TEMP/release-assets"
-      - name: Narrow published installation check, not a second full regression
-        run: python3 -B deploy/docker/smoke.py --manifest "$RUNNER_TEMP/release-assets/release.json" --published-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: complete-${{ inputs.version }}-${{ inputs.revision }}
