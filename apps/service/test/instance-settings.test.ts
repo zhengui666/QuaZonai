@@ -1,3 +1,4 @@
+import { createService } from '../src/service.ts';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -166,5 +167,28 @@ test('concurrent writes, invalid input and failed storage leave the last committ
     assert.deepEqual((await state.service.app.inject({ method: 'GET', url: route, headers: state.headers })).json(), original);
     const recovered = await request({ expectedRevision: 1, backtest: target('recovered'), connections: [] });
     assert.equal(recovered.statusCode, 200); assert.equal(recovered.json().revision, 2);
+  } finally { await state.cleanup(); }
+});
+
+
+test('V2 recovery binding survives settings save, token rotation and reopening the original instance', async () => {
+  const state = await setup();
+  const recovery = { id: 'checkpoint-worker', url: 'https://science.example', protocolVersion: 2 as const, instanceId: 'original-worker', recoveryProfileId: 'verified-profile', token: 'TEST_ONLY-secret' };
+  try {
+    const saved = await state.service.app.inject({ method: 'PUT', url: route, headers: state.headers, payload: { expectedRevision: 0, backtest: recovery, connections: [] } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.deepEqual(saved.json().backtest, recovery);
+    const binding = scienceTarget(state.service.config) as RemoteNativeTarget;
+    assert.equal(binding.protocolVersion, 2); assert.equal(binding.instanceId, recovery.instanceId); assert.equal(binding.recoveryProfileId, recovery.recoveryProfileId);
+    assert.equal(Object.hasOwn(binding, 'token'), false);
+    await state.service.close();
+    const reopened = await createService(state.options);
+    try {
+      const current = scienceTarget(reopened.config) as RemoteNativeTarget;
+      assert.equal(current.protocolVersion, 2); assert.equal(current.instanceId, recovery.instanceId); assert.equal(current.recoveryProfileId, recovery.recoveryProfileId);
+      const original = await reopened.app.inject({ method: 'GET', url: route, headers: state.headers });
+      const rotated = await reopened.app.inject({ method: 'PUT', url: route, headers: state.headers, payload: { expectedRevision: original.json().revision, backtest: { ...original.json().backtest, token: 'TEST_ONLY-rotated' }, connections: [] } });
+      assert.equal(rotated.statusCode, 200, rotated.body); assert.equal(rotated.json().backtest.protocolVersion, 2);
+    } finally { await reopened.close(); }
   } finally { await state.cleanup(); }
 });

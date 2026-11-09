@@ -1,3 +1,4 @@
+import { withNativeStep } from '../../research/src/native-execution.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -106,7 +107,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const policy = resolveStrategyPolicy(proposal, bound ? object(originalPolicy, 'strategy_policy') : json(input.policy));
       const members = strategyMembers(proposal);
       // Forecast keeps the complete original prefix even when only HELDOUT is traded.
-      const targets = await forecastMembers(input.binary, sourceCatalog, members, request, policy, input.currency, directory, context, false, partition ?? policy.evaluationPartition, proposal.members !== undefined);
+      const targets = await withNativeStep(`source:${sourceIndex}`, () => forecastMembers(input.binary, sourceCatalog, members, request, policy, input.currency, directory, context, false, partition ?? policy.evaluationPartition, proposal.members !== undefined));
       await update('FORECASTING', sourceIndex + 1, evidence.length);
       if (selection && canonical(withoutExecutionQuotas(selection)) !== canonical(withoutExecutionQuotas(targets.selection))) throw new Problem('strategy_selection_mismatch');
       selection = targets.selection;

@@ -6,7 +6,7 @@ import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { ReviewSourceLicense } from '../../../packages/contracts/src/review-source.ts';
 import type { ReviewCheck } from '../../../packages/contracts/src/review.ts';
 import { canonical } from './documents.ts';
-import { executeNativeValue, nativeTargetForData, retainNativeRemoteUncertainty, withNativeRemoteTracking } from './native-execution.ts';
+import { executeNativeValue, nativeTargetForData, cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from './native-execution.ts';
 import type { ResearchRuntime } from './research-runtime.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -80,7 +80,13 @@ export const ReviewSourceValidationTask = defineTask<{ metadata: JsonObject; obs
       } finally { await rm(directory, { recursive: true, force: true }); }
     });
   } },
-  async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
+  async abort(_task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    } await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
 });
 
 export function trustedSourceChecks(captured: CapturedReviewSource | null, native: JsonObject | null, inputData: JsonObject, atNs: string): ReviewCheck[] {

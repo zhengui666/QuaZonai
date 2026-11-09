@@ -187,7 +187,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     if (action === 'delete') method = 'DELETE';
     if (action === 'capacity' && values.file) {
       const file = await fileBody(values.file);
-      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
+      try {
+        if (Object.hasOwn(file.body, 'assumptions')) {
+          requestId(file.body, values['request-id']);
+          if (Object.keys(file.body).some(key => !['requestId', 'assumptions'].includes(key))) throw new CliError('capacity_request_invalid');
+          researchCapital(file.body.assumptions);
+        } else researchCapital(file.body);
+      } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
       method = 'POST'; body = file.bytes;
     }
   } else if (group === 'portfolio' || group === 'backtest') {
@@ -204,7 +210,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (['get', 'delete', 'watch', 'wait'].includes(action)) { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
     else if (action === 'capacity') {
       const file = await fileBody(values.file);
-      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
+      try {
+        if (Object.hasOwn(file.body, 'assumptions')) {
+          requestId(file.body, values['request-id']);
+          if (Object.keys(file.body).some(key => !['requestId', 'assumptions'].includes(key))) throw new CliError('capacity_request_invalid');
+          researchCapital(file.body.assumptions);
+        } else researchCapital(file.body);
+      } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
       method = 'POST'; path = `/portfolios/${resourceId(id)}/capacity`; body = file.bytes;
     } else throw new CliError('unknown_portfolio_command');
   } else if (group === 'observation') {

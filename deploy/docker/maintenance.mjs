@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 const require = createRequire(new URL('../../apps/service/package.json', import.meta.url));
-const { openNodeSqliteStorage } = await import(require.resolve('@earendil-works/pi-durable/storage/sqlite/node'));
+const { openDurableStorage } = await import('../../apps/research/src/durable-storage.ts');
 // Chord exports are import-only. Resolve its declared public import target.
 const chordPackage = require.resolve('@earendil-works/chord/package.json');
 const chord = JSON.parse(readFileSync(chordPackage, 'utf8'));
@@ -32,7 +32,7 @@ export function requireOriginal(configPath) {
 }
 export async function requireIdle(configPath) {
   const path = requireOriginal(configPath);
-  const storage = await openNodeSqliteStorage(path);
+  const storage = await openDurableStorage(path, { requireOriginal: true });
   try {
     const record = await storage.findDocument({ kind: 'qz.application', scope: { kind: 'session' } }, 'current', context);
     const application = record ? (await storage.document(record.id, 'current', context)).value : {};

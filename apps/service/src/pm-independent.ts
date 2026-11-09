@@ -1,5 +1,5 @@
 import { boundScienceTarget } from './science-binding.ts';
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -151,7 +151,13 @@ export function pmIndependentTask(config: ServiceConfig) {
         }, ctx);
       }
     } },
-    async abort(task, runtime, ctx) { await runtime.commit(async tx => {
+    async abort(task, runtime, ctx) {
+      const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, ctx);
+      let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      while (protectedExecution && !settled) {
+        await runtime.sleep(runtime.now() + 1000, ctx);
+        settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      } await runtime.commit(async tx => {
       const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
       for (const id of [identity('pm-independent-trial', task.input.decisionId), identity('pm-independent-baseline-trial', task.input.decisionId)]) {
         const trial = record.derivedTrials[id]; if (trial) { revise(trial); trial.state = 'FAILED'; trial.errorCode = 'owner_stopped_independent_evaluation'; }

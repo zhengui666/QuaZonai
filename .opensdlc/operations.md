@@ -89,3 +89,36 @@ The code refactor does not install an unattended production monitor or perform a
 ## Measurements
 
 Record source revision, actual elapsed time, workload/cache state and outcome. The pre-refactor `66353559` hosted logs show routine Rust CI 35m11s, PG 25m35s and dev release 3h41m53s; three native image compiles account for 87m54s. These are a measured baseline, not the new implementation's performance. Keep new CI/build measurements in the task or Actions rather than creating another metrics ledger.
+
+### Protected scientific recovery
+
+V2 scientific execution uses the original official Durable Task and the original
+complete request. HTTP disconnect and host close detach observers; only explicit
+owner cancellation requests remote termination. V1 historical receipts keep their
+original semantics and are not upgraded by relabelling them.
+
+Configure an accepted worker using the exact `instanceId` and
+`recovery.profileId` returned by `/v2/capabilities`, as `protocolVersion: 2`,
+`instanceId` and `recoveryProfileId` on its private backtest binding. Never fill
+these from examples or silently remove them to make an unavailable node run.
+A `recovery: null` capability cannot admit protected work. Installation, the
+fixed runC/CRIU process-tree adapter, filesystem consistency and acceptance
+prerequisites are in [internal checkpoint deployment](../deploy/docker/recovery/README.md).
+
+SQLite writers verify FULL/WAL and hold a process-lifetime owner lock. After the
+first successful open a durable `.initialized` fact beside the original database
+prevents ordinary startup from silently creating an empty replacement ledger.
+Keep this fact, owner-lock files, SQLite sidecars and private input files in the
+stopped-writer backup. `research.requireOriginalDatabase: true` additionally
+requires an existing original database on the first managed startup.
+
+Capacity POST accepts either its original assumptions body (exact replay derives
+a stable request identity) or `{requestId, assumptions}` for an explicit new
+calculation. Capacity GET reads retained results and never starts computation.
+Source refresh accepts `{requestId}` and resumes its original private captured
+configuration. Plugins claiming read-only recovery may repeat uncommitted reads;
+unknown long-running transformations require an actual supported recovery adapter.
+
+The current cloud executor failed CRIU's required kernel probes even in the
+approved isolated Docker check. See the [captured P0 evidence](tasks/durable-recovery/evidence/README.md).
+No native command or power-loss profile is qualified by the protocol tests.

@@ -1,0 +1,18 @@
+{
+  "socketPath": "/run/quazonai-recovery/broker.sock",
+  "socketMode": 432,
+  "driver": {
+    "dataRoot": "/var/lib/quazonai-recovery",
+    "rootfs": "/opt/quazonai-science/rootfs",
+    "rootfsDigest": "REPLACE_WITH_ACCEPTED_ROOTFS_TREE_DIGEST",
+    "implementationDigest": "sha256:REPLACE_WITH_ORIGINAL_SCIENTIFIC_IMPLEMENTATION_DIGEST",
+    "catalogRoots": ["/data/catalogs"],
+    "profilePath": "/etc/quazonai-recovery/verified-profile.json",
+    "runc": "/opt/quazonai-recovery/bin/runc",
+    "criu": "/opt/quazonai-recovery/bin/criu",
+    "flock": "/usr/bin/flock",
+    "nodeBinary": "/usr/local/bin/node",
+    "binary": "/opt/quazonai/bin/job",
+    "tickBinary": "/opt/quazonai/bin/job-high-precision"
+  }
+}

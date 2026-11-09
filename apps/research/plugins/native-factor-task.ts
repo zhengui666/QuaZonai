@@ -1,4 +1,4 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
@@ -41,6 +41,12 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?:
     },
   },
   async abort(_task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    }
     // This is the local task state. Remote cancellation has its own receipt;
     // a lost connection must never be presented as a confirmed remote stop.
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);

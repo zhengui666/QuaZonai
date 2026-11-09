@@ -1,4 +1,5 @@
 import { scienceTarget } from './config.ts';
+import { withNativeStep } from '../../research/src/native-execution.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -51,44 +52,64 @@ export async function assessCapacity(binary: NativeTarget, catalog: string, simu
     return capacityFailure(error, currency, 'portfolio', assumptions);
   }
 }
+/** Compatibility helpers use the same captured plan as the managed HTTP Task. */
 export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConfig, context: Context, assumptions: Assumptions): Promise<CapacityReport> {
-  const { id, currency, status } = fact.view;
-  if (status !== 'COMPUTED') return unavailableCapacity(currency, 'portfolio_not_computed', id, assumptions);
-  if (fact.policy.kind === 'catalog-ensemble') return unavailableCapacity(currency, 'catalog_ensemble_capacity_unavailable', id, assumptions);
-  const simulation = fact.native?.simulationRequest;
-  if (!simulation || typeof simulation !== 'object' || Array.isArray(simulation)) return unavailableCapacity(currency, 'portfolio_simulation_request_missing', id, assumptions);
-  const catalog = fact.native?.catalog;
-  if (typeof catalog !== 'string' || !catalog.trim()) return unavailableCapacity(currency, 'portfolio_catalog_missing', id, assumptions);
-  try { await access(catalog); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return unavailableCapacity(currency, 'portfolio_catalog_missing', id, assumptions);
-  }
-  const directory = await mkdtemp(join(config.dataDir, 'capacity-'));
-  try {
-    const report = await assessCapacity(scienceTarget(config), catalog, simulation, assumptions, directory, context);
-    return { ...report, scope: id };
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  return computeCapacityPlan(await capacityPlan(undefined, 'PORTFOLIO', fact.view.id, assumptions, fact), scienceTarget(config), config.dataDir, context);
 }
 export async function factorCapacity(host: ResearchHost, config: ServiceConfig, id: string, context: Context, assumptions?: Assumptions): Promise<CapacityReport> {
+  return computeCapacityPlan(await capacityPlan(host, 'FACTOR', id, assumptions), scienceTarget(config), config.dataDir, context);
+}
+
+/** Captured scientific facts for one admitted capacity operation. */
+export type CapacityPlan = {
+  scope: string; currency: string; assumptions?: Assumptions; unavailable?: CapacityReport;
+  catalog?: string; simulation?: JsonObject;
+  forecast?: { members: ReturnType<typeof strategyMembers>; request: JsonObject; policy: ReturnType<typeof resolveStrategyPolicy>; ensemble: boolean };
+};
+export async function capacityPlan(host: ResearchHost | undefined, kind: 'FACTOR' | 'PORTFOLIO', id: string, assumptions?: Assumptions, fact?: PortfolioFact): Promise<CapacityPlan> {
+  if (kind === 'PORTFOLIO') {
+    if (!fact || fact.view.id !== id) throw new Error('portfolio_not_found');
+    const { currency, status } = fact.view;
+    const plan: CapacityPlan = { scope: id, currency, assumptions };
+    const unavailable = (reason: string) => ({ ...plan, unavailable: unavailableCapacity(currency, reason, id, assumptions) });
+    if (status !== 'COMPUTED') return unavailable('portfolio_not_computed');
+    if (fact.policy.kind === 'catalog-ensemble') return unavailable('catalog_ensemble_capacity_unavailable');
+    const simulation = fact.native?.simulationRequest;
+    if (!simulation || typeof simulation !== 'object' || Array.isArray(simulation)) return unavailable('portfolio_simulation_request_missing');
+    if (typeof fact.native?.catalog !== 'string' || !fact.native.catalog.trim()) return unavailable('portfolio_catalog_missing');
+    return { ...plan, catalog: fact.native.catalog, simulation: structuredClone(simulation) };
+  }
+  if (!host) throw new Error('capacity_host_required');
   const { view, study, specification } = await readFactor(host, id);
   const capital = assumptions ?? specification?.capital;
-  if (study.input?.data.catalog_ensemble_request !== undefined) return unavailableCapacity(view.currency ?? '', 'catalog_ensemble_capacity_unavailable', id, capital);
-  if (!view.combinable) return unavailableCapacity(view.currency ?? '', view.reason ?? 'independent_evidence_missing', id, capital);
-  if (!capital) return unavailableCapacity(view.currency ?? '', 'explicit_capacity_policy_missing', id);
+  const plan: CapacityPlan = { scope: id, currency: view.currency ?? '', assumptions: capital };
+  const unavailable = (reason: string) => ({ ...plan, unavailable: unavailableCapacity(plan.currency, reason, id, capital) });
+  if (study.input?.data.catalog_ensemble_request !== undefined) return unavailable('catalog_ensemble_capacity_unavailable');
+  if (!view.combinable) return unavailable(view.reason ?? 'independent_evidence_missing');
+  if (!capital) return unavailable('explicit_capacity_policy_missing');
   const selected = study.trials.find(trial => trial.taskId === view.trialId)!;
   const proposal = object(selected.proposal); const input = study.input!;
-  const result = object(study.final!.result); const request = object(result.request);
-  const directory = await mkdtemp(join(config.dataDir, 'capacity-'));
-  try {
-    const catalog = input.data.sealed ? replayCatalog(input.data, request) : String(input.data.catalog);
-    const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy));
-    const targets = await forecastMembers(scienceTarget(config), catalog, strategyMembers(proposal), request, policy, view.currency!, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
-    const simulation = { schema_version: 1, selection: targets.selection, settings: policy.simulationSettings, target_points: targets.points };
-    const report = await assessCapacity(scienceTarget(config), catalog, simulation, capital, directory, context);
-    return { ...report, scope: id };
-  } catch (error) {
-    return capacityFailure(error, view.currency ?? '', id, capital);
+  const request = object(object(study.final!.result).request);
+  const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy));
+  return structuredClone({ ...plan, catalog: input.data.sealed ? replayCatalog(input.data, request) : String(input.data.catalog),
+    forecast: { members: strategyMembers(proposal), request, policy, ensemble: proposal.members !== undefined } });
+}
+export async function computeCapacityPlan(plan: CapacityPlan, target: NativeTarget, dataDir: string, context: Context): Promise<CapacityReport> {
+  if (plan.unavailable) return structuredClone(plan.unavailable);
+  if (!plan.forecast) {
+    try { await access(plan.catalog!); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return unavailableCapacity(plan.currency, 'portfolio_catalog_missing', plan.scope, plan.assumptions); }
   }
+  const directory = await mkdtemp(join(dataDir, 'capacity-'));
+  try {
+    let simulation = plan.simulation;
+    if (plan.forecast) {
+      const { members, request, policy, ensemble } = plan.forecast;
+      const targets = await withNativeStep('forecast-members', () => forecastMembers(target, plan.catalog!, members, request, policy, plan.currency, directory, context, false, policy.evaluationPartition, ensemble));
+      simulation = { schema_version: 1, selection: targets.selection, settings: policy.simulationSettings, target_points: targets.points };
+    }
+    const report = await withNativeStep('assess-capacity', () => assessCapacity(target, plan.catalog!, simulation!, plan.assumptions, directory, context));
+    return { ...report, scope: plan.scope };
+  } catch (error) { return capacityFailure(error, plan.currency, plan.scope, plan.assumptions); }
   finally { await rm(directory, { recursive: true, force: true }); }
 }

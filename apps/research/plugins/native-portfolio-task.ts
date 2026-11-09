@@ -1,4 +1,4 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -36,6 +36,12 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
     });
   } },
   async abort(_task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    }
     // Local task abort does not establish remote termination without its receipt.
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
   },

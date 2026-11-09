@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { atomicWriteFile } from '../../research/src/durable-files.ts';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
@@ -124,12 +125,9 @@ export async function instanceSettings(config: ServiceConfig) {
   let closing = false;
 
   async function persist(value: InstanceSettingsView, state: CredentialState) {
-    const temporary = `${path}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, JSON.stringify({ ...value, credentialState: state }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
-      await rename(temporary, path);
+      await atomicWriteFile(path, JSON.stringify({ ...value, credentialState: state }, null, 2) + '\n');
     } catch {
-      await rm(temporary, { force: true }).catch(() => undefined);
       throw new Problem('instance_settings_save_failed', 503);
     }
   }

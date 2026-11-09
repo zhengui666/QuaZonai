@@ -2,7 +2,8 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
 import { Pool } from 'pg';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { atomicWriteFile } from '../../research/src/durable-files.ts';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -22,7 +23,7 @@ import { dataSources, registerDataSources } from './data-sources.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { listFactors, readFactor } from './factors.ts';
-import { factorCapacity, portfolioCapacity } from './capacity.ts';
+import { createCapacity, capacityRequest } from './capacity-tasks.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
 import { accountKey, capitalStatus, control, transportBindingKey } from './capital-exit.ts';
@@ -36,6 +37,13 @@ import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 import { reviewAllocationExtension, registerReviewAllocationRoutes } from './review-allocation.ts';
 import { registerReviewPolicyRoutes } from './review-policy.ts';
 import { registerListRoutes } from './lists.ts';
+
+function capacityInput(kind: 'FACTOR' | 'PORTFOLIO', id: string, body: unknown) {
+  const value = object(body, 'capacity_request');
+  const envelope = Object.hasOwn(value, 'assumptions');
+  if (envelope && (Object.keys(value).some(key => !['requestId', 'assumptions'].includes(key)) || typeof value.requestId !== 'string')) throw new Problem('capacity_request_invalid');
+  return capacityRequest(kind, id, researchCapital(envelope ? value.assumptions : value), envelope ? value.requestId as string : undefined);
+}
 
 const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
@@ -51,7 +59,8 @@ export async function createService(options: ServiceOptions) {
     desired = saved.enabled ?? saved; moduleNames = saved.modules ?? {};
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension];
+  const capacity = createCapacity(config);
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension, capacity.extension, sources.extension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -91,6 +100,8 @@ export async function createService(options: ServiceOptions) {
     requiredExtensions.add(extension.name);
     extensions.set(extension.name, { name: extension.name, version: null, enabled: true, kind: 'host', state: 'loaded', error: null });
   }
+  capacity.connect(research);
+  sources.connect(research);
   const readTasks = researchTaskViews(research);
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
@@ -160,16 +171,18 @@ export async function createService(options: ServiceOptions) {
       cost: null, activeTasks: (await research.harness.inspect(context)).tasks.length };
   });
   app.get(`${API}/factors`, async () => listFactors(research, (await work.snapshot())?.researchRequests));
-  app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
-  app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
+  app.get<{ Params: { id: string }; Querystring: { requestId?: string } }>(`${API}/factors/:id/capacity`, async request => { await readFactor(research, request.params.id); return capacity.read('FACTOR', request.params.id, request.query.requestId); });
+  app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => capacity.startFactor(request.params.id, capacityInput('FACTOR', request.params.id, request.body)));
   app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
   app.get<{ Params: { id: string } }>(`${API}/factors/:id/review`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view.review ?? null);
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(portfolioView));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/review`, async request => (await work.getPortfolio(request.params.id)).view.review ?? null);
+  app.get<{ Params: { id: string }; Querystring: { requestId?: string } }>(`${API}/portfolios/:id/capacity`, async request => { await work.getPortfolio(request.params.id); return capacity.read('PORTFOLIO', request.params.id, request.query.requestId); });
   app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
-    const assumptions = researchCapital(request.body);
-    return portfolioCapacity(await work.getPortfolio(request.params.id), config, context, assumptions);
+    const input = capacityInput('PORTFOLIO', request.params.id, request.body);
+    const fact = await work.getPortfolio(request.params.id);
+    return capacity.startPortfolio(fact, input);
   });
   app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
   app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatus(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)])) } }); }); });
@@ -210,9 +223,7 @@ export async function createService(options: ServiceOptions) {
     if (!enabled && requiredExtensions.has(found.name)) throw new Problem('service_extension_required', 409);
     await research.harness.commit(async (tx) => {
       const next = { ...desired, [found.name]: enabled };
-      const temporary = `${extensionFile}.${crypto.randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify({ enabled: next, modules: moduleNames }), { mode: 0o600 });
-      await rename(temporary, extensionFile); desired = next;
+      await atomicWriteFile(extensionFile, JSON.stringify({ enabled: next, modules: moduleNames })); desired = next;
       (await tx.doc(Application)).extensionEnabled[found.name] = enabled;
       found.enabled = enabled; const loaded = !!research.registry.snapshot().extension(found.name);
       found.state = loaded === enabled ? enabled ? 'loaded' : 'disabled' : 'pending_restart';

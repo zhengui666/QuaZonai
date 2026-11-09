@@ -16,12 +16,14 @@ WORKDIR /opt/quazonai
 COPY --chmod=644 apps/service/package.json apps/service/package-lock.json ./apps/service/
 COPY --chmod=644 apps/research/package.json apps/research/package-lock.json ./apps/research/
 COPY --chmod=644 apps/cli/package.json apps/cli/package-lock.json ./apps/cli/
+COPY --chmod=644 apps/nautilus/package.json apps/nautilus/package-lock.json ./apps/nautilus/
 # argon2's official package ships prebuilt platform binaries. No source bundler/SEA.
 RUN --mount=type=cache,target=/root/.npm --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
     npm ci --prefix apps/service --omit=dev --no-audit --no-fund \
  && npm ci --prefix apps/research --omit=dev --ignore-scripts --no-audit --no-fund \
- && npm ci --prefix apps/cli --omit=dev --ignore-scripts --no-audit --no-fund
+ && npm ci --prefix apps/cli --omit=dev --ignore-scripts --no-audit --no-fund \
+ && npm ci --prefix apps/nautilus --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Stage only public source files before combining them with dependencies. This
 # keeps source changes from multiplying full dependency snapshots on vfs hosts.

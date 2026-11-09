@@ -25,7 +25,7 @@ function storeDraft(value: Draft) {
 function clearDraft() { memoryDraft = undefined; removeDraft(key); }
 function content(value: Fields) {
   return {
-    backtest: value.backtestEnabled ? { id: value.backtest?.id?.trim() ?? '', url: value.backtest?.url?.trim() ?? '', ...(optional(value.backtest?.token) ? { token: optional(value.backtest?.token) } : {}) } : null,
+    backtest: value.backtestEnabled ? { ...(value.backtest?.protocolVersion === 2 ? { protocolVersion: 2 as const, instanceId: value.backtest.instanceId, recoveryProfileId: value.backtest.recoveryProfileId } : {}), id: value.backtest?.id?.trim() ?? '', url: value.backtest?.url?.trim() ?? '', ...(optional(value.backtest?.token) ? { token: optional(value.backtest?.token) } : {}) } : null,
     connections: (value.connections ?? []).map(connection => ({ id: connection.id.trim(), name: connection.name.trim(), mode: connection.mode, url: connection.url.trim(), clientId: connection.clientId.trim(), accountId: connection.accountId.trim(), ...(optional(connection.token) ? { token: optional(connection.token) } : {}) })),
   };
 }
@@ -55,16 +55,16 @@ export default function InstanceSettings() {
         values.connections = (values.connections ?? []).map(connection => ({ ...connection, token: next.connections.find(item => item.id === connection.id && item.url === connection.url)?.token }));
       }
       form.setFieldsValue(values ?? fields(next)); setRevision(draft?.revision ?? next.revision); setPending(draft?.pending);
-    } else if (saved && JSON.stringify(content(form.getFieldsValue())) === JSON.stringify({ backtest: saved.backtest, connections: saved.connections }) && !pending) {
+    } else if (saved && JSON.stringify(content(form.getFieldsValue(true))) === JSON.stringify({ backtest: saved.backtest, connections: saved.connections }) && !pending) {
       form.resetFields(); form.setFieldsValue(fields(next)); setRevision(next.revision);
     }
     setSaved(next);
   }, [query.data]);
-  const changed = () => { setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue() })); };
+  const changed = () => { setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue(true) })); };
   async function save() {
     if (saving || revision === undefined) return;
-    const value = pending ?? { expectedRevision: revision, ...content(form.getFieldsValue()) };
-    setSaving(true); setPending(value); setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue(), pending: value }));
+    const value = pending ?? { expectedRevision: revision, ...content(form.getFieldsValue(true)) };
+    setSaving(true); setPending(value); setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue(true), pending: value }));
     try {
       const next = await api<InstanceSettingsView>('/settings/instances', { method: 'PUT', body: value });
       await cache.cancelQueries({ queryKey: ['/settings/instances'] });
@@ -74,7 +74,7 @@ export default function InstanceSettings() {
       form.resetFields(); form.setFieldsValue(fields(latest)); setSaved(latest); setRevision(latest.revision); setPending(undefined); clearDraft(); setDraftSaved(true); setNotice('已保存');
     } catch (failure) {
       if (!mounted.current) return; setError(failure);
-      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) { setPending(undefined); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue() })); void query.refetch(); }
+      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) { setPending(undefined); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue(true) })); void query.refetch(); }
     } finally { if (mounted.current) setSaving(false); }
   }
   const loadLatest = () => {

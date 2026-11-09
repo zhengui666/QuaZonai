@@ -181,11 +181,12 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
         assert.equal(unknown.requestId, '0'.repeat(64)); assert.equal(unknown.status, 'UNKNOWN');
       }
     }
-    let recoveryGets = 0; let recoveryPosts = 0; let terminal: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'COMPLETED'; let holdRecovery = false; let onRecoveryRead: (() => void) | undefined;
+    let recoveryGets = 0; let recoveryPosts = 0; let recoveryDeletes = 0; let terminal: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'COMPLETED'; let holdRecovery = false; let onRecoveryRead: (() => void) | undefined;
     const recovering = createServer((message, response) => {
-      if (message.method !== 'GET') recoveryPosts++;
+      if (message.method === 'POST') recoveryPosts++;
+      if (message.method === 'DELETE') recoveryDeletes++;
       assert.equal(message.url, `/v1/executions/${originalReference.requestId}`);
-      recoveryGets++; onRecoveryRead?.(); response.setHeader('content-type', 'application/json');
+      if (message.method === 'GET') recoveryGets++; onRecoveryRead?.(); response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ schemaVersion: 1, requestId: originalReference.requestId,
         ...(holdRecovery || recoveryGets < 3 ? { status: 'RUNNING' } : terminal === 'COMPLETED' ? { status: terminal, result: result.result } : terminal === 'FAILED' ? { status: terminal, error: 'controlled_failure' } : { status: terminal }) }));
     });
@@ -233,7 +234,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const stopped = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/locally-stopped-original', headers })).json();
       assert.equal(stopped.status, 'STOPPED'); assert.equal(stopped.error, 'tick_economic_local_stop_remote_receipt_unsettled');
       const retained = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(stoppedTaskId), context))!.requests[0]!;
-      assert.equal(retained.requestId, originalReference.requestId); assert.equal(retained.status, 'PENDING'); assert.equal(recoveryPosts, 0);
+      assert.equal(retained.requestId, originalReference.requestId); assert.equal(retained.status, 'PENDING'); assert.equal(recoveryPosts, 0); assert.equal(recoveryDeletes, 1); assert.equal(retained.cancellationRequested, true);
     } finally { recovering.closeAllConnections(); await new Promise<void>(resolve => recovering.close(() => resolve())); }
     assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun', 'recovery only reads the retained original receipt; it never POSTs another native run');
     await service.close(); service = await createService(options);

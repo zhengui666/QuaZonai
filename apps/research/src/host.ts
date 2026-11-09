@@ -4,10 +4,10 @@ import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { configure, createRegistry, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId, Tx } from '@earendil-works/pi-durable';
-import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { acquireDurableOwner, assertOriginalDurableDatabase, openDurableStorage } from './durable-storage.ts';
+import type { DurableOwner } from './durable-storage.ts';
 import { pathToFileURL } from 'node:url';
-import { resolve, dirname } from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { canonical, Requests, Study } from './documents.ts';
 import { ReviewLedger } from './review-documents.ts';
 import { freezeReviewPolicies } from './review-workflow.ts';
@@ -40,6 +40,8 @@ export async function openResearch(options: {
   providerModules?: readonly string[];
   models?: Models;
   storage?: Storage;
+  /** Installed recovery may only reopen the existing original ledger. */
+  requireOriginalDatabase?: boolean;
   settings?: HarnessOptions['settings'];
   thinkingLevel?: ModelThinkingLevel;
   /** Service-owned parent admission, applied to original native recovery too. */
@@ -48,13 +50,20 @@ export async function openResearch(options: {
   const settings = researchSettings(options.settings);
   const requestedThinking = options.thinkingLevel ?? 'medium';
   if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
-  const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
+  let credentials: ModelCredentials | undefined;
+  let owner: DurableOwner | undefined;
   let models: Models;
   let speed!: ReturnType<typeof subscriptionSpeed>;
   let harness!: Harness;
   let storage!: Storage;
   const registry = createRegistry();
   try {
+    // Own the original storage before opening credentials, provider modules or
+    // a Harness. A second owner must never make external calls before failing.
+    owner = await acquireDurableOwner(options.database);
+    if (options.requireOriginalDatabase) assertOriginalDurableDatabase(owner.path);
+    storage = options.storage ?? await openDurableStorage(owner.path, { owner });
+    credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
     models = options.models ?? await configuredModels(options.providerModules, credentials);
     speed = subscriptionSpeed(models);
     models = speed.models;
@@ -66,10 +75,12 @@ export async function openResearch(options: {
     registry.install(reviewExtensionWithUsage(() => harness));
     registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
     registry.install(researchContinuation(() => harness));
-    await mkdir(dirname(resolve(options.database)), { recursive: true });
-    storage = options.storage ?? await openNodeSqliteStorage(options.database);
     harness = await Harness.open(storage, { models, registry, settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => extension.name !== 'qz.review') } }, context);
-  } catch (error) { await credentials?.close(); throw error; }
+  } catch (error) {
+    try { await storage?.close(context); }
+    finally { try { await credentials?.close(); } finally { owner?.close(); } }
+    throw error;
+  }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
   const watchers = new Set<ConversationWatch>();
@@ -118,7 +129,11 @@ export async function openResearch(options: {
       } else await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInstructions(researchInput(request.input)), requestId }, context);
     }
     harness.resume();
-  } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
+  } catch (error) {
+    try { await harness.close(context); }
+    finally { try { await credentials?.close(); } finally { owner?.close(); } }
+    throw error;
+  }
 
   async function start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
@@ -384,7 +399,7 @@ export async function openResearch(options: {
           await Promise.allSettled([...admissions]);
           await Promise.all([...watchers].map((watch) => watch.stop()));
           try { await harness.close(context); } // Suspend native work, never imply cancellation.
-          finally { await credentials?.close(); }
+          finally { try { await credentials?.close(); } finally { owner?.close(); } }
         })();
       }
       return closed;

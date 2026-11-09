@@ -17,7 +17,7 @@ import { assessCapacity, capacityPolicy } from './capacity.ts';
 import { runReviewScience } from '../../research/src/review-science-adapter.ts';
 import { researchRuntime } from '../../research/src/research-runtime.ts';
 import { runIndependentReview } from '../../research/src/review-runtime.ts';
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { exactWeights, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
 import { checkExposure } from '../../research/plugins/native-exposure.ts';
 import { normalizedRequest, iterationRequest } from '../../research/plugins/native-wasm.ts';
@@ -316,7 +316,13 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
       }, ctx);
     } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
   } },
-  async abort(task, runtime, ctx) { await runtime.commit(async tx => {
+  async abort(task, runtime, ctx) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, ctx);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, ctx);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+    } await runtime.commit(async tx => {
     const saved = fact((await tx.doc(ReviewAllocations)).records[task.input.id]!); saved.view.status = 'STOPPED';
     (await tx.doc(ReviewAllocations)).records[task.input.id] = json(saved);
     return { status: 'terminal', outcome: { status: 'aborted' } };

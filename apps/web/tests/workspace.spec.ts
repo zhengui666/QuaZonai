@@ -1114,3 +1114,27 @@ test('clearing a metric or currency scope also clears its dependent sorting and 
   await expect(page).not.toHaveURL(/metric=|sort=criterionValue/);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+test('editing a V2 instance token preserves its unregistered recovery binding across save and reload', async ({ page }) => {
+  await contract(page);
+  const original = { id: 'protected-worker', url: 'https://native.example.com', token: 'original-private-token', protocolVersion: 2, instanceId: 'immutable-instance', recoveryProfileId: 'verified-linux-profile' };
+  let saved = { revision: 1, backtest: original, connections: [] };
+  const writes: Array<{ expectedRevision: number; backtest: typeof original; connections: unknown[] }> = [];
+  await page.route('**/api/v3/settings/instances', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: saved });
+    const input = route.request().postDataJSON(); writes.push(input);
+    saved = { revision: saved.revision + 1, backtest: input.backtest, connections: input.connections };
+    return route.fulfill({ json: saved });
+  });
+  await page.goto('/#/settings?section=instances');
+  const token = page.getByLabel('访问令牌', { exact: true });
+  await expect(token).toHaveValue(original.token);
+  await token.fill('rotated-private-token');
+  await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  expect(writes).toEqual([{ expectedRevision: 1, backtest: { ...original, token: 'rotated-private-token' }, connections: [] }]);
+  await page.reload();
+  await expect(token).toHaveValue('rotated-private-token');
+  expect(saved.backtest.protocolVersion).toBe(2); expect(saved.backtest.instanceId).toBe(original.instanceId); expect(saved.backtest.recoveryProfileId).toBe(original.recoveryProfileId);
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage, ...localStorage }))).not.toContain('rotated-private-token');
+});

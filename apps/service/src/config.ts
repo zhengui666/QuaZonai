@@ -5,7 +5,7 @@ import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-dur
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { DatasetView, JsonObject, ModelRef, NautilusConnection, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
 import type { NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { setRemoteNativeCredential } from '../../research/src/native-execution.ts';
+import { setRemoteNativeCredential, validateRemoteTarget } from '../../research/src/native-execution.ts';
 
 import type { StrategyPolicy } from '../../research/src/strategy.ts';
 import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
@@ -24,7 +24,7 @@ type BacktestConfig = RemoteNativeTarget & { token?: string };
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string; config?: JsonObject }
 export interface ServiceConfig {
   host: string; port: number; dataDir: string;
-  research: { database: string; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
+  research: { database: string; requireOriginalDatabase?: boolean; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
   /** Runtime source snapshots for existing mandates; excluded from new admissions. */
   retainedDatasets?: DatasetConfig[];
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
@@ -94,16 +94,17 @@ export function scienceTarget(config: { nautilus?: ServiceConfig['nautilus']; jo
 
 /** Register the secret outside research facts and pass only its private reference onward. */
 export function remoteNativeBinding(target: BacktestConfig, reference?: string): RemoteNativeTarget {
+  const recovery = target.protocolVersion === 2 ? { protocolVersion: 2 as const, instanceId: target.instanceId!, recoveryProfileId: target.recoveryProfileId! } : {};
   if (target.credentialRef) {
     if (target.token) setRemoteNativeCredential(target.credentialRef, target.token);
-    return { id: target.id, url: target.url, credentialRef: target.credentialRef };
+    return { id: target.id, url: target.url, ...recovery, credentialRef: target.credentialRef };
   }
   if (Object.hasOwn(target, 'token')) {
-    if (typeof target.token !== 'string' || !target.token) return { id: target.id, url: target.url };
+    if (typeof target.token !== 'string' || !target.token) return { id: target.id, url: target.url, ...recovery };
     const credentialRef = reference ?? randomUUID(); setRemoteNativeCredential(credentialRef, target.token);
-    return { id: target.id, url: target.url, credentialRef };
+    return { id: target.id, url: target.url, ...recovery, credentialRef };
   }
-  return { id: target.id, url: target.url, ...(target.tokenEnv ? { tokenEnv: target.tokenEnv } : {}) };
+  return { id: target.id, url: target.url, ...recovery, ...(target.tokenEnv ? { tokenEnv: target.tokenEnv } : {}) };
 }
 
 function remoteUrl(value: unknown) {
@@ -125,8 +126,8 @@ export function validateNautilusConfiguration(config: Pick<ServiceConfig, 'nauti
     const backtest = config.nautilus.backtest;
     if (backtest !== undefined) {
       if (!backtest || typeof backtest !== 'object' || Array.isArray(backtest) || typeof backtest.id !== 'string' || !backtest.id.trim()
-        || Object.keys(backtest).some(key => !['id', 'url', 'token', 'tokenEnv'].includes(key))) throw new Error('nautilus_backtest_instance_invalid');
-      remoteUrl(backtest.url); instanceToken(backtest.token); tokenEnvironment(backtest.tokenEnv);
+        || Object.keys(backtest).some(key => !['id', 'url', 'token', 'tokenEnv', 'protocolVersion', 'instanceId', 'recoveryProfileId'].includes(key))) throw new Error('nautilus_backtest_instance_invalid');
+      remoteUrl(backtest.url); instanceToken(backtest.token); tokenEnvironment(backtest.tokenEnv); validateRemoteTarget(backtest);
     }
   }
   const ids = new Set<string>();
