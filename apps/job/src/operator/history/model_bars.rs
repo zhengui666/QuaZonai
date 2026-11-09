@@ -1,7 +1,7 @@
 //! Price/volume model inputs, not ABI recovery or historical execution definitions.
-use super::{SourceRowContext, event_key, field, hf_selection, seconds, text, v2};
+use super::{event_key, field, hf_selection, seconds, text, v2, SourceRowContext};
 use alloy_core::primitives::U256;
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_model::{
     data::TradeTick,
     enums::AggressorSide,
@@ -14,7 +14,7 @@ use parquet::{
     record::{Field, Row},
 };
 use rust_decimal::{Decimal, RoundingStrategy};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
@@ -295,12 +295,10 @@ mod tests {
         ] {
             assert!(amount(&row(value), "token_amount").is_err());
         }
-        assert!(
-            amount(
-                &Row::new(vec![("token_amount".into(), Field::Null)]),
-                "token_amount"
-            )
-            .is_err()
-        );
+        assert!(amount(
+            &Row::new(vec![("token_amount".into(), Field::Null)]),
+            "token_amount"
+        )
+        .is_err());
     }
 }

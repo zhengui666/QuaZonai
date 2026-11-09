@@ -3,9 +3,9 @@
 //! reconstruct historical maker/taker eligibility. Provider direction columns
 //! remain in the audit only. Nautilus books each returned commission once.
 use crate::catalog::NativeMarketData;
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
-use contracts::{DbCounter, DecimalValue, recorded_fees::*};
+use contracts::{recorded_fees::*, DbCounter, DecimalValue};
 use nautilus_common::clock::Clock;
 use nautilus_execution::models::fee::{FeeModel, FeeModelHandle};
 use nautilus_model::{

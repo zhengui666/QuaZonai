@@ -158,12 +158,10 @@ fn original_records_are_allocated_once_not_averaged_into_a_rate() {
     );
     assert_eq!(report.fills[0].allocations[1].original.id, "b");
     assert_eq!(report.fills[1].allocations.len(), 1);
-    assert!(
-        charge(&model, "0.000001")
-            .unwrap_err()
-            .to_string()
-            .contains("QUANTITY_EXHAUSTED")
-    );
+    assert!(charge(&model, "0.000001")
+        .unwrap_err()
+        .to_string()
+        .contains("QUANTITY_EXHAUSTED"));
 }
 
 #[test]
@@ -176,12 +174,10 @@ fn actual_fill_clock_selects_recorded_zero_and_unmatched_clock_is_not_zero() {
     );
     assert_eq!(model.report().fills[0].allocations[0].original.id, "c");
     set_time(&clock, 3 * MINUTE_NS + 1);
-    assert!(
-        charge(&model, "2.000000")
-            .unwrap_err()
-            .to_string()
-            .contains("FILL_CLOCK_UNMATCHED")
-    );
+    assert!(charge(&model, "2.000000")
+        .unwrap_err()
+        .to_string()
+        .contains("FILL_CLOCK_UNMATCHED"));
     assert_eq!(model.report().fills.len(), 1);
 }
 
@@ -406,12 +402,10 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
     assert_eq!(report.fills.len(), 2);
     assert!(report.fills[0].fill_ns.get() < 4 * MINUTE_NS);
     assert!(report.fills[1].fill_ns.get() >= 4 * MINUTE_NS);
-    assert!(
-        report
-            .fills
-            .iter()
-            .all(|fill| fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS)
-    );
+    assert!(report
+        .fills
+        .iter()
+        .all(|fill| fill.bar_end_ns.get() == fill.fill_ns.get() / MINUTE_NS * MINUTE_NS));
     let allocated: BigDecimal = report
         .fills
         .iter()
@@ -440,13 +434,11 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
         BigDecimal::from(3000) - allocated
     );
     std::fs::remove_file(directory.path().join("recorded-fees/123.POLYMARKET.json")).unwrap();
-    assert!(
-        format!(
-            "{:#}",
-            crate::simulation::simulate(directory.path(), &request).unwrap_err()
-        )
-        .contains("RECORDED_FEE_FILE_REQUIRED")
-    );
+    assert!(format!(
+        "{:#}",
+        crate::simulation::simulate(directory.path(), &request).unwrap_err()
+    )
+    .contains("RECORDED_FEE_FILE_REQUIRED"));
 }
 
 #[test]

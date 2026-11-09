@@ -90,52 +90,42 @@ fn retired_single_file_cannot_bypass_partition_validation() {
         serde_json::to_vec(&source("123.POLYMARKET")).unwrap(),
     )
     .unwrap();
-    assert!(
-        RecordedFeeModel::load(root.path(), &market(), clock())
-            .unwrap_err()
-            .to_string()
-            .contains("RECORDED_FEE_FILE_REQUIRED")
-    );
+    assert!(RecordedFeeModel::load(root.path(), &market(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_FILE_REQUIRED"));
     write_part(root.path(), "123.POLYMARKET", &source("123.POLYMARKET"));
     std::fs::write(
         root.path().join("recorded-fees/123.POLYMARKET.json"),
         "invalid partition",
     )
     .unwrap();
-    assert!(
-        RecordedFeeModel::load(root.path(), &market(), clock())
-            .unwrap_err()
-            .to_string()
-            .contains("RECORDED_FEE_INVALID_SOURCE")
-    );
+    assert!(RecordedFeeModel::load(root.path(), &market(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_INVALID_SOURCE"));
 }
 
 #[test]
 fn selected_market_partition_is_required_and_cannot_change_instrument_or_revision() {
     let root = tempfile::tempdir().unwrap();
     write_part(root.path(), "123.POLYMARKET", &source("123.POLYMARKET"));
-    assert!(
-        RecordedFeeModel::load(root.path(), &two_markets(), clock())
-            .unwrap_err()
-            .to_string()
-            .contains("RECORDED_FEE_FILE_REQUIRED")
-    );
+    assert!(RecordedFeeModel::load(root.path(), &two_markets(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_FILE_REQUIRED"));
     write_part(root.path(), "456.POLYMARKET", &source("123.POLYMARKET"));
-    assert!(
-        RecordedFeeModel::load(root.path(), &two_markets(), clock())
-            .unwrap_err()
-            .to_string()
-            .contains("RECORDED_FEE_PARTITION_INSTRUMENT_MISMATCH")
-    );
+    assert!(RecordedFeeModel::load(root.path(), &two_markets(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_PARTITION_INSTRUMENT_MISMATCH"));
     let mut other = source("456.POLYMARKET");
     other.revision = "different-original-revision".into();
     write_part(root.path(), "456.POLYMARKET", &other);
-    assert!(
-        RecordedFeeModel::load(root.path(), &two_markets(), clock())
-            .unwrap_err()
-            .to_string()
-            .contains("RECORDED_FEE_PARTITION_SOURCE_MISMATCH")
-    );
+    assert!(RecordedFeeModel::load(root.path(), &two_markets(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_PARTITION_SOURCE_MISMATCH"));
     write_part(root.path(), "456.POLYMARKET", &source("456.POLYMARKET"));
     let model = RecordedFeeModel::load(root.path(), &two_markets(), clock()).unwrap();
     assert_eq!(model.state.borrow().buckets.len(), 4);

@@ -3,14 +3,14 @@ use crate::{
     catalog::{NativeBarSeries, NativeMarketData},
     catalog_ensemble_policy::CatalogEnsemblePolicy,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::ToPrimitive;
 use contracts::{
-    DbCounter, SchemaV1,
     catalog_ensemble::*,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     recorded_fees::*,
     science::*,
+    DbCounter, SchemaV1,
 };
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
@@ -606,13 +606,11 @@ pub fn replay(
                         .account_type(AccountType::Margin)
                         .book_type(BookType::L1_MBP)
                         .base_currency(Currency::from_str("pUSD")?)
-                        .starting_balances(vec![
-                            Money::from_str_exact(&format!(
-                                "{} pUSD",
-                                settings.starting_capital.as_decimal().to_plain_string()
-                            ))
-                            .map_err(anyhow::Error::msg)?,
-                        ])
+                        .starting_balances(vec![Money::from_str_exact(&format!(
+                            "{} pUSD",
+                            settings.starting_capital.as_decimal().to_plain_string()
+                        ))
+                        .map_err(anyhow::Error::msg)?])
                         .default_leverage(Decimal::ONE)
                         .allow_cash_borrowing(false)
                         .fee_model(fee_errors.wrap(model.handle()))

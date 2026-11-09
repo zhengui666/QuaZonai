@@ -1,5 +1,5 @@
 //! Exact published market rows and complete L2 snapshots shared by import and replay.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{BookOrder, Data, OrderBookDelta, OrderBookDeltas},
@@ -10,7 +10,7 @@ use nautilus_model::{
 };
 use parquet::{
     file::reader::SerializedFileReader,
-    record::{Field, Row, reader::RowIter},
+    record::{reader::RowIter, Field, Row},
 };
 use rust_decimal::Decimal;
 use std::{collections::BTreeMap, fs::File, path::Path};

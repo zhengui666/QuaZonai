@@ -1,13 +1,13 @@
 //! Historical source clocks and precision around the official time aggregator.
 //! Nautilus owns interval boundaries, OHLCV, empty intervals and timer state.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_common::clock::{Clock, VirtualClock};
 use nautilus_core::UnixNanos;
 use nautilus_data::aggregation::{BarAggregator, TimeBarAggregator};
 use nautilus_model::{
     data::{Bar, BarType, TradeTick},
     enums::{AggregationSource, BarIntervalType},
-    types::{Price, Quantity, fixed::FIXED_PRECISION},
+    types::{fixed::FIXED_PRECISION, Price, Quantity},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -181,11 +181,10 @@ mod tests {
             HistoricalTradeBars::new("TOKEN/QUOTE.VENUE-1-SECOND-LAST-INTERNAL".parse().unwrap())
                 .unwrap();
         assert!(bars.update(&trade(0, 100, "1.2", "2")).unwrap().is_none());
-        assert!(
-            bars.update(&trade(999_999_999, 3_000_000_000, "1.234", "0.125"))
-                .unwrap()
-                .is_none()
-        );
+        assert!(bars
+            .update(&trade(999_999_999, 3_000_000_000, "1.234", "0.125"))
+            .unwrap()
+            .is_none());
         let first = bars
             .update(&trade(1_000_000_000, 3_000_000_000, "1.3", "4"))
             .unwrap()
@@ -213,10 +212,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(first.ts_event.as_u64(), 0);
-        assert!(
-            bars.update(&trade(2_000_000_000, 3_000_000_000, "3", "3"))
-                .is_err()
-        );
+        assert!(bars
+            .update(&trade(2_000_000_000, 3_000_000_000, "3", "3"))
+            .is_err());
         let final_bars = bars.finish().unwrap();
         assert_eq!(final_bars.len(), 1);
         assert_eq!(final_bars[0].ts_event.as_u64(), 3_000_000_000);

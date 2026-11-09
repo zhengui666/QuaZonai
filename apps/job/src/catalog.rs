@@ -5,13 +5,13 @@ pub mod aggregation;
 pub mod currencies;
 mod file_batches;
 pub mod publish;
-pub use file_batches::{FileBatchSession, file_batch_session};
+pub use file_batches::{file_batch_session, FileBatchSession};
 
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::{
-    DbCounter, SchemaV1,
     execution::{NativeDataQualityReportV1, NativeDatasetQualityV1, NativeDatasetSelectionV1},
     science::NativeBarSelectionV1,
+    DbCounter, SchemaV1,
 };
 use nautilus_core::UnixNanos;
 use nautilus_model::{

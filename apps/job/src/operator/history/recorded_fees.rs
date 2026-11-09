@@ -1,9 +1,9 @@
 //! Prepare conditional cost replay from original source fields and same-ID native quantities.
 //! No fee formula, quantity renormalization, instrument definition or qualification is inferred.
-use super::{SourceRowContext, event_key, field, hf_selection, seconds, text, v2};
-use anyhow::{Context, Result, ensure};
+use super::{event_key, field, hf_selection, seconds, text, v2, SourceRowContext};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
-use contracts::{DbCounter, SchemaV1, recorded_fees::*, science::NativeBarSelectionV1};
+use contracts::{recorded_fees::*, science::NativeBarSelectionV1, DbCounter, SchemaV1};
 use nautilus_model::data::{Bar, TradeTick};
 use nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id;
 use nautilus_serialization::arrow::DecodeFromRecordBatch;
@@ -12,7 +12,7 @@ use parquet::{
     file::reader::{FileReader, SerializedFileReader},
     record::{Field, Row},
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,

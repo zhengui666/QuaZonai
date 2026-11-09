@@ -1,5 +1,5 @@
 //! One native publication/readback boundary for prepared immutable batches.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_model::data::{Data, HasTsInit, NautilusDataType};
 use nautilus_persistence::{
     backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,

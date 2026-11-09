@@ -1,5 +1,5 @@
 //! Shared exact spot-candle construction and original native catalog publication.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
 use nautilus_model::{
     data::{Bar, BarType, Data},

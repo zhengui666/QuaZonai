@@ -177,31 +177,27 @@ mod tests {
         assert_eq!(quality.rounded_trade_prices, 1);
         assert_eq!(quality.self_trades, 1);
         for address in EXCHANGES_V2 {
-            assert!(
-                fill(
-                    &row("137_1_1", &address.to_uppercase(), 2.0),
-                    &mappings,
-                    &mut quality,
-                    None
-                )
-                .unwrap()
-                .is_none()
-            );
+            assert!(fill(
+                &row("137_1_1", &address.to_uppercase(), 2.0),
+                &mappings,
+                &mut quality,
+                None
+            )
+            .unwrap()
+            .is_none());
         }
         assert_eq!(quality.exchange_summaries_excluded, 2);
         for id in ["137_01_1", "[137_1_1,137_1_2]", "0xorderhash"] {
             assert!(fill(&row(id, "bob", 2.0), &mappings, &mut quality, None).is_err());
         }
         for currency in ["USDC.e", "USDC"] {
-            assert!(
-                fill(
-                    &row("137_1_1", "bob", 2.0),
-                    &instruments(currency),
-                    &mut quality,
-                    None
-                )
-                .is_err()
-            );
+            assert!(fill(
+                &row("137_1_1", "bob", 2.0),
+                &instruments(currency),
+                &mut quality,
+                None
+            )
+            .is_err());
         }
     }
 }

@@ -1,9 +1,9 @@
 //! Causal full-universe scores from original fills and completed native BARs.
 //! One v2 model instance per member scans the canonical (availability,id) stream.
 use crate::{feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{DbCounter, recorded_fees::RecordedTradeFeeV1, science::*};
+use contracts::{recorded_fees::RecordedTradeFeeV1, science::*, DbCounter};
 use domain::execution::features::FeatureState;
 use nautilus_model::{data::Bar, identifiers::InstrumentId};
 use std::{
@@ -115,22 +115,18 @@ mod tests {
                 .unwrap();
         let (bar, mut records) = observation("100", 1, true);
         records[0].quantity = "0.999999".parse().unwrap();
-        assert!(
-            policy
-                .observe(bar, &records)
-                .unwrap_err()
-                .to_string()
-                .contains("BAR_QUANTITY")
-        );
+        assert!(policy
+            .observe(bar, &records)
+            .unwrap_err()
+            .to_string()
+            .contains("BAR_QUANTITY"));
         let (bar, records) = observation("100", 1, true);
         policy.observe(bar, &records).unwrap();
-        assert!(
-            policy
-                .observe(bar, &records)
-                .unwrap_err()
-                .to_string()
-                .contains("CANONICAL_ORDER")
-        );
+        assert!(policy
+            .observe(bar, &records)
+            .unwrap_err()
+            .to_string()
+            .contains("CANONICAL_ORDER"));
         let definitions = feature_schema("original@revision", counter(20).unwrap());
         let mut state = FeatureState::new(&definitions).unwrap();
         let values = state.values(counter(1).unwrap()).unwrap();
