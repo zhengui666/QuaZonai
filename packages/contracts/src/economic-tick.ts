@@ -118,6 +118,7 @@ export type TickEconomicReplayView = {
   sources?: { factorId: string; researchId: number; trialId: number; memberIndex: number; sourceRevision: string }[];
   status: 'QUEUED' | 'RUNNING' | 'COMPUTED' | 'FAILED' | 'STOPPED';
   scientificQualification: 'UNQUALIFIED_EXPLORATORY'; result: NativeTickEconomicResult | null; error: string | null;
+  bookCores?: number;
 };
 /** Progress of the named phase, read from the replay's existing Durable Task. */
 export type TickEconomicReplayProgress = { phase: string; updatedAt: string; completed?: number; total?: number };

@@ -2033,6 +2033,17 @@ pub fn replay_models_with_funding(
     request: &NativeTickEconomicRequestV1,
     wasms: &[Vec<u8>],
 ) -> Result<NativeTickEconomicResultV1> {
+    replay_models_with_funding_and_cores(root, funding_root, request, wasms, 1)
+}
+
+pub fn replay_models_with_funding_and_cores(
+    root: &Path,
+    funding_root: &Path,
+    request: &NativeTickEconomicRequestV1,
+    wasms: &[Vec<u8>],
+    cores: usize,
+) -> Result<NativeTickEconomicResultV1> {
+    ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
     validate(request)?;
     ensure!(
         !funding_sources(funding_root, &request.research)?.is_empty(),
@@ -2143,17 +2154,24 @@ pub fn replay_models_with_funding(
     let observed = observed(s);
     let normalize_sizes = normalize_observed_book_sizes(s);
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
-    let mut book_readers = Vec::new();
+    let mut book_readers = if observed {
+        Some(books::BookReaders::open(
+            funding_root,
+            &assets
+                .iter()
+                .map(|asset| asset.instrument.id())
+                .collect::<Vec<_>>(),
+            request.research.input.event_start_ns.get(),
+            request.research.input.event_end_ns.get(),
+            cores,
+        )?)
+    } else {
+        None
+    };
     let mut book_heads = Vec::new();
     if observed {
         for (i, asset) in assets.iter().enumerate() {
-            let mut reader = books::Books::open(
-                funding_root,
-                asset.instrument.id(),
-                request.research.input.event_start_ns.get(),
-                request.research.input.event_end_ns.get(),
-            )?;
-            let head = reader.next()?;
+            let head = book_readers.as_mut().unwrap().next(i)?;
             let head = if normalize_sizes {
                 head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
                     .transpose()?
@@ -2163,7 +2181,6 @@ pub fn replay_models_with_funding(
             if let Some(head) = &head {
                 book_heap.push(Reverse((head.received(), i)));
             }
-            book_readers.push(reader);
             book_heads.push(head);
         }
     }
@@ -2274,7 +2291,7 @@ pub fn replay_models_with_funding(
             let i = book_heap.pop().unwrap().0 .1;
             let frame = book_heads[i].take().unwrap();
             snapshots.insert(i, frame);
-            let next = book_readers[i].next()?;
+            let next = book_readers.as_mut().unwrap().next(i)?;
             book_heads[i] = if normalize_sizes {
                 next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
                     .transpose()?
@@ -3018,11 +3035,7 @@ pub fn replay_models_with_funding(
     }
     if observed {
         if funding_root.join("book-snapshots.source.json").is_file() {
-            let (carry_snapshots, carry_rows) =
-                book_readers.iter().fold((0, 0), |totals, reader| {
-                    let counts = reader.checkpoint_counts();
-                    (totals.0 + counts.0, totals.1 + counts.1)
-                });
+            let (carry_snapshots, carry_rows) = book_readers.as_ref().unwrap().checkpoint_counts();
             result.coverage.source_evidence.insert("published_books".into(), serde_json::json!({
                 "carry_checkpoint_snapshots": carry_snapshots.to_string(),
                 "carry_checkpoint_rows": carry_rows.to_string(),

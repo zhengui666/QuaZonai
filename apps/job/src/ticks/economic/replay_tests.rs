@@ -276,6 +276,18 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
         &wasm,
     )
     .unwrap();
+    let parallel = replay_models_with_funding_and_cores(
+        &prepared.join("research/catalog"),
+        &economic,
+        &request,
+        &[wasm.clone()],
+        8,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&result).unwrap(),
+        serde_json::to_value(&parallel).unwrap()
+    );
     assert_eq!(result.model, "SEGREGATED_OBSERVED_L2_IOC_V1");
     assert_eq!(
         decimal(result.initial_usdc_after_cost.as_ref().unwrap()).unwrap(),

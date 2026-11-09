@@ -39,6 +39,8 @@ Run `quazonai identity`. Without a login, have the user run `quazonai login --or
 | Inspect/update requested settings or installed extensions | `settings get`, `settings set --file FILE`, `extensions list`, `extensions enable NAME`, `extensions disable NAME` |
 | Unknown outcome, conflict or failure | [Recovery](references/recovery.md) |
 
+For new tick economic replays, `quazonai settings set --tick-book-cores N` selects a positive CPU-core count for book reading. The default is 1; actual parallelism is limited by available CPUs. The saved setting applies to newly submitted replays, not running tasks. The same setting is available in the Settings page.
+
 Use `quazonai --help` and offline `schema list` / `schema show NAME` for unfamiliar inputs; `--domain` selects native scientific schemas when installed. `client` is only a spelling alias, not the retired command surface. Unsupported adapters and missing evidence are explicit failures; never invent routes or commands.
 
 ## Operation notes

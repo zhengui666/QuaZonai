@@ -18,7 +18,7 @@ export const commands = ['review-science', 'review-source', 'review-allocate', '
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
 const flags = new Set(['--summary-only', '--plan-only']);
-const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id']);
+const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
 const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
 const catalogOptions = new Set(['--catalog', '--funding-catalog', '--partitions']);
 
