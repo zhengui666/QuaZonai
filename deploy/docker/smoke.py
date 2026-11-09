@@ -54,7 +54,7 @@ def api(opener, origin, path, body=None, method=None):
         content = response.read(); return json.loads(content) if content else None
 
 def model_settings(opener, origin, model=None):
-    expected = {'defaultModel': model, 'thinkingLevel': None, 'serviceTier': None}
+    expected = {'defaultModel': model, 'thinkingLevel': None, 'serviceTier': None, 'tickBookCores': 1}
     assert api(opener, origin, 'settings', expected, method='PATCH') == expected
     assert api(opener, origin, 'settings') == expected
     return expected
