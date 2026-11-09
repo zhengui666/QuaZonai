@@ -10,7 +10,7 @@ import type { NativeJson, NativeTarget } from '../../../packages/contracts/src/n
 import type { Context } from '@earendil-works/chord';
 import type { ResearchRuntime } from './research-runtime.ts';
 import type { StrategyPolicy } from './strategy.ts';
-import { nativeTargetForData, retainNativeRemoteUncertainty, withNativeExecutionInterceptor, withNativeRemoteTracking } from './native-execution.ts';
+import { nativeTargetForData, cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeExecutionInterceptor, withNativeStep, withNativeRemoteTracking } from './native-execution.ts';
 import { replayReviewAccount, replayStoredReviewAccount } from './review-account-science.ts';
 import { canonicalJsonDigest } from './native-json.ts';
 import { NativeEvidencePart, readNativeEvidence, retainNativeEvidence } from '../plugins/native-evidence.ts';
@@ -46,8 +46,8 @@ export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: str
           }, context);
           if (stored) return await readNativeEvidence(runtime, runtime.conversationId, task.id, stored, context) as NativeJson;
           // A crash may follow external execution but precede its checkpoint. Never resubmit or erase that attempt.
-          if (reserved) throw new Error('review_factor_account_stage_requires_reconciliation');
-          const value = object(await next());
+          if (reserved && !await hasNativeStepRecovery(task.id, runtime, context, { command, input })) throw new Error('review_factor_account_stage_requires_reconciliation');
+          const value = object(await withNativeStep(`review-account:${task.input.recordKey}:call:${index}`, next));
           const encoded = await retainNativeEvidence(value, async (part, data) => {
             await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${index * 1000000 + part}`, null)).data = data; return undefined; }, context);
           });
@@ -75,7 +75,13 @@ export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: str
       }
     });
   } },
-  async abort(task, runtime, context) { await runtime.commit(async tx => { const record = (await tx.doc(ReviewFactorAccounts, runtime.conversationId)).records[task.input.recordKey]; if (record) record.status = 'FAILED'; return { status: 'terminal', outcome: { status: 'aborted' } }; }, context); },
+  async abort(task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    } await runtime.commit(async tx => { const record = (await tx.doc(ReviewFactorAccounts, runtime.conversationId)).records[task.input.recordKey]; if (record) record.status = 'FAILED'; return { status: 'terminal', outcome: { status: 'aborted' } }; }, context); },
 });
 
 export async function factorAccountEvidence(api: ResearchRuntime, context: Context, data: JsonObject, model: string, policy: StrategyPolicy, evidenceRef: string): Promise<JsonObject | null> {

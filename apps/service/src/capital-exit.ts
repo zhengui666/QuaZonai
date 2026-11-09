@@ -1,4 +1,4 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { scienceTarget } from './config.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineTask } from '@earendil-works/pi-durable';
@@ -213,7 +213,13 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
       await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'reconcile' } }), context);
     },
   },
-  async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
+  async abort(_task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    } await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
 });
 function acceptCommand(input: CommandInput, state: AccountControl, value: JsonObject) {
   const command = state.commands[input.requestId]!;

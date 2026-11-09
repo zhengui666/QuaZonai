@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/conte
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { NativeRemoteUncertainty, cancelNativeRemoteTasks, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { openResearch } from '../../research/src/host.ts';
 import { validateCapitalDocument } from '../src/capital-exit.ts';
 import { implementationIdentity } from '../src/pm-science.ts';
@@ -109,7 +109,7 @@ test('unanswered capital cancellation retains the original reference through Dur
         throw error;
       }
     } },
-    async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
+    async abort(task, runtime, context) { await cancelNativeRemoteTasks(task.id, runtime, context); await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
   });
   const extension = defineExtension({ name: 'test.capital-remote-stop', tasks: [validation], tools: [defineTool({
     name: 'validate_capital', description: 'Controlled capital validation transport', parameters: Type.Object({}), replay: 'safe',
@@ -129,7 +129,7 @@ test('unanswered capital cancellation retains the original reference through Dur
     assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
     assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1); assert.ok(deadlines.includes(15_000));
     const receipt = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-    assert.deepEqual(receipt, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'PENDING', error: 'nautilus_execution_unknown' }] });
+    assert.deepEqual(receipt, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'PENDING', error: 'nautilus_execution_unknown', cancellationRequested: true }] });
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), receipt);
     assert.equal(posts, 1); assert.deepEqual(source.failures, []);

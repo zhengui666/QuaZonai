@@ -3,7 +3,7 @@ import type { DataSourceUpdate, DataSourceView } from '../../../packages/contrac
 
 async function plugins(page: Page) {
   let source: DataSourceView = { name: 'test.data', version: '1.0', enabled: false, state: 'disabled', fields: [{ key: 'path', label: '配置路径', type: 'text', required: true }, { key: 'token', label: '访问令牌', type: 'password' }, { key: 'limit', label: '条数', type: 'number' }, { key: 'history', label: '加载历史', type: 'boolean' }], config: { path: '', token: '', limit: 10, history: false }, datasetIds: [], lastLoadedAt: null, error: null };
-  const writes: { method: string; body: DataSourceUpdate | null }[] = []; let failSave = false; let failLoad = false;
+  const writes: { method: string; body: DataSourceUpdate | { requestId: string } | null }[] = []; let failSave = false; let failLoad = false; let unavailableLoad = false;
   await page.route('**/api/v3/**', route => {
     const request = route.request(); const path = new URL(request.url()).pathname.replace('/api/v3', '');
     if (path === '/session') return route.fulfill({ json: { authenticated: true, setupRequired: false } });
@@ -17,6 +17,7 @@ async function plugins(page: Page) {
         const input = request.postDataJSON() as DataSourceUpdate;
         source = { ...source, ...input, config: Object.fromEntries(Object.entries(input.config).filter(([, value]) => value !== null && value !== '')), state: input.enabled ? 'loaded' : 'disabled' };
       } else {
+        if (unavailableLoad) return route.fulfill({ status: 503, json: { error: 'transport_unavailable' } });
         if (failLoad) return route.fulfill({ status: 422, json: { message: '数据加载失败' } });
         source = { ...source, state: 'loaded', datasetIds: ['registered-dataset'], lastLoadedAt: '2026-10-26T00:00:00Z' };
       }
@@ -24,7 +25,7 @@ async function plugins(page: Page) {
     }
     return route.fulfill({ status: 404, json: { error: 'not_found' } });
   });
-  return { writes, changeConfig: (config: DataSourceView['config']) => { source = { ...source, config }; }, failSave: (value: boolean) => { failSave = value; }, failLoad: (value: boolean) => { failLoad = value; } };
+  return { writes, changeConfig: (config: DataSourceView['config']) => { source = { ...source, config }; }, failSave: (value: boolean) => { failSave = value; }, failLoad: (value: boolean) => { failLoad = value; }, unavailableLoad: (value: boolean) => { unavailableLoad = value; } };
 }
 
 test('data plugins save dynamic fields before loading and link from extensions', async ({ page }, info) => {
@@ -104,4 +105,27 @@ test('saving cleared optional number and password fields keeps them empty', asyn
   await expect(plugin.getByLabel('访问令牌', { exact: true })).toHaveValue('');
   await expect(plugin.getByRole('button', { name: '保存配置', exact: true })).toBeDisabled();
   await expect(plugin.getByRole('button', { name: '加载数据', exact: true })).toBeEnabled();
+});
+
+
+test('unknown plugin load survives reload and retries its original request without persisting credentials', async ({ page }) => {
+  const state = await plugins(page); state.changeConfig({ path: '/tmp/original.json', token: 'private-source-token', limit: 10, history: false });
+  await page.goto('/#/settings?section=data-plugins');
+  const plugin = page.getByRole('region', { name: 'test.data', exact: true });
+  await plugin.getByRole('switch', { name: '启用 test.data', exact: true }).check();
+  await plugin.getByRole('button', { name: '保存配置', exact: true }).click();
+  await expect(plugin.getByText('已保存配置，可加载数据', { exact: true })).toBeVisible();
+  state.unavailableLoad(true);
+  await plugin.getByRole('button', { name: '加载数据', exact: true }).click();
+  await expect(plugin.getByRole('button', { name: '核对加载', exact: true })).toBeEnabled();
+  const first = state.writes.filter(row => row.method === 'POST')[0]!.body as { requestId: string };
+  expect(first).toEqual({ requestId: expect.any(String) });
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage, ...localStorage }))).not.toContain('private-source-token');
+  await page.reload();
+  await expect(plugin.getByRole('button', { name: '核对加载', exact: true })).toBeEnabled();
+  state.unavailableLoad(false);
+  await plugin.getByRole('button', { name: '核对加载', exact: true }).click();
+  await expect(plugin.getByText('已加载数据', { exact: true })).toBeVisible();
+  expect(state.writes.filter(row => row.method === 'POST').map(row => row.body)).toEqual([first, first]);
+  expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.data-source:test.data.v3'))).toBeNull();
 });

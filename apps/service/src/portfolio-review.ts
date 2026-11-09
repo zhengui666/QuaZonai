@@ -1,3 +1,4 @@
+import { NativeSteps, withNativeStep } from '../../research/src/native-execution.ts';
 import { withoutExecutionQuotas } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import { defineDocFamily, type ConversationId, type JsonObject } from '@earendil-works/pi-durable';
@@ -31,8 +32,11 @@ export async function reservePortfolioReviewScience(input: PortfolioTaskInput, a
   }, context);
   // A native process may already have run before its result checkpoint. Never
   // replace that unresolved invocation with a new execution identity for free.
-  if (pending) throw new Problem('portfolio_review_stage_requires_reconciliation');
-  const result = await action();
+  if (pending) {
+    const receipts = await api.snapshot(NativeSteps, api.conversationId, String(api.taskId), context);
+    if (!(receipts && Object.entries(receipts.steps).some(([stepKey, reference]) => stepKey.startsWith(`${encodeURIComponent(`portfolio-review:${key}`)}/`) && reference.request && typeof reference.request === 'object' && !Array.isArray(reference.request) && reference.request.schemaVersion === 2))) throw new Problem('portfolio_review_stage_requires_reconciliation');
+  }
+  const result = await withNativeStep(`portfolio-review:${key}`, action);
   await api.commit(async tx => { (await tx.doc(PortfolioReviewScience, String(api.taskId), null)).results[key] = result; }, context);
   return result;
 }

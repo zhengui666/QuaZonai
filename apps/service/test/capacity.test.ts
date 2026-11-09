@@ -49,13 +49,17 @@ test('factor and stored-portfolio capacity expose known data and executable fail
       { url: `/api/v3/portfolios/${view.id}/capacity`, scope: view.id, operation: 'assess-capacity' }];
     const before = await state.service.work.snapshot();
     await writeFile(state.options.config.jobBinary, '#!/bin/sh\nprintf "%s\\n" QZ_NATIVE_JOB_FAILED FORECAST_INSUFFICIENT_WARMUP "private-context-not-for-response" >&2\nexit 1\n', { mode: 0o700 });
+    for (const resource of resources) {
+      const initial = await state.service.app.inject({ url: resource.url, headers: state.headers });
+      assert.equal(initial.statusCode, 200); assert.equal(initial.json().reason, 'capacity_not_assessed');
+    }
     for (const failure of [
       { code: 'FORECAST_INSUFFICIENT_WARMUP', category: 'data', cause: /预热/, action: /历史.*慢周期/ },
       { code: 'native_executable_unavailable', category: 'runtime', cause: /原生科学程序无法启动/, action: /程序.*安装/ },
     ]) {
       if (failure.code === 'native_executable_unavailable') await rm(state.options.config.jobBinary);
       for (const resource of resources) {
-        const response = await state.service.app.inject({ method: 'POST', url: resource.url, headers: state.headers, payload: policy });
+        const response = await state.service.app.inject({ method: 'POST', url: resource.url, headers: state.headers, payload: { requestId: `${failure.code}:${resource.scope}`, assumptions: policy } });
         assert.equal(response.statusCode, 200, response.body);
         const report = response.json();
         assert.equal(report.status, 'UNAVAILABLE'); assert.equal(report.reason, failure.code); assert.equal(report.scope, resource.scope);
@@ -68,11 +72,15 @@ test('factor and stored-portfolio capacity expose known data and executable fail
         assert.match(report.errorDetail.message, failure.cause); assert.match(report.errorDetail.action, failure.action);
         assert.doesNotMatch(response.body, /private-context-not-for-response/);
         assert.equal(response.body.includes(state.directory), false, 'do not expose private host paths');
+        const read = await state.service.app.inject({ url: `${resource.url}?requestId=${encodeURIComponent(`${failure.code}:${resource.scope}`)}`, headers: state.headers });
+        assert.equal(read.statusCode, 200); assert.deepEqual(read.json(), report);
+        const replay = await state.service.app.inject({ method: 'POST', url: resource.url, headers: state.headers, payload: { requestId: `${failure.code}:${resource.scope}`, assumptions: policy } });
+        assert.equal(replay.statusCode, 200); assert.deepEqual(replay.json(), report);
       }
     }
     const normal = unavailableCapacity('USD', 'liquidity_stale', 'portfolio', policy);
     await writeFile(state.options.config.jobBinary, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(normal)}'\n`, { mode: 0o700 });
-    const unchanged = await state.service.app.inject({ method: 'POST', url: resources[1]!.url, headers: state.headers, payload: policy });
+    const unchanged = await state.service.app.inject({ method: 'POST', url: resources[1]!.url, headers: state.headers, payload: { requestId: 'normal-native-unavailable', assumptions: policy } });
     assert.equal(unchanged.statusCode, 200); assert.deepEqual(unchanged.json(), { ...normal, scope: view.id }, 'normal native unavailable reasons are not classification envelopes');
     assert.deepEqual(await state.service.work.snapshot(), before, 'read-only diagnosis cannot change original facts or old reports');
   } finally { await state.cleanup(); }
@@ -87,7 +95,7 @@ test('unknown and cancelled capacity failures remain HTTP errors and factor canc
     for (const [diagnostic, code] of [['private original capacity failure', 'internal_error'], ['custom_capacity_failure', 'custom_capacity_failure'], ['aborted', 'aborted']]) {
       await writeFile(state.options.config.jobBinary, `#!/bin/sh\nprintf '%s\\n' '${diagnostic}' >&2\nexit 1\n`, { mode: 0o700 });
       for (const url of [`/api/v3/factors/${factor.id}/capacity`, `/api/v3/portfolios/${view.id}/capacity`]) {
-        const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: policy });
+        const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { requestId: `${code}:${url}`, assumptions: policy } });
         assert.equal(response.statusCode, 500, response.body); assert.deepEqual(response.json(), { error: code });
       }
     }

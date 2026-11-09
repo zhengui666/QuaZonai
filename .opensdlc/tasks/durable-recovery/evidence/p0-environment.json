@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-11-09T15:34:05.453687+00:00",
+  "sourceCommit": "8fe4f9d25dc0a66e32237edf0e9f7db5ad51e227",
+  "outcome": "BLOCKED",
+  "verifiedCommands": [],
+  "kernel": "Linux 6.18.57 x86_64 GNU/Linux",
+  "uid": 1000,
+  "capEffective": "0000000000000000",
+  "tools": [
+    {
+      "file": "runc",
+      "url": "https://github.com/opencontainers/runc/releases/download/v1.5.2/runc.amd64",
+      "sha256": "599f6f94ff8c5057241eff0d54c3c74f95c34935b6457b33fe545defc61e9488",
+      "bytes": 10866512
+    },
+    {
+      "file": "criu.deb",
+      "url": "https://deb.debian.org/debian/pool/main/c/criu/criu_4.3-1~exp2_amd64.deb",
+      "sha256": "66a5c280fd06496dd127c6f4f3d4ddff527c1fb722c0d70d64df380d1ea8f8d0",
+      "bytes": 618984
+    }
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/workspace/scratch/quazonai-recovery-p0/runc",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "runc version 1.5.2\ncommit: v1.5.2-0-g29dd3dc\nspec: 1.3.0\ngo: go1.26.8\nlibseccomp: 2.6.1\nlibpathrs: 0.2.6\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/workspace/scratch/quazonai-recovery-p0/runtime/usr/sbin/criu",
+        "--version"
+      ],
+      "exitCode": 0,
+      "stdout": "Version: 4.3\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/workspace/scratch/quazonai-recovery-p0/runtime/usr/sbin/criu",
+        "check",
+        "--extra"
+      ],
+      "exitCode": 1,
+      "stdout": "CRIU needs to have the CAP_SYS_ADMIN or the CAP_CHECKPOINT_RESTORE capability: \nsetcap cap_checkpoint_restore+eip /workspace/scratch/quazonai-recovery-p0/runtime/usr/sbin/criu\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "unshare",
+        "--user",
+        "--map-root-user",
+        "/workspace/scratch/quazonai-recovery-p0/runtime/usr/sbin/criu",
+        "check",
+        "--extra"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error (criu/sockets.c:216): sockets: Diag module missing (-2)\nError (criu/sockets.c:216): sockets: Diag module missing (-2)\nError (criu/tun.c:85): tun: Unable to create tun: No such file or directory\nWarn  (criu/sk-unix.c:224): unix: Unable to open a socket file: Operation not permitted\nWarn  (criu/net.c:3952): net: Unable to get socket network namespace\nError (criu/kerndat.c:1088): Fail to mount tmfps to /tmp/.criu.move_mount_set_group.MYL0UP: Operation not permitted\nError (criu/kerndat.c:2036): kerndat_has_move_mount_set_group failed when initializing kerndat.\nError (criu/crtools.c:266): Could not initialize kernel features detection.\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "--host=unix:///var/run/docker.sock",
+        "run",
+        "--rm",
+        "--privileged",
+        "--network=none",
+        "--name",
+        "qz-recovery-p0-criu-check",
+        "--mount",
+        "type=bind,src=/workspace/scratch/quazonai-recovery-p0/runtime,dst=/runtime,readonly",
+        "--mount",
+        "type=bind,src=/usr/lib/x86_64-linux-gnu,dst=/hostlibs,readonly",
+        "--entrypoint",
+        "/bin/sh",
+        "debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2",
+        "-c",
+        "LD_LIBRARY_PATH=/runtime/usr/lib/x86_64-linux-gnu:/hostlibs /runtime/usr/sbin/criu check --extra"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error (criu/sockets.c:216): sockets: Diag module missing (-2)\nError (criu/sockets.c:216): sockets: Diag module missing (-2)\nError (criu/tun.c:85): tun: Unable to create tun: No such file or directory\nWarn  (criu/kerndat.c:1286): Can't keep kdat cache on non-tempfs\nError (criu/cr-check.c:160): sys/kernel/ns_last_pid sysctl is inaccessible: No such file or directory\nWarn  (criu/cr-check.c:1675): Does not look good.\n",
+      "capture": "Exact output retained from approved exec result 7b86c3; not rerun."
+    }
+  ],
+  "nativeAcceptance": "NOT_RUN",
+  "powerLossAcceptance": "NOT_RUN",
+  "limitations": [
+    "Kernel feature detection fails even inside the approved task-owned privileged Docker container.",
+    "The preexisting target/debug/job is from the old main branch; it was not used as current-dev scientific evidence.",
+    "Rust 1.99.1 compiler and Cargo are not on PATH in this environment.",
+    "No host global settings or kernel modules were changed."
+  ]
+}

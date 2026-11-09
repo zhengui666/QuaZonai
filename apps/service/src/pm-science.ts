@@ -6,11 +6,11 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { v7 as uuidv7 } from 'uuid';
+import { v7 as uuidv7, v5 as uuidv5 } from 'uuid';
 import type { Money, OwnerBoundary } from '../../../packages/contracts/src/pm.ts';
 import { compareDecimal, subtractDecimal, validatePmEntity } from '../../../packages/contracts/src/pm-validation.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
-import { remoteNativeCapabilities } from '../../research/src/native-execution.ts';
+import { remoteNativeCapabilities, withFreshNativeRead, withNativeStep } from '../../research/src/native-execution.ts';
 import { compileWasm, iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import { jsonChunks } from '../../research/src/native-json.ts';
 import { canonical } from '../../research/src/documents.ts';
@@ -70,7 +70,7 @@ export async function implementationIdentity(binary: NativeTarget, context?: Con
  * read those rows. Paths, matching metadata and a fresh digest taken only at
  * independent evaluation cannot establish that the original history survived.
  */
-export async function verifyOriginalPrefix(source: JsonObject, catalog: string, binary: NativeTarget, dataDir: string, context: Context): Promise<JsonObject> {
+export async function verifyOriginalPrefix(source: JsonObject, catalog: string, binary: NativeTarget, dataDir: string, context: Context, purpose = 'verification'): Promise<JsonObject> {
   const expected = object(source.catalogPrefix, 'original_fit_catalog_prefix_evidence');
   const selection = object(object(object(source.request).forecast).selection, 'original_fit_prefix_selection');
   if (expected.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || typeof expected.content_sha256 !== 'string'
@@ -78,7 +78,8 @@ export async function verifyOriginalPrefix(source: JsonObject, catalog: string, 
   const root = join(dataDir, 'scratch'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'pm-source-prefix-'));
   try {
-    const actual = await executeNative(binary, 'catalog-prefix-digest', selection, ['--catalog', catalog], directory, context);
+    const actual = await withFreshNativeRead('catalog-prefix-digest', purpose,
+      () => executeNative(binary, 'catalog-prefix-digest', selection, ['--catalog', catalog], directory, context));
     if (canonical(actual) !== canonical(expected)) throw new Error('pm_original_catalog_prefix_changed');
     return actual;
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -177,7 +178,7 @@ async function runPmAccountScience(input: PmAccountScienceInput, context: Contex
       if (saved.fingerprint !== fingerprint) throw new Error('pm_account_science_checkpoint_basis_mismatch');
       return object(saved.value);
     }
-    const value = await compute(); await checkpoint?.write(`account:${key}`, { fingerprint, value }); return value;
+    const value = await withNativeStep(`account:${key}`, compute); await checkpoint?.write(`account:${key}`, { fingerprint, value }); return value;
   }
   // A UUID here identifies this real bridge artifact. It is explicitly NOT a
   // claim that the PM content-addressed revision was a native source UUID.
@@ -253,7 +254,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   if (input.currency !== input.capital.currency || compareDecimal(input.capital.amount, '0') <= 0) throw new Error('pm_science_capital_invalid');
   validatePmAllocationMethod(input.allocationMethod);
   const source = input.source; const fit = object(source.fit, 'frozen_fit');
-  const verifiedPrefix = await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context);
+  const verifiedPrefix = await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context, 'before-science');
   const fitRequest = object(source.fitRequest, 'original_fit_request');
   const original = object(source.simulationRequest, 'original_simulation_request');
   const request = object(source.request, 'original_factor_request');
@@ -307,10 +308,15 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
       if (saved.fingerprint !== fingerprint) throw new Error('pm_science_checkpoint_basis_mismatch');
       return object(saved.value, 'retained_native_result');
     }
-    const value = await compute(); await checkpoint?.write(key, { fingerprint, value }); return value;
+    const value = await withNativeStep(key, compute); await checkpoint?.write(key, { fingerprint, value }); return value;
   }
   const put = async (payload: JsonObject, bytes?: Uint8Array): Promise<string> => {
-    const id = uuidv7(); objects[id] = payload;
+    // Native object identities must survive a crash before the enclosing
+    // preparation result commits. The original scientific basis and bytes
+    // address this object without creating a new identity during recovery.
+    const objectDigest = createHash('sha256').update(canonical(payload));
+    if (bytes) objectDigest.update(bytes);
+    const id = uuidv5(`${fingerprint}:${objectDigest.digest('hex')}`, uuidv5.URL); objects[id] = payload;
     await writeFile(join(directory, id), bytes ?? jsonChunks(payload)); return id;
   };
   try {
@@ -480,7 +486,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     try {
       // A source changed between child runs invalidates the whole comparison,
       // including a resumed computation whose earlier receipts were retained.
-      if (!context.abortSignal?.aborted) await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context);
+      if (!context.abortSignal?.aborted) await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context, 'after-science');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
 }

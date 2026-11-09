@@ -1,3 +1,4 @@
+import { syncDirectory, syncTree } from '../../research/src/durable-files.ts';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
 import { copyFile, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
@@ -110,7 +111,8 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
     for (const candidate of [data, data.sealed]) if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
       for (const key of ['catalog', 'catalog_partitions']) if (typeof candidate[key] === 'string') candidate[key] = `revisions/${id}/${candidate[key]}`;
     }
-    try { await rename(staging, directory); moved = true; }
+    await syncTree(staging);
+    try { await rename(staging, directory); moved = true; await syncDirectory(dirname(staging)); await syncDirectory(dirname(directory)); }
     catch (error) {
       if (!['EEXIST', 'ENOTEMPTY'].includes(String((error as NodeJS.ErrnoException).code))) throw error;
       // A retry may reuse only the exact complete immutable bytes.
@@ -136,8 +138,10 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
         await readSourceRevision({ ...dataset, revisionManifest: pending });
         await writeComplete(historyPending, manifest);
         await rename(historyPending, history);
+        await syncDirectory(directory);
         // Reader sees old complete manifest or new complete manifest, never a partial file.
         await rename(pending, manifestPath);
+        await syncDirectory(root);
       } finally { await rm(pending, { force: true }); await rm(historyPending, { force: true }); }
       return (await readSourceRevision(dataset))!;
     }, async head => {

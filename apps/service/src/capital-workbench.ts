@@ -5,7 +5,8 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, object, observation, portfolio, Problem, text } from './facts.ts';
-import { accountKey, assertCapitalCommandPermission, capitalCommandPermission, CapitalExitCommand, capitalStatusForBinding, control, physicalCapitalState, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
+import { accountKey, assertCapitalCommandPermission, capitalCommandPermission, CapitalExitCommand, capitalStatusForBinding, control, physicalCapitalState, readCapitalControl, recordCapitalControl, recordCapitalControlFailure } from './capital-exit.ts';
+import { validateCapitalDocumentDurable } from './capital-validation.ts';
 import { downstreamRequest } from './downstream.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -19,7 +20,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const original = await fact(id); let key = accountKey(original.connection, (await host.harness.snapshot(Application, context))?.accountControls);
     try {
       const fresh = await readCapitalControl(original.connection, original.view.currency);
-      for (const exit of fresh.status.exits) await validateCapitalDocument(config, 'VIEW', exit);
+      for (const exit of fresh.status.exits) await validateCapitalDocumentDurable(host, config, 'VIEW', exit);
       await host.harness.commit(async tx => {
         const facts = await tx.doc(Application);
         facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls!, original.connection, fresh);
@@ -44,7 +45,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       const amount = decimal(body.amount, 'amount'); if (decimalUnits(amount) <= 0n || body.currency !== original.view.currency) throw new Problem('capital_exit_amount_or_currency_invalid', 422);
       const request = { schema_version: 1, account_source_id: status.accountSourceId, expected_source_observation_id: status.observationId,
         scope: { kind: 'AMOUNT', amount, currency: body.currency }, policy: body.policy === undefined ? { kind: 'CASH_ONLY' } : object(body.policy) };
-      await validateCapitalDocument(config, 'REQUEST', request);
+      await validateCapitalDocumentDurable(host, config, 'REQUEST', request);
       captured = await host.harness.commit(async tx => {
         const facts = await tx.doc(Application); const current = observation(facts.observations[id]);
         const prior = current.capitalPreviews?.[requestId]; if (prior && canonical(prior.original!) !== canonical(body)) throw new Problem('request_id_conflict', 409);
@@ -57,7 +58,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const response = await downstreamRequest(original.connection, 'capital-exits/preview', 'POST', envelope);
     if (response.requestId !== requestId || response.clientId !== original.connection.clientId || response.accountId !== original.connection.accountId) throw new Problem('capital_exit_preview_identity_mismatch', 409);
     const preview = object(response.preview);
-    await validateCapitalDocument(config, 'PREVIEW', preview);
+    await validateCapitalDocumentDurable(host, config, 'PREVIEW', preview);
     if (preview.account_source_id !== request.account_source_id || preview.original_observation_id !== request.expected_source_observation_id || preview.expected_account_control_revision !== captured.controlRevision
       || canonical(preview.scope!) !== canonical(json(request.scope)) || canonical(preview.policy!) !== canonical(json(request.policy)) || preview.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_preview_binding_mismatch', 409);
     await host.harness.commit(async tx => {
@@ -84,7 +85,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       if (preview.expected_account_control_revision !== status.controlRevision || preview.original_observation_id !== status.observationId) throw new Problem('capital_exit_preview_stale', 409);
       native = { schema_version: 1, preview_id: preview.id!, expected_account_control_revision: counter(preview.expected_account_control_revision, 'control_revision'),
         acknowledged_plan_artifact_id: preview.plan_artifact_id!, expected_source_observation_id: preview.original_observation_id! };
-      await validateCapitalDocument(config, 'START', native);
+      await validateCapitalDocumentDurable(host, config, 'START', native);
       reserved = decimal(object(object(preview.funds).requested).amount, 'requested_amount'); path = 'capital-exits';
     } else {
       const exitId = text(original.exitId, 'capital_exit_id'); const exit = status.exits.find(value => value.id === exitId);
@@ -101,7 +102,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
         native.user_reported_amount = amount; native.currency = current.view.currency;
         native.external_transfer_ref = text(original.externalTransferRef, 'external_transfer_ref');
       }
-      await validateCapitalDocument(config, 'ACTION', native); path = `capital-exits/${encodeURIComponent(exitId)}/actions`;
+      await validateCapitalDocumentDurable(host, config, 'ACTION', native); path = `capital-exits/${encodeURIComponent(exitId)}/actions`;
     }
     return host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const state = control(facts.accountControls?.[key]);

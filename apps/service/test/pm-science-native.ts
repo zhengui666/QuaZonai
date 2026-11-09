@@ -47,7 +47,7 @@ test('PM native: original training panels drive frozen coefficients, fresh per-c
     const bindings = result.evidence.bindings as JsonObject[]; const objects = object(result.evidence.objects);
     assert.equal(bindings.length, 2);
     for (const binding of bindings) for (const field of ['reportArtifactId', 'modelArtifactId', 'calibrationArtifactId']) {
-      const id = String(binding[field]); assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      const id = String(binding[field]); assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
       assert.ok(objects[id], `${field} must resolve to the retained actual payload.`);
     }
     assert.equal(object(result.evidence.method).parameterOrigin, 'REGISTERED_METHOD');

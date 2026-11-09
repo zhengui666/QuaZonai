@@ -2,7 +2,7 @@ import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { runReviewScience } from './review-science-adapter.ts';
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from './native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from './native-execution.ts';
 
 /** Host-created immutable plan, never a model-supplied script or metric table. */
 export interface ReviewNativePlan {
@@ -24,5 +24,11 @@ export const ReviewNativeTask = defineTask<ReviewNativePlan, { phase: 'compute' 
       }
     });
   } },
-  async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
+  async abort(_task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    } await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
 });

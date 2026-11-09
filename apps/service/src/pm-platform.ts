@@ -1,6 +1,6 @@
 import { ReviewLedger, latestTrialReview } from '../../research/src/review-documents.ts';
 import { boundScienceTarget, pmScienceData, withoutExecutionQuotas } from './science-binding.ts';
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId, Tx } from '@earendil-works/pi-durable';
@@ -382,7 +382,13 @@ export function createPmPlatform(config: ServiceConfig) {
       }
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
     } },
-    async abort(task, runtime, ctx) { await runtime.commit(async tx => {
+    async abort(task, runtime, ctx) {
+      const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, ctx);
+      let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      while (protectedExecution && !settled) {
+        await runtime.sleep(runtime.now() + 1000, ctx);
+        settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      } await runtime.commit(async tx => {
       const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const cycle = record.cycles[task.input.cycleId]!;
       if (cycle.state !== 'SUPERSEDED') { revise(cycle); cycle.state = 'FAILED'; cycle.reasonCodes = ['owner_stopped_local_compute']; }
       return { status: 'terminal', outcome: { status: 'aborted' } };
@@ -502,7 +508,7 @@ export function createPmPlatform(config: ServiceConfig) {
             const frozenData = object(object(record.artifacts[candidate.cycleId]!.configured).data);
             const catalog = String(source.configured.data.catalog);
             const prefix = await withNativeRemoteTracking(runtime.taskId, runtime, ctx,
-              () => verifyOriginalPrefix(candidate.source, catalog, boundScienceTarget(config, frozenData), config.dataDir, ctx));
+              () => verifyOriginalPrefix(candidate.source, catalog, boundScienceTarget(config, frozenData), config.dataDir, ctx, `source-recovery:${candidate.signature}`));
             const checked = await readSourceRevision(configured);
             if (!checked || checked.contentDigest !== source.contentDigest) throw new Problem('source_changed_during_recovery_verification');
             verifiedRecovery = { signature: candidate.signature, prefix };
@@ -687,7 +693,13 @@ export function createPmPlatform(config: ServiceConfig) {
       async maintenance(task, runtime, ctx) { await runtime.commit(async tx => pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).deletedAt
         ? { status: 'terminal', outcome: { status: 'completed', result: null } } : resumeMaintenance(tx, runtime.taskId, 'qz.pm.mandate-monitor', task.state.checkpoint), ctx); },
     },
-    async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); },
+    async abort(_task, runtime, ctx) {
+      const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, ctx);
+      let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      while (protectedExecution && !settled) {
+        await runtime.sleep(runtime.now() + 1000, ctx);
+        settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+      } await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); },
   });
 
   async function start(value: unknown) {

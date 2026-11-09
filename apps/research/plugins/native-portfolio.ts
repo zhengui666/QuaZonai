@@ -1,6 +1,6 @@
 import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { executeNativeValue } from '../src/native-execution.ts';
+import { executeNativeValue, withNativeStep } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -41,11 +41,11 @@ export async function forecastMembers(binary: NativeTarget, catalog: string, mem
     const modelPath = join(directory, `model-${index}.wasm`);
     await writeFile(modelPath, compileWasm(member.model, 'selected-factor.wat', 'portfolio-evaluation'));
     const args = ['--catalog', catalog, '--model', modelPath];
-    const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context) : null;
+    const summary = diagnostics ? await withNativeStep(`member:${index}:diagnostic`, () => executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context)) : null;
     if (summary && (canonical(withoutExecutionQuotas(summary.request!)) !== canonical(withoutExecutionQuotas(computationRequest)) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
     const forecastRequest = object(computationRequest.forecast, 'forecast_request');
     const command = policy.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast';
-    const forecasts = await executeNative(binary, command, forecastRequest, args, directory, context);
+    const forecasts = await withNativeStep(`member:${index}:forecast`, () => executeNative(binary, command, forecastRequest, args, directory, context));
     const original = thresholdTargets(forecasts, policy, currency, partition ? selection : undefined);
     const points = partition && policy.kind !== 'cross-market-threshold' ? intervalTargets(original, selection) : original;
     memberRows.push(points);

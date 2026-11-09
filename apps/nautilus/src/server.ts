@@ -9,6 +9,9 @@ import { pipeline } from 'node:stream/promises';
 import { JsonReader, jsonChunks, canonicalJsonDigest } from '../../research/src/native-json.ts';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeExecutionRequestV2 } from '../../../packages/contracts/src/nautilus.ts';
+import type { RecoveryDriver } from './checkpoint-driver.ts';
+import { openNativeExecutions } from './execution-task.ts';
 
 type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number; progressPath?: string };
 
@@ -37,6 +40,8 @@ export interface WorkerOptions {
   /** Legacy configuration accepted for compatibility; execution quotas are ignored. */
   tickMaximumMemoryBytes?: number;
   tickMaximumOutputBytes?: number;
+  /** Only a deployment-verified driver may admit internally recoverable work. */
+  recoveryDriver?: RecoveryDriver<NativeExecutionRequestV2>;
 }
 
 function positiveLimit(value: number | undefined, fallback: number, code: string): number {
@@ -97,6 +102,21 @@ function validateRequest(value: unknown, digest: string): Request {
   return value as unknown as Request;
 }
 
+function validateRequestV2(value: unknown): NativeExecutionRequestV2 {
+  if (!object(value) || value.schemaVersion !== 2 || typeof value.instanceId !== 'string' || !value.instanceId
+    || typeof value.recoveryProfileId !== 'string' || !value.recoveryProfileId
+    || typeof value.implementationDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value.implementationDigest)
+    || Object.keys(value).some(key => !['schemaVersion', 'requestId', 'invocationId', 'implementationDigest', 'command', 'input', 'args', 'files', 'instanceId', 'recoveryProfileId'].includes(key))) fail('nautilus_request_invalid');
+  const { requestId, schemaVersion: _version, instanceId: _instance, recoveryProfileId: _profile, ...content } = value;
+  // Reuse the original argument/attachment contract without altering the V2
+  // canonical identity, which also binds the original worker and profile.
+  const original = { ...content, schemaVersion: 1 as const };
+  validateRequest({ ...original, requestId: canonicalJsonDigest(original) }, value.implementationDigest);
+  const { requestId: _id, ...identity } = value;
+  if (typeof requestId !== 'string' || !/^[a-f0-9]{64}$/.test(requestId) || canonicalJsonDigest(identity) !== requestId) fail('nautilus_request_identity_conflict', 409);
+  return value as unknown as NativeExecutionRequestV2;
+}
+
 export async function createNautilusWorker(options: WorkerOptions) {
   const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
   const calibrationThreads = options.calibrationThreads === undefined ? undefined
@@ -115,6 +135,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
   const receipts = join(root, 'executions'); const scratch = join(root, 'scratch');
   await mkdir(receipts, { recursive: true }); await mkdir(scratch, { recursive: true });
   const roots = await Promise.all(options.catalogRoots.map(path => realpath(path)));
+  const executions = await openNativeExecutions(join(root, 'executions.sqlite'), options.recoveryDriver);
   const active = new Map<string, Active>();
   const launching = new Map<string, Promise<Active>>();
   // Admission reservations only, not a queue. Existing receipts never consume
@@ -280,6 +301,22 @@ export async function createNautilusWorker(options: WorkerOptions) {
     try {
       if (request.method === 'GET' && request.url === '/health') return await send(response, closing ? 503 : 200, { ready: !closing });
       if (!authorized(request, options.token)) return await send(response, 401, { error: 'nautilus_authentication_required' });
+      if (request.method === 'GET' && request.url === '/v2/capabilities') return await send(response, 200,
+        { schemaVersion: 2, instanceId: executions.instanceId, implementationDigest, commands, recovery: await executions.profile() });
+      const recoverable = /^\/v2\/executions\/([a-f0-9]{64})$/.exec(request.url ?? '');
+      if (recoverable && ['GET', 'DELETE'].includes(request.method ?? '')) {
+        const value = request.method === 'DELETE' ? await executions.cancel(recoverable[1]!) : await executions.read(recoverable[1]!);
+        return await send(response, value ? 'cancellation' in value || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status) ? 200 : 202 : 404,
+          value ?? { schemaVersion: 2, instanceId: executions.instanceId, requestId: recoverable[1], error: 'nautilus_execution_not_found' });
+      }
+      if (request.method === 'POST' && request.url === '/v2/execute') {
+        if (closing) return await send(response, 503, { error: 'nautilus_worker_closing' });
+        const value = validateRequestV2(await body(request, options.maximumRequestBytes ?? 256 * 1024 * 1024));
+        // Existing receipts bind their original implementation across upgrades;
+        // only a new admission must match the currently installed executable.
+        if (!await executions.read(value.requestId) && value.implementationDigest !== implementationDigest) fail('nautilus_implementation_changed', 409);
+        return await send(response, 202, await executions.submit(value));
+      }
       if (request.method === 'GET' && request.url === '/v1/capabilities') return await send(response, 200, { schemaVersion: 1, implementationDigest, commands });
       const match = /^\/v1\/executions\/([a-f0-9]{64})$/.exec(request.url ?? '');
       if (match && ['GET', 'DELETE'].includes(request.method ?? '')) {
@@ -319,6 +356,8 @@ export async function createNautilusWorker(options: WorkerOptions) {
     const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     for (const execution of active.values()) execution.cancel();
     await Promise.allSettled([...active.values()].map(execution => execution.promise));
+    // Harness closure pauses original V2 work. It never invokes owner DELETE.
+    await executions.close();
     server.closeIdleConnections();
     await closed;
   } };

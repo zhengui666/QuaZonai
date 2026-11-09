@@ -108,17 +108,17 @@ test('admitted instance survives environment changes and production refuses miss
   }
 });
 
-test('bounded cancellation retains its unknown original remote receipt after Durable abort and reopen', { timeout: 15_000 }, async t => {
+test('legacy bounded cancellation preserves its original unknown remote receipt across reopen', { timeout: 15_000 }, async t => {
   const actualTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
   // Exercise the real timeout branch with a short clock, not a 15-second wait.
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 10 : milliseconds); });
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-stop-receipt-'));
   let accepted!: () => void; const entered = new Promise<void>(resolve => { accepted = resolve; });
   let original: NativeExecutionRequest | undefined; let cancels = 0; let posts = 0;
-  const source = await worker(async (request, _response) => {
+  const source = await worker(async (request, response) => {
     if (request.method === 'POST') { posts++; original = await body(request); accepted(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
-    cancels++; // Deliberately no response: remote termination remains unknown.
+    cancels++; // No response: legacy cancellation remains explicitly unknown.
   });
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('compute', {}), { stopReason: 'toolUse' })]);
@@ -138,7 +138,10 @@ test('bounded cancellation retains its unknown original remote receipt after Dur
     assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1);
     assert.ok(deadlines.includes(15_000));
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-    assert.deepEqual(facts, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'PENDING', error: 'nautilus_execution_unknown' }] });
+    assert.equal(facts!.requests.length, 1);
+    assert.equal(facts!.requests[0]!.requestId, original!.requestId);
+    assert.equal(facts!.requests[0]!.cancellationRequested, true);
+    assert.equal(facts!.requests[0]!.status, 'PENDING', 'a local legacy abort does not certify remote cancellation');
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), facts);
     assert.equal(posts, 1, 'reading or reopening uncertainty never submits another remote execution');

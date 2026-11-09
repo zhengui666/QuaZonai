@@ -1,4 +1,5 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
+import { CapitalDocumentValidation } from './capital-validation.ts';
+import { cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
@@ -167,6 +168,12 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
     });
   } },
   async abort(task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    }
     await runtime.commit(async (tx) => {
       const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
       fact.view.progress = { phase: 'STOPPED', updatedAt: new Date().toISOString() };
@@ -271,6 +278,12 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
     },
   },
   async abort(task, runtime, context) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, context);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, context);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, context);
+    }
     await runtime.commit(async (tx) => {
       const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
       fact.view.status = 'STOPPED'; // local observation stop is NOT a remote revocation
@@ -280,4 +293,4 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
     }, context);
   },
 });
-export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand] });
+export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand, CapitalDocumentValidation] });

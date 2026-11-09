@@ -14,7 +14,7 @@ import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { exactWeights, strategyMembers } from '../../research/src/strategy.ts';
 import { compileWasm, iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { replayTickEconomic } from '../../research/plugins/tick-economic.ts';
-import { NativeRemoteUncertainty, waitForRemoteNativeExecutionReceipt, retainNativeRemoteUncertainty, validateRemoteTarget, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { NativeRemoteUncertainty, waitForRemoteNativeExecutionReceipt, cancelNativeRemoteTasks, hasNativeStepRecovery, retainNativeRemoteUncertainty, validateRemoteTarget, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { executionDiagnostic } from '../../research/src/execution-errors.ts';
 import { assertNativeRemoteTaskSettled } from '../../research/src/native-remote-receipts.ts';
 import type { ServiceConfig } from './config.ts';
@@ -100,6 +100,12 @@ export const TickEconomicReplay = defineTask<ReplayInput, ReplayCheckpoint, null
     } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
   } },
   async abort(task, runtime, ctx) {
+    const protectedExecution = await hasNativeStepRecovery(runtime.taskId, runtime, ctx);
+    let settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+    while (protectedExecution && !settled) {
+      await runtime.sleep(runtime.now() + 1000, ctx);
+      settled = await cancelNativeRemoteTasks(runtime.taskId, runtime, ctx);
+    }
     await runtime.commit(async tx => {
       const view = fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!).view;
       view.status = 'STOPPED'; view.error = null;

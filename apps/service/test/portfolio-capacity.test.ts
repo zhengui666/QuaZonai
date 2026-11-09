@@ -9,7 +9,7 @@ import { built, context, setup } from './support.ts';
 
 const policy = { participation: '0.0100', maximumAgeSeconds: 120, scenarios: ['10000.000000000000000001', '01000.00', '10000.000000000000000001'] };
 
-test('portfolio capacity uses only the exact saved native request/catalog and leaves original facts and tasks unchanged', async () => {
+test('portfolio capacity uses only the exact saved native request/catalog and preserves original facts and records one recoverable capacity task', async () => {
   const state = await setup();
   try {
     const { view } = await built(state);
@@ -42,7 +42,14 @@ console.log(${JSON.stringify(JSON.stringify(wire))});\n`);
       policy: { schema_version: 1, maximum_age_seconds: 120, participation_limit: policy.participation }, capitals: policy.scenarios });
     await assert.rejects(stat(recorded[0].cwd), (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT');
     assert.deepEqual(await state.service.work.snapshot(), before, 'no portfolio, target, account or source facts may be written');
-    assert.deepEqual((await state.service.research.tasks()).records, tasks, 'read-only capacity must not create a durable task');
+    const afterTasks = (await state.service.research.tasks()).records;
+    assert.deepEqual(afterTasks.items.filter(task => task.kind !== 'qz.capacity'), tasks.items, 'capacity does not alter original research tasks');
+    assert.equal(afterTasks.items.filter(task => task.kind === 'qz.capacity').length, 1);
+    const read = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}/capacity`, headers: state.headers });
+    assert.deepEqual(read.json(), response.json());
+    const replay = await state.service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${view.id}/capacity`, headers: state.headers, payload: policy });
+    assert.deepEqual(replay.json(), response.json());
+    assert.equal((await readFile(capture, 'utf8')).trim().split('\n').length, 1);
     assert.equal(state.faux.state.callCount, calls);
     assert.deepEqual((await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers })).json().capacity, original.view.capacity);
   } finally { await state.cleanup(); }
@@ -61,13 +68,13 @@ test('old or uncomputed portfolio capacity is explicitly unavailable without rec
       { status: 'COMPUTED', native: { ...original.native, catalog: join(state.directory, 'absent-original-catalog') }, reason: 'portfolio_catalog_missing' },
     ];
     await writeFile(state.options.config.jobBinary, '#!/bin/sh\necho unexpected_native_execution >&2\nexit 1\n', { mode: 0o700 });
-    for (const variant of variants) {
+    for (const [index, variant] of variants.entries()) {
       await state.service.research.harness.commit(async tx => {
         const facts = await tx.doc(Application);
         facts.portfolios[view.id] = json({ ...original, native: variant.native, view: { ...original.view, status: variant.status } });
       }, context);
       const before = await state.service.work.snapshot();
-      const response = await state.service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${view.id}/capacity`, headers: state.headers, payload: policy });
+      const response = await state.service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${view.id}/capacity`, headers: state.headers, payload: { requestId: `variant:${index}`, assumptions: policy } });
       assert.equal(response.statusCode, 200, response.body);
       const report = response.json();
       assert.equal(report.status, 'UNAVAILABLE'); assert.equal(report.reason, variant.reason); assert.equal(report.scope, view.id);
