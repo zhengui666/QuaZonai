@@ -35,6 +35,7 @@ import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 import { reviewAllocationExtension, registerReviewAllocationRoutes } from './review-allocation.ts';
 import { registerReviewPolicyRoutes } from './review-policy.ts';
+import { registerListRoutes } from './lists.ts';
 
 const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
@@ -106,6 +107,7 @@ export async function createService(options: ServiceOptions) {
   });
   await app.register(cookie);
   registerAuth(app, research, config);
+  registerListRoutes(app, research, config);
   registerReviewAllocationRoutes(app, research, config);
   registerReviewPolicyRoutes(app, research);
   const maintenance = createMaintenance(research);

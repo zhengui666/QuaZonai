@@ -322,6 +322,15 @@ export async function openResearch(options: {
     async list(cursor?: Cursor) {
       return harness.commit((tx) => tx.scanConversations({ order: 'descending' }, 100, cursor), context);
     },
+    /** Collection projections do not load literature, campaign records or task receipts. */
+    async listState(id: number) {
+      const [research, reviews, submission] = await Promise.all([
+        harness.snapshot(Study, id as ConversationId, context),
+        harness.snapshot(ReviewLedger, id as ConversationId, context),
+        latestSubmission(id),
+      ]);
+      return { research, reviews, submission };
+    },
     async view(id: number) {
       const watch = await (await conversation(id)).watch(context);
       try {

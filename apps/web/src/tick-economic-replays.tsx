@@ -1,8 +1,14 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense } from 'react';
 import { Button, Progress, Spin, Table } from 'antd';
+import { ArrowLeftIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import type { TickEconomicReplayDetail, TickEconomicReplaySummary } from '../../../packages/contracts/src/economic-tick.ts';
 import { api } from './api';
+import type { TickReplayListItem } from '../../../packages/contracts/src/lists.ts';
+import { href, type Route } from './router';
+import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
+import { shortTitle } from './titles';
+import { FactorIdentity } from './factors';
 import { Empty, ErrorNotice, Exact, Facts, Loading, Metrics, Status, TableSurface, Timestamp } from './ui';
 import { partitionLabel } from './metric-glossary';
 import { replayCurve, replayDayTime, replayMetrics, replayPhasePercentage } from './tick-economic-values';
@@ -17,7 +23,7 @@ function Qualification({ value }: { value: string }) {
   return <span className="tick-replay-qualification">{value === 'UNQUALIFIED_EXPLORATORY' && <span>探索性结果，未获科学资格</span>}<code>{value}</code></span>;
 }
 function Members({ replay }: { replay: TickEconomicReplaySummary }) {
-  return replay.members ? <ul className="tick-replay-members">{replay.members.map(member => <li key={member.factorId}><code>{member.factorId}</code> · 权重 <Exact value={member.weight} /></li>)}</ul> : <code>{replay.factorId ?? '未记录'}</code>;
+  return replay.members ? <ul className="tick-replay-members">{replay.members.map(member => <li key={member.factorId}><FactorIdentity id={member.factorId} /><span>权重 <Exact value={member.weight} /></span></li>)}</ul> : replay.factorId ? <FactorIdentity id={replay.factorId} /> : <span>未记录</span>;
 }
 export function TickReplayProgress({ replay }: { replay: TickEconomicReplaySummary }) {
   if (!active(replay)) return null;
@@ -35,35 +41,36 @@ function LastRead({ stale, at }: { stale: boolean; at: number }) {
   return stale && at > 0 ? <p className="quiet" role="status">数据未更新，下方为上次读取的记录：<Timestamp value={new Date(at).toISOString()} /></p> : null;
 }
 
-/** A page collection, independent of standard portfolio ownership and commands. */
-export function TickEconomicReplays() {
-  const [selected, setSelected] = useState<string>();
-  const query = useQuery({ queryKey: [collection], queryFn: ({ signal }) => api<TickEconomicReplaySummary[]>(collection, { signal }),
-    refetchInterval: current => current.state.data?.some(active) ? 5000 : false, refetchIntervalInBackground: false, refetchOnMount: 'always' });
+/** Exploratory replays retain their own list and immutable detail identity. */
+export function TickEconomicReplays({ route }: { route: Route }) {
+  const list = useListWorkspace<TickReplayListItem>(route, collection, 'createdAt');
   return <section className="tick-economic-replays" aria-label="Tick 经济回放">
-    <div className="section-heading"><h2>Tick 经济回放</h2><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新回放列表</Button></div>
-    <p className="quiet">独立的探索性经济回放。活动记录约每 5 秒更新；新回放可手动刷新查找。</p>
-    <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} /><LastRead stale={query.isError} at={query.dataUpdatedAt} />
-    {query.isPending ? <Loading /> : query.data?.length ? <Table<TickEconomicReplaySummary> rowKey="id" size="small" dataSource={query.data} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 1200 }} columns={[
-      { title: '回放编号', width: 220, render: (_cell, row) => <Button type="link" className="tick-replay-select" aria-pressed={selected === row.id} onClick={() => setSelected(row.id)}>{row.id}</Button> },
-      { title: '数据集', dataIndex: 'datasetId', width: 130 },
-      { title: '因子与权重', width: 220, render: (_cell, row) => <Members replay={row} /> },
-      { title: '执行模型', width: 190, render: (_cell, row) => <code>{row.executionModel ?? '未记录'}</code> },
-      { title: '状态与进度', width: 220, render: (_cell, row) => <><Status value={row.status} label={row.status === 'RUNNING' ? '运行中' : undefined} /><TickReplayProgress replay={row} /></> },
-      { title: '科学资格', width: 220, render: (_cell, row) => <Qualification value={row.scientificQualification} /> },
-      { title: '创建时间', width: 180, render: (_cell, row) => <Timestamp value={row.createdAt} /> },
-    ]} /> : !query.error && <Empty title="尚无 Tick 经济回放" />}
-    {selected && <TickReplayDetail key={selected} id={selected} />}
+    <div className="section-heading"><h2>Tick 经济回放</h2><Button loading={list.query.isFetching} onClick={() => { void list.query.refetch(); }}>刷新回放列表</Button></div>
+    <ListTools list={list} searchLabel="搜索经济回放" placeholder="搜索回放、数据集或来源因子" filters={[
+      { key: 'status', label: '执行状态' }, { key: 'datasetId', label: '数据集' },
+      { key: 'memberType', label: '因子数量', options: [{ value: 'single-factor', label: '单因子' }, { value: 'ensemble', label: '多因子' }] },
+      { key: 'createdFrom', label: '创建日期起', kind: 'date', advanced: true }, { key: 'createdTo', label: '创建日期止', kind: 'date', advanced: true },
+      { key: 'source', label: '来源研究', advanced: true },
+    ]} />
+    <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} /><LastRead stale={list.query.isError} at={list.query.dataUpdatedAt} />
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<TickReplayListItem> {...list.tableProps} rowKey="id" size="small" dataSource={list.items} scroll={{ x: 960 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的 Tick 经济回放' : '尚无 Tick 经济回放'} /> }} columns={[
+      { title: '回放名称', key: 'name', width: 220, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_cell, row) => <a className="record-link" {...list.linkProps(row.id, { view: 'tick' })}>{shortTitle(row.name, undefined, '经济回放')}</a> },
+      { title: '执行状态', width: 170, render: (_cell, row) => <div><Status plain value={row.status} label={row.status === 'RUNNING' ? '运行中' : undefined} />{(row.status === 'QUEUED' || row.status === 'RUNNING') && row.progress && <span className="quiet">{phases[row.progress.phase] ?? '回放进行中'}{typeof row.progress.completed === 'number' && typeof row.progress.total === 'number' && row.progress.total > 0 ? ` ${Math.min(100, Math.max(0, row.progress.completed / row.progress.total * 100)).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : ''}</span>}</div> },
+      { title: '数据集', key: 'datasetName', width: 170, ellipsis: true, ...list.sortColumn('datasetName'), render: (_cell, row) => row.datasetName ?? '名称未记录' },
+      { title: '因子数', key: 'memberCount', width: 95, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
+      { title: '结果性质', width: 120, render: () => '探索性' },
+      { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_cell, row) => <Timestamp value={row.createdAt} /> },
+    ]} />}
   </section>;
 }
-function TickReplayDetail({ id }: { id: string }) {
+export function TickReplayDetail({ id, route }: { id: string; route: Route }) {
   const query = useQuery({ queryKey: [collection, id], queryFn: async ({ signal }) => {
     const replay = await api<TickEconomicReplayDetail>(`${collection}/${encodeURIComponent(id)}`, { signal });
     if (replay.id !== id) throw new Error('回放结果与所选编号不一致');
     return replay;
   }, refetchInterval: current => current.state.data && active(current.state.data) ? 5000 : false, refetchIntervalInBackground: false, refetchOnMount: 'always' });
   const value = query.data; const result = value?.status === 'COMPUTED' ? value.result : null;
-  return <article className="tick-replay-detail" aria-label={`经济回放 ${id}`}>
+  return <article className="tick-replay-detail" aria-label={`经济回放 ${id}`}><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />Tick 经济回放列表</a>
     <div className="section-heading"><h3>回放详情</h3><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新所选回放</Button></div>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} /><LastRead stale={query.isError} at={query.dataUpdatedAt} />
     {query.isPending ? <Loading /> : value && <>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { normalizeResearchState } from './list-values';
 export type Workspace = 'pm' | 'research' | 'data' | 'factors' | 'portfolios' | 'observations' | 'settings' | 'extensions';
 export interface Route { page: Workspace; id?: string; creating: boolean; params: URLSearchParams; unknown?: boolean }
 const pages = new Set<Workspace>(['pm', 'research', 'data', 'factors', 'portfolios', 'observations', 'settings', 'extensions']);
@@ -6,14 +7,25 @@ export function currentRoute(): Route {
   const [path = '', query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, id, extra] = path.split('/');
   const page = pages.has(name as Workspace) ? name as Workspace : 'research';
-  const params = new URLSearchParams(query);
+  const rawParams = new URLSearchParams(query);
+  const params = page === 'research' ? normalizeResearchState(rawParams) : rawParams;
   const unknown = !!name && !pages.has(name as Workspace) || extra !== undefined || !!id && ['data', 'settings', 'extensions'].includes(page);
   try { return { page, ...(id && id !== 'new' ? { id: decodeURIComponent(id) } : {}), creating: id === 'new', params, unknown }; }
   catch { return { page, creating: false, params, unknown: true }; }
 }
 export function useRoute() {
   const [route, setRoute] = useState(currentRoute);
-  useEffect(() => { const update = () => setRoute(currentRoute()); window.addEventListener('hashchange', update); return () => window.removeEventListener('hashchange', update); }, []);
+  useEffect(() => {
+    const update = () => {
+      const next = currentRoute();
+      if (next.page === 'research' && new URLSearchParams(location.hash.split('?')[1] ?? '').has('state')) {
+        history.replaceState(null, '', `${location.hash.split('?')[0]}${next.params.size ? `?${next.params}` : ''}`);
+      }
+      setRoute(next);
+    };
+    update(); window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
   return route;
 }
 export function navigate(path: string, replace = false) {
@@ -21,3 +33,25 @@ export function navigate(path: string, replace = false) {
   else { history.replaceState(null, '', `#${path}`); window.dispatchEvent(new HashChangeEvent('hashchange')); }
 }
 export function href(path: string) { return `#${path}`; }
+
+const tableScrollers = () => [...document.querySelectorAll<HTMLElement>('.workspace-table .ant-table-content, .workspace-table .ant-table-body')];
+const listPositions = new Map<string, { x: number; y: number; tables: number[]; target?: string }>();
+/** Remember only collection navigation; details keep their complete query in the URL. */
+export function rememberListNavigation(target?: string) {
+  const route = currentRoute();
+  if (route.id || route.creating) return;
+  const focused = document.activeElement instanceof HTMLAnchorElement ? document.activeElement.getAttribute('href') ?? undefined : undefined;
+  listPositions.set(location.hash, { x: window.scrollX, y: window.scrollY, tables: tableScrollers().map(element => element.scrollLeft), target: target ?? focused });
+}
+/** May be retried after the collection query settles and rows mount. */
+export function restoreListNavigation(route: Route, settled = false) {
+  if (route.id || route.creating) return false;
+  const position = listPositions.get(location.hash);
+  if (!position) return false;
+  window.scrollTo(position.x, position.y);
+  tableScrollers().forEach((element, index) => { element.scrollLeft = position.tables[index] ?? 0; });
+  const target = position.target ? [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].find(anchor => anchor.getAttribute('href') === position.target) : undefined;
+  if (target) { target.focus({ preventScroll: true }); window.scrollTo(position.x, position.y); listPositions.delete(location.hash); }
+  else if (settled) { document.getElementById('main-content')?.focus({ preventScroll: true }); listPositions.delete(location.hash); }
+  return true;
+}

@@ -8,7 +8,10 @@ import { allocationInput, portfolioAllocationEligible, type AllocationFields } f
 import { AllocationResult, PortfolioAllocations } from './review-allocations';
 
 vi.mock('./data-hooks', () => ({ useResource: () => ({ data: [], isPending: false, refetch: vi.fn() }) }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }) }));
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
+  useQuery: () => ({ data: { items: [], total: 0, page: 1, pageSize: 20, facets: {} }, isPending: false, refetch: vi.fn() }),
+}));
 vi.mock('./commands', async importOriginal => ({ ...await importOriginal<typeof import('./commands')>(), useCommand: () => ({ busy: false, submit: vi.fn() }) }));
 
 function portfolio(id: string): PortfolioView {
@@ -73,9 +76,11 @@ describe('multi-portfolio allocation presentation', () => {
     expect(markup).toContain('尚无多组合资金配置记录');
   });
   it('preserves candidate weights and async status without claiming overall approval', () => {
-    const value: ReviewAllocationView = { id: 'allocation', requestId: 'original-request', name: '候选配置', status: 'RUNNING', portfolioIds: ['one', 'two'], taskId: 42, consumedScientificCalls: 7, weights: { level: 'PORTFOLIO', status: 'PROPOSED', members: [{ id: 'one', weight: '0.700000000000000001' }], sourceReportIds: ['source-report'], candidateId: 'new-version', requiresStudy: true, reason: null }, review: null, error: null, createdAt: '2026-11-02T10:00:00Z' };
+    const value: ReviewAllocationView = { id: 'allocation', requestId: 'original-request', name: '用于区分相同前缀的完整资金配置名称'.repeat(4) + '必须可见的名称末尾', status: 'RUNNING', portfolioIds: ['one', 'two'], taskId: 42, consumedScientificCalls: 7, weights: { level: 'PORTFOLIO', status: 'PROPOSED', members: [{ id: 'one', weight: '0.700000000000000001' }], sourceReportIds: ['source-report'], candidateId: 'new-version', requiresStudy: true, reason: null }, review: null, error: null, createdAt: '2026-11-02T10:00:00Z' };
     const markup = renderToStaticMarkup(createElement(AllocationResult, { value }));
     expect(markup).toContain('0.700000000000000001');
+    expect(markup).toContain(value.name);
+    expect(markup).toContain('完整名称与描述');
     expect(markup).toContain('new-version');
     expect(markup).toContain('source-report');
     expect(markup).toContain('尚无评审报告');

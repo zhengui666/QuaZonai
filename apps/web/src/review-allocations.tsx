@@ -1,28 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Form, Input, Select, Table } from 'antd';
+import { ArrowLeftIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { DatasetView, PortfolioView } from '../../../packages/contracts/src/index.ts';
 import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
 import { useResource } from './data-hooks';
-import { href } from './router';
+import { href, navigate, type Route } from './router';
+import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
+import type { AllocationListItem } from '../../../packages/contracts/src/lists.ts';
 import { DraftNotice, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, Timestamp } from './ui';
 import { ReviewReportPanel } from './review-report';
 import { allocationInput, portfolioAllocationEligible, type AllocationFields } from './review-allocation-input';
 import { shortTitle } from './titles';
+import { RecordTitle } from './disclosure';
 
 /** Optional consumer on the existing portfolio page; only frozen source identities leave this form. */
-export function PortfolioAllocations({ portfolios }: { portfolios: PortfolioView[] }) {
-  const cache = useQueryClient(); const records = useResource<ReviewAllocationView[]>('/review-allocations', { poll: 3000 });
-  const [open, setOpen] = useState(false); const [selectedId, setSelectedId] = useState<string>();
-  const detail = useResource<ReviewAllocationView>(`/review-allocations/${encodeURIComponent(selectedId ?? '')}`, { enabled: !!selectedId, poll: 3000 });
+export function PortfolioAllocations({ route = { page: 'portfolios', creating: false, params: new URLSearchParams({ view: 'allocations' }) }, portfolios: suppliedPortfolios }: { route?: Route; portfolios?: PortfolioView[] }) {
+  const cache = useQueryClient(); const list = useListWorkspace<AllocationListItem>(route, '/review-allocations', 'createdAt');
+  const [open, setOpen] = useState(false);
+  const candidates = useResource<PortfolioView[]>('/portfolios', { enabled: open && !suppliedPortfolios, poll: open ? 5000 : undefined });
+  const portfolios = suppliedPortfolios ?? candidates.data ?? [];
+  const candidatesLoaded = suppliedPortfolios !== undefined || candidates.data !== undefined;
   const datasets = useResource<DatasetView[]>('/datasets', { enabled: open });
   const [form] = Form.useForm<AllocationFields>(); const initialized = useRef(false);
   const [saved, setSaved] = useState(() => draftIsPersisted('review-allocation')); const [validationError, setValidationError] = useState<string>();
   const command = useCommand<ReviewAllocationView>('review-allocations', value => {
-    removeDraft('review-allocation'); setSelectedId(value.id); setOpen(false); initialized.current = false;
+    removeDraft('review-allocation'); setOpen(false); initialized.current = false;
     cache.setQueryData([`/review-allocations/${encodeURIComponent(value.id)}`], value);
     void cache.invalidateQueries({ queryKey: ['/review-allocations'] });
+    navigate(list.detailPath(value.id, { view: 'allocations' }));
   });
   const ids = Form.useWatch('portfolioIds', form) as string[] | undefined;
   const eligible = portfolios.filter(portfolioAllocationEligible);
@@ -39,12 +46,11 @@ export function PortfolioAllocations({ portfolios }: { portfolios: PortfolioView
       } as AllocationFields);
     } else form.setFieldsValue(readDraft<AllocationFields>('review-allocation') ?? { clusters: [{ id: '', members: [], maximumWeight: '' }] });
   }, [open, form, command.values]);
-  const pendingRecord = detail.data ?? records.data?.find(row => row.id === selectedId);
   return <section className="review-allocation-section" aria-label="多组合资金配置">
-    <div className="section-heading"><h2>多组合资金配置</h2><Button disabled={eligible.length < 2 && !command.pending} onClick={() => setOpen(value => !value)}>{open ? '收起配置' : command.pending ? '核对原配置提交' : '配置多组合资金'}</Button></div>
-    {eligible.length < 2 && <p className="quiet" role="status">至少需要两个已计算且通过独立评审的组合。当前有 {eligible.length} 个；请先补齐各组合的评审证据。</p>}
+    <div className="section-heading"><h2>多组合资金配置</h2><Button disabled={candidatesLoaded && eligible.length < 2 && !command.pending} onClick={() => setOpen(value => !value)}>{open ? '收起配置' : command.pending ? '核对原配置提交' : '配置多组合资金'}</Button></div>
+    {candidatesLoaded && eligible.length < 2 && <p className="quiet" role="status">至少需要两个已计算且通过独立评审的组合。当前有 {eligible.length} 个；请先补齐各组合的评审证据。</p>}
     <p className="quiet">使用相同币种、数据集和原始本金的组合，以质量和风险分散生成资金权重，再验证合并资产目标与共享账户结果。</p>
-    {open && <Form className="review-allocation-form" form={form} layout="vertical" disabled={!!command.pending || command.busy} scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values) => { setValidationError(undefined); if (!command.pending) setSaved(saveDraft('review-allocation', values)); }} onFinish={values => {
+    {open && <><ErrorNotice error={candidates.error} retry={() => { void candidates.refetch(); }} />{candidates.isPending && !suppliedPortfolios ? <Loading /> : <Form className="review-allocation-form" form={form} layout="vertical" disabled={!!command.pending || command.busy} scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values) => { setValidationError(undefined); if (!command.pending) setSaved(saveDraft('review-allocation', values)); }} onFinish={values => {
       try { const input = allocationInput(values, portfolios); setValidationError(undefined); void command.submit(input); }
       catch (error) { setValidationError(error instanceof Error ? error.message : '配置约束无效'); }
     }}>
@@ -67,21 +73,33 @@ export function PortfolioAllocations({ portfolios }: { portfolios: PortfolioView
       <div className="form-columns review-allocation-limits"><Form.Item label="最大换手（0–2）" name="maximumTurnover" extra="各组合新旧资金权重绝对变化之和；1 = 100%。" rules={[{ required: true, message: '请填写最大换手' }]}><Input inputMode="decimal" /></Form.Item></div>
       {validationError && <p className="error-text" role="alert">{validationError}</p>}<ErrorNotice error={command.error} /><DraftNotice saved={saved || !!command.pending} />
       <div className="form-actions">{command.pending ? <Button type="primary" disabled={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>核对原提交</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={eligible.length < 2}>计算资金配置</Button>}</div>
-    </Form>}
-    <ErrorNotice error={records.error} retry={() => { void records.refetch(); }} />
-    {records.isPending ? <Loading /> : records.data?.length ? <Table<ReviewAllocationView> rowKey="id" size="small" dataSource={records.data} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 600 }} columns={[
-      { title: '配置名称', render: (_cell, row) => <Button type="link" onClick={() => setSelectedId(row.id)}>{shortTitle(row.name, undefined, '资金配置')}</Button> },
-      { title: '状态', render: (_cell, row) => <Status value={row.status} /> },
-      { title: '组合数', align: 'right', render: (_cell, row) => row.portfolioIds.length },
-      { title: '科学调用', align: 'right', dataIndex: 'consumedScientificCalls' },
-      { title: '创建时间', render: (_cell, row) => <Timestamp value={row.createdAt} /> },
-    ]} /> : !records.error && <p className="quiet">尚无多组合资金配置记录</p>}
-    {selectedId && <div className="review-allocation-detail"><ErrorNotice error={detail.error} retry={() => { void detail.refetch(); }} />{!pendingRecord ? detail.isPending && <Loading /> : <AllocationResult value={pendingRecord} />}</div>}
+    </Form>}</>}
+    <ListTools list={list} searchLabel="搜索资金配置" placeholder="搜索名称或来源组合" filters={[
+      { key: 'status', label: '执行状态' }, { key: 'reviewDecision', label: '评审结论' },
+      { key: 'createdFrom', label: '创建日期起', kind: 'date', advanced: true }, { key: 'createdTo', label: '创建日期止', kind: 'date', advanced: true },
+      { key: 'source', label: '来源组合', advanced: true },
+    ]} />
+    <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<AllocationListItem> {...list.tableProps} rowKey="id" size="small" dataSource={list.items} scroll={{ x: 780 }} locale={{ emptyText: list.hasFilters ? '没有匹配的资金配置' : '尚无多组合资金配置记录' }} columns={[
+      { title: '配置名称', key: 'name', width: 240, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_cell, row) => <a className="record-link" {...list.linkProps(row.id, { view: 'allocations' })}>{shortTitle(row.name, undefined, '资金配置')}</a> },
+      { title: '执行状态', width: 120, render: (_cell, row) => <Status plain value={row.status} /> },
+      { title: '评审结论', width: 120, render: (_cell, row) => row.reviewDecision ? ({ PASS: '通过评审', REJECT: '不予放行', INCONCLUSIVE: '证据不足' }[row.reviewDecision] ?? '未识别结论') : '未评审' },
+      { title: '来源组合数', key: 'memberCount', width: 110, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
+      { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_cell, row) => <Timestamp value={row.createdAt} /> },
+    ]} />}
+
   </section>;
 }
 
+export function AllocationDetail({ id, route }: { id: string; route: Route }) {
+  const query = useResource<ReviewAllocationView>(`/review-allocations/${encodeURIComponent(id)}`, { poll: 3000 });
+  return <div className="portfolio-result"><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />多组合资金配置列表</a>
+    <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : query.data && <div className="study-document"><div className="result-content"><AllocationResult value={query.data} /></div></div>}
+  </div>;
+}
+
 export function AllocationResult({ value }: { value: ReviewAllocationView }) {
-  return <article><h3>{shortTitle(value.name, undefined, '资金配置')}</h3><Status value={value.status} /><Facts items={[["配置身份", <code>{value.id}</code>], ["计算任务", value.taskId ?? '未记录'], ["已使用科学调用", value.consumedScientificCalls], ["创建时间", <Timestamp value={value.createdAt} />]]} />
+  return <article><RecordTitle name={value.name} fallback="资金配置" /><Status value={value.status} /><Facts items={[["配置身份", <code>{value.id}</code>], ["计算任务", value.taskId ?? '未记录'], ["已使用科学调用", value.consumedScientificCalls], ["创建时间", <Timestamp value={value.createdAt} />]]} />
     <p className="quiet">来源组合 {value.portfolioIds.map(id => <a key={id} href={href(`/portfolios/${encodeURIComponent(id)}`)}>{id} </a>)}</p>
     {value.error && <ErrorNotice error={new Error(value.error)} />}
     {value.weights && <section><h4>候选资金权重</h4><p>{value.weights.status === 'PROPOSED' ? '已产生候选权重，按新候选及整体评审结果继续。' : '当前无法生成配置权重。'}</p>{value.weights.reason && <p>{value.weights.reason}</p>}{!!value.weights.members.length && <Table rowKey="id" size="small" pagination={false} dataSource={value.weights.members} columns={[{ title: '组合身份', dataIndex: 'id' }, { title: '资金权重（1 = 100%）', align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} />}<Facts items={[["新候选", value.weights.candidateId ?? '尚未创建'], ["报告来源", value.weights.sourceReportIds.join(' / ') || '未记录']]} /></section>}

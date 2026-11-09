@@ -9,6 +9,7 @@ export * from './pm-forward.ts';
 export type * from './review.ts';
 export type * from './review-source.ts';
 export type * from './reviewed-factors.ts';
+export type * from './portfolio-performance.ts';
 export * from './review-scoring.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
@@ -139,6 +140,7 @@ export interface CapacityReport {
 }
 export interface PortfolioProgress { phase: string; updatedAt: string; completed?: number; total?: number }
 export interface PortfolioView {
+  performance?: import('./portfolio-performance.ts').PortfolioPerformanceSummary;
   review?: ReviewReport | null;
   progress?: PortfolioProgress;
   id: string; name: string; researchIds: number[]; datasetId: string; status: string;
@@ -203,3 +205,4 @@ export interface ExtensionView {
 export interface UsageView { inputTokens: number | null; outputTokens: number | null; cost: string | null; activeTasks: number }
 
 export const API = '/api/v3';
+export type { ListPage, ListCriterion, ResearchListItem, FactorListItem, ListPerformance, PortfolioListItem, TickReplayListItem, AllocationListItem } from './lists.ts';

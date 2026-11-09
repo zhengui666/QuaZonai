@@ -7,6 +7,34 @@ import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src
 import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
 import type { NativeTickEconomicResult, TickEconomicReplayDetail, TickEconomicReplaySummary } from '../../../packages/contracts/src/economic-tick.ts';
 
+// Small controlled list responses exercise browser transport, not server query correctness.
+// The companion real HTTP suite independently checks full-collection search and ordering.
+function listFixture(route: Route, collection: string, values: readonly any[]) {
+  const query = new URL(route.request().url()).searchParams;
+  const items = values.map(value => {
+    const common = { ...value, datasetName: value.datasetId ? '测试数据' : null, reviewDecision: value.review?.decision ?? null };
+    if (collection === 'research') return { ...common, scope: 'single-factor', modality: 'BAR', criterion: null };
+    if (collection === 'factors') return { ...common, researchName: value.name, nativeModality: value.nativeModality ?? 'BAR', independentIc: value.evidence === 'independent' ? value.metrics?.find((metric: any) => metric.key === 'HELDOUT.pearson_ic')?.value ?? null : null };
+    if (collection === 'portfolios') return { ...common, memberCount: value.factors?.length ?? value.researchIds.length, memberType: value.factors ? 'factor' : 'research', performance: value.performance ?? { sharpe: null, annualizedReturn: null, maxDrawdown: null, annualizationDays: null }, progress: value.progress ?? null };
+    if (collection === 'tick-economic-replays') return { ...common, name: `经济回放 ${value.id}`, memberCount: value.members?.length ?? 1, memberType: value.members?.length > 1 ? 'ensemble' : 'single-factor' };
+    return { ...common, memberCount: value.portfolioIds.length };
+  });
+  const facets: Record<string, { value: string; label: string }[]> = {};
+  for (const key of ['status', 'scope', 'datasetId', 'modality', 'evidence', 'reviewDecision', 'combinable']) {
+    facets[key] = [...new Set(items.map(item => item[key]).filter(value => value != null))].map(value => ({ value: String(value), label: key === 'datasetId' ? '测试数据' : ({ RUNNING: '研究中', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止' } as Record<string, string>)[String(value)] ?? String(value) }));
+  }
+  let matched = items.filter(item => {
+    const search = query.get('q')?.trim().toLowerCase();
+    if (search && ![item.id, item.title, item.name, item.hypothesis, item.model].join(' ').toLowerCase().includes(search)) return false;
+    return ['status', 'scope', 'datasetId', 'evidence', 'reviewDecision', 'combinable'].every(key => !query.get(key) || query.get(key)!.split(',').includes(String(item[key])))
+      && (!query.get('research') || String(item.researchId) === query.get('research'));
+  });
+  const sort = query.get('sort'); const order = query.get('order') === 'asc' ? 1 : -1;
+  if (sort) matched = [...matched].sort((a, b) => typeof a[sort] === 'number' ? order * (a[sort] - b[sort]) : order * String(a[sort]).localeCompare(String(b[sort])));
+  const current = Number(query.get('page') ?? 1); const pageSize = Number(query.get('pageSize') ?? 20);
+  return { items: matched.slice((current - 1) * pageSize, current * pageSize), total: matched.length, page: current, pageSize, facets };
+}
+
 // Controlled transport only. Real HTTP/durable integration is in real-service.spec.ts.
 async function contract(page: BrowserPage, setup = false, fast = false) {
   const at = '2026-10-01T08:00:00Z';
@@ -62,6 +90,12 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     }
     if (path.startsWith('/models/providers/') && method === 'DELETE') { providers.find(provider => provider.id === path.split('/').at(-1))!.configured = false; return reply({ configured: false }); }
     if (path === '/datasets') return reply([dataset]);
+    if (path === '/research/list') {
+      if (heldResearch) await heldResearch;
+      return reply(listFixture(route, 'research', pagination ? [...studies, { ...studies[0], id: 6, title: '后页研究' }] : studies));
+    }
+    if (path === '/portfolios/list') return reply(listFixture(route, 'portfolios', portfolios));
+    if (['/factors/list', '/tick-economic-replays/list', '/review-allocations/list'].includes(path)) return reply(listFixture(route, path.split('/')[1]!, []));
     if (path === '/mandates') return reply([]);
     if (path === '/factors') return reply([]);
     if (path === '/review-allocations') return reply([]);
@@ -91,7 +125,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
   });
   return { writes, observation, portfolio, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { defaultModel: null, thinkingLevel: null, serviceTier: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
-async function mandate(page: BrowserPage, question: string) { await page.getByLabel('研究名称', { exact: true }).fill(question); await page.getByLabel('研究问题', { exact: true }).fill(question); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled hypothesis, protocol coverage only.'); }
+async function mandate(page: BrowserPage, question: string) { await page.getByRole('textbox', { name: /研究名称$/ }).fill(question); await page.getByLabel('研究问题', { exact: true }).fill(question); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled hypothesis, protocol coverage only.'); }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
 async function audit(page: BrowserPage) {
   await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0);
@@ -99,7 +133,7 @@ async function audit(page: BrowserPage) {
   await page.evaluate(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().iterations)).map(animation => animation.finished.catch(() => undefined))); });
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
 }
-async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.study-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
+async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.workspace-table .ant-table-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
 
 test('multi-portfolio allocation preserves explicit constraints and the original request across uncertain submission', async ({ page }) => {
   const state = await contract(page);
@@ -111,6 +145,8 @@ test('multi-portfolio allocation preserves explicit constraints and the original
   let portfolios = [source('first', '配置来源一'), source('second', '配置来源二')];
   const writes: string[] = []; let record: ReviewAllocationView | null = null;
   await page.route('**/api/v3/portfolios', route => route.fulfill({ json: portfolios }));
+  await page.route('**/api/v3/portfolios/list?*', route => route.fulfill({ json: listFixture(route, 'portfolios', portfolios) }));
+  await page.route('**/api/v3/review-allocations/list?*', route => route.fulfill({ json: listFixture(route, 'review-allocations', record ? [record] : []) }));
   await page.route('**/api/v3/review-allocations', async route => {
     if (route.request().method() === 'GET') return route.fulfill({ json: record ? [record] : [] });
     writes.push(route.request().postData()!);
@@ -128,10 +164,12 @@ test('multi-portfolio allocation preserves explicit constraints and the original
     const dropdown = page.locator('.ant-select-dropdown').filter({ has: page.locator(`[id="${listboxId}"]`) });
     await expect(dropdown).toHaveCount(1);
     await dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click();
+    await expect(dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true })).toHaveAttribute('aria-selected', 'true');
     await dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click();
+    await expect(dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true })).toHaveAttribute('aria-selected', 'true');
     await combobox.press('Escape'); await expect(combobox).toHaveAttribute('aria-expanded', 'false');
   };
-  await page.goto('/#/portfolios'); await page.getByRole('button', { name: '配置多组合资金', exact: true }).click();
+  await page.goto('/#/portfolios?view=allocations'); await page.getByRole('button', { name: '配置多组合资金', exact: true }).click();
   const form = page.locator('.review-allocation-form'); await form.getByLabel('配置名称', { exact: true }).fill('质量风险配置');
   await chooseSources('来源组合（至少两个）');
   const members = form.locator('.review-allocation-member');
@@ -141,8 +179,8 @@ test('multi-portfolio allocation preserves explicit constraints and the original
   expect(JSON.parse(writes[0]!)).toEqual({ requestId: expect.any(String), name: '质量风险配置', portfolioIds: ['first', 'second'], memberCaps: [{ id: 'first', maximumWeight: '0.700000000000000001' }, { id: 'second', maximumWeight: '0.6' }], currentWeights: [{ id: 'first', weight: '0' }, { id: 'second', weight: '0' }], clusterCaps: [{ id: '共同风险', members: ['first', 'second'], maximumWeight: '1' }], maximumTurnover: '1' });
   portfolios = []; await page.reload(); await page.getByRole('button', { name: '核对原配置提交', exact: true }).click();
   await expect(form.getByLabel('配置名称', { exact: true })).toHaveValue('质量风险配置'); await expect(form.getByLabel('配置名称', { exact: true })).toBeDisabled();
-  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect(page.locator('.review-allocation-detail')).toContainText('质量风险配置');
-  expect(writes).toEqual([writes[0], writes[0]]); await expect(page.locator('.review-allocation-detail')).toContainText('尚无评审报告');
+  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect(page.locator('.portfolio-result')).toContainText('质量风险配置');
+  expect(writes).toEqual([writes[0], writes[0]]); await expect(page.locator('.portfolio-result')).toContainText('尚无评审报告');
 });
 
 test('research explicitly selects 365-day Sharpe and preserves its original criterion through retry', async ({ page }) => {
@@ -173,7 +211,7 @@ test('owner setup/login and uncertain research preserve the exact body after cha
   await page.getByLabel('密码', { exact: true }).fill('test-only-password'); await page.getByLabel('确认密码', { exact: true }).fill('different-test-password'); await page.getByRole('button', { name: '创建密码', exact: true }).click(); await expect(page.getByText('两次密码不一致')).toBeVisible(); expect(state.writes).toEqual([]);
   await page.getByLabel('确认密码', { exact: true }).fill('test-only-password'); await page.getByRole('button', { name: '创建密码', exact: true }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '退出登录', exact: true }).click(); await expect(page.getByRole('heading', { name: '登录工作台' })).toBeVisible(); await page.getByLabel('密码', { exact: true }).fill('test-only-password'); await page.getByRole('checkbox', { name: '记住登录' }).check(); await page.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(page.locator('.study-row')).toHaveCount(3); await choose(page, '研究状态', '进行中'); await expect(page.locator('.study-row')).toHaveCount(1); await choose(page, '研究状态', '全部状态'); await expect(page.locator('.study-row')).toHaveCount(3); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('research-1440.png'), fullPage: true });
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3); await choose(page, '研究状态', '研究中'); await page.getByLabel('研究状态', { exact: true }).press('Escape'); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1); await page.getByRole('button', { name: '清除全部', exact: true }).click(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('research-1440.png'), fullPage: true });
   await page.getByRole('button', { name: '新建研究', exact: true }).click(); await mandate(page, '测试目标'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await expect(page.getByLabel('最多模型成员', { exact: true })).toBeHidden(); await expect(page.locator('.submission-preview')).toContainText('单一 Wasm 因子'); await expect(page.locator('.submission-preview')).not.toContainText('single-factor'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
   const first = state.writes.find(value => value.path === '/research')!.raw!; expect(JSON.parse(first)).toEqual({ requestId: expect.any(String), goal: '测试目标', specification: { version: 1, name: '测试目标', question: '测试目标', rationale: 'Controlled hypothesis, protocol coverage only.', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } }, model: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'medium', datasetId: 'test-data' });
   state.hideModels(); await page.reload(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('测试目标'); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await expect(page.locator('.authoring-page')).not.toContainText('"provider"'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '测试目标', exact: true, level: 1 })).toBeVisible(); expect(state.writes.filter(value => value.path === '/research').map(value => value.raw)).toEqual([first, first]);
@@ -306,13 +344,13 @@ test('official text prompts accept blank defaults and an unacknowledged response
   const release = state.holdAuth(); try { await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click(); await dialog.getByLabel('测试 API Key', { exact: true }).fill('synthetic-unacknowledged-only'); await dialog.getByRole('button', { name: '确认连接', exact: true }).click(); await expect.poll(() => state.writes.filter(write => write.path.endsWith('/respond')).length).toBe(3); await dialog.getByRole('button', { name: '取消连接', exact: true }).click(); await expect(dialog).toHaveCount(0); const start = state.writes.filter(write => write.path === '/models/login').at(-1)!; expect(state.writes.filter(write => write.method === 'DELETE').at(-1)!.path).toBe(`/models/login/${JSON.parse(start.raw!).requestId}`); } finally { release(); }
 });
 
-test('cursor filtering preserves later pages and a vanished provider login ends visibly', async ({ page }) => {
-  const state = await contract(page); state.paginate(); await page.goto('/#/research'); await page.getByLabel('搜索已加载研究').fill('后页'); await expect(page.getByRole('heading', { name: '没有匹配的研究' })).toBeVisible(); await page.getByRole('button', { name: '加载更多' }).click(); await expect(page.locator('.study-row')).toHaveCount(1); await expect(page.locator('.collection-scope')).toContainText('已加载 4 条'); await page.getByRole('button', { name: '清除筛选' }).click(); await expect(page.locator('.study-row')).toHaveCount(4);
+test('full collection search reaches later records and a vanished provider login ends visibly', async ({ page }) => {
+  const state = await contract(page); state.paginate(); await page.goto('/#/research'); await page.getByLabel('搜索研究').fill('后页'); await expect(page.getByRole('link', { name: '后页研究', exact: true })).toBeVisible(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1); await expect(page.locator('.workspace-list-scope')).toContainText('匹配 1 条'); await page.getByRole('button', { name: '清除全部' }).click(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(4);
   await page.goto('/#/settings'); await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click(); await expect(page.getByRole('dialog').getByLabel('测试 API Key')).toBeVisible(); state.loseLogin(); await expect(page.getByText('登录已结束', { exact: true })).toBeVisible(); await expect(page.getByRole('dialog').locator('input')).toHaveCount(0); await expect(page.getByRole('status', { name: '等待授权' })).toHaveCount(0);
 });
 
 test('390px keyboard navigation, reduced motion and distinct loading/empty/missing states', async ({ page }, info) => {
-  await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ reducedMotion: 'reduce' }); const state = await contract(page); const release = state.hold(); await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(page.getByRole('status', { name: '加载中' }).first()).toBeVisible(); release(); await expect(page.locator('.study-row')).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ reducedMotion: 'reduce' }); const state = await contract(page); const release = state.hold(); await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(page.getByRole('status').filter({ hasText: '正在读取记录' })).toBeVisible(); release(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
   await page.getByRole('link', { name: '跳到内容' }).focus(); await expect(page.getByRole('link', { name: '跳到内容' })).toHaveCSS('outline-style', 'solid'); await page.keyboard.press('Enter'); await expect(page.locator('#main-content')).toBeFocused(); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-390.png'), fullPage: true });
   await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究名称', { exact: true })).toBeFocused(); await page.keyboard.press('Tab'); await expect(page.getByLabel('研究问题', { exact: true })).toBeFocused(); await page.keyboard.press('Escape'); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-form-390.png'), fullPage: true }); await page.getByRole('button', { name: '取消', exact: true }).click();
   for (const [label, image] of [['投资决策', 'pm'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['设置', 'settings']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(6); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
@@ -546,6 +584,7 @@ test('atomic library separates component evidence and carries exact selected fac
   const capacity: CapacityReport = { status: 'ESTIMATED', reason: null, scope: 'TEST_ONLY', currency: 'CNY', basis: 'Controlled display protocol only', maximumCapital: '1000', minimumCapital: '10', bindingInstrument: 'TEST.CN', observationStartNs: '1800000000000000001', observationEndNs: '1800000000000000002', decisionClockNs: '1800000000000000003', validUntilNs: '1800000000000000004', assumptions: { participation: '0.01', maximumAgeSeconds: 120, executionWindow: 'last available BAR', exit: 'full exit', fees: 'original native fees', depth: 'not observed' }, scenarios: [{ capital: '1000.000000000000000001', requiredTurnover: '250.000000000000000001', maximumParticipation: '0.010000000000000001', usableCapital: '1000', unallocatedCash: '0.000000000000000001', status: 'CONSTRAINED', reason: null }] };
   await page.route('**/api/v3/factors', route => route.fulfill({ json: [factor, component] }));
   await page.route('**/api/v3/factors/*', route => route.fulfill({ json: route.request().url().endsWith(component.id) ? component : factor }));
+  await page.route('**/api/v3/factors/list?*', route => route.fulfill({ json: listFixture(route, 'factors', [factor, component]) }));
   const assessments: unknown[] = [];
   await page.route('**/api/v3/factors/*/capacity', route => { if (route.request().method() === 'POST') { const policy = route.request().postDataJSON(); assessments.push(policy); return route.fulfill({ json: { ...capacity, requestedAssumptions: policy } }); } return route.fulfill({ json: { ...capacity, status: 'UNAVAILABLE', reason: 'explicit_capacity_policy_missing', maximumCapital: null, minimumCapital: null, scenarios: [], assumptions: { ...capacity.assumptions, participation: null, maximumAgeSeconds: null } } }); });
   await page.goto('/#/factors'); await expect(page.getByRole('heading', { name: '因子库', exact: true })).toBeVisible();
@@ -560,7 +599,7 @@ test('atomic library separates component evidence and carries exact selected fac
   await page.getByRole('button', { name: '运行回测' }).click(); await expect(page.locator('.portfolio-result')).toContainText(factor.id); await expect(page.locator('.portfolio-result')).toContainText(factor.name); await expect(page.locator('.portfolio-result')).toContainText(factor.hypothesis); await expect(page.getByRole('link', { name: '原研究 #8 / 试验 #11', exact: true })).toBeVisible();
   for (const width of [320, 390, 1024]) { await page.setViewportSize({ width, height: 844 }); await fits(page, width); await audit(page); if (width === 320) await page.screenshot({ path: info.outputPath('atomic-portfolio-320.png'), fullPage: true }); }
   expect(errors).toEqual([]); await page.screenshot({ path: info.outputPath('atomic-portfolio-1024.png'), fullPage: true });
-  const resultUrl = page.url(); await page.goto('/#/settings'); await page.getByText('深色', { exact: true }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto(resultUrl); await expect(page.locator('.portfolio-result')).toContainText(factor.id); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('atomic-portfolio-dark-1024.png'), fullPage: true });
+  const resultUrl = page.url(); await page.goto('/#/settings'); await page.locator('label').filter({ has: page.getByRole('radio', { name: '深色', exact: true }) }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto(resultUrl); await expect(page.locator('.portfolio-result')).toContainText(factor.id); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('atomic-portfolio-dark-1024.png'), fullPage: true });
 });
 
 test('capital preview/initiation and paused reservations stay distinct from transfers; automatic controls save explicit policy', async ({ page }, info) => {
@@ -585,7 +624,7 @@ test('capital preview/initiation and paused reservations stay distinct from tran
     await audit(page); if (width === 320) await page.screenshot({ path: info.outputPath('capital-controls-320.png'), fullPage: true });
   }
   expect(errors).toEqual([]); await page.screenshot({ path: info.outputPath('capital-controls-1024.png'), fullPage: true });
-  await page.goto('/#/settings'); await page.getByText('深色', { exact: true }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto('/#/observations/o1'); await expect(page.locator('.capital-exit-section')).toContainText('不可发起'); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('capital-controls-dark-1024.png'), fullPage: true });
+  await page.goto('/#/settings'); await page.locator('label').filter({ has: page.getByRole('radio', { name: '深色', exact: true }) }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto('/#/observations/o1'); await expect(page.locator('.capital-exit-section')).toContainText('不可发起'); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('capital-controls-dark-1024.png'), fullPage: true });
 });
 
 test('Chinese metric glossary preserves exact values and supports hover, focus, Escape and click', async ({ page }, info) => {
@@ -931,11 +970,11 @@ function replaySummary({ result: _result, ...summary }: TickEconomicReplayDetail
 
 test('tick economic replays remain discoverable without portfolios and preserve original results and exploratory qualification', async ({ page }, info) => {
   const state = await contract(page); state.empty(); const replay = tickReplay('tick-one');
-  await page.route('**/api/v3/tick-economic-replays', route => route.fulfill({ json: [replaySummary(replay)] }));
+  await page.route('**/api/v3/tick-economic-replays/list?*', route => route.fulfill({ json: listFixture(route, 'tick-economic-replays', [replaySummary(replay)]) }));
   await page.route('**/api/v3/tick-economic-replays/tick-one', route => route.fulfill({ json: replay }));
   await page.goto('/#/portfolios'); await expect(page.getByRole('heading', { name: '尚无策略组合', exact: true })).toBeVisible();
   const section = page.getByRole('region', { name: 'Tick 经济回放', exact: true });
-  await section.getByRole('button', { name: replay.id, exact: true }).click(); const detail = section.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
+  await page.getByRole('tab', { name: 'Tick 经济回放', exact: true }).click(); await section.getByRole('link', { name: `经济回放 ${replay.id}`, exact: true }).click(); const detail = page.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
   await expect(detail).toContainText('0.250000000000000001'); await expect(detail).toContainText('UNQUALIFIED_EXPLORATORY');
   await expect(detail.getByRole('region', { name: 'HELDOUT / BULL', exact: true })).toContainText('0.123');
   await expect(detail.getByRole('region', { name: 'HELDOUT / BEAR', exact: true })).toContainText('不可用');
@@ -944,15 +983,15 @@ test('tick economic replays remain discoverable without portfolios and preserve 
   await detail.locator('.tick-replay-gaps > summary').click(); await expect(detail.locator('.tick-replay-gaps')).toContainText('controlled_missing_mark');
   await detail.locator('.curve-details > summary').click(); await expect(detail.locator('.curve-details')).toContainText('1100.000000000000000001'); await expect(detail.locator('.curve-details')).toContainText('未提供');
   for (const width of [1440, 390]) { await page.setViewportSize({ width, height: 1000 }); await fits(page, width); await audit(page); await page.screenshot({ path: info.outputPath(`tick-replay-${width}.png`), fullPage: true }); }
-  await page.reload(); await expect(section.getByRole('button', { name: replay.id, exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '创建组合', exact: true })).toBeVisible(); expect(state.writes).toEqual([]);
+  await page.reload(); await expect(detail).toBeVisible(); await page.getByRole('link', { name: 'Tick 经济回放列表', exact: true }).click(); await expect(section.getByRole('link', { name: `经济回放 ${replay.id}`, exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '创建组合', exact: true })).toBeVisible(); expect(state.writes).toEqual([]);
 });
 
 test('tick replay refresh uses actual phase counters, stops at terminal state and keeps stale reads recoverable', async ({ page }) => {
   const state = await contract(page); await page.clock.install(); const replay = tickReplay('tick-active', 'QUEUED');
   replay.progress = { phase: 'QUEUED', updatedAt: '2026-11-07T00:00:00Z' }; let detailReads = 0; let unavailable = false;
-  await page.route('**/api/v3/tick-economic-replays', route => route.fulfill({ json: [replaySummary(replay)] }));
+  await page.route('**/api/v3/tick-economic-replays/list?*', route => route.fulfill({ json: listFixture(route, 'tick-economic-replays', [replaySummary(replay)]) }));
   await page.route('**/api/v3/tick-economic-replays/tick-active', route => { detailReads++; return unavailable ? route.fulfill({ status: 503, json: { error: 'unavailable' } }) : route.fulfill({ json: replay }); });
-  await page.goto('/#/portfolios'); await page.getByRole('button', { name: replay.id, exact: true }).click(); const detail = page.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
+  await page.goto('/#/portfolios?view=tick'); await page.getByRole('link', { name: `经济回放 ${replay.id}`, exact: true }).click(); const detail = page.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
   await expect(detail).toContainText('等待执行'); await expect(detail.locator('.ant-spin')).toBeVisible(); await expect(detail).not.toContainText('%');
   replay.status = 'RUNNING'; replay.progress = { phase: 'REPLAYING', updatedAt: '2026-11-07T00:01:00Z', completed: 1, total: 4 };
   const refreshed = page.waitForResponse('**/api/v3/tick-economic-replays/tick-active'); await page.clock.runFor(5000); await refreshed;
@@ -967,15 +1006,75 @@ test('tick replay refresh uses actual phase counters, stops at terminal state an
 test('tick collection errors are isolated, manual refresh discovers later admissions and late details cannot replace selection', async ({ page }) => {
   const state = await contract(page); state.empty(); let listUnavailable = true; let records: TickEconomicReplayDetail[] = []; let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/api/v3/tick-economic-replays', route => listUnavailable ? route.fulfill({ status: 503, json: { error: 'unavailable' } }) : route.fulfill({ json: records.map(replaySummary) }));
+  await page.route('**/api/v3/tick-economic-replays/list?*', route => listUnavailable ? route.fulfill({ status: 503, json: { error: 'unavailable' } }) : route.fulfill({ json: listFixture(route, 'tick-economic-replays', records.map(replaySummary)) }));
   const old = tickReplay('tick-old'); const current = tickReplay('tick-current', 'FAILED'); current.createdAt = null; current.executionModel = null; current.factorId = 'r8.t12.m0'; delete current.members; current.error = 'controlled_original_failure';
   await page.route('**/api/v3/tick-economic-replays/tick-old', async route => { await held; return route.fulfill({ json: old }).catch(() => {}); });
   await page.route('**/api/v3/tick-economic-replays/tick-current', route => route.fulfill({ json: current }));
-  await page.goto('/#/portfolios'); const section = page.getByRole('region', { name: 'Tick 经济回放', exact: true });
+  await page.goto('/#/portfolios?view=tick'); const section = page.getByRole('region', { name: 'Tick 经济回放', exact: true });
   await expect(section.getByRole('alert')).toBeVisible(); await expect(page.getByRole('button', { name: '创建组合', exact: true })).toBeVisible();
   listUnavailable = false; await section.getByRole('button', { name: '重试', exact: true }).click(); await expect(section.getByRole('heading', { name: '尚无 Tick 经济回放', exact: true })).toBeVisible();
   records = [old, current]; await section.getByRole('button', { name: '刷新回放列表', exact: true }).click();
-  await section.getByRole('button', { name: old.id, exact: true }).click(); await section.getByRole('button', { name: current.id, exact: true }).click();
-  const detail = section.getByRole('article', { name: `经济回放 ${current.id}`, exact: true }); await expect(detail).toContainText('controlled_original_failure'); release();
+  await section.getByRole('link', { name: `经济回放 ${old.id}`, exact: true }).click(); await page.goBack(); await section.getByRole('link', { name: `经济回放 ${current.id}`, exact: true }).click();
+  const detail = page.getByRole('article', { name: `经济回放 ${current.id}`, exact: true }); await expect(detail).toContainText('controlled_original_failure'); release();
   await expect(detail).toContainText('未记录'); await expect(detail).not.toContainText(old.id); await expect(detail.getByTestId('equity-chart')).toHaveCount(0); expect(state.writes).toEqual([]);
+});
+
+test('portfolio table shows all three performance metrics and sends sortable fields through the list query', async ({ page }, info) => {
+  const state = await contract(page); const reads: URLSearchParams[] = [];
+  const longName = '名称很长的组合'.repeat(15);
+  const rows = [
+    { ...state.portfolio, id: 'metric-a', name: longName, performance: { sharpe: -1.23456, annualizedReturn: -0.123456, maxDrawdown: 0.25, annualizationDays: 365 } },
+    { ...state.portfolio, id: 'metric-b', name: '缺少表现的历史组合', performance: { sharpe: null, annualizedReturn: null, maxDrawdown: null, annualizationDays: null } },
+  ];
+  await page.route('**/api/v3/portfolios/list?*', route => { reads.push(new URL(route.request().url()).searchParams); return route.fulfill({ json: listFixture(route, 'portfolios', rows) }); });
+  await page.route('**/api/v3/portfolios/metric-a', route => route.fulfill({ json: rows[0] }));
+  await page.goto('/#/portfolios');
+  const table = page.locator('.workspace-table'); await expect(table.getByRole('row')).toHaveCount(3);
+  const measured = table.getByRole('row').filter({ hasText: shortTitle(longName) });
+  await expect(measured).toContainText('-1.235'); await expect(measured).toContainText('-12.35%'); await expect(measured).toContainText('25%');
+  await expect(table.getByRole('row').filter({ hasText: '缺少表现的历史组合' }).getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
+  await expect(table.locator('details')).toHaveCount(0); await expect(table.locator('code')).toHaveCount(0); await expect(table).not.toContainText(longName);
+  for (const [label, key] of [['Sharpe', 'sharpe'], ['年化收益率', 'annualizedReturn'], ['最大回撤', 'maxDrawdown'], ['成员数', 'memberCount']] as const) {
+    await table.getByRole('columnheader', { name: new RegExp(label) }).click();
+    await expect.poll(() => reads.at(-1)?.get('sort')).toBe(key);
+    await expect.poll(() => reads.at(-1)?.get('order')).toBe(key === 'maxDrawdown' ? 'asc' : 'desc');
+    await expect(page).toHaveURL(new RegExp(`sort=${key}`));
+  }
+  await page.reload(); await expect.poll(() => reads.at(-1)?.get('sort')).toBe('memberCount');
+  const scroller = table.locator('.ant-table-content'); await scroller.evaluate(element => { element.scrollLeft = 200; });
+  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(200);
+  await measured.getByRole('link').click(); await expect(page.getByRole('heading', { name: shortTitle(longName), exact: true, level: 1 })).toBeVisible();
+  await page.locator('.back-link').click(); await expect(measured.getByRole('link')).toBeVisible();
+  await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBe(200);
+  await scroller.evaluate(element => { element.scrollLeft = 0; });
+  for (const mode of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: mode as 'light' | 'dark' });
+    for (const width of [1440, 320]) {
+      await page.setViewportSize({ width, height: 900 }); await fits(page, width); await audit(page);
+      await expect(measured.getByRole('link')).toBeVisible();
+      await page.screenshot({ path: info.outputPath(`portfolio-table-${mode}-${width}.png`), fullPage: true });
+    }
+  }
+});
+
+test('research search waits for IME completion before publishing the query', async ({ page }) => {
+  const state = await contract(page); state.paginate(); await page.clock.install();
+  const queries: string[] = [];
+  page.on('request', request => { const url = new URL(request.url()); if (url.pathname === '/api/v3/research/list' && url.searchParams.has('q')) queries.push(url.searchParams.get('q')!); });
+  await page.goto('/#/research'); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(4);
+  const search = page.getByLabel('搜索研究', { exact: true });
+  await search.dispatchEvent('compositionstart'); await search.fill('后页'); await page.clock.runFor(400);
+  expect(queries).toEqual([]); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(4);
+  await search.dispatchEvent('compositionend'); await page.clock.runFor(350);
+  await expect(page.getByRole('link', { name: '后页研究', exact: true })).toBeVisible();
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1); expect(queries).toEqual(['后页']);
+});
+
+test('legacy research status links normalize to visible canonical filters', async ({ page }) => {
+  await contract(page); await page.goto('/#/research?state=失败');
+  await expect(page).toHaveURL(/status=FAILED/); expect(new URL(page.url().split('#')[1]!, 'http://test').searchParams.has('state')).toBe(false);
+  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1);
+  await expect(page.getByLabel('当前筛选')).toContainText('失败');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: '清除全部', exact: true }).click(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
 });
