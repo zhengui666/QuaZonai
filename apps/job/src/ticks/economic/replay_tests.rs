@@ -448,7 +448,8 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
     )
     .unwrap()
     .is_none());
-    let mut contexts = Some(ContextPrices::open(&context_root, &request.research).unwrap());
+    let mut contexts =
+        Some(ContextPrices::open(&context_root, &request.research, true, false).unwrap());
     let before = value(
         margin.as_ref().unwrap(),
         &assets,
@@ -1766,8 +1767,13 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
     )
     .unwrap();
     let mut contexts = Some(ContextPrices {
-        source_revision: "unit-context".into(),
-        readers: BTreeMap::from([(LATE.into(), reader)]),
+        primary: Some(ContextPriceSource {
+            source_revision: "unit-context".into(),
+            clock: "EVENT_TIME_PROXY_UNVERIFIED".into(),
+            readers: BTreeMap::from([(LATE.into(), reader)]),
+        }),
+        event_time_fallback: None,
+        fallback_lookups: 0,
     });
     let fx_ids = BTreeSet::from([BRIDGE.into()]);
     let exposure = small_exposure(
