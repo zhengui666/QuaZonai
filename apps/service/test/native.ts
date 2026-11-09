@@ -40,6 +40,7 @@ import { openResearch } from '../../research/src/host.ts';
 import { factorViews } from '../src/factors.ts';
 import { runReviewScience } from '../../research/src/review-science-adapter.ts';
 import { canonicalJsonDigest } from '../../research/src/native-json.ts';
+import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
 
 
 const fixtureFeesFile = 'frozen-maker-taker-fees.json';
@@ -330,7 +331,10 @@ test('two original studies → native target blending → one fee-affected share
       const frozen = await startLegacyResearch(service.research, `native-idea-${index}`, original);
       receipts.push(frozen); // The second model response binds this exact study.
       const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: original.goal, model: original.model, datasetId: 'late-native-fixture' } });
-      assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); assert.deepEqual(receipt, frozen);
+      assert.equal(start.statusCode, 409, start.body); assert.equal(start.json().error, 'request_id_conflict');
+      // A retained kernel fixture has no current intake identity. New admission
+      // never repairs it; the original submitted receipt still owns its science.
+      const receipt = frozen;
       await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await service.research.view(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -509,14 +513,14 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
     ]);
     // Preserve this synthetic retained-science proof as a pre-review immutable
     // admission; do not invent REAL/PIT or bypass the production Review default.
-    // The service still captures and replays the original simplified owner body.
+    // A simplified new API request cannot adopt this fixture's old intake gap.
     const source = config.datasets[0]!;
     const original = { goal: 'Native ensemble isolation control; synthetic data only.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
       data: source.data, policy: { ...source.policy, strategy: json(source.strategy!) } };
     const frozen = await startLegacyResearch(service.research, 'native-ensemble', original);
-    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: original.goal,
-      model: original.model, datasetId: 'ensemble-native-fixture' });
-    assert.deepEqual(receipt, frozen);
+    await assert.rejects(service.work.startResearch({ requestId: 'native-ensemble', goal: original.goal,
+      model: original.model, datasetId: 'ensemble-native-fixture' }), /request_id_conflict/);
+    const receipt = frozen;
     await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await service.research.view(receipt.conversationId)).research!;
     assert.equal(facts.trials.length, 1, 'read-only retrieval must not register another candidate');
@@ -532,7 +536,8 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
     for (const outcome of [object(facts.trials[0]!.result), object(facts.final!.result)]) {
       const task: SettledTask<JsonObject> = await service.research.harness.waitForTask(outcome.evidenceTaskId as TaskId<JsonObject>, context);
       assert.equal(task.state.outcome.status, 'completed');
-      const evidence = object(task.state.outcome.status === 'completed' ? task.state.outcome.result.native : null);
+      const evidence = await readNativeEvidence(service.research.harness, task.conversationId, task.id,
+        object(task.state.outcome.status === 'completed' ? task.state.outcome.result.native : null), context);
       assert.deepEqual(object(evidence.policy).simulationSettings, selectedSettings);
       assert.deepEqual(object(evidence.policy).instrumentId, crossMarket ? undefined : 'BTC-USD.COINBASE');
       if (crossMarket) assert.deepEqual(object(evidence.policy).allocations, allocations);
@@ -563,7 +568,8 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
     assert.equal(object(final.portfolio).evidenceMode, historical ? 'HISTORICAL_REASSESSMENT' : undefined);
     const finalTask = await service.research.harness.waitForTask(final.evidenceTaskId as TaskId<JsonObject>, context);
     assert.equal(finalTask.state.outcome.status, 'completed');
-    const native = object(finalTask.state.outcome.status === 'completed' ? finalTask.state.outcome.result.native : null);
+    const native = await readNativeEvidence(service.research.harness, finalTask.conversationId, finalTask.id,
+      object(finalTask.state.outcome.status === 'completed' ? finalTask.state.outcome.result.native : null), context);
     assert.deepEqual(object(final.portfolio).statistics, object(native.simulation).statistics);
     assert.equal(object(object(native.simulationRequest).selection).event_start_ns, request.validation_end_ns);
     assert.ok(nativeCurve(object(native.simulation), 'USD').length);
