@@ -46,7 +46,7 @@ jobs:
           image: quazonai-dev:${{ steps.source.outputs.version }}
           revision: ${{ steps.source.outputs.revision }}
           version: ${{ steps.source.outputs.version }}
-      - name: Export the tested image for the separate publisher
+      - name: Export the built image for the separate publisher
         env:
           LOCAL_IMAGE: quazonai-dev:${{ steps.source.outputs.version }}
           REVISION: ${{ steps.source.outputs.revision }}
