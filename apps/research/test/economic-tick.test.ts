@@ -68,6 +68,14 @@ test('economic context is explicit and preserves absent-field legacy requests', 
   assert.equal(JSON.stringify(legacy).includes('context_source'), false);
   const requested = { ...economicRequest(), context_source: 'context-prices.manifest.json' };
   assert.equal(validateNativeTickEconomicRequest(requested).context_source, requested.context_source);
+  const fallback = 'event-time-context-prices.manifest.json';
+  assert.equal(validateNativeTickEconomicRequest({ ...requested, event_time_context_source: fallback }).event_time_context_source, fallback);
+  assert.throws(() => validateNativeTickEconomicRequest({ ...requested, event_time_context_source: '../' + fallback }), /event_time_context_source_invalid/);
+  const received = structuredClone(requested);
+  Object.assign(received.research.input, { availability: 'RECEIVED_TIME_OBSERVED', representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1', maximum_receive_delay_ns: '1' });
+  received.research.sampling.kind = 'RECEIVED_TIME_COHORT_V1';
+  received.research.target.kind = 'FIXED_RECEIVED_TIME';
+  assert.throws(() => validateNativeTickEconomicRequest({ ...received, event_time_context_source: fallback }), /event_time_context_clock_invalid/);
   for (const context_source of [null, '', '../context-prices.manifest.json', '/context-prices.manifest.json', 'other.json']) {
     assert.throws(() => validateNativeTickEconomicRequest({ ...economicRequest(), context_source }), /context_source_invalid/);
   }
