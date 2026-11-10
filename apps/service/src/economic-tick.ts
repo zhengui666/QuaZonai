@@ -34,11 +34,15 @@ type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayV
 type ReplayInput = { id: string; createdAt?: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest; bookCores?: number };
 type ReplayCheckpoint = { phase: 'compute'; progress?: TickEconomicReplayProgress };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
-function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
+function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research'], sameDataset: boolean) {
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
   if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
-    || canonical((source.request)) !== canonical((request)) || canonical((configured.request)) !== canonical((source.request))) return null;
-  return { request: source.request, catalog: text(sourceData.catalog, 'catalog'), fundingCatalog: text(configuredData.catalog, 'catalog') };
+    || canonical(configured.request) !== canonical(request)) return null;
+  const instruments = new Set(source.request.input.instrument_ids);
+  if (request.input.instrument_ids.some(id => !instruments.has(id))) return null;
+  const compatible = sameDataset ? source.request : { ...source.request, input: { ...source.request.input, instrument_ids: request.input.instrument_ids } };
+  if (canonical(compatible) !== canonical(request)) return null;
+  return { sourceRequest: source.request, catalog: text(sameDataset ? sourceData.catalog : configuredData.catalog, 'catalog'), fundingCatalog: text(configuredData.catalog, 'catalog') };
 }
 
 export const TickEconomicReplay = defineTask<ReplayInput, ReplayCheckpoint, null>({
@@ -167,29 +171,31 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       if (!dataset.ready || !dataset.preparation?.nativePrepared) throw new Problem('dataset_not_ready', 409);
       const application = await tx.doc(Application); assertBusinessAdmission(application);
       const requests = await tx.doc(Requests);
+      const admissions = admissionViews(requests);
       const retained = [];
       for (const member of members) {
         const reference = factorReference(member.factorId);
         const study = await tx.doc(Study, reference.researchId as ConversationId);
         if (!study.input || study.deletedAt || study.deletedFactors?.[member.factorId]) throw new Problem('factor_not_found', 404);
-        const admitted = Object.entries(requests.requests).some(([key, row]) => row.conversationId === reference.researchId
-          && object(admissionViews(requests)[key]?.dataset ?? {}).id === input.datasetId);
-        if (!admitted) throw new Problem('tick_economic_factor_dataset_mismatch', 409);
+        const admitted = Object.entries(requests.requests).filter(([key, row]) => row.conversationId === reference.researchId
+          && typeof object(admissions[key]?.dataset ?? {}).id === 'string');
+        if (!admitted.length) throw new Problem('tick_economic_factor_dataset_mismatch', 409);
+        const sameDataset = admitted.some(([key]) => object(admissions[key]?.dataset ?? {}).id === input.datasetId);
         const trial = study.trials.find(row => row.taskId === reference.trialId);
         if (!trial || trial.status !== 'COMPUTED' || !trial.result) throw new Problem('tick_economic_computed_factor_required', 422);
         const models = strategyMembers(object(trial.proposal));
         if (models.length !== 1 || reference.memberIndex !== 0) throw new Problem('tick_economic_single_factor_required', 422);
-        const source = matchingBinding(study.input.data, dataset.data, input.request.research)
+        const source = matchingBinding(study.input.data, dataset.data, input.request.research, sameDataset)
           ?? (study.input.data.sealed && dataset.data.sealed
-            ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research) : null);
+            ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research, sameDataset) : null);
         if (!source) throw new Problem('tick_economic_original_request_mismatch', 409);
         if (input.fundingCatalog !== undefined && input.fundingCatalog !== source.fundingCatalog) throw new Problem('tick_economic_funding_catalog_mismatch', 409);
         const native = object(trial.result);
         const coverage = object(native.coverage, 'native_coverage');
         if (canonical((native.request!)) !== canonical((iterationRequest(study.input.data))) || coverage.modality !== 'TRADE_TICK'
-          || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
+          || coverage.source_revision !== source.sourceRequest.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
           || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
-        const target = boundScienceTarget(config, study.input.data);
+        const target = boundScienceTarget(config, sameDataset ? study.input.data : dataset.data);
         if (retained.length && (source.catalog !== retained[0]!.source.catalog || source.fundingCatalog !== retained[0]!.source.fundingCatalog
           || canonical(target) !== canonical(retained[0]!.target))) throw new Problem('tick_economic_member_binding_mismatch', 409);
         retained.push({ reference, source, target, model: models[0]!.model, factorId: member.factorId });
@@ -203,7 +209,7 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId,
         ...(input.members ? { members: input.members } : { factorId: input.factorId }), taskId, fundingCatalog: source.fundingCatalog,
         sources: retained.map(member => ({ factorId: member.factorId, researchId: member.reference.researchId, trialId: member.reference.trialId,
-          memberIndex: member.reference.memberIndex, sourceRevision: member.source.request.input.source_revision })),
+          memberIndex: member.reference.memberIndex, sourceRevision: member.source.sourceRequest.input.source_revision })),
         status: 'QUEUED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null, bookCores };
       replays.runs[id] = json({ original: input, view });
       return view;
