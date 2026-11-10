@@ -459,16 +459,14 @@ pub(super) fn source(root: &Path) -> Result<Arc<IndexedSource>> {
 }
 
 struct Hour {
-    rows: RowIter<'static>,
+    rows: Option<RowIter<'static>>,
+    ready: std::vec::IntoIter<BookSnapshot>,
     file: File,
     path: PathBuf,
     identity: FileIdentity,
     layout: usize,
     at: u64,
-    snapshots: FlatSnapshots,
-    first_row: bool,
     checkpoint: Option<CarryCheckpoint>,
-    previous: Option<u64>,
     carry_snapshots: u64,
     carry_rows: u64,
 }
@@ -479,13 +477,8 @@ struct CarryCheckpoint {
     all_transaction_null: bool,
 }
 impl Hour {
-    fn complete(&mut self, snapshot: BookSnapshot) -> Result<Option<BookSnapshot>> {
+    fn complete(&mut self, snapshot: BookSnapshot) -> Option<BookSnapshot> {
         let received = snapshot.deltas.ts_init.as_u64();
-        ensure!(
-            self.previous.is_none_or(|previous| previous < received),
-            "ECONOMIC_BOOK_RECEIPT_ORDER_INVALID"
-        );
-        self.previous = Some(received);
         if let Some(checkpoint) = self.checkpoint.take() {
             if checkpoint.all_transaction_null
                 && checkpoint.event == snapshot.deltas.ts_event.as_u64()
@@ -493,10 +486,10 @@ impl Hour {
             {
                 self.carry_snapshots += 1;
                 self.carry_rows += checkpoint.rows;
-                return Ok(None);
+                return None;
             }
         }
-        Ok(Some(snapshot))
+        Some(snapshot)
     }
 
     fn next(
@@ -506,72 +499,80 @@ impl Hour {
         start: u64,
         end: u64,
     ) -> Result<Option<BookSnapshot>> {
-        let layout = &source.layouts[self.layout];
-        while let Some(row) = self.rows.next() {
-            let row = row?;
-            let symbol = scalar(mapped_field(&row, &layout.stream.columns, "symbol")?)?;
-            ensure!(
-                symbol == layout.symbol
-                    || source
-                        .aliases
-                        .get(&layout.market)
-                        .and_then(|aliases| aliases.get(&symbol))
-                        == Some(&layout.instrument_id),
-                "ECONOMIC_BOOK_SOURCE_SYMBOL_MISMATCH"
-            );
-            let event = timestamp(
-                mapped_field(&row, &layout.stream.columns, "time")?,
-                &layout.stream.time_unit,
-            )?;
-            let received = timestamp(
-                mapped_field(&row, &layout.stream.columns, "available_at")?,
-                layout
-                    .stream
-                    .available_time_unit
-                    .as_deref()
-                    .unwrap_or(&layout.stream.time_unit),
-            )?;
-            let transaction_null = |row: &parquet::record::Row| {
-                row.get_column_iter().any(|(name, value)| {
-                    name == "transaction_time" && matches!(value, parquet::record::Field::Null)
-                })
-            };
-            if self.first_row {
-                self.first_row = false;
-                if source.observed && received == self.at && transaction_null(&row) {
-                    self.checkpoint = Some(CarryCheckpoint {
-                        event,
-                        received,
-                        rows: 0,
-                        all_transaction_null: true,
-                    });
+        if let Some(rows) = self.rows.take() {
+            let layout = &source.layouts[self.layout];
+            let mut snapshots = FlatSnapshots::default();
+            let mut complete = Vec::new();
+            for (index, row) in rows.enumerate() {
+                let row = row?;
+                let symbol = scalar(mapped_field(&row, &layout.stream.columns, "symbol")?)?;
+                ensure!(
+                    symbol == layout.symbol
+                        || source
+                            .aliases
+                            .get(&layout.market)
+                            .and_then(|aliases| aliases.get(&symbol))
+                            == Some(&layout.instrument_id),
+                    "ECONOMIC_BOOK_SOURCE_SYMBOL_MISMATCH"
+                );
+                let event = timestamp(
+                    mapped_field(&row, &layout.stream.columns, "time")?,
+                    &layout.stream.time_unit,
+                )?;
+                let received = timestamp(
+                    mapped_field(&row, &layout.stream.columns, "available_at")?,
+                    layout
+                        .stream
+                        .available_time_unit
+                        .as_deref()
+                        .unwrap_or(&layout.stream.time_unit),
+                )?;
+                let transaction_null = |row: &parquet::record::Row| {
+                    row.get_column_iter().any(|(name, value)| {
+                        name == "transaction_time" && matches!(value, parquet::record::Field::Null)
+                    })
+                };
+                if index == 0 {
+                    if source.observed && received == self.at && transaction_null(&row) {
+                        self.checkpoint = Some(CarryCheckpoint {
+                            event,
+                            received,
+                            rows: 0,
+                            all_transaction_null: true,
+                        });
+                    }
+                }
+                if let Some(checkpoint) = &mut self.checkpoint {
+                    if (checkpoint.event, checkpoint.received) == (event, received) {
+                        checkpoint.rows += 1;
+                        checkpoint.all_transaction_null &= transaction_null(&row);
+                    }
+                }
+                if received < start || received >= end {
+                    continue;
+                }
+                if let Some(snapshot) =
+                    snapshots.push(&layout.stream.columns, row, encoding, event, received)?
+                {
+                    // Parse the complete frame first; a carried checkpoint is not new liquidity.
+                    if let Some(snapshot) = self.complete(snapshot) {
+                        complete.push(snapshot);
+                    }
                 }
             }
-            if let Some(checkpoint) = &mut self.checkpoint {
-                if (checkpoint.event, checkpoint.received) == (event, received) {
-                    checkpoint.rows += 1;
-                    checkpoint.all_transaction_null &= transaction_null(&row);
+            if let Some(snapshot) = snapshots.finish(&layout.stream.columns)? {
+                if let Some(snapshot) = self.complete(snapshot) {
+                    complete.push(snapshot);
                 }
             }
-            if received < start || received >= end {
-                continue;
-            }
-            if let Some(snapshot) =
-                self.snapshots
-                    .push(&layout.stream.columns, row, encoding, event, received)?
-            {
-                // Parse the complete frame first; a carried checkpoint is not new liquidity.
-                if let Some(snapshot) = self.complete(snapshot)? {
-                    return Ok(Some(snapshot));
-                }
-            }
+            // Published rows may follow exchange time instead of provider receipt order.
+            complete.sort_by_key(|snapshot| snapshot.deltas.ts_init);
+            self.ready = complete.into_iter();
         }
-        self.identity.check(&self.file, &self.path)?;
-        self.snapshots
-            .finish(&layout.stream.columns)?
-            .map(|snapshot| self.complete(snapshot))
-            .transpose()
-            .map(Option::flatten)
+        if self.ready.len() <= 1 {
+            self.identity.check(&self.file, &self.path)?;
+        }
+        Ok(self.ready.next())
     }
 }
 
@@ -674,16 +675,17 @@ impl RawBooks {
             let opened = File::open(&path)?;
             file.identity.check(&opened, &path)?;
             self.hour = Some(Hour {
-                rows: parquet_file_rows(opened.try_clone()?, &layout.stream.format)?,
+                rows: Some(parquet_file_rows(
+                    opened.try_clone()?,
+                    &layout.stream.format,
+                )?),
+                ready: Vec::new().into_iter(),
                 file: opened,
                 path,
                 identity: file.identity,
                 layout: file.layout,
                 at: file.at,
-                snapshots: FlatSnapshots::default(),
-                first_row: true,
                 checkpoint: None,
-                previous: None,
                 carry_snapshots: 0,
                 carry_rows: 0,
             });
@@ -700,6 +702,7 @@ mod tests {
         file::writer::SerializedFileWriter,
         schema::parser::parse_message_type,
     };
+    use rust_decimal::Decimal;
     use std::sync::Arc;
 
     const START: u64 = 1_767_225_600_000_000_000;
@@ -990,6 +993,42 @@ mod tests {
             books.next().err().unwrap().to_string(),
             "ECONOMIC_BOOK_SOURCE_SYMBOL_MISMATCH"
         );
+    }
+
+    #[test]
+    fn raw_hour_replay_orders_complete_frames_by_original_provider_receipt() {
+        let (root, id) = source(false);
+        let early = START + 31_375_438_289;
+        let late = START + 31_389_330_520;
+        let event = START / 1_000_000 + 9_016;
+        replace_first_hour(
+            root.path(),
+            &[
+                (event, late, "bid", "10.12", "1.234567"),
+                (event, late, "ask", "10.13", "2"),
+                (event + 545, early, "bid", "10.14", "3"),
+                (event + 545, early, "ask", "10.15", "4"),
+            ],
+            "BTC_USDT",
+            None,
+            true,
+        );
+        let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        let first = books.next().unwrap().unwrap();
+        let second = books.next().unwrap().unwrap();
+        assert_eq!(first.received(), early);
+        assert_eq!(second.received(), late);
+        assert_eq!(first.deltas.ts_event.as_u64(), (event + 545) * 1_000_000);
+        assert_eq!(second.deltas.ts_event.as_u64(), event * 1_000_000);
+        assert_eq!(first.deltas.deltas.len(), 3);
+        assert_eq!(second.deltas.deltas.len(), 3);
+        assert_eq!(first.bid_depth, Decimal::from(3));
+        assert_eq!(first.ask_depth, Decimal::from(4));
+        assert_eq!(second.bid_depth, Decimal::new(1_234_567, 6));
+        assert_eq!(second.ask_depth, Decimal::from(2));
+        assert_eq!(first.price(true), Some(Decimal::new(1015, 2)));
+        assert_eq!(second.price(false), Some(Decimal::new(1012, 2)));
+        assert!(books.next().unwrap().is_none());
     }
 
     #[test]
