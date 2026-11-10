@@ -263,6 +263,8 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
 
     let directory = tempfile::tempdir().unwrap();
     let (prepared, mut request, wasm) = source(directory.path(), 1, None, true);
+    let mut spot_research = request.research.clone();
+    spot_research.input.instrument_ids.retain(|id| id != LATE);
     request.research.clip_end(counter(2 * DAY).unwrap());
     request.scenario.execution_model = Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
     request.context_source = Some(CONTEXT_MANIFEST.into());
@@ -307,6 +309,26 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
             rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
         }
         catalog.write_to_parquet(&rows, None, None, None).unwrap();
+    }
+    let mut missing_context = request.clone();
+    missing_context.context_source = None;
+    for model in [
+        NativeTickEconomicExecutionModelV1::ObservedL2IocV1,
+        NativeTickEconomicExecutionModelV1::ObservedL2IocV2,
+    ] {
+        missing_context.scenario.execution_model = Some(model);
+        validate(&missing_context).unwrap();
+        assert_eq!(
+            replay_with_funding(
+                &prepared.join("research/catalog"),
+                &economic,
+                &missing_context,
+                &wasm,
+            )
+            .unwrap_err()
+            .to_string(),
+            "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
+        );
     }
     let result = replay_with_funding(
         &prepared.join("research/catalog"),
@@ -379,6 +401,23 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
         .limitations
         .iter()
         .any(|limit| limit == "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK"));
+    let spot_prepared = directory.path().join("spot-observed");
+    cohort_cache::prepare_views(&economic, &spot_research, &spot_prepared, 1_000_000).unwrap();
+    missing_context.research = spot_research;
+    missing_context.research.clip_end(counter(2 * DAY).unwrap());
+    let spot = replay_with_funding(
+        &spot_prepared.join("research/catalog"),
+        &economic,
+        &missing_context,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(spot.model, "SEGREGATED_OBSERVED_L2_IOC_V2");
+    assert!(spot.request.context_source.is_none());
+    assert_eq!(spot.assets.len(), 2);
+    assert_eq!(spot.days.len(), 2);
+    assert!(spot.days.iter().all(|day| day.equity_usdt.is_some()));
+    assert!(spot.native_fills.get() >= 2);
 }
 
 #[test]
@@ -1055,7 +1094,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &BTreeSet::from([BRIDGE.into()]),
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1076,7 +1115,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
     assert_eq!(orders[0].quantity().as_decimal(), Decimal::new(2, 1));
     assert_eq!(orders[0].filled_qty().as_decimal(), filled);
     assert_eq!(orders[0].status(), OrderStatus::Canceled);
-    assert_eq!(small_quantity(&assets[i], &cash, &margin), filled);
+    assert_eq!(small_quantity(&assets[i], &cash, Some(&margin)), filled);
     small
         .reconcile(
             i,
@@ -1098,7 +1137,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
     // or balance repair is used to close it.
     cash.step(100 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
         .unwrap();
-    let remaining = small_quantity(&assets[i], &cash, &margin);
+    let remaining = small_quantity(&assets[i], &cash, Some(&margin));
     small
         .reconcile(
             i,
@@ -1145,7 +1184,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1160,7 +1199,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
     // fills 0.2 of the 0.3 order. Preserve the residual 0.1 dust/exit scenario.
     cash.step(4 * SECOND, &instrument, 100.0, 0.8, Some(target))
         .unwrap();
-    let quantity = small_quantity(&assets[i], &cash, &margin);
+    let quantity = small_quantity(&assets[i], &cash, Some(&margin));
     assert_eq!(quantity, Decimal::new(2, 1));
     let entry = cash.orders();
     assert_eq!(entry.len(), 1);
@@ -1189,7 +1228,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         20 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1232,7 +1271,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             100 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1252,7 +1291,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             102 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1272,7 +1311,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             104 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1373,7 +1412,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
         &[bridge, i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1388,7 +1427,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             2 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
@@ -1424,7 +1463,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         3 * SECOND,
         &request.scenario,
@@ -1472,7 +1511,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         &request.scenario,
@@ -1502,7 +1541,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         &request.scenario,
@@ -1618,7 +1657,7 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             &mut rows,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             3 * SECOND,
             &request.scenario,
@@ -1673,7 +1712,7 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             &mut rows,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             4 * SECOND,
             &request.scenario,
@@ -1762,7 +1801,7 @@ fn small_same_base_different_quotes_simultaneous_fresh_signals_get_one_pending_c
             &fresh,
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -1855,7 +1894,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
         &small,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         10 * SECOND,
         SECOND,
@@ -1874,7 +1913,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             10 * SECOND,
             SECOND,
@@ -1891,7 +1930,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
         &small,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         12 * SECOND,
         SECOND,
@@ -1910,7 +1949,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             12 * SECOND,
             SECOND,
@@ -1984,7 +2023,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             &fresh,
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -2009,7 +2048,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             .reconcile(
                 spot,
                 4 * SECOND,
-                small_quantity(&assets[spot], &cash, &margin),
+                small_quantity(&assets[spot], &cash, Some(&margin)),
                 true,
                 &mut assets,
                 &request.scenario,
@@ -2020,7 +2059,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             4 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
@@ -2129,7 +2168,7 @@ fn small_quote_shrink_keeps_signed_deficit_and_protects_other_pending_reservatio
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         3 * SECOND,
         &request.scenario,
@@ -2165,7 +2204,7 @@ fn small_nonzero_roundtrip_cost_hurdle_excludes_equality_and_below() {
             &[i],
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -2411,6 +2450,30 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         serde_json::to_value(&quote_result.small_capital_diagnostics).unwrap()
     );
     assert!(valued.methods["spot_valuation"].contains("do not change trading"));
+    request
+        .research
+        .input
+        .instrument_ids
+        .retain(|id| id != LATE);
+    request.research.input.event_end_ns = counter(4 * DAY).unwrap();
+    request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+    let spot_prepared = directory.path().join("spot-only");
+    let metadata =
+        cohort_cache::prepare_views(&catalog, &request.research, &spot_prepared, 1_000_000)
+            .unwrap();
+    request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
+    let spot = replay(
+        &spot_prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    assert_eq!(spot.assets.len(), 2);
+    assert_eq!(spot.native_fills.get(), 4);
+    let diagnostics = spot.small_capital_diagnostics.as_ref().unwrap();
+    assert_eq!(diagnostics.positions_opened.get(), 1);
+    assert_eq!(diagnostics.positions_closed.get(), 1);
+    assert!(diagnostics.remaining_positions.is_empty());
 }
 
 #[test]

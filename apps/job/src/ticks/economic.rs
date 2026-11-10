@@ -81,12 +81,6 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
         "ECONOMIC_FLOW_CACHE_REQUIRED"
     );
     let s = &request.scenario;
-    if observed(s) {
-        ensure!(
-            request.context_source.is_some(),
-            "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
-        );
-    }
     if let Some(weights) = &request.signal_weights {
         ensure!(!weights.is_empty(), "ECONOMIC_SIGNAL_WEIGHTS_INVALID");
         let sum = weights.iter().try_fold(Decimal::ZERO, |sum, weight| {
@@ -1020,14 +1014,16 @@ fn small_queue(
     a.decisions += 1;
     Ok(())
 }
-fn small_quantity(a: &Asset, cash: &NativeLedger, margin: &NativeLedger) -> Decimal {
+fn small_quantity(a: &Asset, cash: &NativeLedger, margin: Option<&NativeLedger>) -> Decimal {
     if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
         a.instrument
             .base_currency()
             .and_then(|currency| cash.balance(currency))
             .map_or(Decimal::ZERO, |b| b.as_decimal())
     } else {
-        margin.current_quantity(a.instrument.id())
+        margin.map_or(Decimal::ZERO, |ledger| {
+            ledger.current_quantity(a.instrument.id())
+        })
     }
 }
 fn small_legal_quantity(
@@ -1095,7 +1091,7 @@ fn small_exposure(
     small: &SmallCapital,
     assets: &[Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     now: u64,
     age: u64,
@@ -1127,7 +1123,7 @@ fn small_exposure(
             };
             exposure[i] += balance.as_decimal().abs() * rate;
         }
-    } else {
+    } else if let Some(margin) = margin {
         for position in margin.positions() {
             let Some(i) = assets
                 .iter()
@@ -1198,7 +1194,7 @@ fn small_new_entries(
     fresh: &[usize],
     assets: &mut [Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     event: u64,
     policy: &NativeTickSmallCapitalPolicyV1,
@@ -1271,7 +1267,11 @@ fn small_new_entries(
         }
         // An unknown sleeve prevents adding risk, but exits never enter this branch.
         let Some(capital) = value(
-            if is_margin { margin } else { cash },
+            if is_margin {
+                margin.context("TICK_ECONOMIC_LEDGER_INPUT")?
+            } else {
+                cash
+            },
             assets,
             fx_ids,
             event,
@@ -1433,7 +1433,7 @@ fn small_cap_entries(
     rows: &mut [NativeMark],
     assets: &[Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     event: u64,
     s: &NativeTickEconomicScenarioV1,
@@ -1451,7 +1451,12 @@ fn small_cap_entries(
             .context("ECONOMIC_NATIVE_DEFINITION_REQUIRED")?;
         let a = &assets[i];
         let is_margin = matches!(a.instrument, InstrumentAny::CryptoPerpetual(_));
-        let current = if is_margin { margin } else { cash }.current_quantity(a.instrument.id());
+        let ledger = if is_margin {
+            margin.context("TICK_ECONOMIC_LEDGER_INPUT")?
+        } else {
+            cash
+        };
+        let current = ledger.current_quantity(a.instrument.id());
         if !current.is_zero()
             && target.is_sign_negative() == current.is_sign_negative()
             && target.abs() <= current.abs()
@@ -1459,14 +1464,7 @@ fn small_cap_entries(
             continue;
         }
         let capital = value(
-            if is_margin { margin } else { cash },
-            assets,
-            fx_ids,
-            event,
-            age,
-            is_margin,
-            contexts,
-            None,
+            ledger, assets, fx_ids, event, age, is_margin, contexts, None,
         )?;
         let exposure = small_exposure(
             small, assets, cash, margin, fx_ids, event, age, is_margin, contexts,
@@ -2114,6 +2112,10 @@ pub fn replay_models_with_funding_and_cores(
                 instrument.settlement_currency() == Currency::USDC(),
                 "ECONOMIC_PERP_SETTLEMENT_UNSUPPORTED"
             );
+            ensure!(
+                !observed(&request.scenario) || request.context_source.is_some(),
+                "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
+            );
         }
         let mut reader = cache.cohorts(a)?;
         let head = reader.next().transpose()?;
@@ -2690,7 +2692,14 @@ pub fn replay_models_with_funding_and_cores(
                         .collect::<Vec<_>>();
                     ledger.inventory_target_instruments(&bridges)?;
                     cash = Some(ledger);
-                    margin = Some(build(&assets, true, margin_capital, s)?);
+                    if assets
+                        .iter()
+                        .any(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+                    {
+                        margin = Some(build(&assets, true, margin_capital, s)?);
+                    } else {
+                        reserve_usdc += margin_capital;
+                    }
                     conversion_ns = Some(counter(event)?);
                     initial_usdc = Some(exact(converted)?);
                 }
@@ -2709,7 +2718,8 @@ pub fn replay_models_with_funding_and_cores(
                 )?;
             }
         }
-        if let (Some(small), Some(c), Some(m)) = (&small, &cash, &margin) {
+        if let (Some(small), Some(c)) = (&small, &cash) {
+            let m = margin.as_ref();
             small_cap_entries(
                 small,
                 &mut marks_cash,
@@ -2789,7 +2799,8 @@ pub fn replay_models_with_funding_and_cores(
                 }
             }
         }
-        if let (Some(small), Some(c), Some(m)) = (&mut small, &cash, &margin) {
+        if let (Some(small), Some(c)) = (&mut small, &cash) {
+            let m = margin.as_ref();
             let reconciled = if observed {
                 snapshots.keys().copied().collect::<Vec<_>>()
             } else {
@@ -2814,28 +2825,31 @@ pub fn replay_models_with_funding_and_cores(
                 }
             }
             if event >= next_grid {
-                let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
-                let mut maintenance = Some(Decimal::ZERO);
-                for p in m.positions() {
-                    let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
-                    else {
-                        maintenance = None;
-                        break;
-                    };
-                    let Some(price) = small_position_price(a, event, age, &mut contexts)? else {
-                        maintenance = None;
-                        break;
-                    };
-                    let native_margin = m.maintenance_at(p.instrument_id, price)?;
-                    maintenance = maintenance.map(|sum| sum + native_margin.as_decimal());
-                }
-                if net
-                    .zip(maintenance)
-                    .is_some_and(|(net, needed)| needed > Decimal::ZERO && net <= needed)
-                {
-                    for i in 0..assets.len() {
-                        if matches!(assets[i].instrument, InstrumentAny::CryptoPerpetual(_)) {
-                            small.exit(i, event, &mut assets, s, &mut seed)?;
+                if let Some(m) = m {
+                    let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
+                    let mut maintenance = Some(Decimal::ZERO);
+                    for p in m.positions() {
+                        let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
+                        else {
+                            maintenance = None;
+                            break;
+                        };
+                        let Some(price) = small_position_price(a, event, age, &mut contexts)?
+                        else {
+                            maintenance = None;
+                            break;
+                        };
+                        let native_margin = m.maintenance_at(p.instrument_id, price)?;
+                        maintenance = maintenance.map(|sum| sum + native_margin.as_decimal());
+                    }
+                    if net
+                        .zip(maintenance)
+                        .is_some_and(|(net, needed)| needed > Decimal::ZERO && net <= needed)
+                    {
+                        for i in 0..assets.len() {
+                            if matches!(assets[i].instrument, InstrumentAny::CryptoPerpetual(_)) {
+                                small.exit(i, event, &mut assets, s, &mut seed)?;
+                            }
                         }
                     }
                 }
@@ -3246,7 +3260,7 @@ fn append_day(
     let equity = if funding_unknown {
         reason = "FUNDING_UNAVAILABLE".into();
         None
-    } else if let (Some(c), Some(m)) = (cash, margin) {
+    } else if let Some(c) = cash {
         match (
             valuation_value(
                 c,
@@ -3259,17 +3273,23 @@ fn append_day(
                 Some(&mut reason),
                 quotes,
             )?,
-            valuation_value(
-                m,
-                assets,
-                fx_ids,
-                at,
-                age,
-                true,
-                contexts,
-                Some(&mut reason),
-                quotes,
-            )?,
+            margin
+                .as_ref()
+                .map(|m| {
+                    valuation_value(
+                        m,
+                        assets,
+                        fx_ids,
+                        at,
+                        age,
+                        true,
+                        contexts,
+                        Some(&mut reason),
+                        quotes,
+                    )
+                })
+                .transpose()?
+                .unwrap_or(Some(Decimal::ZERO)),
             valuation_fx(usdt0, assets, fx_ids, at, age, quotes),
         ) {
             (Some(c), Some(m), Some(fx)) => {
@@ -3343,16 +3363,11 @@ fn schedule(
         contexts,
         None,
     )?;
-    let m = value(
-        margin.as_ref().unwrap(),
-        assets,
-        fx_ids,
-        event,
-        age,
-        true,
-        contexts,
-        None,
-    )?;
+    let m = margin
+        .as_ref()
+        .map(|m| value(m, assets, fx_ids, event, age, true, contexts, None))
+        .transpose()?
+        .unwrap_or(Some(Decimal::ZERO));
     let sums = assets
         .iter()
         .filter(|a| mark(a, event, age).is_some())
@@ -3478,7 +3493,7 @@ fn schedule(
     }
     // This scenario closes under-margined positions at later observed events, not at hindsight prices.
     let mut maintenance = Decimal::ZERO;
-    for p in margin.as_ref().unwrap().positions() {
+    for p in margin.iter().flat_map(|m| m.positions()) {
         let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id) else {
             continue;
         };
@@ -3489,7 +3504,7 @@ fn schedule(
     }
     if m.is_some_and(|net| net <= maintenance) && maintenance > Decimal::ZERO {
         plans.retain(|(i, _)| !matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_)));
-        for p in margin.as_ref().unwrap().positions() {
+        for p in margin.iter().flat_map(|m| m.positions()) {
             if let Some(i) = assets
                 .iter()
                 .position(|a| a.instrument.id() == p.instrument_id)
