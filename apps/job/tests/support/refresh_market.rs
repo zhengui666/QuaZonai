@@ -145,7 +145,6 @@ pub fn market_direction_with_size(
     later[0].weight = "0.2".parse().unwrap();
     later[1].weight = "0.6".parse().unwrap();
     let request = NativeSimulationRequestV1 {
-
         schema_version: SchemaV1,
         selection,
         settings: NativeSimulationSettingsV1 {
