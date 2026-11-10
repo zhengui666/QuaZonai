@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quazonai"
+  short_description: "通过 CLI 完成 Quazonai 研究、组合分析、账户观测与任务跟踪"
+  default_prompt: "使用 $quazonai 检查可用数据和模型，提交研究并跟踪结果。"

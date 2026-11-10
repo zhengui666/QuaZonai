@@ -1,9 +1,9 @@
 ---
-name: quazonai-cli
+name: quazonai
 description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、分析因子与组合、回放 tick、管理 PM mandate/campaign/strategy、交付目标、观测 paper/live 账户、处理资金退出，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
 ---
 
-# QuaZonai CLI
+# Quazonai
 
 把用户目标转成原生 `quazonai` 命令，保存请求与回执，再按真实业务状态交付结果。使用 CLI 提供的功能，不直接读写服务数据库或自行拼装另一套 HTTP 客户端。
 
@@ -12,16 +12,16 @@ description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用�
 在项目目录运行以下命令，即可从 GitHub `dev` 分支安装此技能到 Codex：
 
 ```sh
-npx skills add https://github.com/zhengui666/QuaZonai/tree/dev/.agents/skills/quazonai-cli --agent codex
+npx skills add https://github.com/zhengui666/QuaZonai/tree/dev/.agents/skills/quazonai --agent codex
 ```
 
 更新到 `dev` 的最新版本：
 
 ```sh
-npx skills update quazonai-cli
+npx skills update quazonai
 ```
 
-安装后在新对话中调用 `$quazonai-cli`。仅当前项目要使用时，在该项目目录安装；需跨项目使用时添加 `--global`。
+安装后在新对话中调用 `$quazonai`。仅当前项目要使用时，在该项目目录安装；需跨项目使用时添加 `--global`。
 
 ## 1. 连接并识别能力
 
