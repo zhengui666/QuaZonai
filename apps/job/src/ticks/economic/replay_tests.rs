@@ -453,7 +453,11 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
     let context_root = context_prepared.join("research/catalog");
     let mut unrelated = request.research.clone();
     unrelated.input.instrument_ids.retain(|id| id != LATE);
-    assert!(context_manifest(&context_root, &unrelated).is_err());
+    let spot_prepared = directory.path().join("spot-context-prepared");
+    cohort_cache::prepare_views(&original, &unrelated, &spot_prepared, 1_000_000).unwrap();
+    let mut prices = ContextPrices::open(&context_root, &unrelated, true, false).unwrap();
+    assert!(prices.primary.as_ref().unwrap().readers.is_empty());
+    assert_eq!(prices.price(SPOT, HOUR, HOUR, false).unwrap(), None);
     assert_eq!(
         std::fs::read(context_root.join("context-prices-000.csv")).unwrap(),
         csv.as_bytes()

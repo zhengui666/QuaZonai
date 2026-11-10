@@ -344,9 +344,6 @@ fn context_manifest_at(
             && m.start_ns < m.end_ns
             && !m.instrument_ids.is_empty()
             && m.instrument_ids.windows(2).all(|p| p[0] < p[1])
-            && m.instrument_ids
-                .iter()
-                .any(|id| request.input.instrument_ids.contains(id))
             && m.files.len() == m.instrument_ids.len(),
         "ECONOMIC_CONTEXT_MANIFEST_INVALID"
     );
