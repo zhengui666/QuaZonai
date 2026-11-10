@@ -296,8 +296,8 @@ impl Fixture {
             (START + 1200) * NS
         };
         let selected = json!({"dataset_revision_id": contracts::Id::new(), "settlements": [],
-            "selection": {"schema_version": 1, "bar_types": [format!("{}-1-MINUTE-LAST-EXTERNAL", prediction::IDS[0])],
-                "event_start_ns": ((START + 60) * NS).to_string(), "event_end_ns": end.to_string(),
+            "selection": {"schema_version": 1, "bar_types": [format!("{}-1-MINUTE-LAST-INTERNAL", prediction::IDS[0])],
+                "event_start_ns": (START * NS).to_string(), "event_end_ns": end.to_string(),
                 "decision_cutoff_ns": ((START + 1900) * NS).to_string(), "maximum_rows": 100}});
         let name = if sealed { "sealed" } else { "discovery" };
         let declaration = self.root.join(format!("{name}-declaration.json"));
@@ -311,7 +311,7 @@ impl Fixture {
             "schema_version": 1, "registered_ref": format!("fixture:v2:{name}"), "native_snapshot_ref": "fixture:v2-native",
             "storage_version": "fixture-v1", "provider_kind": "NAUTILUS_CATALOG", "data_kind": "BAR",
             "partition": if sealed { "SEALED" } else { "DISCOVERY" },
-            "event_start": instant(START + 60), "event_end": chrono::DateTime::from_timestamp_nanos(end as i64),
+            "event_start": instant(START), "event_end": chrono::DateTime::from_timestamp_nanos(end as i64),
             "available_through": instant(START + 1900), "origin": "FIXTURE", "pit_status": "UNVERIFIED", "revision_policy": "UNKNOWN",
             "provenance_reference": "SYNTHETIC_NATIVE_REGRESSION: not actual HF source files",
             "availability_provenance": "Synthetic event-time proxies; no historical availability claim",
@@ -379,7 +379,7 @@ fn public_v2_schema_runs_through_real_dispatch_preparation_export_and_factor_eva
     assert_eq!(bars.len(), 29);
     assert!(!bars
         .iter()
-        .any(|bar| bar.ts_event.as_u64() == (START + 480) * NS));
+        .any(|bar| bar.ts_event.as_u64() == (START + 420) * NS));
     let request = json!({"schema_version": 1, "forecast": {"schema_version": 1, "selection": selected["selection"],
         "parameters": {"schema_version": 1, "fast_period": 1, "slow_period": 2, "label_horizon_observations": 1, "total_fuel": "1000000"}},
         "train_end_ns": ((START + 600) * NS).to_string(), "validation_end_ns": ((START + 1200) * NS).to_string()});
@@ -450,11 +450,16 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
     let fixture = Fixture::new(true);
     let source_selection = fixture.cached_selection();
     let native_selection = fixture.root.join("cost-bar-selection.json");
-    fs::write(&native_selection, serde_json::to_vec(&json!({
-        "schema_version":1,"bar_types":["101.POLYMARKET-1-MINUTE-LAST-EXTERNAL"],
-        "event_start_ns":((START+60)*NS).to_string(),"event_end_ns":((START+120)*NS).to_string(),
-        "decision_cutoff_ns":((START+120)*NS).to_string(),"maximum_rows":1
-    })).unwrap()).unwrap();
+    fs::write(
+        &native_selection,
+        serde_json::to_vec(&json!({
+            "schema_version":1,"bar_types":["101.POLYMARKET-1-MINUTE-LAST-INTERNAL"],
+            "event_start_ns":(START*NS).to_string(),"event_end_ns":((START+60)*NS).to_string(),
+            "decision_cutoff_ns":((START+60)*NS).to_string(),"maximum_rows":1
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let make_native = |name: &str, event_id: &str, volume: &str, available: u64| {
         let path = fixture.root.join(name);
         fs::create_dir(&path).unwrap();
@@ -462,7 +467,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
             ParquetDataCatalog::from_uri(path.to_str().unwrap(), None, Some(4096), None, None)
                 .unwrap();
         let id: InstrumentId = "101.POLYMARKET".parse().unwrap();
-        let kind: BarType = "101.POLYMARKET-1-MINUTE-LAST-EXTERNAL".parse().unwrap();
+        let kind: BarType = "101.POLYMARKET-1-MINUTE-LAST-INTERNAL".parse().unwrap();
         let price = Price::from("0.800000000");
         catalog
             .write_to_parquet(
@@ -473,7 +478,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
                     price,
                     price,
                     Quantity::from(volume),
-                    ((START + 60) * NS).into(),
+                    (START * NS).into(),
                     ((START + 60) * NS).into(),
                 )],
                 None,
@@ -654,10 +659,12 @@ fn model_bars_keep_all_source_tokens_native_quantities_and_unverified_status() {
         .unwrap();
     assert_eq!(first.size.as_decimal().to_string(), "1.000000");
     assert_eq!(first.price.as_decimal().to_string(), "0.800000000");
-    assert!(bars.iter().all(|bar| bar.ts_event == bar.ts_init));
+    assert!(bars
+        .iter()
+        .all(|bar| bar.ts_init.as_u64() == bar.ts_event.as_u64() + 60 * NS));
     assert!(!bars
         .iter()
-        .any(|bar| bar.ts_event.as_u64() == (START + 8 * 60) * NS));
+        .any(|bar| bar.ts_event.as_u64() == (START + 7 * 60) * NS));
     assert!(!command(&output).output().unwrap().status.success());
 
     let second_relative = "OrderFilled/2026_09_01_part2.parquet";
