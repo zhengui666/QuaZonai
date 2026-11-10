@@ -59,6 +59,15 @@ function sourceEnd(data: JsonObject, selection: JsonObject, end: JsonObject[stri
   return BigInt(rawEnd) > BigInt(end as string) ? rawEnd : end as string;
 }
 
+function receivedPair(primaryData: JsonObject, sealedData: JsonObject) {
+  const primary = nativeResearchInput(primaryData); const independent = nativeResearchInput(sealedData);
+  if (primary?.modality !== 'TRADE_TICK' || independent?.modality !== 'TRADE_TICK'
+    || primary.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
+    || independent.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
+    || canonical(primary.request) !== canonical(clipTickRegimeEvaluation(independent.request, independent.request.validation_end_ns))) return null;
+  return { primary, independent };
+}
+
 export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT', record = true): Promise<void> {
   const window = await footprint(data);
   const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
@@ -74,8 +83,7 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
       window.receivedEnd = receivedEnd;
     }
   }
-  // Iteration reads only the clipped prefix. Keep the original-range check
-  // against final exposures so a new root cannot reset an exposed study.
+  // Iteration reads the clipped prefix; the original sealed suffix remains independent.
   // Original catalog bindings carry their time range before the scope task runs.
   // Reading that boundary must not require a scope for the held-out catalog.
   const finalCatalog = finalData && finalData.catalog_scan_request !== undefined;
@@ -88,10 +96,20 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const end = BigInt(finalEnd as string) > BigInt(currentEnd) ? finalEnd : currentEnd;
   const receivedEnd = finalWindow?.receivedEnd !== undefined && BigInt(finalWindow.receivedEnd as string) > BigInt(selection.event_end_ns as string)
     ? finalWindow.receivedEnd : selection.event_end_ns!;
-  const checked = reserve ? window : { ...window, end,
+  let checked = reserve ? window : { ...window, end,
     ...(window.availability === 'RECEIVED_TIME_OBSERVED' ? { receivedEnd } : {}) };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
+    if (!reserve && !historical && finalWindow?.availability === 'RECEIVED_TIME_OBSERVED' && finalData) {
+      const original = (await tx.doc(Study, api.conversationId)).input?.data;
+      const sealed = original?.sealed;
+      if (original && sealed && typeof sealed === 'object' && !Array.isArray(sealed)
+        && canonical(data) === canonical(original) && canonical(finalData) === canonical(sealed)
+        && receivedPair(original, sealed)) {
+        // Known history can train a rolling study; compare its new held-out envelope and record the full prefix below.
+        checked = { ...finalWindow, end };
+      }
+    }
     const scopes = new Map<string, Set<string>>();
     async function assets(item: JsonObject): Promise<Set<string>> {
       if (Array.isArray(item.instrumentIds) && item.instrumentIds.every(id => typeof id === 'string')) return new Set(item.instrumentIds as string[]);
@@ -122,11 +140,9 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
       if (!original || !sealed || typeof sealed !== 'object' || Array.isArray(sealed)
         || typeof original.catalog !== 'string' || typeof sealed.catalog !== 'string'
         || canonical(data) !== canonical(sealed)) return false;
-      const primary = nativeResearchInput(original); const independent = nativeResearchInput(sealed);
-      if (primary?.modality !== 'TRADE_TICK' || independent?.modality !== 'TRADE_TICK'
-        || primary.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
-        || independent.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
-        || canonical(primary.request) !== canonical(clipTickRegimeEvaluation(independent.request, independent.request.validation_end_ns))) return false;
+      const pair = receivedPair(original, sealed);
+      if (!pair) return false;
+      const { primary } = pair;
       // The delay envelope remains authoritative outside this admitted prefix/sealed pair.
       return item.catalog === await realpath(original.catalog) && checked.catalog === await realpath(sealed.catalog)
         && item.receivedStart === primary.request.input.event_start_ns && item.receivedEnd === primary.request.validation_end_ns

@@ -15,6 +15,7 @@ import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
 import { Study } from '../src/documents.ts';
 import { clipTickRegimeEvaluation, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import research from '../plugins/research.ts';
+import { startLegacyResearch } from './legacy-study.ts';
 
 const context = BACKGROUND_CONTEXT;
 const second = 1_000_000_000n;
@@ -171,6 +172,102 @@ test('only an admitted received-time study can finalize beside its own iteration
     assert.deepEqual([ledger.windows[1]!.start, ledger.windows[1]!.end, ledger.windows[1]!.receivedStart, ledger.windows[1]!.receivedEnd], ['48', '90', '50', '80']);
     await assert.rejects(checkExposure(api(3), context, full, true), /heldout_already_exposed/);
     assert.equal(ledger.windows.length, 2);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('an original received pair permits known primary history while preserving every new final exposure check', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-rolling-received-exposure-'));
+  const primaryCatalog = join(directory, 'primary'); const sealedCatalog = join(directory, 'sealed'); const renamedCatalog = join(directory, 'renamed');
+  await Promise.all([primaryCatalog, sealedCatalog, renamedCatalog].map(path => mkdir(path)));
+  const full = tickData(sealedCatalog, 'ROLLING.SIM');
+  const request = (full.nativeInput as JsonObject).request as JsonObject;
+  Object.assign(request.input as JsonObject, { event_start_ns: '0', event_end_ns: '80', decision_cutoff_ns: '80',
+    availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2' });
+  Object.assign(request, { train_end_ns: '30', validation_end_ns: '50', target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '1' } });
+  (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+  full.source_event_start_ns = '0'; full.source_event_end_ns = '90';
+  const primary = { catalog: primaryCatalog, source_event_start_ns: '0', source_event_end_ns: '55',
+    nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), '50') } };
+  const admitted: JsonObject = { ...primary, sealed: full };
+  const study = { input: { data: admitted } };
+  const prior: JsonObject = { kind: 'FINAL', taskId: 99, conversationId: 8,
+    modality: 'TRADE_TICK', instrumentIds: ['ROLLING.SIM'], start: '10', end: '20' };
+  const ledger: { windows: JsonObject[] } = { windows: [structuredClone(prior)] };
+  const api = (taskId: number) => ({ taskId, conversationId: 7,
+    async commit(action: (tx: unknown) => Promise<void>) { return action({ async doc(type: unknown) { return type === Study ? study : ledger; } }); },
+  }) as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    await checkExposure(api(1), context, admitted, false, full);
+    assert.deepEqual(ledger.windows[0], prior);
+    const iteration = structuredClone(ledger.windows[1]!);
+    assert.deepEqual([iteration.start, iteration.end, iteration.receivedStart, iteration.receivedEnd], ['0', '55', '0', '50'],
+      'the stored prefix includes all previously known history and the original receive-delay envelope');
+
+    for (const changed of [{ ...admitted, sealed: undefined }, { ...admitted, catalog: renamedCatalog }]) {
+      await assert.rejects(checkExposure(api(2), context, changed as JsonObject, false, full), /heldout_already_exposed/);
+    }
+    const mismatched = structuredClone(full);
+    (((mismatched.nativeInput as JsonObject).request as JsonObject).input as JsonObject).source_revision = 'different-source';
+    await assert.rejects(checkExposure(api(2), context, admitted, false, mismatched), /heldout_already_exposed/);
+
+    const renamed = structuredClone(full);
+    renamed.catalog = renamedCatalog;
+    const repeatedRequest = (renamed.nativeInput as JsonObject).request as JsonObject;
+    Object.assign(repeatedRequest, { train_end_ns: '5', validation_end_ns: '15' });
+    Object.assign(repeatedRequest.input as JsonObject, { source_revision: 'renamed-published-source', event_end_ns: '25', decision_cutoff_ns: '25' });
+    renamed.source_event_end_ns = '25';
+    const repeated: JsonObject = { catalog: renamedCatalog, source_event_start_ns: '0', source_event_end_ns: '15',
+      nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(repeatedRequest), '15') }, sealed: renamed };
+    study.input.data = repeated;
+    await assert.rejects(checkExposure(api(2), context, repeated, false, renamed), /heldout_already_exposed/,
+      'changing paths and revisions cannot make the same old private interval new');
+    study.input.data = admitted;
+
+    ledger.windows.push({ kind: 'ITERATION', taskId: 100, conversationId: 9,
+      modality: 'TRADE_TICK', instrumentIds: ['ROLLING.SIM'], start: '65', end: '70' });
+    await assert.rejects(checkExposure(api(2), context, full, true), /heldout_already_exposed/);
+    ledger.windows.pop();
+    await checkExposure(api(2), context, full, true);
+    assert.deepEqual(ledger.windows[0], prior); assert.deepEqual(ledger.windows[1], iteration);
+    assert.deepEqual([ledger.windows[2]!.start, ledger.windows[2]!.end], ['48', '90']);
+    await assert.rejects(checkExposure(api(3), context, admitted, false, full), /heldout_already_exposed/);
+    assert.equal(ledger.windows.length, 3);
+
+    const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+    const reservation = defineExtension({ name: 'test.rolling-received-recovery', tools: [defineTool({
+      name: 'reserve_prefix', description: 'Record the original primary source exposure', parameters: obj({}), replay: 'safe',
+      async execute(_args, runtime, ctx) {
+        const input = await studyInput(runtime, ctx);
+        await checkExposure(runtime, ctx, input.data, false, input.data.sealed as JsonObject);
+        return { control: { terminate: true } };
+      },
+    }), defineTool({
+      name: 'reserve_suffix', description: 'Reserve the original independent source after reopening', parameters: obj({}), replay: 'safe',
+      async execute(_args, runtime, ctx) {
+        const input = await studyInput(runtime, ctx);
+        await checkExposure(runtime, ctx, input.data.sealed as JsonObject, true);
+        return { control: { terminate: true } };
+      },
+    })] });
+    const options = { database: join(directory, 'recovery.sqlite'), models, extensions: [reservation] };
+    let host = await openResearch(options);
+    try {
+      await host.harness.commit(async tx => { (await tx.doc(Exposures)).windows.push(structuredClone(prior)); }, context);
+      faux.setResponses([fauxAssistantMessage(fauxToolCall('reserve_prefix', {}), { stopReason: 'toolUse' })]);
+      const receipt = await startLegacyResearch(host, 'original-rolling-pair', { goal: 'Source role recovery protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: admitted, policy: {} });
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      const original = (await host.harness.snapshot(Exposures, context))!.windows;
+      assert.equal(original.length, 2); assert.deepEqual(original[0], prior);
+      await host.close(); host = await openResearch(options);
+      assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, original);
+      faux.setResponses([fauxAssistantMessage(fauxToolCall('reserve_suffix', {}), { stopReason: 'toolUse' })]);
+      const handle = (await host.harness.conversation(receipt.conversationId, context))!;
+      const submission = await host.harness.commit(tx => handle.submit(tx, { type: 'input', content: 'Reserve the original suffix', requestId: 'original-suffix' }), context);
+      await (await host.harness.submission(submission, context))!.wait(context);
+      const restored = (await host.harness.snapshot(Exposures, context))!.windows;
+      assert.equal(restored.length, 3); assert.deepEqual(restored.slice(0, 2), original);
+      assert.deepEqual([restored[2]!.start, restored[2]!.end, restored[2]!.conversationId], ['48', '90', receipt.conversationId]);
+    } finally { await host.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
