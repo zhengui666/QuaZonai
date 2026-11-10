@@ -200,7 +200,7 @@ def bundle(tag: str, revision: str, image: str, destination: Path, *,
         for name in sorted(BUNDLE_FILES):
             source = destination / name if name == "release.json" else BUNDLE / name
             if name == "README.md":
-                content = source.read_text().replace("@QUAZONAI_VERSION@", tag).encode()
+                content = asset_package().readme(release).encode()
                 member = tarfile.TarInfo(name)
                 member.size = len(content)
                 archive.addfile(member, io.BytesIO(content))

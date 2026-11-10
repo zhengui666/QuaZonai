@@ -41,7 +41,7 @@ try {
             [IO.Compression.ZipFileExtensions]::ExtractToFile($Entry, $Target)
         }
     } finally { $Zip.Dispose() }
-    foreach ($Name in @('runtime/node.exe','runtime/LICENSE','app/apps/cli/src/main.ts','quazonai.cmd','distribution.json','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md')) {
+    foreach ($Name in @('runtime/node.exe','runtime/LICENSE','app/apps/cli/src/main.ts','quazonai.cmd','distribution.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Candidate $Name) -PathType Leaf)) { throw "Incomplete JS/Node CLI: $Name" }
     }
     $Actual = & (Join-Path $Candidate 'quazonai.cmd') --version

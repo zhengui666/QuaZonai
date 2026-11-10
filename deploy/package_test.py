@@ -49,7 +49,7 @@ class CliEncodingTests(unittest.TestCase):
         dependencies = root / 'apps/cli/node_modules'
         if not dependencies.is_dir():
             raise RuntimeError('Run npm ci --prefix apps/cli before the CLI decoding tests.')
-        files = {name: root / name for name in package.NOTICES}
+        files = {}
         files.update({
             'runtime/node.exe' if os.name == 'nt' else 'runtime/node': cls.node,
             'runtime/LICENSE': cls.node.parent / 'LICENSE' if os.name == 'nt' else cls.node.parent.parent / 'LICENSE',

@@ -19,7 +19,6 @@ CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suff
     ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
     ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
 IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime')}
-NOTICES = {'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
 REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
 MARKER = '@QUAZONAI_VERSION@'
@@ -37,7 +36,7 @@ def safe_name(name: str) -> bool:
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
 def cli_members(platform: str) -> set[str]:
-    return NOTICES | {'distribution.json', 'runtime/LICENSE',
+    return {'distribution.json', 'runtime/LICENSE',
         'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
         'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
@@ -54,7 +53,7 @@ def check_cli_archive(path: Path, platform: str) -> None:
             if any(not item.isfile() for item in members):
                 raise ValueError('CLI archives contain only regular files.')
             names = [item.name for item in members]
-    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'licenses/'))
+    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/'))
     if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
@@ -83,9 +82,6 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         (directory / 'runtime').mkdir()
         shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
         shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
-        for name in NOTICES:
-            shutil.copy2(ROOT / name, directory / name)
-        shutil.copytree(ROOT / 'licenses', directory / 'licenses')
         (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
         if windows:
             (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')

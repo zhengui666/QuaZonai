@@ -5,9 +5,7 @@
   "files": [
     "bin",
     "src",
-    "schemas",
-    "LICENSE",
-    "README.md"
+    "schemas"
   ],
   "type": "module",
   "bin": {

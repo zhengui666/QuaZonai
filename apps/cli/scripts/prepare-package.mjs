@@ -1,9 +1,8 @@
-// Package original project license/contract assets; no hand-maintained schemas.
+// Package original contract assets; no hand-maintained schemas.
 import { copyFile, mkdir } from 'node:fs/promises';
 const root = new URL('../../../', import.meta.url);
 const local = new URL('../', import.meta.url);
 await mkdir(new URL('schemas/', local), { recursive: true });
-await copyFile(new URL('LICENSE', root), new URL('LICENSE', local));
 await copyFile(new URL('packages/contracts/src/index.ts', root), new URL('schemas/contracts.ts.txt', local));
 await copyFile(new URL('packages/contracts/src/pm.ts', root), new URL('schemas/pm.ts.txt', local));
 await copyFile(new URL('packages/contracts/src/pm-intent.ts', root), new URL('schemas/pm-intent.ts.txt', local));

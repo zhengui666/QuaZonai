@@ -115,12 +115,7 @@ try {
   }
   for (const name of ['tmp', 'input', 'output']) fs.mkdirSync(destination('/' + name), { mode: name === 'tmp' ? 0o1777 : 0o755 });
   fs.chmodSync(destination('/tmp'), 0o1777);
-  for (const name of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
-    const source = path.join(repository, name);
-    if (fs.existsSync(source)) copyNative(source, '/usr/share/doc/quazonai/' + name);
-  }
-  // Preserve upstream notices from the installed native distributions, not invented licenses.
-  copyNative(path.join(repository, 'licenses/nautilus-backtest-LGPL-3.0.txt'), '/usr/share/doc/quazonai/licenses/nautilus-backtest-LGPL-3.0.txt');
+  // Preserve upstream notices from installed distributions.
   const noticeRoot = path.join(sysroot, 'share/doc/rust');
   if (fs.existsSync(noticeRoot)) fs.cpSync(noticeRoot, destination('/usr/share/doc/rust'), { recursive: true, dereference: false, verbatimSymlinks: true });
   for (const component of ['coreutils', 'tar', 'zstd', 'libacl1', 'libzstd1', 'liblz4-1', 'liblzma5', 'zlib1g', 'libc6', 'libgcc-s1', 'libstdc++6']) {

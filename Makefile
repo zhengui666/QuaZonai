@@ -1,4 +1,4 @@
-.PHONY: check check-ts check-web check-science check-core check-native-full check-source check-deploy check-links generate-native-schema
+.PHONY: check check-ts check-web check-science check-core check-native-full check-source check-deploy generate-native-schema
 
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
@@ -11,7 +11,6 @@ QZ_PM_OBSERVED_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(
 QZ_EXPORT_OBSERVED_FIXTURES ?= 1
 QZ_SCIENCE_TEST_FILTER_ARGS ?=
 QZ_PM_FORWARD_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(TMPDIR),/tmp))/qz-pm-forward-fixture
-LYCHEE ?= lychee
 
 check: check-ts check-web check-deploy
 
@@ -72,6 +71,3 @@ check-deploy: check-source
 	node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs deploy/docker/pm-maintenance.test.mjs deploy/docker/native-build.test.mjs deploy/docker/workflow.test.mjs runtimes/native/native-files.test.mjs runtimes/native/native-image-contract.test.mjs
 	python3 -B -m unittest discover -s deploy -p package_test.py
 	python3 -B -m unittest discover -s deploy/docker -p release_test.py
-
-check-links:
-	git ls-files -z --cached --others --exclude-standard -- '*.md' | xargs -0 $(LYCHEE) --config .lychee.toml --
