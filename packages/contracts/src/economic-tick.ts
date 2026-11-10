@@ -15,7 +15,8 @@ export type NativeTickEconomicRequest = {
   schema_version: 1; research: NativeTickFactorRequest; scenario: NativeTickEconomicScenario;
   fx_instrument_ids: string[]; funding_source: string; context_source?: string; event_time_context_source?: string; spot_valuation_source?: string;
   signal_weights?: string[];
-  small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string };
+  small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string;
+    decision_clock?: 'COHORT_BUCKET_V1' | 'FIXED_INTERVAL_V1' };
 };
 
 const decimalFields = ['initial_usdt', 'usdt0_per_usdt', 'spot_fraction', 'gross_fraction', 'maximum_asset_weight',
@@ -74,11 +75,14 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   let policy: NativeTickEconomicRequest['small_capital_policy'];
   if (request.small_capital_policy !== undefined) {
     const value = object(request.small_capital_policy);
-    fields(value, ['maximum_entry_notional_usdc', 'maximum_holding_ns']);
+    fields(value, ['maximum_entry_notional_usdc', 'maximum_holding_ns', 'decision_clock']);
     const notional = value.maximum_entry_notional_usdc, holding = value.maximum_holding_ns;
     if (typeof notional !== 'string' || notional.length > 64 || !/^[+]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(notional) || compareDecimal(notional, '0') <= 0) throw new Error('tick_economic_maximum_entry_notional_usdc_invalid');
     if (typeof holding !== 'string' || !/^[1-9]\d*$/.test(holding) || BigInt(holding) > 9223372036854775807n) throw new Error('tick_economic_maximum_holding_ns_invalid');
-    policy = { maximum_entry_notional_usdc: addDecimal(notional, '0'), maximum_holding_ns: holding };
+    const clock = value.decision_clock;
+    if (clock !== undefined && clock !== 'COHORT_BUCKET_V1' && clock !== 'FIXED_INTERVAL_V1') throw new Error('tick_economic_decision_clock_invalid');
+    policy = { maximum_entry_notional_usdc: addDecimal(notional, '0'), maximum_holding_ns: holding,
+      ...(clock === undefined ? {} : { decision_clock: clock }) };
   }
   const normalized = { ...s }; for (const key of decimalFields) normalized[key] = addDecimal(s[key], '0');
   return { schema_version: 1, research, scenario: normalized,
@@ -94,6 +98,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
 export type NativeTickEconomicResult = {
   schema_version: 1; request: NativeTickEconomicRequest; model: string;
   small_capital_diagnostics?: {
+    decision_clock_ticks?: string;
     entry_attempts: string; unfilled_entries: string; positions_opened: string; positions_closed: string; exit_attempts: string;
     maximum_exit_delay_ns: string | null;
     remaining_positions: { instrument_id: string; quantity: string; entry_decision_ns: string; first_fill_ns: string; exit_decision_ns: string | null }[];
@@ -143,8 +148,9 @@ export function validateNativeTickEconomicResult(value: unknown): NativeTickEcon
   const decimal = (value: unknown) => typeof value === 'string' && value.length <= 80 && /^[+-]?(?:0*\d{1,29}(?:\.\d{0,28})?|\.\d{1,28})(?![\s\S])/.test(value);
   if (result.small_capital_diagnostics !== undefined) {
     const d = object(result.small_capital_diagnostics);
-    fields(d, ['entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts', 'maximum_exit_delay_ns', 'remaining_positions']);
+    fields(d, ['decision_clock_ticks', 'entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts', 'maximum_exit_delay_ns', 'remaining_positions']);
     if (['entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts'].some(key => !counter(d[key]))
+      || d.decision_clock_ticks !== undefined && !counter(d.decision_clock_ticks)
       || d.maximum_exit_delay_ns !== null && !counter(d.maximum_exit_delay_ns)
       || !Array.isArray(d.remaining_positions) || d.remaining_positions.some(value => {
         const p = object(value); fields(p, ['instrument_id', 'quantity', 'entry_decision_ns', 'first_fill_ns', 'exit_decision_ns']);

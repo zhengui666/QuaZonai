@@ -3,6 +3,8 @@ use super::{clocked_feature, cohort_cache, Cohort};
 use crate::signals::SignalModule;
 use anyhow::{ensure, Context, Result};
 use contracts::{economic_tick::*, DbCounter, DecimalValue, SchemaV1};
+use nautilus_common::timer::{create_valid_interval, VirtualTimer};
+use nautilus_core::DurationNanos;
 use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
     indicator::{Indicator, MovingAverage},
@@ -845,6 +847,7 @@ struct SmallCapital {
     positions_closed: u64,
     exit_attempts: u64,
     maximum_exit_delay: Option<u64>,
+    decision_clock_ticks: Option<u64>,
 }
 impl SmallCapital {
     fn new(count: usize) -> Self {
@@ -858,6 +861,7 @@ impl SmallCapital {
             positions_closed: 0,
             exit_attempts: 0,
             maximum_exit_delay: None,
+            decision_clock_ticks: None,
         }
     }
     fn exit(
@@ -970,6 +974,7 @@ impl SmallCapital {
     }
     fn report(&self, assets: &[Asset]) -> Result<NativeTickSmallCapitalDiagnosticsV1> {
         Ok(NativeTickSmallCapitalDiagnosticsV1 {
+            decision_clock_ticks: self.decision_clock_ticks.map(counter).transpose()?,
             entry_attempts: counter(self.entry_attempts)?,
             unfilled_entries: counter(self.unfilled_entries)?,
             positions_opened: counter(self.positions_opened)?,
@@ -2310,14 +2315,37 @@ pub fn replay_models_with_funding_and_cores(
         .small_capital_policy
         .as_ref()
         .map(|_| SmallCapital::new(assets.len()));
+    let fixed_clock = request.small_capital_policy.as_ref().is_some_and(|policy| {
+        policy.decision_clock == Some(NativeTickDecisionClockV1::FixedIntervalV1)
+    });
+    let mut decision_timer = fixed_clock.then(|| {
+        VirtualTimer::new(
+            "small-capital-decisions".into(),
+            create_valid_interval(DurationNanos::new(s.decision_interval_ns.get())),
+            start.into(),
+            Some((request.research.input.event_end_ns.get() - 1).into()),
+            true,
+        )
+    });
+    let mut decision_fresh = BTreeSet::new();
     let mut latest_source_events = vec![0; assets.len()];
     while let Some(event) = heap
         .peek()
         .map(|Reverse((at, _))| *at)
         .into_iter()
         .chain(book_heap.peek().map(|Reverse((at, _))| *at))
+        .chain(
+            decision_timer
+                .as_ref()
+                .filter(|timer| !timer.is_expired())
+                .map(|timer| timer.next_time_ns().as_u64())
+                .filter(|at| *at < request.research.input.event_end_ns.get()),
+        )
         .min()
     {
+        let decision_tick = decision_timer
+            .as_mut()
+            .is_some_and(|timer| timer.next_time_ns().as_u64() == event && timer.next().is_some());
         // Complete each global timestamp before scheduling new decisions.
         let mut group = Vec::new();
         while heap.peek().is_some_and(|Reverse((at, _))| *at == event) {
@@ -2343,6 +2371,9 @@ pub fn replay_models_with_funding_and_cores(
             }
         }
         if let Some(small) = &mut small {
+            if decision_tick {
+                *small.decision_clock_ticks.get_or_insert(0) += 1;
+            }
             small.expire(event, &mut assets, s, &mut seed)?;
         }
         while day_end <= event {
@@ -2420,9 +2451,11 @@ pub fn replay_models_with_funding_and_cores(
         let mut fresh = Vec::new();
         let mut attempted = Vec::new();
         for &i in &group {
-            if let Some(small) = &mut small {
-                let price = finite(assets[i].head.as_ref().unwrap().vwap)?;
-                small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+            if !fixed_clock {
+                if let Some(small) = &mut small {
+                    let price = finite(assets[i].head.as_ref().unwrap().vwap)?;
+                    small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+                }
             }
             let a = &mut assets[i];
             let current = a.head.take().unwrap();
@@ -2483,6 +2516,9 @@ pub fn replay_models_with_funding_and_cores(
                     a.score = Some(score);
                     if small.is_some() {
                         fresh.push(i);
+                        if fixed_clock {
+                            decision_fresh.insert(i);
+                        }
                     }
                     if request.research.parameters.total_fuel.is_some() {
                         consumed = consumed.checked_add(used).context("ECONOMIC_FUEL_RANGE")?;
@@ -2835,7 +2871,13 @@ pub fn replay_models_with_funding_and_cores(
                     assets[i].pending = None;
                 }
             }
-            if event >= next_grid {
+            if decision_tick {
+                for &i in &decision_fresh {
+                    let price = finite(assets[i].previous.as_ref().unwrap().vwap)?;
+                    small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+                }
+            }
+            if decision_tick || (!fixed_clock && event >= next_grid) {
                 if let Some(m) = m {
                     let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
                     let mut maintenance = Some(Decimal::ZERO);
@@ -2864,14 +2906,22 @@ pub fn replay_models_with_funding_and_cores(
                         }
                     }
                 }
-                next_grid = (event / s.decision_interval_ns.get() + 1)
-                    .checked_mul(s.decision_interval_ns.get())
-                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+                if !fixed_clock {
+                    next_grid = (event / s.decision_interval_ns.get() + 1)
+                        .checked_mul(s.decision_interval_ns.get())
+                        .context("ECONOMIC_CLOCK_OVERFLOW")?;
+                }
             }
-            if event < request.research.input.decision_cutoff_ns.get() {
-                let eligible: Vec<_> = fresh
-                    .iter()
-                    .copied()
+            if event < request.research.input.decision_cutoff_ns.get()
+                && (!fixed_clock || decision_tick)
+            {
+                let candidates = if fixed_clock {
+                    decision_fresh.iter().copied().collect()
+                } else {
+                    fresh
+                };
+                let eligible: Vec<_> = candidates
+                    .into_iter()
                     .filter(|i| {
                         funding_unknown.is_none()
                             || !matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_))
@@ -2907,6 +2957,9 @@ pub fn replay_models_with_funding_and_cores(
             next_grid = (event / s.decision_interval_ns.get() + 1)
                 .checked_mul(s.decision_interval_ns.get())
                 .context("ECONOMIC_CLOCK_OVERFLOW")?;
+        }
+        if decision_tick {
+            decision_fresh.clear();
         }
     }
     let end = request.research.input.event_end_ns.get();
@@ -3048,7 +3101,8 @@ pub fn replay_models_with_funding_and_cores(
             ("funding_source".into(), funding_manifest.as_ref().map_or_else(|| "Periodic funding is inapplicable to this CurrencyPair-only replay.".into(), |manifest| format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", manifest.source_revision, manifest.start_ns.get(), manifest.end_ns.get(), manifest.rows, request.funding_source))),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
-            ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
+            ("decision_clock".into(), if fixed_clock { format!("FIXED_INTERVAL_V1. Official Nautilus VirtualTimer at start + k * {}ns through the half-open input window. Same-time received data and scores precede alpha decisions. Empty seconds hold, each new cohort score is consumed once. Predetermined holding-risk deadlines and queued execution remain independent.", s.decision_interval_ns.get()) } else { "Legacy cohort-event decisions, capped by global interval buckets rather than a fixed timer.".into() }),
+            ("policy".into(),if small.is_some() && fixed_clock {"Fixed capped USDC alpha entries and reference-price exits at native timer deadlines, using each asset latest new cohort once. Empty clock events hold without resubmitting old signals. Declared roundtrip-cost hurdle and frozen entry fastEMA remain. Timeout is measured from entry decision with the original precise risk deadline. Orders execute only at real later observations after latency, partial fills and residual inventory remain, and quote inventory is not alpha. No dynamic sleeve transfers.".into()} else if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(), if funding_manifest.is_none() { "Periodic funding is inapplicable to this CurrencyPair-only replay.".into() } else if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),

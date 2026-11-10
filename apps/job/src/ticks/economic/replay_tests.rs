@@ -1095,6 +1095,7 @@ fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
 fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
     let (prepared, mut request, _) = source(directory, 0, None, true);
     request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        decision_clock: None,
         maximum_entry_notional_usdc: "30".parse().unwrap(),
         maximum_holding_ns: counter(60 * SECOND).unwrap(),
     });
@@ -2285,9 +2286,10 @@ fn small_nonzero_roundtrip_cost_hurdle_excludes_equality_and_below() {
     }
 }
 
-#[test]
-fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real_later_cohort() {
-    let directory = tempfile::tempdir().unwrap();
+fn small_replay_source(
+    directory: &Path,
+    extra_cohort: Option<TradeTick>,
+) -> (PathBuf, NativeTickEconomicRequestV1) {
     let mut instruments = definitions();
     let usdt0 = Currency::from_str("USDT0").unwrap();
     let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
@@ -2329,6 +2331,7 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     request.scenario.maximum_mark_age_ns = counter(HOUR).unwrap();
     request.fx_instrument_ids = vec![BRIDGE.into()];
     request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        decision_clock: None,
         maximum_entry_notional_usdc: "30".parse().unwrap(),
         maximum_holding_ns: counter(60 * SECOND).unwrap(),
     });
@@ -2364,8 +2367,9 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     }
     // A real source cohort creates the perp cache identity; clipping then legitimately leaves it empty in primary.
     add(LATE, 3 * DAY / SECOND + 20, "100.00", AggressorSide::Buy);
+    rows.extend(extra_cohort);
     rows.sort_by_key(|row| (row.ts_event, row.instrument_id));
-    let source = directory.path().join("source");
+    let source = directory.join("source");
     let mut builder = cohort_cache::Builder::new_flow(&source, 100, 100, 1_000_000).unwrap();
     for row in rows {
         builder.push(row).unwrap();
@@ -2403,7 +2407,7 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     );
     let spot_quotes = format!("{primary_quote}{heldout_quote}{after_end}");
     std::fs::write(catalog.join("spot-valuation.jsonl"), &spot_quotes).unwrap();
-    let prepared = directory.path().join("prepared");
+    let prepared = directory.join("prepared");
     let metadata =
         cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
     assert!(metadata["economic_sources"]
@@ -2424,6 +2428,15 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     // Consume the official clipped request paired with the primary cache, not a mismatched full-window request.
     request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
     assert_eq!(request.research.input.event_end_ns.get(), 3 * DAY);
+    (prepared, request)
+}
+
+#[test]
+fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real_later_cohort() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request) = small_replay_source(directory.path(), None);
+    let catalog = directory.path().join("source/catalog");
+    let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
     let result = replay(
         &prepared.join("research/catalog"),
         &request,
@@ -2480,6 +2493,38 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         "profitable-looking source event after the prepared primary-view end is outside the replay"
     );
     assert_eq!(result.model, "SEGREGATED_COHORT_MARK_ESTIMATE_V1");
+    assert_eq!(diagnostics.decision_clock_ticks, None);
+    let mut fixed_request = request.clone();
+    fixed_request.scenario.decision_interval_ns = counter(SECOND).unwrap();
+    let policy = fixed_request.small_capital_policy.as_mut().unwrap();
+    policy.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+    policy.maximum_holding_ns = counter(60 * SECOND + SECOND / 2).unwrap();
+    let fixed = replay(
+        &prepared.join("research/catalog"),
+        &fixed_request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    let clocked = fixed.small_capital_diagnostics.as_ref().unwrap();
+    assert_eq!(
+        clocked.decision_clock_ticks.unwrap().get(),
+        3 * DAY / SECOND
+    );
+    assert_eq!(clocked.positions_opened, diagnostics.positions_opened);
+    assert_eq!(clocked.positions_closed, diagnostics.positions_closed);
+    assert_eq!(
+        clocked.unfilled_entries, diagnostics.unfilled_entries,
+        "empty seconds hold without retrying an old alpha signal"
+    );
+    assert_eq!(
+        clocked.maximum_exit_delay_ns.unwrap().get(),
+        19 * SECOND + SECOND / 2,
+        "the exact 80.5s risk deadline remains between timer ticks, with the real exit at 100s"
+    );
+    assert_eq!(
+        fixed.native_fills, result.native_fills,
+        "timer events never create executable quotes"
+    );
     request.scenario.execution_model =
         Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
     let quote_result = replay(
@@ -2536,6 +2581,58 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     assert_eq!(diagnostics.positions_opened.get(), 1);
     assert_eq!(diagnostics.positions_closed.get(), 1);
     assert!(diagnostics.remaining_positions.is_empty());
+}
+
+#[test]
+fn fixed_interval_decisions_consume_same_time_scores_and_defer_reference_exit_to_the_grid() {
+    let directory = tempfile::tempdir().unwrap();
+    let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
+    let at = 100 * SECOND + SECOND / 2;
+    let extra = TradeTick::new(
+        InstrumentId::from(alpha),
+        Price::from("200.00"),
+        Quantity::from("10000.0000"),
+        AggressorSide::Buy,
+        TradeId::from("FIXED-CLOCK-REFERENCE"),
+        at.into(),
+        at.into(),
+    );
+    let (prepared, mut request) = small_replay_source(directory.path(), Some(extra));
+    request.scenario.decision_interval_ns = counter(SECOND).unwrap();
+    let policy = request.small_capital_policy.as_mut().unwrap();
+    policy.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+    policy.maximum_holding_ns = counter(DAY).unwrap();
+    let result = replay(
+        &prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    let diagnostics = result.small_capital_diagnostics.unwrap();
+    assert_eq!(
+        diagnostics.decision_clock_ticks.unwrap().get(),
+        3 * DAY / SECOND
+    );
+    let held = diagnostics
+        .remaining_positions
+        .iter()
+        .find(|p| p.instrument_id == alpha)
+        .unwrap();
+    assert_eq!(
+        held.entry_decision_ns.get(),
+        20 * SECOND,
+        "same-time new cohort precedes its clock decision"
+    );
+    assert_eq!(
+        held.exit_decision_ns.unwrap().get(),
+        101 * SECOND,
+        "the 100.5s reference move is decided at the next one-second tick"
+    );
+    assert_eq!(
+        diagnostics.positions_closed.get(),
+        0,
+        "a clock tick cannot substitute for the missing later execution observation"
+    );
 }
 
 #[test]

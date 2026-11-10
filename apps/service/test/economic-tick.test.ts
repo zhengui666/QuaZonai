@@ -94,6 +94,12 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     const request = validateNativeTickEconomicRequest({ schema_version: 1, research: { ...research, input: unlimitedInput }, scenario: { initial_usdt: '3000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '0.02', participation_fraction: '0.01',
       perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
       fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl', context_source: 'context-prices.manifest.json' });
+    const legacyPolicy = { maximum_entry_notional_usdc: '100', maximum_holding_ns: '60500000000' };
+    assert.deepEqual(validateNativeTickEconomicRequest({ ...request, small_capital_policy: legacyPolicy }).small_capital_policy, legacyPolicy);
+    const clockPolicy = { ...legacyPolicy, decision_clock: 'FIXED_INTERVAL_V1' as const };
+    assert.deepEqual(validateNativeTickEconomicRequest({ ...request, small_capital_policy: clockPolicy }).small_capital_policy, clockPolicy);
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...legacyPolicy, decision_clock: 'unknown' } }), /decision_clock_invalid/);
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...legacyPolicy, decision_clock: ['FIXED_INTERVAL_V1'] } }), /decision_clock_invalid/);
     assert.equal(validateNativeTickEconomicRequest({ ...request, spot_valuation_source: 'spot-valuation.jsonl' }).spot_valuation_source, 'spot-valuation.jsonl');
     assert.throws(() => validateNativeTickEconomicRequest({ ...request, spot_valuation_source: '../spot-valuation.jsonl' }), /spot_valuation_source_invalid/);
     const payload = { requestId: 'economic-original', datasetId: 'ticks', factorId: `r${researchId}.t77.m0`, request };
@@ -168,7 +174,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal((ownedNative[0]!.input as { requestId: string }).requestId, references[0]!.requestId);
     // Stop the service while the actual worker process is still running. The
     // original native child must recover its checkpoint and GET its receipt.
-    const restartRequest = { ...request, scenario: { ...request.scenario, random_seed: '44' } };
+    const restartRequest = { ...request, small_capital_policy: clockPolicy, scenario: { ...request.scenario, random_seed: '44' } };
     const restarting = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
       payload: { ...payload, requestId: 'economic-real-restart', request: restartRequest } });
     assert.equal(restarting.statusCode, 202, restarting.body);

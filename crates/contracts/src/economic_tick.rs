@@ -43,6 +43,15 @@ pub enum NativeTickEconomicExecutionModelV1 {
 pub struct NativeTickSmallCapitalPolicyV1 {
     pub maximum_entry_notional_usdc: DecimalValue,
     pub maximum_holding_ns: DbCounter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_clock: Option<NativeTickDecisionClockV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickDecisionClockV1 {
+    CohortBucketV1,
+    FixedIntervalV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -146,6 +155,8 @@ pub struct NativeTickSmallCapitalPositionV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTickSmallCapitalDiagnosticsV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_clock_ticks: Option<DbCounter>,
     pub entry_attempts: DbCounter,
     pub unfilled_entries: DbCounter,
     pub positions_opened: DbCounter,

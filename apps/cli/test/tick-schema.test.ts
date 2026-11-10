@@ -21,4 +21,6 @@ test('owner economic replay source contracts are available without a native-sche
   assert.match(value.source!, /signal_weights\?: string\[\]/);
   assert.match(value.source!, /NativeTickEconomicRequest/);
   assert.match(value.source!, /perp_pnl_rounding_bound_usdc/);
+  assert.match(value.source!, /decision_clock\?: 'COHORT_BUCKET_V1' \| 'FIXED_INTERVAL_V1'/);
+  assert.match(value.source!, /decision_clock_ticks\?: string/);
 });
