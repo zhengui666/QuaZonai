@@ -235,7 +235,8 @@ async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTask
     const row = { requestId: state.requestId, target: { ...task.input.target }, taskId: ownerId, status: state.status,
       error: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : null };
     const old = facts.requests.findIndex(item => item.requestId === state.requestId);
-    if (old < 0) facts.requests.push(row); else facts.requests[old] = row;
+    const admissionRejection = facts.requests[old]?.admissionRejection;
+    if (old < 0) facts.requests.push(row); else facts.requests[old] = { ...row, ...(admissionRejection ? { admissionRejection } : {}) };
     if (state.status === 'RUNNING') {
       if (state.progress) (await tx.doc(NativeExecutionProgress, runtime.conversationId, String(task.id), null)).snapshots = state.progress.snapshots;
       return { status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'poll' } };
@@ -264,8 +265,9 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
             const ownerId = task.input.ownerTaskId ?? task.id;
             const facts = await tx.doc(NativeRemoteUncertainty, runtime.conversationId, String(ownerId), null);
             const prior = facts.requests.find(row => row.requestId === task.input.requestId);
-            const rejected = { requestId: task.input.requestId, target: { ...task.input.target }, taskId: ownerId, status: 'REJECTED', admission: 'REJECTED', error: error.rejection.error };
+            const rejected = { requestId: task.input.requestId, target: { ...task.input.target }, taskId: ownerId, status: 'REJECTED', admission: 'REJECTED', error: error.rejection.error, admissionRejection: error.rejection.error };
             if (prior) Object.assign(prior, rejected); else facts.requests.push(rejected);
+            if (error.rejection.error === 'nautilus_tick_capacity_exhausted') return { status: 'sleeping', until: runtime.now() + 5000, checkpoint: { phase: 'submit' } };
             return { status: 'terminal', outcome: { status: 'failed', error: { message: error.rejection.error, detail: { admission: 'REJECTED' } } } };
           }, context); return;
         }
