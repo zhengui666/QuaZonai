@@ -527,7 +527,7 @@ fn actual_prepare_keeps_only_selected_raw_responses_and_refuses_pit_promotion() 
     let root = tempfile::tempdir().unwrap();
     let mut selection = NativeDatasetSelectionV1 {
         dataset_revision_id: Id::new(),
-        settlements: vec![],
+
         selection: request.selection,
     };
     selection.selection.event_start_ns = count(START + 2 * MINUTE);

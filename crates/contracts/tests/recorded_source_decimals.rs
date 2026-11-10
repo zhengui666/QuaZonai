@@ -1,72 +1,32 @@
-use contracts::recorded_fees::{RecordedFeeFillV1, RecordedTradeFeeV1};
+use contracts::recorded_fees::RecordedSourceDecimal;
 use serde_json::{json, Value};
 
-fn record() -> Value {
-    json!({
-        "id":"synthetic-source-precision-regression", "instrument_id":"123.POLYMARKET",
-        "ts_event_ns":"1", "source_quantity":"4", "quantity":"4", "fee_usdc":"0.04",
-        "usdc_amount":"2", "price":"0.5", "maker_direction":"BUY", "taker_direction":"SELL"
-    })
-}
-
 #[test]
-fn original_source_price_and_notional_roundtrip_without_numeric_38_18_rounding() {
-    for (field, text) in [
-        ("price", "0.0030000000375025784"),
-        ("usdc_amount", "0.00007000000000000001"),
+fn original_source_decimals_roundtrip_before_native_account_rounding() {
+    for text in [
+        "0.0030000000375025784",
+        "0.00007000000000000001",
+        "0.00000100000000000002",
     ] {
-        let mut original = record();
-        original[field] = json!(text);
-        let parsed: RecordedTradeFeeV1 = serde_json::from_value(original.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&parsed).unwrap(), original);
-    }
-}
-
-#[test]
-fn native_quantities_and_booked_commissions_keep_the_existing_numeric_contract() {
-    for field in ["source_quantity", "quantity"] {
-        let mut original = record();
-        original[field] = json!("0.0000000000000000001");
-        assert!(serde_json::from_value::<RecordedTradeFeeV1>(original).is_err());
-    }
-    let booked_fill = json!({
-        "client_order_id":"test-order", "instrument_id":"123.POLYMARKET",
-        "fill_ns":"60000000000", "bar_end_ns":"60000000000", "order_side":"BUY",
-        "fill_quantity":"4", "fill_price":"0.5", "commission":"0.0000000000000000001",
-        "allocations":[]
-    });
-    let error = serde_json::from_value::<RecordedFeeFillV1>(booked_fill).unwrap_err();
-    assert!(error.to_string().contains("NUMERIC(38,18)"));
-}
-
-#[test]
-fn source_audit_decimals_still_require_finite_plain_decimal_strings() {
-    for field in ["price", "usdc_amount", "fee_usdc"] {
-        for invalid in [
-            Value::Null,
-            json!(0.003),
-            json!("NaN"),
-            json!("Infinity"),
-            json!(""),
-            json!("1e-19"),
-            json!(" 0.5"),
-            json!("0.5\n"),
-            json!("0..5"),
-        ] {
-            let mut original = record();
-            original[field] = invalid;
-            assert!(serde_json::from_value::<RecordedTradeFeeV1>(original).is_err());
-        }
-    }
-}
-
-#[test]
-fn original_source_fee_roundtrips_before_native_currency_rounding() {
-    for fee in ["0.00007000000000000001", "0.00000100000000000002"] {
-        let mut original = record();
-        original["fee_usdc"] = json!(fee);
-        let parsed: RecordedTradeFeeV1 = serde_json::from_value(original.clone())
-            .expect("original source fee is exact input, not a booked account commission");
+        let original = json!(text);
+        let parsed: RecordedSourceDecimal = serde_json::from_value(original.clone()).unwrap();
         assert_eq!(serde_json::to_value(parsed).unwrap(), original);
+    }
+}
+
+#[test]
+fn source_decimals_require_finite_plain_decimal_strings() {
+    for invalid in [
+        Value::Null,
+        json!(0.003),
+        json!("NaN"),
+        json!("Infinity"),
+        json!(""),
+        json!("1e-19"),
+        json!(" 0.5"),
+        json!("0.5\n"),
+        json!("0..5"),
+    ] {
+        assert!(serde_json::from_value::<RecordedSourceDecimal>(invalid).is_err());
     }
 }

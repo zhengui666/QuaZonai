@@ -90,7 +90,7 @@ pub(crate) fn retain_envelope(
 
 /// Only the checked native-node producer calls this opt-in wrapper. The existing
 /// V1 stdin conversion and replay format remain unchanged.
-#[cfg(any(feature = "native-paper", feature = "native-sandbox-test"))]
+#[cfg(feature = "native-node-observer")]
 pub(crate) fn retain_client_bound_envelope(
     output: &mut File,
     envelope: &contracts::account_observation::AccountObservationSubmitV2,

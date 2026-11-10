@@ -15,12 +15,11 @@ export default defineExtension({
       if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
       const catalog = await realpath(input.data.catalog);
       if (!(await stat(catalog)).isDirectory()) throw new Error('catalog_directory_required');
-      const ensemble = input.data.catalog_ensemble_request !== undefined;
-      const scan = ensemble || input.data.catalog_scan_request !== undefined;
+      const scan = input.data.catalog_scan_request !== undefined;
       const tick = isTickResearchInput(input.data);
-      const request = iterationRequest(input.data, ensemble);
+      const request = iterationRequest(input.data);
       const selection = scan ? { scope: 'ALL_CATALOG_BAR_SERIES', ...request } : tick ? structuredClone(object(request.input, 'native_tick_input')) : structuredClone(object(object(request.forecast, 'forecast').selection, 'selection'));
-      if (!ensemble) selection.event_end_ns = request.validation_end_ns!;
+      selection.event_end_ns = request.validation_end_ns!;
       return { output: [{ type: 'text', text: JSON.stringify({ catalog, datasetId: input.data.datasetId ?? null, selection, evidence: 'CONFIGURED_DIRECTORY_ONLY' }) }] };
     },
   })],

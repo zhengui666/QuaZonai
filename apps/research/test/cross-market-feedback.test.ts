@@ -11,7 +11,7 @@ import research from '../plugins/research.ts';
 import { modelFeedback } from '../src/feedback.ts';
 import { object } from '../src/trials.ts';
 
-const ids = Array.from({ length: 2253 }, (_, index) => String(index + 1).padStart(76, '0') + '.POLYMARKET');
+const ids = Array.from({ length: 2253 }, (_, index) => String(index + 1).padStart(76, '0') + '.HYPERLIQUID');
 const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
   selection: { schema_version: 1, event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 10000,
     bar_types: ids.map((id) => id + '-1-MINUTE-LAST-EXTERNAL') }, parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1 } } };
@@ -35,7 +35,7 @@ test('large cross-market brief and all original training-market pages read compl
     data: { catalog: '/test-only-primary', request, trainingMarkets: ids.map((instrumentId, index) => ({ instrumentId, observedCalendarDays: 70, barRows: String(index + 1), final_private_marker: 'NEVER_RETURN_FINAL_MARKET_FIELDS' })),
       sealed: { catalog: '/test-only-final', secret: 'FINAL_VALUES_NEVER_RETURN' } },
     policy: { strategy: { name: 'original-wide-market-pool', kind: 'cross-market-threshold', instrumentIds: ids, threshold: 0, investedWeight: '1', targetTtlNs: '5',
-      simulationSettings: { base_currency: 'pUSD', starting_capital: '3000', fee_rates: rates } } } };
+      simulationSettings: { base_currency: 'USDC', starting_capital: '3000', fee_rates: rates } } } };
   const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
   const read = (transcript: { messages: readonly unknown[] }, name: string): JsonObject => {
     const message = transcript.messages.filter((m) => (m as { role?: string; toolName?: string }).role === 'toolResult' && (m as { toolName?: string }).toolName === name).at(-1) as { content: { type: string; text?: string }[] };

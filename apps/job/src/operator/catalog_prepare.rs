@@ -9,33 +9,16 @@ use contracts::{
     research::DataPartition,
 };
 use nautilus_core::UnixNanos;
-use nautilus_model::{
-    data::{DataBatch, InstrumentClose, NautilusDataType},
-    instruments::{Instrument, InstrumentAny},
-};
-use nautilus_persistence::{
-    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
-};
+use nautilus_model::instruments::{Instrument, InstrumentAny};
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
 };
 
-#[path = "preparation/archive_candles.rs"]
-mod archive_candles;
-#[path = "preparation/bars.rs"]
-mod bars;
-#[path = "preparation/candles.rs"]
-mod candles;
-#[path = "preparation/classic_zip.rs"]
-mod classic_zip;
-#[cfg(feature = "polymarket-history")]
-#[path = "preparation/polymarket_forward.rs"]
-mod polymarket_forward;
 #[path = "preparation/ticks.rs"]
 mod ticks;
 
@@ -43,7 +26,7 @@ mod ticks;
 #[command(
     version,
     about = "Prepare an isolated native BAR catalog without certifying its source",
-    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help; catalog-prepare prepare-forward --help; catalog-prepare prepare-ticks --help"
+    after_help = "Native source imports: catalog-prepare prepare-ticks --help"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -52,7 +35,7 @@ struct Arguments {
     /// RuntimeCatalogMetadataV1 without derived quality/row_count. Native definitions may be omitted.
     #[arg(long)]
     declaration: PathBuf,
-    /// Explicit NativeDatasetSelectionV1, including original complete settlement groups if present.
+    /// Explicit NativeDatasetSelectionV1.
     #[arg(long)]
     selection: PathBuf,
     /// Independent frozen maker/taker venue policy; never inferred from request fee hints.
@@ -95,71 +78,25 @@ fn native(root: &Path) -> Result<ParquetDataCatalog> {
     )
 }
 
-/// Keep untraded siblings needed by a selected condition, without copying other instruments.
+/// Preserve original definitions and updates for the selected native instruments.
 fn originals(
     root: &Path,
     data: &NativeMarketData,
     selected: &NativeDatasetSelectionV1,
-) -> Result<(Vec<InstrumentAny>, Vec<InstrumentClose>)> {
-    let mut ids = data
+) -> Result<Vec<InstrumentAny>> {
+    let ids = data
         .series
         .iter()
         .map(|s| s.instrument.id().to_string())
-        .collect::<BTreeSet<_>>();
-    let mut payouts = BTreeMap::new();
-    for outcome in selected.settlements.iter().flat_map(|g| &g.outcomes) {
-        ids.insert(outcome.instrument_id.clone());
-        ensure!(
-            payouts
-                .insert(outcome.instrument_id.clone(), outcome)
-                .is_none(),
-            "DUPLICATE_SETTLEMENT"
-        );
-    }
+        .collect::<Vec<_>>();
     let catalog = native(root)?;
     let instruments = catalog.query_instruments_filtered(
-        Some(&ids.iter().cloned().collect::<Vec<_>>()),
+        Some(&ids),
         None,
         Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
     )?;
     let definitions = select_instrument_versions(instruments, &selected.selection)?;
     ensure!(definitions.len() == ids.len(), "CATALOG_INSTRUMENT_MISSING");
-    for (id, versions) in &definitions {
-        let instrument = &versions[0];
-        ensure!(ids.contains(id), "CATALOG_INSTRUMENT_VERSION_MISMATCH");
-        if let Some(outcome) = payouts.get(id) {
-            ensure!(
-                instrument.ts_init().as_u64() <= outcome.ts_init.get(),
-                "INSTRUMENT_DEFINITION_FROM_FUTURE"
-            );
-        }
-        if matches!(instrument, InstrumentAny::BinaryOption(_)) {
-            let value = serde_json::to_value(instrument)?;
-            let (activation, expiration) = domain::prediction::instrument(&value["BinaryOption"])?;
-            if let Some(outcome) = payouts.get(id) {
-                ensure!(
-                    outcome.ts_event.get() >= activation,
-                    "SETTLEMENT_BEFORE_ACTIVATION"
-                );
-            }
-            if let Some(series) = data
-                .series
-                .iter()
-                .find(|s| s.instrument.id() == instrument.id())
-            {
-                // Missing traded-instrument fees remain missing; an original zero rate is supported.
-                domain::prediction::planning_fee(&value["BinaryOption"])?;
-                ensure!(
-                    series.bars.iter().all(|b| b.ts_event.as_u64() >= activation
-                        && b.ts_event.as_u64() <= expiration
-                        && [b.open, b.high, b.low, b.close]
-                            .iter()
-                            .all(|p| p.as_decimal() < rust_decimal::Decimal::ONE)),
-                    "BINARY_BAR_OUTSIDE_NATIVE_CONTRACT"
-                );
-            }
-        }
-    }
     for series in &data.series {
         let observed = std::iter::once(&series.instrument)
             .chain(&series.instrument_updates)
@@ -170,51 +107,7 @@ fn originals(
             "CATALOG_INSTRUMENT_CHANGED"
         );
     }
-    let mut closes = Vec::new();
-    if !payouts.is_empty() {
-        let query = CatalogQuery::new(NautilusDataType::InstrumentClose)
-            .with_identifiers(Some(payouts.keys().cloned().collect()))
-            .with_range(
-                None,
-                Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
-            );
-        let mut session = crate::catalog::file_batch_session(
-            &catalog,
-            query,
-            None,
-            payouts.len().saturating_add(1).min(4096),
-        )?;
-        let mut seen = BTreeSet::new();
-        while let Some(batch) = session.next_batch()? {
-            let DataBatch::InstrumentClose(batch) = batch else {
-                anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH")
-            };
-            for &close in batch.as_ref() {
-                let id = close.instrument_id.to_string();
-                let outcome = payouts.get(&id).context("UNDECLARED_SETTLEMENT")?;
-                ensure!(
-                    seen.insert(id.clone())
-                        && close.ts_event.as_u64() == outcome.ts_event.get()
-                        && close.ts_init.as_u64() == outcome.ts_init.get()
-                        && close
-                            .close_price
-                            .as_decimal()
-                            .to_string()
-                            .parse::<contracts::DecimalValue>()
-                            .map_err(anyhow::Error::msg)?
-                            == outcome.close_price
-                        && close.close_type
-                            == nautilus_model::enums::InstrumentCloseType::ContractExpired
-                        && close.close_price.precision == definitions[&id][0].price_precision(),
-                    "SETTLEMENT_SOURCE_MISMATCH"
-                );
-                closes.push(close);
-            }
-        }
-        ensure!(seen.len() == payouts.len(), "SETTLEMENT_SOURCE_MISMATCH");
-    }
-    closes.sort_by_key(|close| close.instrument_id);
-    Ok((definitions.into_values().flatten().collect(), closes))
+    Ok(definitions.into_values().flatten().collect())
 }
 
 fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
@@ -234,9 +127,9 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             .clone(),
     )?;
     let sealed = partition == DataPartition::Sealed;
-    let (mut observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
+    let (mut observed, measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
     if let Some(path) = &args.fee_source {
-        let source = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        let source = crate::fee_models::catalog_fees::load_file(path, &selected.selection)?;
         ensure!(
             observed
                 .execution_fees
@@ -247,9 +140,9 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
         observed.execution_fees = Some(source);
     }
     if let Some(source) = &observed.execution_fees {
-        crate::prediction::catalog_fees::validate_source_market(source, &observed)?;
+        crate::fee_models::catalog_fees::validate_source_market(source, &observed)?;
     }
-    let (instruments, closes) = originals(&args.catalog, &observed, &selected)?;
+    let instruments = originals(&args.catalog, &observed, &selected)?;
     let definitions = serde_json::to_value(&instruments)?;
     let universe = object
         .get_mut("universe")
@@ -268,9 +161,6 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
         );
     }
     universe.insert("instrument_definitions".into(), definitions);
-    if sealed {
-        measured.settlements.clear();
-    }
     object.insert(
         "row_count".into(),
         serde_json::to_value(measured.row_count)?,
@@ -308,12 +198,7 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
                 .available_through
                 .timestamp_nanos_opt()
                 .and_then(|n| u64::try_from(n).ok())
-                .is_some_and(|n| n <= selected.selection.decision_cutoff_ns.get()
-                    && selected
-                        .settlements
-                        .iter()
-                        .flat_map(|g| &g.outcomes)
-                        .all(|o| o.ts_init.get() <= n)),
+                .is_some_and(|n| n <= selected.selection.decision_cutoff_ns.get()),
         "DECLARED_SELECTION_MISMATCH"
     );
     for timestamp in [
@@ -371,19 +256,14 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     let native = native(&root)?;
     crate::catalog::currencies::write(&root, &instruments)?;
     if let Some(source) = &observed.execution_fees {
-        crate::prediction::catalog_fees::write(&root, source)?;
+        crate::fee_models::catalog_fees::write(&root, source)?;
     }
     native.write_instruments(instruments.clone())?;
     for series in &observed.series {
         native.write_to_parquet(&series.bars, None, None, None)?;
     }
-    for close in &closes {
-        native.write_to_parquet(&[*close], None, None, None)?;
-    }
-    let (readback, mut quality) = measure_catalog(&root, &selected, !sealed)?;
-    if sealed {
-        quality.settlements.clear();
-    }
+
+    let (readback, quality) = measure_catalog(&root, &selected, !sealed)?;
     ensure!(
         serde_json::to_value(&quality)? == serde_json::to_value(&measured)?
             && serde_json::to_value(&readback.execution_fees)?
@@ -399,14 +279,13 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     if spot_source {
         crate::spot_cash_source::preserve_for_selection(&source, &root, &selected.selection)?;
     }
-    let (readback_instruments, readback_closes) = originals(&root, &readback, &selected)?;
+    let readback_instruments = originals(&root, &readback, &selected)?;
     ensure!(
-        serde_json::to_value(readback_instruments)? == serde_json::to_value(instruments)?
-            && readback_closes == closes,
+        serde_json::to_value(readback_instruments)? == serde_json::to_value(instruments)?,
         "CATALOG_ORIGINALS_READBACK_MISMATCH"
     );
     if let Some(path) = &args.fee_source {
-        let original = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        let original = crate::fee_models::catalog_fees::load_file(path, &selected.selection)?;
         ensure!(
             Some(&original) == observed.execution_fees.as_ref(),
             "PREPARATION_FEE_SOURCE_CHANGED"
@@ -429,65 +308,24 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 pub fn run(argv: Vec<std::ffi::OsString>) {
     let is_tick =
         argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks"));
-    let is_forward =
-        argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-forward"));
     // Preserve the original root invocation; the explicit source-import mode has
     // its own argument contract and never manufactures a registration declaration.
-    let result = if argv.get(1).map(|arg| arg.as_os_str())
-        == Some(std::ffi::OsStr::new("prepare-forward"))
-    {
-        #[cfg(feature = "polymarket-history")]
-        {
-            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-forward"))
+    let result =
+        if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks")) {
+            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-ticks"))
                 .chain(argv.into_iter().skip(2));
-            polymarket_forward::run(&polymarket_forward::Arguments::parse_from(argv))
-        }
-        #[cfg(not(feature = "polymarket-history"))]
-        {
-            Err(anyhow::anyhow!(
-                "FORWARD_POLYMARKET_HISTORY_CAPABILITY_REQUIRED"
-            ))
-        }
-    } else if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks"))
-    {
-        let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-ticks"))
-            .chain(argv.into_iter().skip(2));
-        ticks::run(&ticks::Arguments::parse_from(argv))
-    } else if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("ingest-candles"))
-    {
-        let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
-            .chain(argv.into_iter().skip(2));
-        candles::run(&candles::Arguments::parse_from(argv))
-    } else if argv.get(1).map(|arg| arg.as_os_str())
-        == Some(std::ffi::OsStr::new("ingest-archive-candles"))
-    {
-        let argv = std::iter::once(std::ffi::OsString::from(
-            "catalog-prepare ingest-archive-candles",
-        ))
-        .chain(argv.into_iter().skip(2));
-        archive_candles::run(&archive_candles::Arguments::parse_from(argv))
-    } else {
-        prepare(&Arguments::parse_from(argv))
-            .and_then(|metadata| Ok(serde_json::to_value(metadata)?))
-    };
+            ticks::run(&ticks::Arguments::parse_from(argv))
+        } else {
+            prepare(&Arguments::parse_from(argv))
+                .and_then(|metadata| Ok(serde_json::to_value(metadata)?))
+        };
     match result {
         Ok(metadata) => println!(
             "{}",
             serde_json::to_string(&metadata).expect("typed metadata")
         ),
         Err(error) => {
-            if is_forward {
-                let reason = error
-                    .chain()
-                    .map(ToString::to_string)
-                    .find(|s| {
-                        s.starts_with("FORWARD_")
-                            && s.bytes()
-                                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-                    })
-                    .unwrap_or_else(|| "QZ_FORWARD_PREPARATION_FAILED".into());
-                eprintln!("{reason}");
-            } else if is_tick {
+            if is_tick {
                 let reason = error
                     .chain()
                     .map(ToString::to_string)

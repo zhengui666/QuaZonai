@@ -138,7 +138,7 @@ export function clipTickRegimeEvaluation(request: NativeTickFactorRequest, end: 
 /** No directory inference and no tagged/legacy joins. Legacy absence stays legacy. */
 export function nativeResearchInput(data: Record<string, unknown>): NativeResearchInput | null {
   if (data.nativeInput === undefined) return null;
-  if (['request', 'catalog_scan_request', 'catalog_ensemble_request'].some(key => data[key] !== undefined)) throw new Error('ambiguous_factor_request');
+  if (['request', 'catalog_scan_request'].some(key => data[key] !== undefined)) throw new Error('ambiguous_factor_request');
   const tagged = object(data.nativeInput, 'native_research_input');
   fields(tagged, ['modality', 'request']);
   if (tagged.modality === 'TRADE_TICK') return { modality: 'TRADE_TICK', request: validateNativeTickFactorRequest(tagged.request) };
@@ -156,7 +156,7 @@ export function isTickResearchInput(data: Record<string, unknown>): boolean {
 
 export function nativeResearchRequest(data: Record<string, unknown>): JsonObject {
   const tagged = nativeResearchInput(data);
-  const request = tagged?.request ?? data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request;
+  const request = tagged?.request ?? data.catalog_scan_request ?? data.request;
   return copy(object(request, 'native_request')) as JsonObject;
 }
 

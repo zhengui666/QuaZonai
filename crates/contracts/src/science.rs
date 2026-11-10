@@ -182,9 +182,6 @@ pub struct NativeTargetBlendResultV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationRequestV1 {
-    /// Complete original condition payouts; not inferred from a last bar or expiry.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub settings: NativeSimulationSettingsV1,
@@ -243,8 +240,6 @@ pub struct NativeSimulationResultV1 {
     pub settled_replay_ns: Option<DbCounter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot_cash_report: Option<crate::spot_cash_report::NativeSpotCashReportV1>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recorded_fee_replay: Option<crate::recorded_fees::RecordedFeeReplayV1>,
     pub schema_version: SchemaV1,
     pub native_version: String,
     pub iterations: DbCounter,

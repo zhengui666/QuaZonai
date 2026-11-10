@@ -59,9 +59,6 @@ pub struct NativeCapitalExitOwner {
     check_runtime: Box<dyn Fn() -> Result<()>>,
     /// The frozen original quote survives later marks; not the cost basis/PnL.
     reference_quotes: RefCell<Vec<(Id, QuoteTick, Value)>>,
-    /// Backtest clocks follow source time; they cannot prove wall-time freshness
-    /// while a live public-data producer is silent.
-    streaming_paper: bool,
     source_scoped_paper: bool,
 }
 
@@ -69,7 +66,6 @@ pub struct NativeCapitalExitOwner {
 enum FeeShape {
     MakerTaker,
     ProbabilityPrice,
-    Polymarket,
 }
 
 struct NativeReport {
@@ -281,7 +277,6 @@ impl NativeCapitalExitOwner {
             },
             check_runtime,
             reference_quotes: RefCell::new(vec![]),
-            streaming_paper: false,
             source_scoped_paper: false,
         })
     }
@@ -299,101 +294,6 @@ impl NativeCapitalExitOwner {
         Ok(owner)
     }
 
-    /// Adapter over the already-created official Paper engine. This does not
-    /// initialize an account, start a client, add a strategy, or advance time.
-    #[cfg(feature = "native-paper")]
-    pub(crate) fn attach_streaming_paper(
-        engine: &nautilus_backtest::engine::BacktestEngine,
-        instrument_id: InstrumentId,
-        settings: &contracts::science::NativeSimulationSettingsV1,
-        fee_model: FeeModelHandle,
-        claim: &contracts::strategy_portfolio::HandoffClaimViewV2,
-        stable_volume: &Path,
-    ) -> Result<Self> {
-        ensure!(
-            engine.iteration() == 0 && engine.run_id().is_none(),
-            "capital_exit_paper_owner_already_started"
-        );
-        ensure!(
-            settings.account_kind == contracts::science::NativeAccountKind::Cash
-                && instrument_id.venue == nautilus_model::identifiers::Venue::from("POLYMARKET")
-                && domain::prediction::uses_native_fee(&settings.fee_model),
-            "capital_exit_paper_owner_scope_unsupported"
-        );
-        let client_id = ClientId::from("POLYMARKET");
-        let execution = engine.kernel().exec_engine.clone();
-        let account_id = {
-            let execution = execution.borrow();
-            let client = execution
-                .get_client(&client_id)
-                .ok_or_else(|| anyhow!("capital_exit_owner_client_unavailable"))?;
-            ensure!(
-                client.client_id() == client_id && client.venue() == instrument_id.venue,
-                "capital_exit_owner_binding_mismatch"
-            );
-            client.account_id()
-        };
-        let session_id = engine.instance_id().to_string();
-        let binding = SandboxCapitalOwnerBinding {
-            managed_account_key: format!("paper-native:{session_id}"),
-            owner_binding_ref: format!("nautilus-paper:{session_id}"),
-            account_source_id: None,
-            strategy_id: StrategyId::from("QZ-PAPER-001"),
-            client_id,
-            instrument_id,
-        };
-        let gate = CapitalExitGate::open_fresh_paper(
-            stable_volume,
-            &binding.managed_account_key,
-            &binding.owner_binding_ref,
-            &account_id.to_string(),
-            claim,
-        )?;
-        ensure!(
-            !gate.recovery_required(),
-            "capital_exit_owner_recovery_required"
-        );
-        let trader = engine.kernel().trader.clone();
-        let strategy_id = binding.strategy_id;
-        let check_runtime = Box::new(move || {
-            let trader = trader
-                .try_borrow()
-                .map_err(|_| anyhow!("capital_exit_native_owner_busy"))?;
-            ensure!(
-                trader.strategy_ids() == vec![strategy_id]
-                    && trader.actor_ids().is_empty()
-                    && trader.exec_algorithm_ids().is_empty(),
-                "capital_exit_uncovered_strategy_actor_or_algorithm"
-            );
-            let execution = execution
-                .try_borrow()
-                .map_err(|_| anyhow!("capital_exit_native_owner_busy"))?;
-            let client = execution
-                .get_client(&client_id)
-                .ok_or_else(|| anyhow!("capital_exit_owner_client_unavailable"))?;
-            ensure!(
-                client.is_connected() && client.account_id() == account_id,
-                "capital_exit_native_client_disconnected"
-            );
-            Ok(())
-        });
-        Ok(Self {
-            binding,
-            account_id,
-            currency: Currency::from_str(&settings.base_currency)?,
-            session_id,
-            trader_id: engine.trader_id().to_string(),
-            gate,
-            fee_model,
-            fee_shape: FeeShape::Polymarket,
-            venue_fee_rates: None,
-            resolved_source: RefCell::new(None),
-            check_runtime,
-            reference_quotes: RefCell::new(vec![]),
-            streaming_paper: true,
-            source_scoped_paper: true,
-        })
-    }
     pub fn gate(&self) -> CapitalExitGate {
         self.gate.clone()
     }
@@ -512,16 +412,7 @@ impl NativeCapitalExitOwner {
             "capital_exit_native_quote_invalid"
         );
         let now_ns = strategy.clock().timestamp_ns().as_u64();
-        if self.streaming_paper {
-            let wall = Utc::now()
-                .timestamp_nanos_opt()
-                .and_then(|value| u64::try_from(value).ok())
-                .ok_or_else(|| anyhow!("capital_exit_wall_clock_unavailable"))?;
-            ensure!(
-                quote.ts_init.as_u64() <= wall && wall - quote.ts_init.as_u64() <= 5_000_000_000,
-                "capital_exit_native_quote_stale"
-            );
-        }
+
         ensure!(
             quote.ts_event <= quote.ts_init
                 && quote.ts_init.as_u64() <= now_ns
@@ -585,15 +476,11 @@ impl NativeCapitalExitOwner {
             .iter()
             .map(|o| serde_json::to_value(o.events()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let fee_source = if let Some(rates) = self.venue_fee_rates {
-            json!({"source":"trusted_sandbox_venue_config","rates":rates})
-        } else {
-            let payload = crate::prediction::native_payload(&instrument)?;
-            domain::prediction::planning_fee(&payload)?;
-            json!({"source":"original_polymarket_instrument_info",
-                "fee_schedule":payload["info"]["fee_schedule"]})
-        };
-        let raw = json!({"native_version":nautilus_core::consts::NAUTILUS_VERSION_CORE,"native_fee_source":fee_source,"native_fee_model": match self.fee_shape { FeeShape::MakerTaker => "nautilus_execution::models::fee::MakerTakerFeeModel", FeeShape::ProbabilityPrice => "nautilus_execution::models::fee::ProbabilityPriceFeeModel", FeeShape::Polymarket => "nautilus_polymarket::models::PolymarketFeeModel" },"environment":if self.streaming_paper {"PAPER_BACKTEST_ENGINE"} else {"SANDBOX"},"native_session_id":self.session_id,"native_trader_id":self.trader_id,"native_client_id":self.binding.client_id.to_string(),"snapshot":snapshot,"account_event":account,"instrument":instrument,"quote":quote,"order_events":original_orders,"positions":positions});
+        let rates = self
+            .venue_fee_rates
+            .ok_or_else(|| anyhow!("capital_exit_native_fee_basis_unavailable"))?;
+        let fee_source = json!({"source":"trusted_sandbox_venue_config","rates":rates});
+        let raw = json!({"native_version":nautilus_core::consts::NAUTILUS_VERSION_CORE,"native_fee_source":fee_source,"native_fee_model": match self.fee_shape { FeeShape::MakerTaker => "nautilus_execution::models::fee::MakerTakerFeeModel", FeeShape::ProbabilityPrice => "nautilus_execution::models::fee::ProbabilityPriceFeeModel" },"environment":"SANDBOX","native_session_id":self.session_id,"native_trader_id":self.trader_id,"native_client_id":self.binding.client_id.to_string(),"snapshot":snapshot,"account_event":account,"instrument":instrument,"quote":quote,"order_events":original_orders,"positions":positions});
         Ok(NativeReport {
             snapshot,
             account,
@@ -618,16 +505,9 @@ impl NativeCapitalExitOwner {
         if quantity == Decimal::ZERO {
             return Ok(Decimal::ZERO);
         }
-        let zero_rates = if matches!(self.fee_shape, FeeShape::Polymarket) {
-            domain::prediction::planning_fee(&crate::prediction::native_payload(
-                &report.instrument,
-            )?)?
-            .as_decimal()
-                == &bigdecimal::BigDecimal::from(0)
-        } else {
-            self.venue_fee_rates
-                .is_some_and(|rates| rates.maker == Decimal::ZERO && rates.taker == Decimal::ZERO)
-        };
+        let zero_rates = self
+            .venue_fee_rates
+            .is_some_and(|rates| rates.maker == Decimal::ZERO && rates.taker == Decimal::ZERO);
         if !zero_rates {
             ensure!(
                 matches!(report.instrument, InstrumentAny::BinaryOption(_))
@@ -643,9 +523,7 @@ impl NativeCapitalExitOwner {
                     Decimal::ONE
                 }
             }
-            FeeShape::ProbabilityPrice | FeeShape::Polymarket => {
-                minimum_price.max(Decimal::new(5, 1))
-            }
+            FeeShape::ProbabilityPrice => minimum_price.max(Decimal::new(5, 1)),
         };
         let quantity_native = report
             .instrument
@@ -678,9 +556,7 @@ impl NativeCapitalExitOwner {
                 &report.instrument,
             )?;
             ensure!(
-                native.currency == self.currency
-                    && (native.as_decimal() >= Decimal::ZERO
-                        || matches!(self.fee_shape, FeeShape::Polymarket)),
+                native.currency == self.currency && native.as_decimal() >= Decimal::ZERO,
                 "capital_exit_native_fee_currency_unsupported"
             );
             bound = bound.max(native.as_decimal());
@@ -689,28 +565,18 @@ impl NativeCapitalExitOwner {
             return Ok(bound);
         }
         let monetary_quantum = Decimal::new(1, u32::from(self.currency.precision));
-        let model_quantum = if matches!(
-            self.fee_shape,
-            FeeShape::ProbabilityPrice | FeeShape::Polymarket
-        ) {
+        let model_quantum = if matches!(self.fee_shape, FeeShape::ProbabilityPrice) {
             Decimal::new(1, 5)
         } else {
             Decimal::ZERO
         };
-        // The existing Polymarket simulation wrapper rejects each fill below
-        // one collateral unit and price is at most one. That existing minimum,
-        // not an invented lot or a new fee engine, bounds the number of fills.
-        let maximum_fills = if matches!(self.fee_shape, FeeShape::Polymarket) {
-            quantity.ceil()
-        } else {
-            quantity
-                .checked_div(Decimal::new(
-                    1,
-                    u32::from(report.instrument.size_precision()),
-                ))
-                .ok_or_else(|| anyhow!("capital_exit_native_decimal_range"))?
-                .ceil()
-        };
+        let maximum_fills = quantity
+            .checked_div(Decimal::new(
+                1,
+                u32::from(report.instrument.size_precision()),
+            ))
+            .ok_or_else(|| anyhow!("capital_exit_native_decimal_range"))?
+            .ceil();
         bound
             .checked_add(
                 monetary_quantum
@@ -1291,25 +1157,6 @@ impl NativeCapitalExitOwner {
                 ..
             } = &view.policy
             {
-                if self.streaming_paper {
-                    let admitted = self
-                        .gate
-                        .control()
-                        .ok_or_else(|| anyhow!("capital_exit_fence_required"))?;
-                    let command_at = admitted
-                        .updated_at
-                        .timestamp_nanos_opt()
-                        .and_then(|value| u64::try_from(value).ok())
-                        .ok_or_else(|| anyhow!("capital_exit_native_command_clock"))?;
-                    // External wall-time authority must not create a simulated
-                    // order in an earlier market batch. Wait for an original
-                    // quote after this claimed command; never advance a clock.
-                    ensure!(
-                        report.quote.ts_init.as_u64() >= command_at
-                            && report.snapshot.ts_init.as_u64() >= command_at,
-                        "capital_exit_native_command_time_pending"
-                    );
-                }
                 ensure!(
                     legs.len() == 1
                         && legs[0].instrument_id == self.binding.instrument_id.to_string(),
@@ -1347,32 +1194,12 @@ impl NativeCapitalExitOwner {
                     .find(|p| p.is_open())
                     .ok_or_else(|| anyhow!("capital_exit_native_holdings_unavailable"))?;
                 let step = report.instrument.size_increment().as_decimal();
-                let mut desired = needed
+                let desired = needed
                     .checked_div(floor)
                     .and_then(|v| v.checked_div(step))
                     .and_then(|v| v.ceil().checked_mul(step))
                     .ok_or_else(|| anyhow!("capital_exit_native_decimal_range"))?;
-                if self.streaming_paper {
-                    // Include the same official fee model in the required gross
-                    // proceeds. Converge upward at native quantity precision;
-                    // never invent a fee rate or submit an underfunded tiny tail.
-                    let mut covered = false;
-                    for _ in 0..64 {
-                        let fee = self.fee_bound(&report, desired, floor)?;
-                        let next = needed
-                            .checked_add(fee)
-                            .and_then(|gross| gross.checked_div(floor))
-                            .and_then(|quantity| quantity.checked_div(step))
-                            .and_then(|quantity| quantity.ceil().checked_mul(step))
-                            .ok_or_else(|| anyhow!("capital_exit_native_decimal_range"))?;
-                        if next <= desired {
-                            covered = true;
-                            break;
-                        }
-                        desired = next;
-                    }
-                    ensure!(covered, "capital_exit_native_fee_bound_unavailable");
-                }
+
                 let quantity = report.instrument.try_make_qty_from_decimal(
                     desired.min(maximum).min(position.quantity.as_decimal()),
                     Some(true),

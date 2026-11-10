@@ -196,7 +196,7 @@ pub fn fixture_with_delay(
     };
     let request = NativeSimulationRequestV1 {
         schema_version: SchemaV1,
-        settlements: vec![],
+
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,
             bar_types: vec![kind.to_string()],

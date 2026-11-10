@@ -58,7 +58,7 @@ const shortCriterion = (criterion: ReturnType<typeof researchCriterion>): ListCr
 function modality(data: JsonObject): ResearchListItem['modality'] {
   const native = data.nativeInput;
   if (native && typeof native === 'object' && !Array.isArray(native) && (native.modality === 'BAR' || native.modality === 'TRADE_TICK')) return native.modality;
-  return data.request || data.catalog_scan_request || data.catalog_ensemble_request ? 'BAR' : null;
+  return data.request || data.catalog_scan_request ? 'BAR' : null;
 }
 function independentIc(evidence: FactorListItem['evidence'], measured: Metric[]): number | null {
   if (evidence !== 'independent') return null;

@@ -23,21 +23,12 @@ pub fn compose(
     for member in &request.members {
         let report: NativeExperimentEvaluationResultV1 =
             serde_json::from_slice(&read(member.policy.source.report_artifact_id)?)?;
-        let fold = domain::execution::strategy::source(&member.policy, &report)?;
-        domain::prediction::binary_option_source(
-            report.request.binary_option.as_ref(),
-            request.binary_option.as_ref(),
-            &fold.simulation_request.selection,
-        )?;
+        domain::execution::strategy::source(&member.policy, &report)?;
+
         reports.push(report);
     }
     let market = crate::catalog::load_catalog(root, &request.selection)?;
-    crate::prediction::bind_target_context(
-        root,
-        &market,
-        &request.selection,
-        request.binary_option.as_ref(),
-    )?;
+
     let mut fuel = request.total_fuel.map(|fuel| fuel.get());
     let outcome = match &request.purpose {
         StrategyPortfolioPurposeV1::HistoricalReplay {} => {
@@ -88,11 +79,6 @@ pub fn compose(
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             let simulation_request = NativeSimulationRequestV1 {
                 schema_version: SchemaV1,
-                settlements: domain::prediction::binary_option_settlements(
-                    request.binary_option.as_ref(),
-                    &request.members[0].policy.instrument_id,
-                    request.selection.decision_cutoff_ns,
-                ),
                 selection: request.selection.clone(),
                 settings: request.settings.clone(),
                 target_points: targets,
@@ -256,20 +242,6 @@ pub fn compose(
                 &request.members,
                 &targets.iter().collect::<Vec<_>>(),
                 request.mandate.target_ttl_seconds,
-            )?;
-            // Check each policy's original TTL before blending; a shorter
-            // mandate cannot conceal a policy target extending beyond expiry.
-            for point in &targets {
-                domain::prediction::binary_option_current_target(
-                    request.binary_option.as_ref(),
-                    point,
-                    request.selection.decision_cutoff_ns,
-                )?;
-            }
-            domain::prediction::binary_option_current_target(
-                request.binary_option.as_ref(),
-                &target,
-                request.selection.decision_cutoff_ns,
             )?;
             domain::execution::strategy::constraints(
                 &request.mandate,

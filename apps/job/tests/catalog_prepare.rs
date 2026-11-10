@@ -2,8 +2,6 @@
 #![cfg(feature = "catalog-prepare")]
 #[path = "support/market.rs"]
 mod market;
-#[path = "support/polymarket.rs"]
-mod prediction;
 
 use contracts::{
     catalogs::RuntimeCatalogMetadataV1,
@@ -13,7 +11,7 @@ use contracts::{
     DbCounter, Id, SchemaV1,
 };
 use nautilus_model::{
-    data::{Bar, InstrumentClose},
+    data::Bar,
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
@@ -46,16 +44,23 @@ impl Fixture {
         let directory = tempfile::tempdir().unwrap();
         let catalog = directory.path().join("source");
         fs::create_dir(&catalog).unwrap();
-        prediction::write_catalog(&catalog, 5, "0", 1000 * prediction::STEP, false);
+        let (source, request) = market::market("0", 5);
+        fs::remove_dir(&catalog).unwrap();
+        fs::rename(source.path(), &catalog).unwrap();
+        let ids = native(&catalog)
+            .query_instruments_filtered(None, None, None)
+            .unwrap()
+            .iter()
+            .map(|instrument| instrument.id().to_string())
+            .collect::<Vec<_>>();
         let selection = NativeDatasetSelectionV1 {
             dataset_revision_id: Id::new(),
-            settlements: Vec::new(),
             selection: NativeBarSelectionV1 {
                 schema_version: SchemaV1,
-                bar_types: vec![format!("{}-1-MINUTE-LAST-EXTERNAL", prediction::IDS[0])],
-                event_start_ns: count(prediction::STEP),
-                event_end_ns: count(4 * prediction::STEP),
-                decision_cutoff_ns: count(5 * prediction::STEP),
+                bar_types: request.selection.bar_types[..1].to_vec(),
+                event_start_ns: count(market::INTERVAL_NS),
+                event_end_ns: count(4 * market::INTERVAL_NS),
+                decision_cutoff_ns: count(5 * market::INTERVAL_NS),
                 maximum_rows: 10,
             },
         };
@@ -63,16 +68,16 @@ impl Fixture {
             "schema_version": 1, "registered_ref": "synthetic-catalog",
             "native_snapshot_ref": "synthetic-selected-partition", "storage_version": "fixture-v1",
             "provider_kind": "NAUTILUS_CATALOG", "data_kind": "BAR", "partition": "DISCOVERY",
-            "event_start": instant(prediction::STEP), "event_end": instant(4 * prediction::STEP),
-            "available_through": instant(5 * prediction::STEP),
+            "event_start": instant(market::INTERVAL_NS), "event_end": instant(4 * market::INTERVAL_NS),
+            "available_through": instant(5 * market::INTERVAL_NS),
             "origin": "FIXTURE", "pit_status": "UNVERIFIED", "revision_policy": "AS_KNOWN_THEN",
             "provenance_reference": "SYNTHETIC_NATIVE_REGRESSION",
             "availability_provenance": "Synthetic timestamps, not evidence of historical availability",
             "universe": {
                 "name": "Synthetic fixture", "calendar_ref": "synthetic-calendar", "calendar_version": "1",
                 "selection_asof": instant(0), "has_historical_membership": false,
-                "coverage_start": instant(0), "coverage_end": instant(1000 * prediction::STEP),
-                "membership": prediction::IDS.iter().map(|id| json!({
+                "coverage_start": instant(0), "coverage_end": instant(1000 * market::INTERVAL_NS),
+                "membership": ids.iter().map(|id| json!({
                     "instrument_id": id, "valid_from": instant(0), "valid_until": null,
                     "available_at": instant(0), "groups": null
                 })).collect::<Vec<_>>()
@@ -130,6 +135,12 @@ impl Fixture {
         catalog
             .write_to_parquet(&data.series[0].bars, None, None, None)
             .unwrap();
+        fs::copy(
+            self.catalog
+                .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+            root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+        )
+        .unwrap();
         self.catalog = root;
     }
 }
@@ -167,7 +178,7 @@ fn partition_readback_preserves_actual_rows_originals_and_unverified_status() {
         .query_instruments_filtered(None, None, None)
         .unwrap();
     assert_eq!(instruments.len(), 1);
-    assert_eq!(instruments[0].id().to_string(), prediction::IDS[0]);
+    assert_eq!(instruments[0].id().to_string(), "EUR/USD.SIM");
     let source = job::catalog::load_catalog(&f.catalog, &f.selection.selection).unwrap();
     let copied =
         job::catalog::load_catalog(&f.output().join("catalog"), &f.selection.selection).unwrap();
@@ -188,21 +199,10 @@ fn partition_readback_preserves_actual_rows_originals_and_unverified_status() {
 }
 
 #[test]
-fn original_future_definition_and_missing_historical_fee_are_rejected() {
-    for mutation in 0..3 {
-        let mut f = Fixture::new();
-        f.change_original(|value| match mutation {
-            0 => value["BinaryOption"]["ts_init"] = (2 * prediction::STEP).into(),
-            1 => {
-                value["BinaryOption"]["info"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("fee_schedule");
-            }
-            _ => value["BinaryOption"]["info"]["fee_schedule"]["exponent"] = 2.into(),
-        });
-        f.reject();
-    }
+fn original_future_definition_is_rejected() {
+    let mut f = Fixture::new();
+    f.change_original(|value| value["CurrencyPair"]["ts_init"] = (2 * market::INTERVAL_NS).into());
+    f.reject();
 }
 
 #[test]
@@ -226,74 +226,7 @@ fn incomplete_declarations_cannot_acquire_fabricated_provenance_or_measurements(
 }
 
 #[test]
-fn settlement_siblings_and_original_closes_survive_without_leaking_sealed_values() {
-    for sealed in [false, true] {
-        let mut f = Fixture::new();
-        let at = 3 * prediction::STEP;
-        let available = 4 * prediction::STEP;
-        prediction::settle(&f.catalog, at, available, ["1.0000", "0.0000"]);
-        f.selection.settlements =
-            prediction::settlement_groups(at, available, ["1.0000", "0.0000"]);
-        if sealed {
-            f.declaration["partition"] = "SEALED".into();
-        }
-        let result = f.run();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        let metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(&result.stdout).unwrap();
-        assert_eq!(metadata.universe.instrument_definitions.len(), 2);
-        assert_eq!(metadata.quality.datasets[0].settlements.is_empty(), sealed);
-        assert_eq!(
-            metadata.quality.datasets[0].last_bar_notionals.is_none(),
-            sealed
-        );
-        let mut catalog = native(&f.output().join("catalog"));
-        assert_eq!(
-            catalog
-                .query_instruments_filtered(None, None, None)
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            catalog
-                .query::<InstrumentClose>(None, None, None, None, None, true)
-                .unwrap()
-                .into_iter()
-                .map(nautilus_model::data::Data::from)
-                .collect::<Vec<_>>()
-                .len(),
-            2
-        );
-        assert_eq!(
-            catalog
-                .query::<Bar>(None, None, None, None, None, true)
-                .unwrap()
-                .into_iter()
-                .map(nautilus_model::data::Data::from)
-                .collect::<Vec<_>>()
-                .len(),
-            3
-        );
-    }
-}
-
-#[test]
-fn missing_original_settlement_sibling_is_not_synthesized() {
-    let mut f = Fixture::new();
-    f.change_original(|_| {});
-    let at = 3 * prediction::STEP;
-    let available = 4 * prediction::STEP;
-    prediction::settle(&f.catalog, at, available, ["1.0000", "0.0000"]);
-    f.selection.settlements = prediction::settlement_groups(at, available, ["1.0000", "0.0000"]);
-    f.reject();
-}
-
-#[test]
-fn generic_currency_pair_uses_the_same_preparation_without_prediction_metadata() {
+fn generic_currency_pair_preserves_independent_venue_fees() {
     let mut f = Fixture::new();
     let (source, request) = market::market("0.001", 5);
     f.catalog = source.path().to_owned();
@@ -351,7 +284,7 @@ fn oversized_declaration_and_future_membership_are_rejected_before_publication()
     f.reject();
     let mut f = Fixture::new();
     f.declaration["universe"]["membership"][0]["available_at"] =
-        json!(instant(6 * prediction::STEP));
+        json!(instant(6 * market::INTERVAL_NS));
     f.reject();
 }
 
@@ -362,18 +295,21 @@ fn versioned_fixture() -> Fixture {
     fs::create_dir(&root).unwrap();
     let catalog = native(&root);
     let mut versions = Vec::new();
-    for instrument in prediction::instruments("0", 1000 * prediction::STEP) {
+    for instrument in native(&f.catalog)
+        .query_instruments_filtered(None, None, None)
+        .unwrap()
+    {
         for (time, tick) in [
-            (0, "0.0001"),
-            (prediction::STEP / 2, "0.0010"),
-            (2 * prediction::STEP - 1000, "0.0100"),
-            (4 * prediction::STEP + 10, "0.1000"),
-            (6 * prediction::STEP, "0.0001"),
+            (0, "0.00001"),
+            (market::INTERVAL_NS / 2, "0.00010"),
+            (2 * market::INTERVAL_NS - 1000, "0.00100"),
+            (4 * market::INTERVAL_NS + 10, "0.01000"),
+            (6 * market::INTERVAL_NS, "0.00001"),
         ] {
             let mut value = serde_json::to_value(&instrument).unwrap();
-            value["BinaryOption"]["ts_event"] = time.into();
-            value["BinaryOption"]["ts_init"] = time.into();
-            value["BinaryOption"]["price_increment"] = tick.into();
+            value["CurrencyPair"]["ts_event"] = time.into();
+            value["CurrencyPair"]["ts_init"] = time.into();
+            value["CurrencyPair"]["price_increment"] = tick.into();
             versions.push(serde_json::from_value(value).unwrap());
         }
     }
@@ -381,23 +317,17 @@ fn versioned_fixture() -> Fixture {
     catalog
         .write_to_parquet(&data.series[0].bars, None, None, None)
         .unwrap();
+    fs::copy(
+        f.catalog.join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+        root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+    )
+    .unwrap();
     f.catalog = root;
-    prediction::settle(
-        &f.catalog,
-        3 * prediction::STEP,
-        4 * prediction::STEP,
-        ["1.0000", "0.0000"],
-    );
-    f.selection.settlements = prediction::settlement_groups(
-        3 * prediction::STEP,
-        4 * prediction::STEP,
-        ["1.0000", "0.0000"],
-    );
     f
 }
 
 #[test]
-fn physical_partition_keeps_causal_versions_and_siblings_without_future_definitions() {
+fn physical_partition_keeps_selected_causal_versions_without_future_definitions() {
     for sealed in [false, true] {
         let mut f = versioned_fixture();
         if sealed {
@@ -416,18 +346,17 @@ fn physical_partition_keeps_causal_versions_and_siblings_without_future_definiti
             "definition versions are not BAR rows"
         );
         assert_eq!(metadata.quality.datasets[0].instrument_ids.len(), 1);
-        assert_eq!(metadata.universe.instrument_definitions.len(), 6);
+        assert_eq!(metadata.universe.instrument_definitions.len(), 3);
         assert_eq!(metadata.origin, DataOrigin::Fixture);
         assert_eq!(metadata.pit_status, PitStatus::Unverified);
-        assert_eq!(metadata.quality.datasets[0].settlements.is_empty(), sealed);
         assert_eq!(
             metadata.quality.datasets[0].last_bar_notionals.is_none(),
             sealed
         );
         let output = native(&f.output().join("catalog"));
         let published = output.query_instruments_filtered(None, None, None).unwrap();
-        assert_eq!(published.len(), 6);
-        for id in prediction::IDS {
+        assert_eq!(published.len(), 3);
+        for id in ["EUR/USD.SIM"] {
             let times = published
                 .iter()
                 .filter(|v| v.id().to_string() == id)
@@ -436,9 +365,9 @@ fn physical_partition_keeps_causal_versions_and_siblings_without_future_definiti
             assert_eq!(
                 times,
                 vec![
-                    prediction::STEP / 2,
-                    2 * prediction::STEP - 1000,
-                    4 * prediction::STEP + 10
+                    market::INTERVAL_NS / 2,
+                    2 * market::INTERVAL_NS - 1000,
+                    4 * market::INTERVAL_NS + 10
                 ]
             );
         }
@@ -458,7 +387,7 @@ fn physical_partition_keeps_causal_versions_and_siblings_without_future_definiti
 fn preparation_retains_an_original_update_received_exactly_at_selection_start() {
     let mut f = versioned_fixture();
     // Declaration instants are microsecond-aligned; original native times stay exact.
-    let boundary = 2 * prediction::STEP - 1000;
+    let boundary = 2 * market::INTERVAL_NS - 1000;
     f.selection.selection.event_start_ns = count(boundary);
     f.declaration["event_start"] = json!(instant(boundary));
     let result = f.run();
@@ -469,12 +398,12 @@ fn preparation_retains_an_original_update_received_exactly_at_selection_start() 
     );
     let metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(metadata.row_count.get(), 2);
-    assert_eq!(metadata.universe.instrument_definitions.len(), 6);
+    assert_eq!(metadata.universe.instrument_definitions.len(), 3);
     let readback =
         job::catalog::load_catalog(&f.output().join("catalog"), &f.selection.selection).unwrap();
     assert_eq!(
         readback.series[0].instrument.ts_init().as_u64(),
-        prediction::STEP / 2
+        market::INTERVAL_NS / 2
     );
     assert_eq!(readback.series[0].instrument_updates.len(), 2);
     assert_eq!(
@@ -486,6 +415,6 @@ fn preparation_retains_an_original_update_received_exactly_at_selection_start() 
 #[test]
 fn metadata_availability_must_cover_original_updates_after_the_last_bar() {
     let mut f = versioned_fixture();
-    f.declaration["available_through"] = json!(instant(4 * prediction::STEP));
+    f.declaration["available_through"] = json!(instant(4 * market::INTERVAL_NS));
     f.reject();
 }

@@ -128,8 +128,8 @@ fn scoped_point(scope: serde_json::Value) -> contracts::science::NativeTargetPoi
     serde_json::from_value(serde_json::json!({
         "schema_version": 1, "asof_ns": "60000000000", "valid_until_ns": "120000000000",
         "targets": [
-            {"instrument_id": "123.POLYMARKET", "currency": "pUSD", "weight": "0.25"},
-            {"instrument_id": "456.POLYMARKET", "currency": "pUSD", "weight": "0.5"}
+            {"instrument_id": "123.HYPERLIQUID", "currency": "USDC", "weight": "0.25"},
+            {"instrument_id": "456.HYPERLIQUID", "currency": "USDC", "weight": "0.5"}
         ],
         "cash_weight": "0.25", "rebalance_instrument_ids": scope
     }))
@@ -139,7 +139,7 @@ fn scoped_point(scope: serde_json::Value) -> contracts::science::NativeTargetPoi
 #[test]
 fn scoped_blend_preserves_scope_and_exact_full_account_weights() {
     use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
-    let point = scoped_point(serde_json::json!(["123.POLYMARKET"]));
+    let point = scoped_point(serde_json::json!(["123.HYPERLIQUID"]));
     let mut other = point.clone();
     other.targets[0].weight = "0.5".parse().unwrap();
     other.cash_weight = "0".parse().unwrap();
@@ -153,7 +153,7 @@ fn scoped_blend_preserves_scope_and_exact_full_account_weights() {
     let value = serde_json::to_value(&result.target_points[0]).unwrap();
     assert_eq!(
         value["rebalance_instrument_ids"],
-        serde_json::json!(["123.POLYMARKET"])
+        serde_json::json!(["123.HYPERLIQUID"])
     );
     assert_eq!(value["targets"][0]["weight"], "0.4375");
     assert_eq!(value["targets"][1]["weight"], "0.5");
@@ -164,12 +164,12 @@ fn scoped_blend_preserves_scope_and_exact_full_account_weights() {
 #[test]
 fn scoped_blend_rejects_empty_duplicate_outside_mismatched_and_legacy_scopes() {
     use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
-    let point = scoped_point(serde_json::json!(["123.POLYMARKET"]));
+    let point = scoped_point(serde_json::json!(["123.HYPERLIQUID"]));
     for scope in [
         serde_json::json!([]),
-        serde_json::json!(["123.POLYMARKET", "123.POLYMARKET"]),
-        serde_json::json!(["789.POLYMARKET"]),
-        serde_json::json!(["456.POLYMARKET"]),
+        serde_json::json!(["123.HYPERLIQUID", "123.HYPERLIQUID"]),
+        serde_json::json!(["789.HYPERLIQUID"]),
+        serde_json::json!(["456.HYPERLIQUID"]),
         serde_json::Value::Null,
     ] {
         let other = scoped_point(scope);

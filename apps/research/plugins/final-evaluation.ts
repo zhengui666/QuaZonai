@@ -34,8 +34,8 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
         const fitted = typeof proposal.fitTaskId === 'number';
         const members = fitted ? [] : strategyMembers(proposal);
         const result = object(trial.result, 'trial_result');
-        const registeredRequest = input.data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
-        if (canonical(proposal.request!) !== canonical(input.data.catalog_ensemble_request ?? input.data.request!) || canonical(proposal.strategy!) !== canonical(input.policy.strategy!)
+        const registeredRequest = result.request;
+        if (canonical(proposal.request!) !== canonical(input.data.request!) || canonical(proposal.strategy!) !== canonical(input.policy.strategy!)
           || canonical((iterationRequest(data, true))) !== canonical((registeredRequest!))
           || canonical((iterationRequest(input.data, true))) !== canonical((registeredRequest!))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
@@ -46,10 +46,9 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
       }, context);
       if (!selected.settled) {
         try {
-          const scoped = selected.policy.kind === 'catalog-ensemble' ? await catalogScope(api, context, data) : data;
+          const scoped = data;
           await checkExposure(api, context, scoped, true, undefined, selected.policy.evidenceMode);
-          if (selected.fitTaskId !== null && selected.policy.kind === 'catalog-ensemble') throw new Error('ensemble_full_prediction_panel_required');
-          const result = selected.fitTaskId !== null && selected.policy.kind !== 'catalog-ensemble'
+          const result = selected.fitTaskId !== null
             ? await runFittedEnsemble(api, context, { mode: 'REPLAY', fitTaskId: selected.fitTaskId, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: nativeTargetForData(scoped) })
             : await runPortfolio(api, context, { members: selected.members, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: nativeTargetForData(scoped) });
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
@@ -113,8 +112,8 @@ async function preflightFinalizer(trialId: number, api: ResearchRuntime, context
   const result = object(trial.result, 'trial_result');
   if (portfolio) {
     if (!Array.isArray(proposal.members)) throw new Error('selected_portfolio_evaluator_unavailable');
-    const registered = data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
-    if (canonical(proposal.request!) !== canonical(data.catalog_ensemble_request ?? data.request!) || canonical(proposal.strategy!) !== canonical(policy.strategy!)
+    const registered = result.request;
+    if (canonical(proposal.request!) !== canonical(data.request!) || canonical(proposal.strategy!) !== canonical(policy.strategy!)
       || canonical((iterationRequest(heldout, true))) !== canonical((registered!)) || canonical((iterationRequest(data, true))) !== canonical((registered!))) throw new Error('heldout_criteria_mismatch');
     resolvePortfolioPolicy(proposal, object(policy.strategy, 'strategy_policy'));
   } else {

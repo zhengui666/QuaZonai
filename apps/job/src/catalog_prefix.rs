@@ -7,7 +7,7 @@ pub fn digest(
     catalog: &Path,
     selection: &NativeBarSelectionV1,
 ) -> Result<NativeCatalogPrefixResultV1> {
-    #[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
+    #[cfg(feature = "catalog-prepare")]
     {
         use contracts::{DbCounter, SchemaV1};
         use nautilus_model::instruments::Instrument;
@@ -56,7 +56,7 @@ pub fn digest(
             series,
         })
     }
-    #[cfg(not(any(feature = "catalog-prepare", feature = "polymarket-history")))]
+    #[cfg(not(feature = "catalog-prepare"))]
     {
         let _ = (catalog, selection);
         Err(anyhow::anyhow!(

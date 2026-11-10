@@ -11,10 +11,10 @@ const specification = researchSpecification({ version: 1, name: 'Shared-account 
   evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', target: 1, scheme: 'registered-partitions' },
   search: { scope: 'ensemble', maxMembers: 2, stop: 'budget-or-selection' } });
 const proposal = { members: [{ model: wat, weight: '0.25' }, { model: wat, weight: '0.75' }] };
-const account = (partition: string): JsonObject => ({ partitions: [], portfolio: { partition, strategy_kind: 'catalog-ensemble',
+const account = (partition: string): JsonObject => ({ partitions: [], portfolio: { partition, strategy_kind: 'factor-threshold',
   statistics: [{ native_key: 'Sharpe Ratio (252 days)', value: 2 }] } });
 
-test('catalog ensemble account metrics remain on the research and are never attributed to members without diagnostics', async () => {
+test('shared account metrics remain on the research and are never attributed to members without diagnostics', async () => {
   const state = await setup();
   try {
     const { receipt } = await studied(state);

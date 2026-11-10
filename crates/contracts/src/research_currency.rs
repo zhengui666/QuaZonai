@@ -6,8 +6,8 @@ use utoipa::openapi::{
     RefOr, Schema,
 };
 
-pub const NATIVE_COLLATERAL: [&str; 3] = ["USDC", "USDC.e", "pUSD"];
-// Native market quote units are separate from supported prediction collateral.
+pub const NATIVE_COLLATERAL: [&str; 2] = ["USDC", "USDC.e"];
+// Native market quote units retain their original account denominations.
 // Matching instrument definitions and Nautilus retain their exact currency; no FX alias.
 pub const NATIVE_QUOTE: [&str; 1] = ["USDT"];
 
@@ -62,10 +62,12 @@ mod tests {
     use super::*;
     #[test]
     fn collateral_is_explicit_case_sensitive_and_not_a_fiat_alias() {
-        for code in ["USD", "EUR", "CNY", "USDC", "USDC.e", "pUSD", "USDT"] {
+        for code in ["USD", "EUR", "CNY", "USDC", "USDC.e", "USDT"] {
             assert!(supported(code), "{code}");
         }
-        for code in ["", "usd", "PUSD", "usdc", "usdt", "BTC", "USD ", " USD"] {
+        for code in [
+            "", "usd", "PUSD", "pUSD", "usdc", "usdt", "BTC", "USD ", " USD",
+        ] {
             assert!(!supported(code), "{code}");
         }
         for code in NATIVE_COLLATERAL {

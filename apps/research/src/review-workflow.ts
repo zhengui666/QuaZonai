@@ -124,7 +124,7 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
     if (campaign.state === 'SEARCHING') { campaign.state = 'CLOSING'; campaign.closingReason = 'independent_review'; }
     const evidenceRef = `research:${api.conversationId}:trial:${trialId}:validation`;
     const raw = object(object(trial.result)?.request);
-    const start = raw?.train_end_ns ?? object(study.input.data.catalog_ensemble_request)?.evaluation_start_ns ?? study.input.data.train_end_ns;
+    const start = raw?.train_end_ns ?? study.input.data.train_end_ns;
     const evaluationStartNs = typeof start === 'string' && /^\d+$/.test(start) ? start : '0';
     const binding = { trialId, version, policyId: policy.id, status: 'STARTED', report: null, createdAt: new Date().toISOString() };
     ledger.records[version] ??= binding;

@@ -185,9 +185,7 @@ pub(super) fn native_simulation_summary(
         .spot_cash_report
         .as_ref()
         .map(|report| u64::from(report.daily_returns.annualization_days))
-        .unwrap_or_else(|| {
-            crate::prediction::portfolio_annualization_days(&request.settings.fee_model) as u64
-        });
+        .unwrap_or(252);
     let spot_cash = result
         .spot_cash_report
         .as_ref()

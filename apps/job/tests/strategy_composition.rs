@@ -70,14 +70,12 @@ fn original_fold_single_and_two_member_replay_and_stateful_current_continuation(
         (ids[0], serde_json::to_vec(&parts[0]).unwrap()),
     ]);
     let mut request = NativeStrategyCompositionRequestV1 {
-        binary_option: None,
         schema_version: SchemaV1,
         selection: original.folds[0].simulation_request.selection.clone(),
         mandate: fixture::mandate(&evaluation.settings),
         settings: evaluation.settings.clone(),
         purpose: StrategyPortfolioPurposeV1::HistoricalReplay {},
         input_provenance: StrategyInputProvenanceV1 {
-            feature_source_bindings: None,
             dataset_revision_id: dataset,
             market_data_origin: DataOrigin::Synthetic,
             pit_status: PitStatus::Unverified,

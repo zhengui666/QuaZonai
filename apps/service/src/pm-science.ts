@@ -378,7 +378,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
       if (typeof amount !== 'string' || compareDecimal(amount, '0') <= 0 || compareDecimal(amount, input.capital.amount) > 0) throw new Error('pm_planned_capital_invalid');
       const plannedExposure = fraction(amount, input.capital.amount);
       const exposure = compareDecimal(plannedExposure, grossCap) > 0 ? grossCap : plannedExposure;
-      const studyRequest: JsonObject = { schema_version: 1, settlements: original.settlements ?? [],
+      const studyRequest: JsonObject = { schema_version: 1,
         source_selection: { ...fullSelection, event_end_ns: end.toString(), decision_cutoff_ns: end.toString() },
         evaluation_start_ns: clocks[0]!.toString(), manual_cutoffs_ns: clocks.map(String), calendar: null,
         research_available_through_ns: fit.fit_end_ns!, execution_settings: settings, rolling_liquidity: null, assets, members: nativeMembers,
@@ -427,7 +427,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
           status: hold?.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED', result: hold?.result == null ? null : object(hold.result),
           reason: hold?.status === 'COMPLETED' ? null : String(hold?.reason ?? receipt.error ?? 'native_hold_replay_unavailable'),
           simulationRequest: { schema_version: 1, selection: { ...object(studyRequest.source_selection), event_start_ns: clocks[0]!.toString() },
-            settings, target_points: [], settlements: studyRequest.settlements! },
+            settings, target_points: [] },
         } });
       }
     }

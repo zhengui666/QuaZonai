@@ -26,22 +26,11 @@ export function compileWasm(model: string, filename = 'factor.wat', operation = 
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
-  const ensemble = data.catalog_ensemble_request !== undefined;
   const catalog = data.catalog_scan_request !== undefined;
-  if ([data.catalog_ensemble_request, data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  if ([data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
   const request = nativeResearchRequest(data);
   if (isTickResearchInput(data)) {
     partitionBoundaries(request);
-    return request;
-  }
-  if (ensemble) {
-    partitionBoundaries({ ...request, train_end_ns: data.train_end_ns!, validation_end_ns: data.validation_end_ns! }, true);
-    object(request.settings, 'simulation_settings');
-    if (request.score_max_age_ns === null) delete request.score_max_age_ns;
-    if (Array.isArray(request.members)) for (const value of request.members) {
-      const member = object(value, 'member_template');
-      if (member.total_fuel === null) delete member.total_fuel;
-    }
     return request;
   }
   partitionBoundaries(request, catalog);
@@ -57,12 +46,6 @@ export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): 
     const clipped = clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns));
     if (clipDecisionCutoff) clipped.input.decision_cutoff_ns = clipped.validation_end_ns;
     return clipped;
-  }
-  if (data.catalog_ensemble_request !== undefined) {
-    request.event_end_ns = data.validation_end_ns!;
-    request.evaluation_start_ns = data.train_end_ns!;
-    if (clipDecisionCutoff) request.decision_cutoff_ns = data.validation_end_ns!;
-    return request;
   }
   const selection = data.catalog_scan_request !== undefined ? request : object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   selection.event_end_ns = request.validation_end_ns!;

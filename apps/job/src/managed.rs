@@ -373,23 +373,19 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
-            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: request.source_selection.clone(),
         }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
-            request,
             ..
         }
         | NativeTaskParametersV1::SimulatePortfolioSequence {
             dataset_revision_id,
             source_selection,
-            request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
-            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: source_selection.clone(),
         }],

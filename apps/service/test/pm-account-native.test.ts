@@ -34,10 +34,14 @@ test('PM observed native: exact source inventory is valued using original as-of 
 test('PM observed native: HOLD preserves original inventory with zero active orders while real rebalance pays its original costs', nativeOptions, async () => {
   const f = await observedSpotFixture();
   try {
-    const simulation = { ...f.simulation, settlements: [] };
+    const simulation = { ...structuredClone(f.simulation), settlements: [] };
+    const originalSimulation = structuredClone(simulation);
     const result = await compareObservedSpotAccount({ ...f.common, operation: { kind: 'SIMULATION', simulation } }, BACKGROUND_CONTEXT);
-    assert.equal(Object.hasOwn(object(result.request.simulation), 'settlements'), false, 'Empty native settlements serialize as omission.');
-    assert.deepEqual(simulation.settlements, [], 'Wire normalization cannot mutate the caller\'s original evidence.');
+    const { settlements: _legacy, ...wireSimulation } = originalSimulation;
+    assert.deepEqual(result.request.simulation, wireSimulation);
+    assert.equal(Object.hasOwn(object(result.request.simulation), 'settlements'), false);
+    assert.deepEqual(simulation.settlements, []);
+    assert.deepEqual(simulation, originalSimulation, 'Native request preparation retains the caller\'s original evidence.');
     assert.equal(result.hold.status, 'COMPLETED', result.hold.reason ?? ''); assert.equal(result.rebalance.status, 'COMPLETED', result.rebalance.reason ?? '');
     const hold = result.hold.result!, rebalanced = result.rebalance.result!;
     assert.equal(hold.orders, '0'); assert.equal(hold.consumed_target_points, '0'); assert.ok(BigInt(String(rebalanced.orders)) > 0n);
@@ -56,10 +60,14 @@ test('PM observed native: original solver frames use actual current inventory an
   try {
     const objectsDirectory = String(f.source.objectsDirectory);
     assert.ok(f.source.objectsDirectory && f.source.study && f.source.infeasibleStudy, 'Export the actual native study, objects and proven infeasible variant.');
-    const study = { ...object(f.source.study), settlements: [] };
+    const study = { ...structuredClone(object(f.source.study)), settlements: [] };
+    const originalStudy = structuredClone(study);
     const result = await compareObservedSpotAccount({ ...f.common, operation: { kind: 'STUDY', study, objectsDirectory } }, BACKGROUND_CONTEXT);
+    const { settlements: _legacy, ...wireStudy } = originalStudy;
+    assert.deepEqual(result.request.study, wireStudy);
     assert.equal(Object.hasOwn(object(result.request.study), 'settlements'), false);
     assert.deepEqual(study.settlements, []);
+    assert.deepEqual(study, originalStudy);
     assert.equal(result.hold.status, 'COMPLETED', result.hold.reason ?? ''); assert.equal(result.rebalance.status, 'COMPLETED', result.rebalance.reason ?? '');
     const frames = result.rebalance.result!.frames as JsonObject[]; assert.ok(frames.length >= 2);
     const first = object(frames[0]!.input); const firstAsset = (first.assets as JsonObject[])[0]!;

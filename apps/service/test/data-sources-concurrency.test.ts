@@ -63,7 +63,7 @@ test('two sources cannot atomically publish the same dataset after both load pha
 test('saving and toggling a source retains its completed raw acquisition artifact', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-source-artifact-'));
   let state = await open(directory);
-  const name = 'qz.data.acquisition-plan';
+  const name = 'qz.data.local-config';
   try {
     const artifact = { manifestPath: join(directory, 'raw-market-data.json'), planId: 'a'.repeat(64) };
     await writeFile(artifact.manifestPath, JSON.stringify({ source_root: directory }));
@@ -73,7 +73,7 @@ test('saving and toggling a source retains its completed raw acquisition artifac
       const saved = (await tx.doc(DataSourceState)).sources[name] as Record<string, unknown>;
       saved.acquisition = artifact;
     }, context);
-    const update = { enabled: false, config: { kind: 'hub', planPath: 'plan.json', cacheDir: 'cache' } };
+    const update = { enabled: false, config: { path: 'dataset.json' } };
     assert.deepEqual((await state.sources.save(name, update)).acquisition, artifact);
     assert.deepEqual((await state.sources.toggle(name, true)).acquisition, artifact);
     assert.deepEqual((await state.sources.toggle(name, false)).acquisition, artifact);

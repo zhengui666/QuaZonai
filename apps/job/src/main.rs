@@ -23,12 +23,6 @@ struct Arguments {
 enum Operation {
     /// Exact upstream source and precision of this binary.
     BuildIdentity,
-    /// Observe bounded public Polymarket native events; no execution client or orders.
-    #[cfg(feature = "native-node-observer")]
-    PolymarketDataProbe(job::polymarket_data_probe::Arguments),
-    /// Foreground native Sandbox execution with explicitly configured public live data.
-    #[cfg(feature = "native-paper")]
-    Paper(job::paper_node::Arguments),
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
     /// Project official native snapshots into downstream account observation envelopes.
@@ -136,18 +130,7 @@ enum Operation {
         #[arg(long)]
         scope: Option<PathBuf>,
     },
-    /// Conditional dynamic ensemble research across every registered catalog market.
-    ReplayCatalogEnsemble {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        partitions: PathBuf,
-        /// Original complete machine-private BAR scope, never a source-derived shortlist.
-        #[arg(long)]
-        scope: PathBuf,
-        #[arg(long, required = true)]
-        model: Vec<PathBuf>,
-    },
+
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
         #[arg(long)]
@@ -276,13 +259,7 @@ fn run(operation: Operation) -> Result<()> {
             serde_json::to_writer(std::io::stdout(), &job::build_identity())?;
             Ok(())
         }
-        #[cfg(feature = "native-node-observer")]
-        Operation::PolymarketDataProbe(args) => job::polymarket_data_probe::run(args),
-        #[cfg(feature = "native-paper")]
-        Operation::Paper(args) => {
-            job::paper_node::run(args)?;
-            Ok(())
-        }
+
         Operation::NativeAccountObservation(args) => {
             job::account_observation_cli::run(args)?;
             Ok(())
@@ -403,25 +380,6 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
-        Operation::ReplayCatalogEnsemble {
-            catalog,
-            partitions,
-            scope,
-            model,
-        } => {
-            let scope: Vec<String> = serde_json::from_reader(fs::File::open(scope)?)?;
-            let models = model
-                .iter()
-                .map(|path| model_bytes(path))
-                .collect::<Result<Vec<_>>>()?;
-            output(&job::catalog_ensemble::replay(
-                &catalog,
-                &partitions,
-                &input()?,
-                &models,
-                &scope,
-            )?)
-        }
         Operation::EvaluateExperiment {
             catalog,
             model,
@@ -646,58 +604,6 @@ mod tests {
         .is_err());
     }
 
-    #[cfg(feature = "native-paper")]
-    #[test]
-    fn paper_commands_dispatch_through_the_existing_job_executable() {
-        for arguments in [
-            vec![
-                "job",
-                "paper",
-                "preflight",
-                "--config",
-                "paper.json",
-                "--claim",
-                "claim.json",
-            ],
-            vec!["job", "paper", "serve", "--config", "paper.json"],
-            vec![
-                "job",
-                "paper",
-                "apply",
-                "--origin",
-                "http://127.0.0.1:8080",
-                "--credential-file",
-                "token",
-                "--claim",
-                "claim.json",
-            ],
-            vec![
-                "job",
-                "paper",
-                "status",
-                "--origin",
-                "http://127.0.0.1:8080",
-                "--credential-file",
-                "token",
-            ],
-            vec![
-                "job",
-                "paper",
-                "stop",
-                "--origin",
-                "http://127.0.0.1:8080",
-                "--credential-file",
-                "token",
-            ],
-        ] {
-            assert!(matches!(
-                Arguments::try_parse_from(arguments).unwrap().command,
-                Operation::Paper(_)
-            ));
-        }
-    }
-
-    #[cfg(not(feature = "native-paper"))]
     #[test]
     fn default_scientific_job_does_not_expose_paper_commands() {
         assert!(
@@ -789,81 +695,5 @@ mod tests {
                 assert!(error.to_string().contains("canonical UUIDv7"));
             }
         }
-    }
-    #[cfg(feature = "native-node-observer")]
-    #[test]
-    fn public_polymarket_probe_has_only_bounded_data_arguments() {
-        assert!(matches!(
-            Arguments::try_parse_from([
-                "job",
-                "polymarket-data-probe",
-                "--instrument-id",
-                "condition-1.POLYMARKET",
-                "--output",
-                "probe.json",
-                "--max-seconds",
-                "30",
-                "--max-events",
-                "4096",
-                "--proxy-env",
-                "QZ_EXPLICIT_PUBLIC_PROXY",
-            ])
-            .unwrap()
-            .command,
-            Operation::PolymarketDataProbe(_)
-        ));
-        assert!(Arguments::try_parse_from([
-            "job",
-            "polymarket-data-probe",
-            "--instrument-id",
-            "condition-1.POLYMARKET",
-            "--output",
-            "probe.json",
-            "--credential-file",
-            "never-read",
-        ])
-        .is_err());
-    }
-
-    #[cfg(not(feature = "native-node-observer"))]
-    #[test]
-    fn default_scientific_job_has_no_public_polymarket_probe() {
-        assert!(Arguments::try_parse_from([
-            "job",
-            "polymarket-data-probe",
-            "--instrument-id",
-            "condition-1.POLYMARKET",
-            "--output",
-            "probe.json",
-        ])
-        .is_err());
-    }
-
-    #[cfg(feature = "native-paper")]
-    #[test]
-    fn native_paper_uses_file_inputs_without_http_control() {
-        assert!(matches!(
-            Arguments::try_parse_from([
-                "job",
-                "paper",
-                "run",
-                "--config",
-                "native-config.json",
-                "--claim",
-                "native-claim.json",
-            ])
-            .unwrap()
-            .command,
-            Operation::Paper(_)
-        ));
-        for operation in ["serve", "apply", "status", "stop"] {
-            assert!(Arguments::try_parse_from(["job", "paper", operation]).is_err());
-        }
-    }
-
-    #[cfg(not(feature = "native-paper"))]
-    #[test]
-    fn default_scientific_job_has_no_polymarket_paper_host() {
-        assert!(Arguments::try_parse_from(["job", "polymarket-paper", "run"]).is_err());
     }
 }

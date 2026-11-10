@@ -45,7 +45,7 @@ test('unscoped final catalog boundaries cannot erase an existing final exposure'
     async commit(action: (tx: { doc(): Promise<typeof ledger> }) => Promise<void>) { return action({ async doc() { return ledger; } }); },
   } as unknown as Parameters<typeof checkExposure>[0];
   try {
-    for (const kind of ['catalog_scan_request', 'catalog_ensemble_request']) {
+    for (const kind of ['catalog_scan_request']) {
       const finalData: JsonObject = { catalog: directory, train_end_ns: ns(1), validation_end_ns: ns(10),
         [kind]: { event_start_ns: '0', train_end_ns: ns(1), validation_end_ns: ns(10), event_end_ns: '0' } };
       await assert.rejects(checkExposure(api, context, data, false, finalData), /native_partition_boundaries/);
@@ -86,10 +86,10 @@ test('later source events bypass an unavailable BAR scope while receive delay pr
     input.maximum_receive_delay_ns = ns(2);
     await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
     assert.equal(scopeReads, 1);
-    scopes.roots.push({ catalog: directory, reference: ledger.windows[0]!.barTypesRef, instrumentVenues: ['POLYMARKET'] });
+    scopes.roots.push({ catalog: directory, reference: ledger.windows[0]!.barTypesRef, instrumentVenues: ['HYPERLIQUID'] });
     await checkExposure(api, context, data, true, undefined, undefined, false);
     assert.equal(scopeReads, 1);
-    input.instrument_ids = ['ORIGINAL.POLYMARKET'];
+    input.instrument_ids = ['ORIGINAL.HYPERLIQUID'];
     await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
     assert.equal(scopeReads, 2);
     assert.deepEqual(ledger, original);

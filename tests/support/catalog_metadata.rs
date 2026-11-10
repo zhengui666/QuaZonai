@@ -47,7 +47,6 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
     };
     RuntimeCatalogMetadataV1 {
         execution_fees: None,
-        recorded_feature_inputs: None,
         schema_version: SchemaV1,
         registered_ref: "controlled-catalog".into(),
         native_snapshot_ref: "controlled-snapshot".into(),
@@ -90,7 +89,6 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
             native_version: "nautilus-persistence/0.68.0".into(),
             checked_at: instant(301),
             datasets: vec![NativeDatasetQualityV1 {
-                settlements: Vec::new(),
                 dataset_revision_id: Id::new(),
                 selection,
                 row_count: count(3),

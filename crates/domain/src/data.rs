@@ -1,4 +1,4 @@
-//! Native catalog keys, calculation limits and recorded feature provenance.
+//! Native catalog keys and calculation limits.
 use crate::{control::text, research::invalid, DomainError};
 
 fn bad(field: &str) -> DomainError {
@@ -40,9 +40,3 @@ pub fn bounded_native_limits(
     }
     Ok(())
 }
-
-mod recorded_features;
-pub use recorded_features::{
-    recorded_feature_binding, recorded_feature_intent, recorded_feature_matches,
-    recorded_feature_provenance, recorded_feature_register,
-};

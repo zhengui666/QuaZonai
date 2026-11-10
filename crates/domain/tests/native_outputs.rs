@@ -63,7 +63,6 @@ fn quality() -> (NativeTaskParametersV1, NativeDataQualityReportV1) {
         NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
-                settlements: Vec::new(),
                 dataset_revision_id: dataset,
                 selection: selection.clone(),
             }],
@@ -73,7 +72,6 @@ fn quality() -> (NativeTaskParametersV1, NativeDataQualityReportV1) {
             native_version: "nautilus-persistence/0.68.0".into(),
             checked_at: clock(),
             datasets: vec![NativeDatasetQualityV1 {
-                settlements: Vec::new(),
                 dataset_revision_id: dataset,
                 selection,
                 row_count: count(2),

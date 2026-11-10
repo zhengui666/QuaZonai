@@ -27,12 +27,11 @@ export function partitionBoundaries(request: JsonObject, catalog = false): void 
 
 export async function footprint(data: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
-  const ensemble = data.catalog_ensemble_request !== undefined;
-  const catalog = ensemble || data.catalog_scan_request !== undefined;
-  if ([data.catalog_ensemble_request, data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  const catalog = data.catalog_scan_request !== undefined;
+  if ([data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
   const request = nativeResearchRequest(data);
   const tick = isTickResearchInput(data);
-  partitionBoundaries(ensemble ? { ...request, train_end_ns: data.train_end_ns!, validation_end_ns: data.validation_end_ns! } : request, catalog);
+  partitionBoundaries(request, catalog);
   const selection = catalog ? request : tick ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   if (!tick && !catalog && (!Array.isArray(selection.bar_types) || !selection.bar_types.every((id) => typeof id === 'string'))) throw new Error('bar_types_required');
   // Paths, source revisions and modalities do not create a fresh historical sample.
@@ -42,7 +41,7 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
       : catalog ? { barTypesRef: object(data.catalog_scope, 'catalog_scope') } : { barTypes: [...selection.bar_types as string[]].sort() }),
     ...(tick && selection.availability === 'RECEIVED_TIME_OBSERVED' ? { availability: selection.availability,
       receivedStart: request.validation_end_ns!, receivedEnd: selection.event_end_ns! } : {}),
-    start: sourceStart(selection, ensemble ? data.validation_end_ns! : request.validation_end_ns!), end: sourceEnd(data, selection, selection.event_end_ns!) };
+    start: sourceStart(selection, request.validation_end_ns!), end: sourceEnd(data, selection, selection.event_end_ns!) };
 }
 
 function sourceStart(selection: JsonObject, start: JsonObject[string]): string {
@@ -64,12 +63,11 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const window = await footprint(data);
   const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
   const kind = historical ? (reserve ? 'HISTORICAL_FINAL' : 'HISTORICAL_ITERATION') : (reserve ? 'FINAL' : 'ITERATION');
-  const ensemble = data.catalog_ensemble_request !== undefined;
   const request = nativeResearchRequest(data);
-  const selection = ensemble || data.catalog_scan_request !== undefined ? request : isTickResearchInput(data) ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast').selection, 'selection');
+  const selection = data.catalog_scan_request !== undefined ? request : isTickResearchInput(data) ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast').selection, 'selection');
   if (!reserve) {
     window.start = sourceStart(selection, selection.event_start_ns!);
-    const receivedEnd = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
+    const receivedEnd = request.validation_end_ns!;
     window.end = sourceEnd(data, selection, receivedEnd);
     if (window.availability === 'RECEIVED_TIME_OBSERVED') {
       window.receivedStart = selection.event_start_ns!;
@@ -80,12 +78,10 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   // against final exposures so a new root cannot reset an exposed study.
   // Original catalog bindings carry their time range before the scope task runs.
   // Reading that boundary must not require a scope for the held-out catalog.
-  const finalCatalog = finalData && (finalData.catalog_ensemble_request !== undefined || finalData.catalog_scan_request !== undefined);
-  if (finalCatalog && [finalData.catalog_ensemble_request, finalData.catalog_scan_request, finalData.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  const finalCatalog = finalData && finalData.catalog_scan_request !== undefined;
+  if (finalCatalog && [finalData.catalog_scan_request, finalData.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
   const finalRequest = finalCatalog ? nativeResearchRequest(finalData) : undefined;
-  if (finalRequest) partitionBoundaries(finalData!.catalog_ensemble_request !== undefined
-    ? { ...finalRequest, train_end_ns: finalData!.train_end_ns!, validation_end_ns: finalData!.validation_end_ns! }
-    : finalRequest, true);
+  if (finalRequest) partitionBoundaries(finalRequest, true);
   const finalWindow = finalData && !finalRequest ? await footprint(finalData) : null;
   const finalEnd = finalRequest ? finalRequest.event_end_ns! : finalWindow?.end ?? sourceEnd(data, selection, selection.event_end_ns!);
   const currentEnd = sourceEnd(data, selection, selection.event_end_ns!);

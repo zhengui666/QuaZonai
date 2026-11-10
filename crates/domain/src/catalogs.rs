@@ -140,17 +140,14 @@ pub fn execution_account(
 ) -> Result<(), DomainError> {
     use contracts::science::NativeAccountKind;
     match (class, account) {
-        ("CurrencyPair", NativeAccountKind::Margin)
-        | ("Equity", _)
-        | ("BinaryOption", NativeAccountKind::Cash) => Ok(()),
+        ("CurrencyPair", NativeAccountKind::Margin) | ("Equity", _) => Ok(()),
         _ => Err(DomainError::CapabilityUnavailable(
             "execution_assumption_account_instrument",
         )),
     }
 }
 
-/// Bind execution fees to the independent frozen venue policy, or the original
-/// Polymarket fee schedule carried by its native instrument definition.
+/// Bind execution fees to the independent frozen venue policy.
 pub fn execution_fees(
     metadata: &RuntimeCatalogMetadataV1,
     settings: &contracts::science::NativeSimulationSettingsV1,
@@ -167,28 +164,27 @@ pub fn execution_fees(
         return Err(bad("execution_fees"));
     }
     let ids: BTreeSet<_> = ids.iter().collect();
-    let source_rates = if matches!(
+    if !matches!(
         settings.fee_model,
         contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
     ) {
-        let source = metadata
-            .execution_fees
-            .as_ref()
-            .ok_or_else(|| bad("execution_fees.source_missing"))?;
-        maker_taker_fee_selection(source, &metadata.quality.datasets[0].selection)?;
-        if source.currency != settings.base_currency {
-            return Err(bad("execution_fees.currency"));
-        }
-        Some(
-            source
-                .rates
-                .iter()
-                .map(|rate| (rate.instrument_id.as_str(), rate))
-                .collect::<BTreeMap<_, _>>(),
-        )
-    } else {
-        None
-    };
+        return Err(DomainError::CapabilityUnavailable(
+            "catalog_maker_taker_fee_model",
+        ));
+    }
+    let source = metadata
+        .execution_fees
+        .as_ref()
+        .ok_or_else(|| bad("execution_fees.source_missing"))?;
+    maker_taker_fee_selection(source, &metadata.quality.datasets[0].selection)?;
+    if source.currency != settings.base_currency {
+        return Err(bad("execution_fees.currency"));
+    }
+    let source_rates = source
+        .rates
+        .iter()
+        .map(|rate| (rate.instrument_id.as_str(), rate))
+        .collect::<BTreeMap<_, _>>();
     let definitions = instrument_versions(&metadata.universe.instrument_definitions)?;
     for rate in &settings.fee_rates {
         let versions = definitions
@@ -199,44 +195,17 @@ pub fn execution_fees(
         execution_account(class, settings.account_kind)?;
         let currency = match class {
             "CurrencyPair" => &value["quote_currency"],
-            "Equity" | "BinaryOption" => &value["currency"],
+            "Equity" => &value["currency"],
             _ => {
                 return Err(DomainError::CapabilityUnavailable(
                     "execution_assumption_instrument",
                 ));
             }
         };
-        let (maker, taker): (contracts::DecimalValue, contracts::DecimalValue) =
-            if class == "BinaryOption" {
-                if !crate::prediction::uses_native_fee(&settings.fee_model) {
-                    return Err(DomainError::CapabilityUnavailable(
-                        "polymarket_native_fee_model",
-                    ));
-                }
-                (
-                    "0".parse().map_err(|_| bad("execution_fees.maker"))?,
-                    crate::prediction::planning_fee(value)?,
-                )
-            } else {
-                if crate::prediction::uses_native_fee(&settings.fee_model) {
-                    return Err(DomainError::CapabilityUnavailable(
-                        "polymarket_binary_instrument",
-                    ));
-                }
-                if !matches!(
-                    settings.fee_model,
-                    contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
-                ) {
-                    return Err(DomainError::CapabilityUnavailable(
-                        "catalog_maker_taker_fee_model",
-                    ));
-                }
-                let original = source_rates
-                    .as_ref()
-                    .and_then(|rates| rates.get(rate.instrument_id.as_str()))
-                    .ok_or_else(|| bad("execution_fees.identity"))?;
-                (original.maker.clone(), original.taker.clone())
-            };
+        let original = source_rates
+            .get(rate.instrument_id.as_str())
+            .ok_or_else(|| bad("execution_fees.identity"))?;
+        let (maker, taker) = (original.maker.clone(), original.taker.clone());
         if fill.prob_slippage.is_positive() {
             let tick: contracts::DecimalValue =
                 serde_json::from_value(value["price_increment"].clone())
@@ -340,40 +309,6 @@ pub fn metadata(
         return Err(bad("quality.sealed_bar_values"));
     }
     bar_notionals(quality)?;
-    crate::prediction::settlement_scope(
-        &quality.settlements,
-        &quality.instrument_ids,
-        &quality.selection,
-    )?;
-    if value.partition == contracts::research::DataPartition::Sealed
-        && !quality.settlements.is_empty()
-    {
-        return Err(bad("quality.sealed_settlement_values"));
-    }
-    for group in &quality.settlements {
-        for outcome in &group.outcomes {
-            if chrono::DateTime::from_timestamp_nanos(outcome.ts_init.get() as i64)
-                > value.available_through
-            {
-                return Err(bad("quality.settlement_availability"));
-            }
-            // The untraded sibling may have no BAR series. Its native definition is
-            // still required so one source cannot splice unrelated condition IDs.
-            let versions = definitions
-                .get(outcome.instrument_id.as_str())
-                .ok_or_else(|| bad("quality.settlement_instrument"))?;
-            let (class, payload) = instrument_version_at(versions, outcome.ts_init.get())?;
-            if class != "BinaryOption" {
-                return Err(bad("quality.settlement_instrument"));
-            }
-            let (activation, _) = crate::prediction::instrument(payload)?;
-            if payload["info"]["condition_id"].as_str() != Some(&group.condition_id)
-                || outcome.ts_event.get() < activation
-            {
-                return Err(bad("quality.settlement_instrument"));
-            }
-        }
-    }
     if quality.row_count != value.row_count
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns
@@ -399,9 +334,6 @@ pub fn metadata(
         || quality.available_through_ns.get() > available as u64
     {
         return Err(bad("quality_times"));
-    }
-    if let Some(features) = &value.recorded_feature_inputs {
-        recorded_feature_inputs(features, value.partition, value.available_through)?;
     }
     let universe = &value.universe;
     text(&universe.name, 1, 120, false)?;
@@ -608,61 +540,4 @@ pub fn portfolio_groups(
         return Err(bad_source());
     }
     Ok(groups)
-}
-
-/// A bounded attachment key cannot name a host path or a URL.
-pub fn recorded_feature_part_key(value: &str) -> Result<(), DomainError> {
-    if !(1..=120).contains(&value.len())
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    {
-        return Err(bad("recorded_feature_inputs.part_key"));
-    }
-    Ok(())
-}
-
-/// Structural checks only: the trusted source preparer checks the original
-/// paired reports and buffers. Descriptors grant no license or PIT authority.
-pub fn recorded_feature_inputs(
-    value: &RecordedFeatureInputsV1,
-    partition: contracts::research::DataPartition,
-    available_through: DateTime<Utc>,
-) -> Result<(), DomainError> {
-    let available = available_through
-        .timestamp_nanos_opt()
-        .and_then(|n| u64::try_from(n).ok())
-        .ok_or_else(|| bad("recorded_feature_inputs.available_through"))?;
-    if value.partition != partition
-        || partition == contracts::research::DataPartition::Sealed
-        || value.source_selection_start_ns >= value.source_selection_end_ns
-        || value.fragments.is_empty()
-    {
-        return Err(bad("recorded_feature_inputs"));
-    }
-    let mut keys = BTreeSet::new();
-    let mut observations = 0u64;
-    for fragment in &value.fragments {
-        recorded_feature_part_key(&fragment.part_key)?;
-        observations = observations
-            .checked_add(fragment.observations.get())
-            .ok_or_else(|| bad("recorded_feature_inputs.observations"))?;
-        if !keys.insert(&fragment.part_key)
-            || fragment.byte_count.get() == 0
-            || fragment.observations.get() == 0
-            || fragment.min_event_ns > fragment.max_event_ns
-            || fragment.min_event_ns < value.source_selection_start_ns
-            || fragment.max_event_ns >= value.source_selection_end_ns
-            || fragment.min_observed_available_ns > fragment.max_observed_available_ns
-            || fragment.min_observed_available_ns < fragment.min_event_ns
-            || fragment.max_observed_available_ns < fragment.max_event_ns
-            || fragment.max_observed_available_ns.get() > available
-        {
-            return Err(bad("recorded_feature_inputs.fragment"));
-        }
-        // Observed availability may exceed the source event selection end.
-        // BAR event_start/end are intentionally not bounds on feature events.
-    }
-    Ok(())
 }
