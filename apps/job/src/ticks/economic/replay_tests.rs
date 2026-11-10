@@ -401,10 +401,22 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
         .limitations
         .iter()
         .any(|limit| limit == "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK"));
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::remove_file(economic.join(name)).unwrap();
+    }
+    assert!(replay_with_funding(
+        &prepared.join("research/catalog"),
+        &economic,
+        &request,
+        &wasm
+    )
+    .is_err());
     let spot_prepared = directory.path().join("spot-observed");
     cohort_cache::prepare_views(&economic, &spot_research, &spot_prepared, 1_000_000).unwrap();
     missing_context.research = spot_research;
     missing_context.research.clip_end(counter(2 * DAY).unwrap());
+    missing_context.scenario.spot_taker_fee_bps = "7".parse().unwrap();
+    missing_context.scenario.extra_cost_bps = "1".parse().unwrap();
     let spot = replay_with_funding(
         &spot_prepared.join("research/catalog"),
         &economic,
@@ -418,6 +430,56 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
     assert_eq!(spot.days.len(), 2);
     assert!(spot.days.iter().all(|day| day.equity_usdt.is_some()));
     assert!(spot.native_fills.get() >= 2);
+    assert_eq!(decimal(&spot.funding_usdc).unwrap(), Decimal::ZERO);
+    assert!(decimal(spot.fees_usdc_equivalent.as_ref().unwrap()).unwrap() > Decimal::ZERO);
+    assert!(spot.funding_missing_instruments.is_empty());
+    assert!(spot.methods["funding_source"].contains("CurrencyPair-only"));
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::write(economic.join(name), "unrelated invalid funding").unwrap();
+    }
+    let ignored = replay_with_funding(
+        &spot_prepared.join("research/catalog"),
+        &economic,
+        &missing_context,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(spot.fees_usdc_equivalent, ignored.fees_usdc_equivalent);
+}
+
+#[test]
+fn book_only_spot_source_survives_preparation_in_both_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, mut request, _) = source(directory.path(), 1, None, true);
+    request
+        .research
+        .input
+        .instrument_ids
+        .retain(|id| id != LATE);
+    let catalog = directory.path().join("source/catalog");
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::remove_file(catalog.join(name)).unwrap();
+    }
+    let descriptor =
+        serde_json::to_vec(&json!({"source_root":directory.path(),"files":[]})).unwrap();
+    std::fs::write(catalog.join("book-snapshots.source.json"), &descriptor).unwrap();
+    let prepared = directory.path().join("book-only");
+    let metadata =
+        cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
+    assert_eq!(
+        metadata["economic_sources"],
+        json!([{"path":"book-snapshots.source.json","bytes":descriptor.len().to_string()}])
+    );
+    for view in ["research/catalog", "independent/catalog"] {
+        assert_eq!(
+            std::fs::read(prepared.join(view).join("book-snapshots.source.json")).unwrap(),
+            descriptor
+        );
+        assert!(!prepared
+            .join(view)
+            .join("funding-rates.manifest.json")
+            .exists());
+    }
 }
 
 #[test]

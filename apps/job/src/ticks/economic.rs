@@ -215,8 +215,9 @@ struct FundingManifest {
     rows: u64,
     missing_instruments: Vec<String>,
 }
+#[derive(Default)]
 struct Funding {
-    reader: BufReader<File>,
+    reader: Option<BufReader<File>>,
     next: Option<Rate>,
     last: Option<(u64, String)>,
     rows: u64,
@@ -225,7 +226,7 @@ struct Funding {
 impl Funding {
     fn open(path: &Path, instruments: BTreeSet<String>) -> Result<Self> {
         let mut s = Self {
-            reader: BufReader::new(File::open(path)?),
+            reader: Some(BufReader::new(File::open(path)?)),
             next: None,
             last: None,
             rows: 0,
@@ -235,8 +236,11 @@ impl Funding {
         Ok(s)
     }
     fn advance(&mut self) -> Result<()> {
+        let Some(reader) = self.reader.as_mut() else {
+            return Ok(());
+        };
         let mut line = String::new();
-        let n = self.reader.by_ref().take(4097).read_line(&mut line)?;
+        let n = reader.by_ref().take(4097).read_line(&mut line)?;
         if n == 0 {
             self.next = None;
             return Ok(());
@@ -1952,31 +1956,25 @@ pub(crate) fn funding_sources(
     request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<Vec<(String, u64)>> {
     let names = ["funding-rates.jsonl", "funding-rates.manifest.json"];
-    if names.iter().all(|name| !root.join(name).exists()) {
-        ensure!(
-            std::fs::symlink_metadata(root.join("spot-valuation.jsonl"))
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-            "ECONOMIC_FUNDING_SOURCE_REQUIRED"
-        );
-        return Ok(Vec::new());
-    }
     let mut files = Vec::new();
-    for name in names {
-        let state = std::fs::symlink_metadata(root.join(name))?;
+    if names.iter().any(|name| root.join(name).exists()) {
+        for name in names {
+            let state = std::fs::symlink_metadata(root.join(name))?;
+            ensure!(
+                state.is_file() && !state.file_type().is_symlink(),
+                "ECONOMIC_FUNDING_REGULAR_SOURCE_REQUIRED"
+            );
+            files.push((name.into(), state.len()));
+        }
+        let manifest: FundingManifest =
+            serde_json::from_reader(BufReader::new(File::open(root.join(names[1]))?))?;
         ensure!(
-            state.is_file() && !state.file_type().is_symlink(),
-            "ECONOMIC_FUNDING_REGULAR_SOURCE_REQUIRED"
+            manifest.source_revision == request.input.source_revision
+                && manifest.start_ns <= request.input.event_start_ns
+                && manifest.end_ns >= request.input.event_end_ns,
+            "ECONOMIC_FUNDING_COVERAGE_INVALID"
         );
-        files.push((name.into(), state.len()));
     }
-    let manifest: FundingManifest =
-        serde_json::from_reader(BufReader::new(File::open(root.join(names[1]))?))?;
-    ensure!(
-        manifest.source_revision == request.input.source_revision
-            && manifest.start_ns <= request.input.event_start_ns
-            && manifest.end_ns >= request.input.event_end_ns,
-        "ECONOMIC_FUNDING_COVERAGE_INVALID"
-    );
     if root.join(CONTEXT_MANIFEST).exists() {
         let context = context_manifest(root, request)?;
         files.push((
@@ -2064,10 +2062,6 @@ pub fn replay_models_with_funding_and_cores(
 ) -> Result<NativeTickEconomicResultV1> {
     ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
     validate(request)?;
-    ensure!(
-        !funding_sources(funding_root, &request.research)?.is_empty(),
-        "ECONOMIC_FUNDING_SOURCE_REQUIRED"
-    );
     let cache = cohort_cache::load(root, &request.research)?;
     let mut defs = definitions(root)?
         .into_iter()
@@ -2207,31 +2201,48 @@ pub fn replay_models_with_funding_and_cores(
             book_heads.push(head);
         }
     }
-    let funding_manifest: FundingManifest = serde_json::from_reader(File::open(
-        funding_root.join("funding-rates.manifest.json"),
-    )?)?;
-    let funding_ids = funding_manifest
-        .instruments
+    let (funding_manifest, mut funding) = if assets
         .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        funding_manifest.source_revision == request.research.input.source_revision
-            && funding_manifest.start_ns <= request.research.input.event_start_ns
-            && funding_manifest.end_ns >= request.research.input.event_end_ns
-            && funding_ids.len() == funding_manifest.instruments.len()
-            && assets
-                .iter()
-                .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
-                .all(|a| funding_ids.contains(&a.instrument.id().to_string())),
-        "ECONOMIC_FUNDING_COVERAGE_INVALID"
-    );
+        .any(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+    {
+        ensure!(
+            !funding_sources(funding_root, &request.research)?.is_empty(),
+            "ECONOMIC_FUNDING_SOURCE_REQUIRED"
+        );
+        let manifest: FundingManifest = serde_json::from_reader(File::open(
+            funding_root.join("funding-rates.manifest.json"),
+        )?)?;
+        let funding_ids = manifest
+            .instruments
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            manifest.source_revision == request.research.input.source_revision
+                && manifest.start_ns <= request.research.input.event_start_ns
+                && manifest.end_ns >= request.research.input.event_end_ns
+                && funding_ids.len() == manifest.instruments.len()
+                && assets
+                    .iter()
+                    .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+                    .all(|a| funding_ids.contains(&a.instrument.id().to_string())),
+            "ECONOMIC_FUNDING_COVERAGE_INVALID"
+        );
+        let funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
+        (Some(manifest), funding)
+    } else {
+        (None, Funding::default())
+    };
     let missing_funding = funding_manifest
-        .missing_instruments
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let mut funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
+        .as_ref()
+        .map(|manifest| {
+            manifest
+                .missing_instruments
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
     let mut contexts = (request.context_source.is_some()
         || request.event_time_context_source.is_some())
     .then(|| {
@@ -2953,10 +2964,12 @@ pub fn replay_models_with_funding_and_cores(
     while funding.next.is_some() {
         funding.advance()?;
     }
-    ensure!(
-        funding.rows == funding_manifest.rows,
-        "ECONOMIC_FUNDING_ROW_COUNT_MISMATCH"
-    );
+    if let Some(manifest) = &funding_manifest {
+        ensure!(
+            funding.rows == manifest.rows,
+            "ECONOMIC_FUNDING_ROW_COUNT_MISMATCH"
+        );
+    }
     if let Some(context) = contexts.as_mut() {
         context.finish()?;
     }
@@ -3032,12 +3045,12 @@ pub fn replay_models_with_funding_and_cores(
         schema_version: SchemaV1, request: request.clone(),
         small_capital_diagnostics: small.as_ref().map(|p| p.report(&assets)).transpose()?, model: if request.scenario.execution_model.is_some() { "SEGREGATED_SYNTHETIC_QUOTE_IOC_V1" } else { "SEGREGATED_COHORT_MARK_ESTIMATE_V1" }.into(),
         methods: BTreeMap::from([
-            ("funding_source".into(), format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", funding_manifest.source_revision, funding_manifest.start_ns.get(), funding_manifest.end_ns.get(), funding_manifest.rows, request.funding_source)),
+            ("funding_source".into(), funding_manifest.as_ref().map_or_else(|| "Periodic funding is inapplicable to this CurrencyPair-only replay.".into(), |manifest| format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", manifest.source_revision, manifest.start_ns.get(), manifest.end_ns.get(), manifest.rows, request.funding_source))),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
             ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
-            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
+            ("funding".into(), if funding_manifest.is_none() { "Periodic funding is inapplicable to this CurrencyPair-only replay.".into() } else if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
             ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
@@ -3055,11 +3068,11 @@ pub fn replay_models_with_funding_and_cores(
         initial_conversion_cost_usdc:exact(conversion_cost)?, nominal_usd_settled_usdc:exact(margin_summary.nominal_settlement_usdc)?,
         native_fills:counter(fills)?, native_rejections:counter(rejections)?,
         native_perp_pnl_rounding_events:counter(margin_summary.fills)?, perp_pnl_rounding_bound_usdc:exact(Decimal::new(1,2)*Decimal::from(margin_summary.fills))?,
-        funding_missing_instruments:funding_manifest.missing_instruments,
+        funding_missing_instruments:funding_manifest.as_ref().map(|manifest| manifest.missing_instruments.clone()).unwrap_or_default(),
         targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if funding_manifest.is_none(){"PERIODIC_FUNDING_INAPPLICABLE_TO_CURRENCY_PAIR_ASSETS"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
     if let Some(evidence) = initial_conversion_evidence {
         result

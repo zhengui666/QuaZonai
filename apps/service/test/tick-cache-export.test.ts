@@ -147,29 +147,35 @@ test('cohort range views publish one owned snapshot file while keeping source an
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test('explicit funding sidecars survive owned publication while unrelated files still fail', async () => {
-  const f = await preparedCache(undefined, true);
-  try {
-    const rates = '{"instrument_id":"BTCUSDT.SIM","event_ns":"10","rate":"0.00001"}\n';
-    const funding = JSON.stringify({ source_revision: f.request.input.source_revision, start_ns: '0', end_ns: '80',
-      instruments: ['BTCUSDT.SIM'], rows: 1, missing_instruments: [] });
-    const books = JSON.stringify({ source_root: join(f.directory, 'original-published-files'), files: [] });
-    const extras = [{ path: 'funding-rates.jsonl', bytes: String(Buffer.byteLength(rates)) },
-      { path: 'funding-rates.manifest.json', bytes: String(Buffer.byteLength(funding)) },
-      { path: 'book-snapshots.source.json', bytes: String(Buffer.byteLength(books)) }];
-    for (const part of ['research', 'independent']) {
-      const root = join(f.prepared, part, 'catalog');
-      await writeFile(join(root, extras[0]!.path), rates); await writeFile(join(root, extras[1]!.path), funding);
-      await writeFile(join(root, extras[2]!.path), books);
-    }
-    const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8')); metadata.economic_sources = extras;
-    await writeFile(f.options.prepared, JSON.stringify(metadata));
-    const result = await exportDataset(f.options);
-    assert.equal(await readFile(join(String(result.data.catalog), extras[0]!.path), 'utf8'), rates);
-    assert.equal(await readFile(join(String(result.data.catalog), extras[2]!.path), 'utf8'), books);
-    await writeFile(join(f.prepared, 'research/catalog/unrelated.json'), '{}');
-    await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'extra.json') }), /unmanifested/);
-  } finally { await rm(f.directory, { recursive: true, force: true }); }
+test('economic sidecars publish with a complete optional funding pair or books alone', async () => {
+  for (const fundingMode of ['pair', 'none', 'rates', 'manifest']) {
+    const f = await preparedCache(undefined, true);
+    try {
+      const rates = '{"instrument_id":"BTCUSDT.SIM","event_ns":"10","rate":"0.00001"}\n';
+      const funding = JSON.stringify({ source_revision: f.request.input.source_revision, start_ns: '0', end_ns: '80',
+        instruments: ['BTCUSDT.SIM'], rows: 1, missing_instruments: [] });
+      const books = JSON.stringify({ source_root: join(f.directory, 'original-published-files'), files: [] });
+      const sources = new Map([['book-snapshots.source.json', books]]);
+      if (fundingMode === 'pair' || fundingMode === 'rates') sources.set('funding-rates.jsonl', rates);
+      if (fundingMode === 'pair' || fundingMode === 'manifest') sources.set('funding-rates.manifest.json', funding);
+      const extras = [...sources].map(([path, bytes]) => ({ path, bytes: String(Buffer.byteLength(bytes)) }));
+      for (const part of ['research', 'independent']) {
+        const root = join(f.prepared, part, 'catalog');
+        for (const [path, bytes] of sources) await writeFile(join(root, path), bytes);
+      }
+      const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8')); metadata.economic_sources = extras;
+      await writeFile(f.options.prepared, JSON.stringify(metadata));
+      if (fundingMode === 'rates' || fundingMode === 'manifest') {
+        await assert.rejects(exportDataset(f.options), /tick_economic_source_manifest_invalid/);
+        continue;
+      }
+      const result = await exportDataset(f.options);
+      assert.equal(await readFile(join(String(result.data.catalog), 'book-snapshots.source.json'), 'utf8'), books);
+      if (fundingMode === 'pair') assert.equal(await readFile(join(String(result.data.catalog), 'funding-rates.jsonl'), 'utf8'), rates);
+      await writeFile(join(f.prepared, 'research/catalog/unrelated.json'), '{}');
+      await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'extra.json') }), /unmanifested/);
+    } finally { await rm(f.directory, { recursive: true, force: true }); }
+  }
 });
 
 test('spot valuation publication clips and validates research and independent views', async () => {

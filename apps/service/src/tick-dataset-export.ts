@@ -135,7 +135,8 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       const extras = metadata.economic_sources;
       if (!Array.isArray(extras)) throw new Error('tick_economic_source_manifest_invalid');
       const sources = extras;
-      const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
+      const hasFunding = extras.some(extra => ['funding-rates.jsonl', 'funding-rates.manifest.json'].includes(String(object(extra, 'tick_economic_source').path)));
+      const names = new Set<string>(hasFunding ? ['funding-rates.jsonl', 'funding-rates.manifest.json'] : []);
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'book-snapshots.source.json')) names.add('book-snapshots.source.json');
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) names.add('spot-valuation.jsonl');
       const contextSizes = new Map<string, bigint>();
@@ -179,13 +180,15 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         files.add(path);
       }
       if (names.size) throw new Error('tick_economic_source_manifest_invalid');
-      const funding = object(parseOriginalJson(await readFile(join(directory, 'funding-rates.manifest.json'), 'utf8')), 'funding_manifest');
-      const fundingInstruments = Array.isArray(funding.instruments) ? funding.instruments : [];
-      if (funding.source_revision !== request.input.source_revision || cacheCounter(funding.start_ns) > BigInt(request.input.event_start_ns)
-        || cacheCounter(funding.end_ns) < BigInt(request.input.event_end_ns) || !Array.isArray(funding.instruments)
-        || funding.instruments.some(id => typeof id !== 'string' || !id) || new Set(funding.instruments).size !== funding.instruments.length
-        || typeof funding.rows !== 'number' || !Number.isSafeInteger(funding.rows) || funding.rows < 0
-        || !Array.isArray(funding.missing_instruments) || funding.missing_instruments.some(id => typeof id !== 'string' || !fundingInstruments.includes(id))) throw new Error('tick_economic_source_coverage_mismatch');
+      if (hasFunding) {
+        const funding = object(parseOriginalJson(await readFile(join(directory, 'funding-rates.manifest.json'), 'utf8')), 'funding_manifest');
+        const fundingInstruments = Array.isArray(funding.instruments) ? funding.instruments : [];
+        if (funding.source_revision !== request.input.source_revision || cacheCounter(funding.start_ns) > BigInt(request.input.event_start_ns)
+          || cacheCounter(funding.end_ns) < BigInt(request.input.event_end_ns) || !Array.isArray(funding.instruments)
+          || funding.instruments.some(id => typeof id !== 'string' || !id) || new Set(funding.instruments).size !== funding.instruments.length
+          || typeof funding.rows !== 'number' || !Number.isSafeInteger(funding.rows) || funding.rows < 0
+          || !Array.isArray(funding.missing_instruments) || funding.missing_instruments.some(id => typeof id !== 'string' || !fundingInstruments.includes(id))) throw new Error('tick_economic_source_coverage_mismatch');
+      }
     }
     async function visit(path: string): Promise<void> {
       await observe(path); const state = await lstat(path);

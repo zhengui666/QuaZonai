@@ -213,11 +213,18 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
         .is_empty());
     let quotes = dir.path().join("spot-valuation.jsonl");
     std::fs::write(&quotes, "{}\n").unwrap();
-    assert!(
-        funding_sources(dir.path(), &request.research).is_err(),
-        "quotes need the funding pair for economic export"
+    assert_eq!(
+        funding_sources(dir.path(), &request.research).unwrap(),
+        vec![("spot-valuation.jsonl".into(), 3)]
     );
     std::fs::remove_file(&quotes).unwrap();
+    let books = dir.path().join("book-snapshots.source.json");
+    std::fs::write(&books, "{}\n").unwrap();
+    assert_eq!(
+        funding_sources(dir.path(), &request.research).unwrap(),
+        vec![("book-snapshots.source.json".into(), 3)]
+    );
+    std::fs::remove_file(&books).unwrap();
     std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());
     let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
@@ -233,7 +240,6 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
         .contains(&("spot-valuation.jsonl".into(), 3)));
-    let books = dir.path().join("book-snapshots.source.json");
     std::fs::write(&books, "{}\n").unwrap();
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
