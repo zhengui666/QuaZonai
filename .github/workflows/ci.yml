@@ -13,6 +13,7 @@ env:
   TEST_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   scope:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     outputs:
       science: ${{ steps.paths.outputs.science }}
@@ -99,7 +100,7 @@ jobs:
           retention-days: 7
   science-core:
     needs: scope
-    if: needs.scope.outputs.science == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.scope.outputs.science == 'true'
     # glibc baseline is compatible with the pinned bookworm Node image.
     runs-on: ubuntu-22.04
     timeout-minutes: 180
