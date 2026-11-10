@@ -137,6 +137,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
       status: String(trial.status), metrics: metrics(trial.result), ...tickInputDetails(trial.result),
+      ...(trial.economic ? { economic: object(trial.economic, 'tick_economic') } : {}),
       ...publicExecutionError(trial.error, 'scientific_execution_failed', Array.isArray((trial.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', trial.errorDetail),
     })), tasks,
     final: final ? { status: String(final.status), trialId: typeof final.trialId === 'number' ? final.trialId : null,
