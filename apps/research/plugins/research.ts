@@ -14,6 +14,7 @@ import { registerHypothesis } from '../src/pm-ledger.ts';
 import { compareCampaign, freezeSelection } from '../src/pm-comparison.ts';
 import { closeResearch } from '../src/closure.ts';
 import { strategyIntakeTool } from '../src/strategy-intake.ts';
+import { tickEconomicFeedback } from './tick-economic.ts';
 
 const ExplicitFinish = defineDoc<{ intent: JsonObject | null }>({ kind: 'qz.research-explicit-finish', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ intent: null }) });
 const detached = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -103,6 +104,7 @@ ${literatureInstructions}`)],
         return { output: [{ type: 'text', text: JSON.stringify({ trialId: trial.taskId, status: trial.status, error: trial.error ?? null,
           hypothesis: proposal.hypothesis ?? null, instrumentId: proposal.instrumentId ?? null,
           result: trial.result === null || trial.result === undefined ? null : modelFeedback(object(trial.result, 'trial_result')),
+          ...(trial.economic ? { economic: await tickEconomicFeedback(api, context, object(trial.economic, 'tick_economic')) } : {}),
         }) }] };
       },
     }),

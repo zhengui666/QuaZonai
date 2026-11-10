@@ -1,4 +1,4 @@
-import { arr, obj, opt, str } from '@earendil-works/pi-schema';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { FactorTask, runFactor } from './native-factor-task.ts';
@@ -6,9 +6,10 @@ import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
 import { CatalogScopeTask, catalogScope } from './native-catalog-scope.ts';
 import { nativeResearchRequest, withNativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { runTickEconomic, TickEconomicTask } from './tick-economic.ts';
 
 export default defineExtension({
-  name: 'qz.factor-wasm', tasks: [FactorTask, CatalogScopeTask],
+  name: 'qz.factor-wasm', tasks: [FactorTask, CatalogScopeTask, TickEconomicTask],
   tools: [defineTool({
     name: 'factor_evaluate', structuredOutputSchema: trialFeedbackSchema,
     description: 'Evaluate an arbitrary factor, not a position. Standalone research uses hypothesis and model without campaign IDs; campaign-bound experiments supply the registered hypothesisId and actual lineage. BAR models export predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Explicit TRADE_TICK models use feature ABI v2 and the explicit cohort feature schema in research_brief (seven base features, or eight with signed quantity for FLOW_CACHE); BAR slots are never reinterpreted. Values may have any finite sign or scale. Validation statistics are feedback, not profitability or qualification.',
@@ -26,6 +27,14 @@ export default defineExtension({
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
         return runFactor(api, context, args.model, withNativeResearchRequest(data, request));
       }), true);
+    },
+  }), defineTool({
+    name: 'factor_economic_evaluate',
+    description: 'Replay one original COMPUTED tick factor on its original TRAIN/VALIDATION primary data with the initial policy.tickEconomic capital, costs and execution policy. Returns after-cost economic feedback before final selection. Reuses the original model and recorded economic child on repeated calls.',
+    parameters: obj({ trialId: int({ minimum: 1 }) }), replay: 'safe', executionMode: 'sequential',
+    async execute(args, api, context) {
+      const economic = await runTickEconomic(api, context, args.trialId);
+      return { output: [{ type: 'text', text: JSON.stringify({ trialId: args.trialId, economic }) }], isError: economic.status !== 'COMPUTED' };
     },
   })],
 });
