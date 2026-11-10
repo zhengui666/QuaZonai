@@ -685,7 +685,7 @@ fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expi
         );
         assert_eq!(
             String::from_utf8(output.stderr).unwrap().lines().next(),
-            Some("QZ_NATIVE_JOB_FAILED")
+            Some("QZ_SIMULATION_MARKET_UNSUPPORTED")
         );
     }
 }

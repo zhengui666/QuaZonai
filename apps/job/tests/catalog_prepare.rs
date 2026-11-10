@@ -295,6 +295,7 @@ fn versioned_fixture() -> Fixture {
     fs::create_dir(&root).unwrap();
     let catalog = native(&root);
     let mut versions = Vec::new();
+    // Original OHLC prices include 0.00020 offsets; each in-window tick must retain that price grid.
     for instrument in native(&f.catalog)
         .query_instruments_filtered(None, None, None)
         .unwrap()
@@ -302,8 +303,8 @@ fn versioned_fixture() -> Fixture {
         for (time, tick) in [
             (0, "0.00001"),
             (market::INTERVAL_NS / 2, "0.00010"),
-            (2 * market::INTERVAL_NS - 1000, "0.00100"),
-            (4 * market::INTERVAL_NS + 10, "0.01000"),
+            (2 * market::INTERVAL_NS - 1000, "0.00020"),
+            (4 * market::INTERVAL_NS + 10, "0.00100"),
             (6 * market::INTERVAL_NS, "0.00001"),
         ] {
             let mut value = serde_json::to_value(&instrument).unwrap();
