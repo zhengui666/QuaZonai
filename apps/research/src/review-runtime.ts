@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonical } from './documents.ts';
-import { configure, defineDoc, defineTask, LiveDoc } from '@earendil-works/pi-durable';
+import { configure, defineDoc, defineTask, LiveDoc, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId, SubmissionId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import type { ReviewCheck, ReviewMetric, ReviewPolicy, ReviewReport, ReviewTarget } from '../../../packages/contracts/src/review.ts';
@@ -10,11 +10,13 @@ import { ReviewNativeTask } from './review-native-task.ts';
 import type { ReviewNativePlan } from './review-native-task.ts';
 import { ReviewSession } from './review-documents.ts';
 import type { ResearchRuntime } from './research-runtime.ts';
+import { ModelTiers } from './models.ts';
 
 export interface IndependentReviewInput {
   target: ReviewTarget; policy: ReviewPolicy;
   model: { provider: string; modelId: string };
   thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
+  serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier;
   sciencePlans?: ReviewNativePlan[];
   evidence: JsonObject; checks: ReviewCheck[]; metrics: ReviewMetric[]; createdAt: string;
 }
@@ -35,6 +37,7 @@ export const IndependentReviewTask = defineTask<IndependentReviewInput, ReviewCh
         const conversation = await tx.createConversation({ ownership: { kind: 'task', taskId: task.id } });
         await configure(tx, conversation.id, { model: task.input.model, thinkingLevel: task.input.thinkingLevel,
           extensions: [reviewExtension], tools: null, instructions: reviewInstructions });
+        if (task.input.serviceTier) (await tx.doc(ModelTiers)).tiers[(await tx.doc(ProviderDoc, conversation.id)).sessionId] = task.input.serviceTier;
         const session = await tx.doc(ReviewSession, conversation.id);
         session.binding = json({ target: task.input.target, policy: task.input.policy, evidenceRefs: task.input.target.sourceEvidenceRefs });
         session.evidence = json(task.input.evidence);
@@ -119,7 +122,9 @@ export const IndependentReviewTask = defineTask<IndependentReviewInput, ReviewCh
 export async function runIndependentReview(api: ResearchRuntime, context: Context, input: IndependentReviewInput): Promise<ReviewReport> {
   const id = await api.commit(async tx => {
     const child = await tx.doc(Child, api.taskId);
-    const digest = createHash('sha256').update(canonical(json(input))).digest('hex');
+    // Execution speed keeps the existing review identity when older tasks resume.
+    const { serviceTier: _serviceTier, ...identity } = input;
+    const digest = createHash('sha256').update(canonical(json(identity))).digest('hex');
     const previous = child.bindings[input.target.id];
     if (previous) { if (previous.digest !== digest) throw new Error('review_identity_conflict'); return previous.taskId; }
     const taskId = await tx.createTask(IndependentReviewTask, input, { ownership: { kind: 'task', taskId: api.taskId } });

@@ -183,7 +183,7 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
   const report = await runIndependentReview(api, context, {
     target: { kind: frozen.kind, id: `research:${api.conversationId}:trial:${trialId}`, version: frozen.version,
       sourceEvidenceRefs: [...new Set([frozen.evidenceRef, ...metrics.map(metric => metric.evidenceRef), ...componentDiagnostics.map(metric => metric.evidenceRef), ...sciencePlans.map(plan => plan.evidenceRef), ...sourceEvidence.evidenceRefs, ...checks.flatMap(check => check.evidenceRefs)])], evaluationStartNs: frozen.evaluationStartNs },
-    policy: frozen.policy, model: frozen.input.model, thinkingLevel: frozen.input.thinkingLevel,
+    policy: frozen.policy, model: frozen.input.model, thinkingLevel: frozen.input.thinkingLevel, serviceTier: frozen.input.serviceTier,
     evidence, checks, metrics, sciencePlans, createdAt: frozen.createdAt,
   });
   await api.commit(async tx => {

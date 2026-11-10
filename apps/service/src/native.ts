@@ -15,7 +15,7 @@ import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, 
 import { assessCapacity, capacityPolicy } from './capacity.ts';
 
 export interface PortfolioTaskInput {
-  review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
+  review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
   id: string; dataDir: string; catalog: string; binary: NativeTarget;
   // Every source retains the strategy registered with its original research.
   capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: StrategyPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;

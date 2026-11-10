@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { ReviewSession } from '../src/review-documents.ts';
@@ -14,6 +14,7 @@ import type { IndependentReviewInput } from '../src/review-runtime.ts';
 import { researchRuntime } from '../src/research-runtime.ts';
 import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ReviewReport } from '../../../packages/contracts/src/review.ts';
+import { ModelTiers } from '../src/models.ts';
 
 const context = BACKGROUND_CONTEXT;
 const kinds = ['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio'];
@@ -42,7 +43,7 @@ async function admit(host: Awaited<ReturnType<typeof openResearch>>, input: Inde
 // Uses the official Faux Provider and actual Durable storage/tasks. These tests
 // establish isolated tool execution and replay, never paid-model review quality.
 test('isolated review reads every category, retains missing evidence and reopens the original task without new model calls', { timeout: 30_000 }, async () => {
-  const f = await fixture(); let host = await openResearch(f);
+  const f = await fixture(); f.input.serviceTier = 'priority'; let host = await openResearch(f);
   try {
     const observed: JsonObject[] = [];
     const read = (transcript: { messages: readonly unknown[] }, kind: string) => {
@@ -73,6 +74,8 @@ test('isolated review reads every category, retains missing evidence and reopens
     assert.ok(report.missingEvidence.includes('reference_calibration_missing'));
     assert.equal(report.narrative, finish('fixture:validation').narrative);
     const reviewer = Number(result.reviewerConversationId);
+    const provider = await host.harness.snapshot(ProviderDoc, reviewer as ConversationId, context);
+    assert.equal((await host.harness.snapshot(ModelTiers, context))!.tiers[provider!.sessionId], 'priority');
     const session = await host.harness.snapshot(ReviewSession, reviewer as ConversationId, context);
     assert.equal(observed.length, 6, 'all six successful JSON payloads were consumed before finish');
     assert.equal(session!.finished, true); assert.deepEqual(session!.reads, kinds); assert.equal(session!.calls, 20);
@@ -83,6 +86,7 @@ test('isolated review reads every category, retains missing evidence and reopens
     assert.deepEqual(repeated.state.outcome, task.state.outcome);
     assert.equal(f.faux.state.callCount, 20);
     assert.equal((await host.harness.snapshot(ReviewSession, reviewer as ConversationId, context))!.finished, true);
+    assert.equal((await host.harness.snapshot(ModelTiers, context))!.tiers[provider!.sessionId], 'priority');
   } finally { await host.close(); await rm(f.directory, { recursive: true, force: true }); }
 });
 
@@ -110,7 +114,7 @@ const ReplayProbe = defineTask<IndependentReviewInput, { phase: 'review' }, Json
   phases: { async review(task, runtime, ctx) {
     const api = researchRuntime(runtime);
     const first = await runIndependentReview(api, ctx, task.input);
-    const second = await runIndependentReview(api, ctx, task.input);
+    const second = await runIndependentReview(api, ctx, { ...task.input, serviceTier: 'priority' });
     let conflict = false;
     try { await runIndependentReview(api, ctx, { ...task.input, target: { ...task.input.target, version: 'fixture:changed-version' } }); }
     catch (error) { conflict = error instanceof Error && error.message === 'review_identity_conflict'; }
