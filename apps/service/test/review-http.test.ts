@@ -59,14 +59,19 @@ test('review reports remain owner-only and preserve identity through projection 
   } finally { await state.cleanup(); }
 });
 
-test('new admission executes an isolated reviewer and persists its gate before any independent computation', { timeout: 30_000 }, async () => {
+for (const recoverSelected of [false, true]) test(`independent measurement keeps a non-PASS review ${recoverSelected ? 'after owner recovery of the selected original' : 'on new admission'}`, { timeout: 30_000 }, async () => {
   const { obj } = await import('@earendil-works/pi-schema');
   const { defineExtension, defineTool } = await import('@earendil-works/pi-durable');
   const { evaluateTrial } = await import('../../research/src/trials.ts');
   const { finalizeFactor } = await import('../../research/plugins/final-evaluation.ts');
+  const { ensureTrialReview } = await import('../../research/src/review-workflow.ts');
+  const heldoutWasm = (await import('../../research/plugins/heldout-wasm.ts')).default;
+  const factorWasm = (await import('../../research/plugins/factor-wasm.ts')).default;
   const { ReviewSession } = await import('../../research/src/review-documents.ts');
   const { fauxAssistantMessage, fauxToolCall, wat } = await import('./support.ts');
   const state = await setup();
+  const previousBinary = process.env.QZ_JOB_BINARY;
+  process.env.QZ_JOB_BINARY = state.options.config.jobBinary;
   try {
     state.options.extensions = [defineExtension({ name: 'test.new-review-pipeline', tools: [defineTool({
       name: 'review_candidate', description: 'Controlled candidate for review orchestration only, no native or market evidence.',
@@ -79,10 +84,11 @@ test('new admission executes an isolated reviewer and persists its gate before a
             { partition: 'HELDOUT', privateSentinel: 'NEVER_REVIEW_HELDOUT_PAYLOAD' },
           ],
         }));
-        await finalizeFactor({ trialId: api.taskId, reason: 'Controlled attempt at independent evaluation.' }, api, ctx);
-        return { output: [{ type: 'text', text: 'Original review gate settled.' }], control: { terminate: true } };
+        if (recoverSelected) await ensureTrialReview(api, ctx, api.taskId);
+        else await finalizeFactor({ trialId: api.taskId, reason: 'Controlled attempt at independent evaluation.' }, api, ctx);
+        return { output: [{ type: 'text', text: 'Original review and independent evaluator settled.' }], control: { terminate: true } };
       },
-    })] })];
+    })] }), factorWasm, heldoutWasm];
     state.options.config.datasets[0]!.data.request = { train_end_ns: '10', validation_end_ns: '20', forecast: {
       schema_version: 1, selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' }, parameters: {} } };
     state.options.config.datasets[0]!.data.sealed = structuredClone(state.options.config.datasets[0]!.data);
@@ -107,10 +113,24 @@ test('new admission executes an isolated reviewer and persists its gate before a
     assert.equal(response.statusCode, 202, response.body);
     const receipt = response.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
-    const current = await state.service.research.state(receipt.conversationId);
+    let current = await state.service.research.state(receipt.conversationId);
+    if (recoverSelected) {
+      assert.equal(current.research!.final!.reason, 'independent_review_not_passed');
+      const originalFinal = current.research!.final!;
+      const selected = Number(originalFinal.trialId);
+      state.faux.setResponses([call('factor_evaluate', { hypothesis: 'Rejected post-selection search', model: wat })]);
+      const resumed = await state.service.research.resume(receipt.conversationId, receipt.submissionId);
+      await (await state.service.research.harness.submission(resumed.submissionId, context))!.wait(context);
+      current = await state.service.research.state(receipt.conversationId);
+      assert.equal(current.research!.final!.trialId, selected);
+      assert.equal(current.research!.trials.length, 1);
+      assert.deepEqual(current.research!.previousStops, [{ previousSubmissionId: receipt.submissionId, final: originalFinal }]);
+      assert.deepEqual(await state.service.research.resume(receipt.conversationId, receipt.submissionId), resumed);
+      await assert.rejects(state.service.research.resume(receipt.conversationId, resumed.submissionId), /research_already_final/);
+    }
     assert.ok(current.research!.input!.policy.reviewPolicies);
-    assert.equal(current.research!.final?.status, 'STOPPED', JSON.stringify(await state.service.research.view(receipt.conversationId)));
-    assert.equal(current.research!.final!.reason, 'independent_review_not_passed');
+    assert.equal(current.research!.final?.status, 'FAILED', 'The protocol-only native executable cannot compute factor observations.');
+    assert.equal(typeof current.research!.final!.error, 'string');
     assert.equal(current.research!.final!.result, null);
     const stored = Object.values(current.reviews!.records);
     assert.equal(stored.length, 1);
@@ -139,12 +159,12 @@ test('new admission executes an isolated reviewer and persists its gate before a
     const session = await state.service.research.harness.snapshot(ReviewSession, reviewerId, context);
     assert.equal(session!.finished, true); assert.equal(session!.calls, 7);
     assert.equal(JSON.stringify(session!.evidence).includes('NEVER_REVIEW_HELDOUT_PAYLOAD'), false);
-    assert.equal((await state.service.research.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 20), context)).items.length, 0);
+    assert.equal((await state.service.research.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 20), context)).items.length, 1, 'The original selected model reaches its independent evaluator even when review is inconclusive.');
     const apiReport = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}/reviews`, headers: state.headers });
     assert.equal(apiReport.statusCode, 200); assert.deepEqual(apiReport.json(), [report]);
-    const modelCalls = state.faux.state.callCount; assert.equal(modelCalls, 8);
+    const modelCalls = state.faux.state.callCount; assert.equal(modelCalls, recoverSelected ? 9 : 8);
     await state.restart();
     assert.equal((await state.service.research.state(receipt.conversationId)).research!.final!.reviewReportId, report.id);
     assert.equal(state.faux.state.callCount, modelCalls);
-  } finally { await state.cleanup(); }
+  } finally { await state.cleanup(); if (previousBinary === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previousBinary; }
 });

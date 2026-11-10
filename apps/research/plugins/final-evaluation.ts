@@ -1,4 +1,4 @@
-import { requireTrialReview } from '../src/review-workflow.ts';
+import { ensureTrialReview } from '../src/review-workflow.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
 import { canonical, Study } from '../src/documents.ts';
@@ -23,7 +23,7 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
       if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
       const data = object(input.data.sealed, 'heldout_data');
       await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, true);
-      if (!await requireTrialReview(api, context, args.trialId)) return;
+      const review = await ensureTrialReview(api, context, args.trialId, { deferRefusalConclusion: true });
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -39,7 +39,7 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
           || canonical((iterationRequest(data, true))) !== canonical((registeredRequest!))
           || canonical((iterationRequest(input.data, true))) !== canonical((registeredRequest!))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
-        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
+        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null, ...(review ? { reviewReportId: review.id, conclusion: review.decision } : {}) };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (campaign.binding && study.final.status === 'STARTED') campaign.state = 'EVALUATING_INDEPENDENT';
         return { members, fitTaskId: fitted ? proposal.fitTaskId as number : null, policy: resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy')), settled: study.final.status !== 'STARTED' };
@@ -67,7 +67,7 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
       if (input.campaign?.independentConsumer === 'PM_PORTFOLIO') throw new Error('independent_evaluation_reserved_for_pm');
       const data = object(input.data.sealed, 'heldout_data');
       await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, false);
-      if (!await requireTrialReview(api, context, args.trialId)) return;
+      const review = await ensureTrialReview(api, context, args.trialId, { deferRefusalConclusion: true });
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -80,7 +80,7 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
           || canonical((iterative)) !== canonical((iterationRequest(input.data)))
           || input.data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(input.data))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
-        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
+        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null, ...(review ? { reviewReportId: review.id, conclusion: review.decision } : {}) };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (campaign.binding && study.final.status === 'STARTED') campaign.state = 'EVALUATING_INDEPENDENT';
         return { model: proposal.model, settled: study.final.status !== 'STARTED' };

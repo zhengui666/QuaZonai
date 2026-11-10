@@ -103,7 +103,7 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
   ];
 }
 
-/** All direct/automatic finalizers share this fence. A failed review never consumes Sealed. */
+/** Review findings remain separate from the selected candidate's independent measurement. */
 export async function ensureTrialReview(api: ResearchRuntime, context: Context, trialId: number, options: { deferRefusalConclusion?: boolean } = {}): Promise<ReviewReport | null> {
   const frozen = await api.commit(async tx => {
     const study = await tx.doc(Study, api.conversationId);
@@ -197,9 +197,4 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
     }
   }, context);
   return report;
-}
-
-export async function requireTrialReview(api: ResearchRuntime, context: Context, trialId: number): Promise<boolean> {
-  const report = await ensureTrialReview(api, context, trialId);
-  return report === null || report.decision === 'PASS';
 }

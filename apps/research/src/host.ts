@@ -215,20 +215,24 @@ export async function openResearch(options: {
       if (!study.input) throw new Error('research_not_found');
       if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
       const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
-      const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
+      const selected = study.final?.status === 'STOPPED' && study.final.reason === 'independent_review_not_passed'
+        && study.final.result === null && typeof study.final.trialId === 'number' && study.reviewSelection?.trialId === study.final.trialId
+        && study.input.data.sealed !== undefined && current.submission?.status === 'done'
+        && study.trials.some(trial => trial.taskId === study.final!.trialId && trial.status === 'COMPUTED');
+      const stopped = selected || study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
         && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');
       if (study.final && (intent || !stopped)) throw new Error('research_already_final');
       if (current.submission?.id !== previousId) throw new Error('research_not_recoverable_conflict');
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
-      const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
-      const submissionId = await handle.submit(tx, mode === 'model_error' ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode), requestId, whenBusy: 'reject' });
+      const mode = intent?.recovery?.mode ?? (selected ? 'selected' : stopped ? 'stopped' : 'model_error');
+      const submissionId = await handle.submit(tx, mode === 'model_error' ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode, study.reviewSelection?.trialId), requestId, whenBusy: 'reject' });
       if (!intent) {
         const campaign = await tx.doc(CampaignResearchDoc, handle.id);
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
-        campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null; delete campaign.ownerStopTaskId;
+        campaign.state = mode === 'selected' ? 'CLOSING' : 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = mode === 'selected' ? 'independent_evaluation' : null; delete campaign.ownerStopTaskId;
         delete (await tx.doc(Continuation, handle.id)).evidenceSignature;
         requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode } };
       }
