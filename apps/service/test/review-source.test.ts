@@ -65,12 +65,12 @@ test('source provenance accepts an absent or zero legacy row quota with exact or
     finally { await f.close(); }
   }
 });
-test('native metadata echoing a default zero row quota binds the original request that omitted it', async () => {
+test('source evidence cannot silently rewrite an omitted scientific row limit to zero', async () => {
   const f = await fixture(null);
   try {
     const quality = f.metadata.quality.datasets[0]!;
     const configured = await f.replaceMetadata({ ...f.metadata, quality: { datasets: [{ ...quality, selection: { ...quality.selection, maximum_rows: 0 } }] } });
-    assert.ok(await prepareReviewSourceEvidence(configured));
+    await assert.rejects(prepareReviewSourceEvidence(configured), /review_source_validation_scope_mismatch/);
     assert.equal('maximum_rows' in (configured.data.request as { forecast: { selection: object } }).forecast.selection, false);
   } finally { await f.close(); }
 });

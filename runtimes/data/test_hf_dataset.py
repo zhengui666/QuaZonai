@@ -1,6 +1,8 @@
 """Offline partition selection, cache, interruption and transport regressions."""
 
 from concurrent.futures import ThreadPoolExecutor
+from _source_test_fixtures import hf_acquisition
+
 import contextlib
 from copy import deepcopy
 import csv
@@ -96,7 +98,7 @@ class HfDatasetTest(unittest.TestCase):
 
     def test_download_and_overlapping_queries_reuse_one_cache_without_checksums(self):
         selection = self.plan()
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(len(self.data_requests()), 1)
         self.assertEqual(result["cached_files"], 0)
         self.assertEqual(result["files"][0]["validation"], "PARQUET_ENVELOPE")
@@ -104,11 +106,11 @@ class HfDatasetTest(unittest.TestCase):
         self.assertNotIn("README.md", [f["path"] for f in result["files"]])
         self.assertEqual(Path(result["files"][0]["local_path"]).read_bytes(), self.content["data/a.parquet"])
         self.requests.clear()
-        self.assertEqual(hf_dataset.download(selection, self.cache, self.output), result)
+        self.assertEqual(hf_acquisition(selection, self.cache, self.output), result)
         self.assertEqual(self.requests, [])
         next_selection = hf_dataset.plan(DATASET, manifest="partitions.json", markets=["market-a"])
         self.requests.clear()
-        next_result = hf_dataset.download(next_selection, self.cache, self.root / "next")
+        next_result = hf_acquisition(next_selection, self.cache, self.root / "next")
         self.assertEqual(next_result["cached_files"], 1)
         self.assertEqual([url for url, _ in self.data_requests()], [BASE + "data/b.parquet"])
         self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 1)
@@ -156,10 +158,10 @@ class HfDatasetTest(unittest.TestCase):
         self.assertEqual(partition["markets"], [])
         self.assertEqual(selection["coverage"], "NOT_ASSERTED")
         selection["max_bytes"] = 1  # Original persisted quota is readable but no longer enforced.
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(result["files"][0]["partition"], partition)
         self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 1)
-        reused = hf_dataset.download(selection, self.cache, self.root / "reused")
+        reused = hf_acquisition(selection, self.cache, self.root / "reused")
         self.assertEqual(reused["cached_files"], 1)
         self.assertEqual(len(self.data_requests()), 1)
         self.assertIsNone(hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"], max_bytes=1)["max_bytes"])
@@ -237,14 +239,14 @@ class HfDatasetTest(unittest.TestCase):
         selection = self.plan()
         self.http.side_effect = self.interrupted_response
         with self.assertRaises(OSError):
-            hf_dataset.download(selection, self.cache, self.output)
+            hf_acquisition(selection, self.cache, self.output)
         root = hf_dataset.cache_root(self.cache, selection)
         self.assertFalse((root / "files/data/a.parquet").exists())
         self.assertEqual((root / "transfers/data/a.parquet/data.partial").stat().st_size, 7)
         self.assertFalse((self.output / "selection.json").exists())
         self.requests.clear()
         self.http.side_effect = self.respond
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(self.data_requests()[0][1]["Range"], "bytes=7-")
         self.assertEqual(result["files"][0]["resumed_bytes"], 7)
         self.assertEqual(result["downloaded_bytes"], len(self.content["data/a.parquet"]) - 7)
@@ -263,7 +265,7 @@ class HfDatasetTest(unittest.TestCase):
         selection = self.plan()
         body = self.content["data/a.parquet"]
         self.create_partial(selection, body)
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(self.data_requests()[0][1]["Range"], f"bytes={len(body)-1}-")
         self.assertEqual(result["downloaded_bytes"], 1)
 
@@ -275,7 +277,7 @@ class HfDatasetTest(unittest.TestCase):
                 return Response(self.content["data/a.parquet"])
             return self.respond(request, timeout)
         self.http.side_effect = ignored_range
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(result["files"][0]["resumed_bytes"], 0)
         self.assertEqual(Path(result["files"][0]["local_path"]).read_bytes(), self.content["data/a.parquet"])
 
@@ -284,7 +286,7 @@ class HfDatasetTest(unittest.TestCase):
         root = self.create_partial(selection, self.content["data/a.parquet"][:7])
         self.http.side_effect = lambda *_a, **_kw: Response(b"wrong", 206, {"Content-Range": "bytes 0-4/5"})
         with self.assertRaisesRegex(ValueError, "unexpected byte range"):
-            hf_dataset.download(selection, self.cache, self.output)
+            hf_acquisition(selection, self.cache, self.output)
         self.assertEqual((root / "transfers/data/a.parquet/data.partial").read_bytes(), self.content["data/a.parquet"][:7])
         self.assertFalse((self.output / "selection.json").exists())
 
@@ -295,7 +297,7 @@ class HfDatasetTest(unittest.TestCase):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 self.http.side_effect = lambda *_a, **_kw: Response(body, headers={"Content-Length": None})
                 with self.assertRaisesRegex(ValueError, message):
-                    hf_dataset.download(selection, Path(directory) / "cache", Path(directory) / "out")
+                    hf_acquisition(selection, Path(directory) / "cache", Path(directory) / "out")
                 self.assertFalse(list(Path(directory).rglob("selection.json")))
 
     def test_format_rejection_preserves_source_bytes_and_retry_can_recover(self):
@@ -303,21 +305,21 @@ class HfDatasetTest(unittest.TestCase):
         original = self.content["data/a.parquet"]
         self.content["data/a.parquet"] = b"<html>" + b"x" * (len(original) - 6)
         with self.assertRaisesRegex(ValueError, "Parquet header"):
-            hf_dataset.download(selection, self.cache, self.output)
+            hf_acquisition(selection, self.cache, self.output)
         root = hf_dataset.cache_root(self.cache, selection)
         self.assertEqual(len(list(root.rglob("*.rejected-*"))), 1)
         self.assertFalse((root / "files/data/a.parquet").exists())
         self.content["data/a.parquet"] = original
-        hf_dataset.download(selection, self.cache, self.output)
+        hf_acquisition(selection, self.cache, self.output)
         self.assertEqual((root / "files/data/a.parquet").read_bytes(), original)
 
     def test_existing_corruption_symlinks_and_changed_requests_are_preserved(self):
         selection = self.plan()
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         target = Path(result["files"][0]["local_path"])
         target.write_bytes(b"short")
         with self.assertRaisesRegex(ValueError, "byte size"):
-            hf_dataset.download(selection, self.cache, self.root / "next")
+            hf_acquisition(selection, self.cache, self.root / "next")
         self.assertEqual(target.read_bytes(), b"short")
         target.unlink()
         outside = self.root / "outside"
@@ -330,8 +332,8 @@ class HfDatasetTest(unittest.TestCase):
         target.write_bytes(self.content["data/a.parquet"])
         different = hf_dataset.plan(DATASET, manifest="partitions.json", markets=["market-a"],
                                     start_date="2026-09-01", end_date="2026-09-03")
-        with self.assertRaisesRegex(ValueError, "different request"):
-            hf_dataset.download(different, self.cache, self.output)
+        with self.assertRaisesRegex(ValueError, "another plan|completed publication"):
+            hf_acquisition(different, self.cache, self.output)
 
     def test_duplicate_concurrent_requests_share_one_completed_file(self):
         selection = self.plan()
@@ -341,72 +343,65 @@ class HfDatasetTest(unittest.TestCase):
             return self.respond(request, timeout)
         self.http.side_effect = slower_response
         with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(hf_dataset.download, selection, self.cache, self.root / f"out-{i}")
+            futures = [executor.submit(hf_acquisition, selection, self.cache, self.root / f"out-{i}")
                        for i in range(2)]
             results = [f.result() for f in futures]
         self.assertEqual(len(self.data_requests()), 1)
         self.assertEqual(sum(r["cached_files"] for r in results), 1)
 
-    def test_same_output_concurrency_and_empty_directory_crash_recover(self):
+    def test_same_output_concurrency_publishes_once_after_unit_completion(self):
         selection = self.plan()
-        self.output.mkdir()  # Simulate a crash after mkdir, before request publication.
         with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(hf_dataset.download, selection, self.cache, self.output) for _ in range(2)]
+            futures = [executor.submit(hf_acquisition, selection, self.cache, self.output) for _ in range(2)]
             results = [f.result() for f in futures]
         self.assertEqual(results[0], results[1])
         self.assertEqual(len(self.data_requests()), 1)
         self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 1)
 
-    def test_retry_accepts_pinned_revision_alias_and_preserves_original_request(self):
+    def test_retry_uses_exact_frozen_plan_without_revision_alias_rewriting(self):
         selection = self.plan()
         self.http.side_effect = self.interrupted_response
         with self.assertRaises(OSError):
-            hf_dataset.download(selection, self.cache, self.output)
+            hf_acquisition(selection, self.cache, self.output)
         self.http.side_effect = self.respond
-        pinned = self.plan(revision=COMMIT)
-        result = hf_dataset.download(pinned, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(result["plan"], selection)
-        self.assertEqual(snapshot.fetch_local_manifest(self.output / "request.json"), selection)
-        self.assertEqual(hf_dataset.download(pinned, self.cache, self.output), result)
+        self.assertFalse((self.output / "request.json").exists())
+        self.assertEqual(hf_acquisition(selection, self.cache, self.output), result)
+        pinned = {**selection, "requested_revision": COMMIT}
+        self.requests.clear()
+        with self.assertRaisesRegex(ValueError, "another plan"):
+            hf_acquisition(pinned, self.cache, self.output)
+        self.assertEqual(self.requests, [])
 
-    def test_retry_revalidates_preserved_request_before_acquisition_or_publication(self):
+    def test_invalid_frozen_plan_is_rejected_before_unit_or_publication(self):
         selection = self.plan()
         self.requests.clear()
         for index, requested_revision in enumerate((None, "", " ", 1)):
             with self.subTest(requested_revision=requested_revision):
                 output = self.root / f"invalid-request-{index}"
-                output.mkdir()
                 original = {**selection, "requested_revision": requested_revision}
-                request_path = output / "request.json"
-                before = hf_dataset.manifest_bytes(original)
-                request_path.write_bytes(before)
-                self.assertTrue(hf_dataset.same_request(original, selection))
-                with patch.object(snapshot, "acquire_cached_file", wraps=snapshot.acquire_cached_file) as acquire, \
-                        patch.object(snapshot, "publish_bytes", wraps=snapshot.publish_bytes) as publish:
+                with patch.object(snapshot, "acquire_cached_file") as acquire, \
+                        patch.object(snapshot, "publish_bytes") as publish:
                     with self.assertRaises(ValueError):
-                        hf_dataset.download(selection, self.cache, output)
+                        hf_acquisition(original, self.cache, output)
                     acquire.assert_not_called()
                     publish.assert_not_called()
-                self.assertEqual(request_path.read_bytes(), before)
-                self.assertFalse((output / "selection.json").exists())
+                self.assertFalse(output.exists())
         self.assertEqual(self.requests, [])
 
-    def test_pending_request_reuses_completed_cache_offline_and_keeps_original_revision_alias(self):
+    def test_new_frozen_publication_reuses_completed_cache_offline(self):
         selection = self.plan(revision="original-tag")
-        hf_dataset.download(selection, self.cache, self.output)
+        hf_acquisition(selection, self.cache, self.output)
         pending = self.root / "pending"
-        pending.mkdir()
-        original = hf_dataset.manifest_bytes(selection)
-        (pending / "request.json").write_bytes(original)
-        pinned = {**selection, "requested_revision": COMMIT}
         self.requests.clear()
         self.http.side_effect = AssertionError("fixed-plan retry must not access the Hub")
         with patch.object(snapshot, "repository_metadata", side_effect=AssertionError("no ref resolution")), \
-                patch.object(snapshot, "file_hash", side_effect=AssertionError("no checksum")):
-            result = hf_dataset.download(pinned, self.cache, pending)
+                patch.object(snapshot, "file_hash", side_effect=AssertionError("no source checksum")):
+            result = hf_acquisition(selection, self.cache, pending)
             self.assertEqual(hf_dataset.verify(pending / "selection.json")["files"], 1)
         self.assertEqual(result["plan"], selection)
-        self.assertEqual((pending / "request.json").read_bytes(), original)
+        self.assertFalse((pending / "request.json").exists())
         self.assertEqual((result["downloaded_bytes"], result["cached_files"]), (0, 1))
         self.assertEqual(self.requests, [])
 
@@ -425,7 +420,7 @@ class HfDatasetTest(unittest.TestCase):
         for record in [revision["partition_index"], *revision["files"]]:
             record["url"] = record["url"].replace(COMMIT, revision["revision"])
         candidates.append(revision)
-        hf_dataset.download(selection, self.cache, self.output)
+        hf_acquisition(selection, self.cache, self.output)
         pending = self.root / "pending"
         pending.mkdir()
         (pending / "request.json").write_bytes(hf_dataset.manifest_bytes(selection))
@@ -437,21 +432,20 @@ class HfDatasetTest(unittest.TestCase):
             for index, candidate in enumerate(candidates):
                 with self.subTest(output=output.name, candidate=index):
                     hf_dataset.validate_plan(candidate)
-                    self.assertFalse(hf_dataset.same_request(selection, candidate))
+                    self.assertNotEqual(selection, candidate)
                     with patch.object(snapshot, "acquire_cached_file") as acquire, \
                             patch.object(snapshot, "publish_bytes") as publish:
-                        with self.assertRaisesRegex(ValueError, "different request"):
-                            hf_dataset.download(candidate, self.cache, output)
+                        with self.assertRaisesRegex(ValueError, "another plan|completed publication"):
+                            hf_acquisition(candidate, self.cache, output)
                         acquire.assert_not_called()
                         publish.assert_not_called()
                     self.assertEqual({p.name: p.read_bytes() for p in output.iterdir()}, before)
         self.assertEqual(self.requests, [])
 
-    def test_completed_retry_rejects_selection_conflicting_with_preserved_request(self):
+    def test_completed_manifest_cannot_diverge_from_frozen_plan_or_unit_receipts(self):
         selection = self.plan()
-        result = hf_dataset.download(selection, self.cache, self.output)
-        request_path, manifest_path = self.output / "request.json", self.output / "selection.json"
-        original_request = request_path.read_bytes()
+        result = hf_acquisition(selection, self.cache, self.output)
+        manifest_path = self.output / "selection.json"
         changed = deepcopy(selection)
         changed["license"] = "other-terms"
         altered = {**result, "plan": changed}
@@ -459,33 +453,25 @@ class HfDatasetTest(unittest.TestCase):
         manifest_path.write_bytes(hf_dataset.manifest_bytes(altered))
         before = manifest_path.read_bytes()
         self.requests.clear()
-        self.http.side_effect = AssertionError("conflicting request must not access the Hub")
-        with patch.object(snapshot, "acquire_cached_file") as acquire, \
-                patch.object(snapshot, "publish_bytes") as publish:
-            with self.assertRaisesRegex(ValueError, "different request"):
-                hf_dataset.download(changed, self.cache, self.output)
+        with patch.object(snapshot, "acquire_cached_file") as acquire:
+            with self.assertRaisesRegex(ValueError, "frozen source plan"):
+                hf_acquisition(selection, self.cache, self.output)
             acquire.assert_not_called()
-            publish.assert_not_called()
-        self.assertEqual(request_path.read_bytes(), original_request)
         self.assertEqual(manifest_path.read_bytes(), before)
         self.assertEqual(self.requests, [])
 
-    def test_completed_retry_keeps_legacy_manifest_only_output_and_revision_alias(self):
+    def test_manifest_without_frozen_publication_identity_is_not_adopted(self):
         selection = self.plan(revision="original-tag")
-        result = hf_dataset.download(selection, self.cache, self.output)
-        request_path, manifest_path = self.output / "request.json", self.output / "selection.json"
-        request_path.unlink()
+        hf_acquisition(selection, self.cache, self.output)
+        marker = self.output / "source-unit-publication.json"
+        marker.unlink()
+        manifest_path = self.output / "selection.json"
         before = manifest_path.read_bytes()
-        pinned = {**selection, "requested_revision": COMMIT}
         self.requests.clear()
-        self.http.side_effect = AssertionError("completed retry must not access the Hub")
-        with patch.object(snapshot, "repository_metadata", side_effect=AssertionError("no ref resolution")), \
-                patch.object(snapshot, "acquire_cached_file") as acquire, \
-                patch.object(snapshot, "publish_bytes") as publish:
-            self.assertEqual(hf_dataset.download(pinned, self.cache, self.output), result)
+        with patch.object(snapshot, "acquire_cached_file") as acquire:
+            with self.assertRaisesRegex(ValueError, "completed publication"):
+                hf_acquisition(selection, self.cache, self.output)
             acquire.assert_not_called()
-            publish.assert_not_called()
-        self.assertFalse(request_path.exists())
         self.assertEqual(manifest_path.read_bytes(), before)
         self.assertEqual(self.requests, [])
 
@@ -493,7 +479,7 @@ class HfDatasetTest(unittest.TestCase):
         self.content.update({"a": b"one", "a.lock/b": b"two", "a.partial/c": b"three"})
         self.sync_index()
         selection = hf_dataset.plan(DATASET, includes=["a", "a.lock/b", "a.partial/c"])
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual([Path(f["local_path"]).read_bytes() for f in result["files"]], [b"one", b"two", b"three"])
 
     def test_csv_first_logical_record_supports_multiline_quotes_without_size_cap(self):
@@ -517,23 +503,24 @@ class HfDatasetTest(unittest.TestCase):
     def test_final_manifest_is_fully_preserved_and_verified_without_capacity_gate(self):
         selection = self.plan()
         self.requests.clear()
-        result = hf_dataset.download(selection, self.cache, self.output)
+        result = hf_acquisition(selection, self.cache, self.output)
         self.assertEqual(json.loads((self.output / "selection.json").read_bytes()), result)
         self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], len(selection["files"]))
         self.assertEqual(len(self.requests), len(selection["files"]))
         self.requests.clear()
-        self.assertEqual(hf_dataset.download(selection, self.cache, self.output), result)
+        self.assertEqual(hf_acquisition(selection, self.cache, self.output), result)
         self.assertEqual(self.requests, [])
 
     def test_plugin_real_dispatch_and_package_include_new_module(self):
         options = ["--dataset", DATASET, "--manifest", "partitions.json", "--market", "market-a",
                    "--start-date", "2026-09-01", "--end-date", "2026-09-02"]
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(source_plugins.main(["download", "hf-dataset", *options,
-                             "--cache-dir", str(self.cache), "--output", str(self.output)]), 0)
-        self.assertEqual(json.loads(output.getvalue())["schema"], hf_dataset.SELECTION_SCHEMA)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            source_plugins.main(["download", "hf-dataset", *options,
+                                 "--cache-dir", str(self.cache), "--output", str(self.output)])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.data_requests(), [])
         descriptor = next(p for p in source_plugins.plugin_descriptors() if p["id"] == "hf-dataset")
-        self.assertEqual(descriptor["capabilities"], ["convert", "download", "freeze", "plan", "prepare", "verify"])
+        self.assertEqual(descriptor["capabilities"], ["convert", "freeze", "plan", "prepare", "verify"])
         dockerfile = Path(__file__).parents[2] / "deploy/docker/Dockerfile"
         self.assertIn("runtimes/data/hf_dataset.py", dockerfile.read_text())
 
@@ -608,7 +595,7 @@ class HfOfflineFreezeTest(unittest.TestCase):
             mock.assert_not_called()
         descriptor = next(p for p in source_plugins.plugin_descriptors() if p["id"] == "hf-dataset")
         self.assertIn("freeze", descriptor["capabilities"])
-        self.assertEqual(descriptor["public_network_operations"], ["download", "plan"])
+        self.assertEqual(descriptor["public_network_operations"], ["plan"])
         self.assertFalse(source_plugins.PLUGINS["hf-dataset"].capabilities["freeze"].public_network)
 
     def test_missing_complete_file_never_adopts_partial_or_publishes_manifest(self):
@@ -910,11 +897,11 @@ class RealHttpTransportTest(unittest.TestCase):
                 root = Path(directory)
                 plan = hf_dataset.plan(DATASET, manifest="partitions.json", markets=["market-a"])
                 with self.assertRaisesRegex(ValueError, "truncated"):
-                    hf_dataset.download(plan, root / "cache", root / "request")
-                result = hf_dataset.download(plan, root / "cache", root / "request")
+                    hf_acquisition(plan, root / "cache", root / "request")
+                result = hf_acquisition(plan, root / "cache", root / "request")
                 self.assertEqual(requests, [None, "bytes=7-"])
                 self.assertEqual(Path(result["files"][0]["local_path"]).read_bytes(), body)
-                cached = hf_dataset.download(plan, root / "cache", root / "overlap")
+                cached = hf_acquisition(plan, root / "cache", root / "overlap")
                 self.assertEqual(cached["cached_files"], 1)
                 self.assertEqual(len(requests), 2)
                 self.assertEqual(hf_dataset.verify(root / "overlap/selection.json")["files"], 1)

@@ -53,13 +53,13 @@ mod tests {
         let at = minute * MINUTE;
         let price = Price::from("0.500000");
         let bar = Bar::new_checked(
-            BarType::from_str(&format!("{id}-1-MINUTE-LAST-EXTERNAL")).unwrap(),
+            BarType::from_str(&format!("{id}-1-MINUTE-LAST-INTERNAL")).unwrap(),
             price,
             price,
             price,
             price,
             Quantity::from("1.000000"),
-            at.into(),
+            (at - MINUTE).into(),
             at.into(),
         )
         .unwrap();
@@ -251,7 +251,7 @@ impl CatalogEnsemblePolicy {
     pub fn observe(&mut self, bar: Bar, records: &[RecordedTradeFeeV1]) -> Result<u64> {
         crate::catalog::validate_price_bar(&bar, None)?;
         let id = bar.bar_type.instrument_id();
-        let end = bar.ts_event.as_u64();
+        let end = crate::catalog::right_open_bar_close_ns(&bar)?;
         ensure!(
             end >= MINUTE && end.is_multiple_of(MINUTE),
             "CATALOG_ENSEMBLE_MINUTE"
@@ -260,6 +260,7 @@ impl CatalogEnsemblePolicy {
             unreachable!("owned schema always declares modeled lag")
         };
         let available = end
+            .max(bar.ts_init.as_u64())
             .checked_add(lag_ns.get())
             .context("CATALOG_ENSEMBLE_CLOCK")?;
         ensure!(

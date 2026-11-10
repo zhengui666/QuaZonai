@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { normalizeResearchState } from './list-values';
 export type Workspace = 'pm' | 'research' | 'data' | 'factors' | 'portfolios' | 'observations' | 'settings' | 'extensions';
 export interface Route { page: Workspace; id?: string; creating: boolean; params: URLSearchParams; unknown?: boolean }
 const pages = new Set<Workspace>(['pm', 'research', 'data', 'factors', 'portfolios', 'observations', 'settings', 'extensions']);
@@ -7,8 +6,7 @@ export function currentRoute(): Route {
   const [path = '', query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, id, extra] = path.split('/');
   const page = pages.has(name as Workspace) ? name as Workspace : 'research';
-  const rawParams = new URLSearchParams(query);
-  const params = page === 'research' ? normalizeResearchState(rawParams) : rawParams;
+  const params = new URLSearchParams(query);
   const unknown = !!name && !pages.has(name as Workspace) || extra !== undefined || !!id && ['data', 'settings', 'extensions'].includes(page);
   try { return { page, ...(id && id !== 'new' ? { id: decodeURIComponent(id) } : {}), creating: id === 'new', params, unknown }; }
   catch { return { page, creating: false, params, unknown: true }; }
@@ -16,13 +14,7 @@ export function currentRoute(): Route {
 export function useRoute() {
   const [route, setRoute] = useState(currentRoute);
   useEffect(() => {
-    const update = () => {
-      const next = currentRoute();
-      if (next.page === 'research' && new URLSearchParams(location.hash.split('?')[1] ?? '').has('state')) {
-        history.replaceState(null, '', `${location.hash.split('?')[0]}${next.params.size ? `?${next.params}` : ''}`);
-      }
-      setRoute(next);
-    };
+    const update = () => { setRoute(currentRoute()); };
     update(); window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);

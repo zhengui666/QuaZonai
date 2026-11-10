@@ -244,6 +244,7 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
     ensure!(trades_count > 0, "MODEL_EMPTY_SELECTION");
     let report = json!({"schema_version":1,"source":selection.repository,"revision":selection.revision,
         "source_observed_at":selection.retrieved_at,"amount_model":MODEL,
+        "bar_semantics":crate::catalog::aggregation::CONVENTION,
         "selection":{"start_seconds":args.start_seconds,"end_seconds":args.end_seconds,"bar_seconds":60},
         "scanned_rows":scanned,"outside_window_rows":outside,"exchange_summaries_excluded":summaries,
         "trades":trades_count,"bars":bars_count,"instrument_identities":identities.len(),"instrument_definitions":0,

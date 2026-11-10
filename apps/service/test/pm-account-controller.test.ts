@@ -71,7 +71,7 @@ async function fixture(keepMonitor = false) {
     const start = (requestId: string, alias = 0, authority: 'AUTHORIZED_TARGETS' | 'RESEARCH_ONLY' = 'AUTHORIZED_TARGETS') => state.service.app.inject({
       method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
         requestId, goal: 'Control ownership protocol only; no investment qualification asserted.', datasetId: 'controlled', model: state.model,
-        funding: { kind: 'ACCOUNT', accountBindingId: connections[alias]!.id }, maxTrials: 1, businessPreference: 'NET_RETURN', operatingAuthority: authority } });
+        funding: { kind: 'ACCOUNT', accountBindingId: connections[alias]!.id }, businessPreference: 'NET_RETURN', operatingAuthority: authority } });
     const stopMonitors = async () => {
       const document = pmState(await state.service.research.harness.snapshot(PmDocument, context));
       for (const record of Object.values(document.mandates)) if (record.monitorTaskId) {

@@ -1,3 +1,4 @@
+import { obj } from '@earendil-works/pi-schema';
 import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -5,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { Requests, Study } from '../src/documents.ts';
@@ -15,10 +16,10 @@ import research from '../plugins/research.ts';
 
 const context = BACKGROUND_CONTEXT;
 const probe = defineExtension({ name: 'test.stopped-continuation', tools: [defineTool({
-  name: 'continuation_trial', description: 'Test-only ledger protocol, not market evidence', parameters: Type.Object({}), replay: 'safe',
+  name: 'continuation_trial', description: 'Test-only ledger protocol, not market evidence', parameters: obj({}), replay: 'safe',
   async execute(_args, api, ctx) {
     await evaluateTrial(api, ctx, { hypothesis: 'Original protocol candidate', members: [{ model: '(module)', weight: '1' }], instrumentId: 'TEST.SIM' }, async () => ({ protocolOnly: true }));
-    return { content: [{ type: 'text', text: 'Original protocol candidate registered' }] };
+    return { output: [{ type: 'text', text: 'Original protocol candidate registered' }] };
   },
 })] });
 const responses = () => [
@@ -29,13 +30,13 @@ async function stoppedStudy(maximum = 3, ownerAbort = false) {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-stopped-continuation-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   let enter!: () => void; const entered = new Promise<void>(resolve => { enter = resolve; });
-  const waiting = defineExtension({ name: 'test.owner-maintenance', tools: [defineTool({ name: 'maintenance_wait', description: 'Test-only cancellable owner maintenance probe', parameters: Type.Object({}),
+  const waiting = defineExtension({ name: 'test.owner-maintenance', tools: [defineTool({ name: 'maintenance_wait', description: 'Test-only cancellable owner maintenance probe', parameters: obj({}),
     async execute(_args, _api, ctx) { enter(); await awaitWithContext(new Promise<void>(() => {}), ctx); return {}; },
   })] });
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [probe, research, waiting] };
   let host = await openResearch(options);
   faux.setResponses(ownerAbort ? [fauxAssistantMessage(fauxToolCall('maintenance_wait', {}), { stopReason: 'toolUse' })] : responses());
-  const input = { goal: 'Keep the original goal, data, model and budget', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { max_trials: maximum } };
+  const input = { goal: 'Keep the original goal, data, model and budget', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {  } };
   const receipt = await host.start('original-owner-key', input);
   if (ownerAbort) {
     await entered; await assert.rejects(host.resume(receipt.conversationId, receipt.submissionId), /research_not_recoverable_conflict/);
@@ -54,10 +55,10 @@ function interruptNextRecovery(state: Awaited<ReturnType<typeof stoppedStudy>>) 
   state.host.harness.conversation = async (id, ctx) => {
     const handle = await original(id, ctx); if (!handle) return handle;
     const submit = handle.submit.bind(handle);
-    handle.submit = async (draft, inner) => {
+    handle.submit = (async (first: unknown, inner: unknown) => { const draft = (first as { type?: string }).type ? first as import('@earendil-works/pi-durable').SubmissionDraft : inner as import('@earendil-works/pi-durable').SubmissionDraft;
       if (draft.requestId?.startsWith('qz.research.resume:')) throw new Error('test_interruption_before_native_input');
-      return submit(draft, inner);
-    };
+      return Reflect.apply(submit, handle, [first, inner]);
+    }) as typeof handle.submit;
     return handle;
   };
 }
@@ -88,23 +89,22 @@ test('unselected STOPPED continues with new native identity and registered resul
   } finally { await state.close(); }
 });
 
-test('saved continuation intent repairs only the missing native input after reopen', { timeout: 15_000 }, async () => {
+test('failed continuation admission rolls back every domain change before an explicit retry', { timeout: 15_000 }, async () => {
   const state = await stoppedStudy();
   try {
     interruptNextRecovery(state);
     await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /test_interruption_before_native_input/);
     const interrupted = (await state.host.state(state.receipt.conversationId)).research!;
-    assert.equal(interrupted.final, null); assert.deepEqual(interrupted.trials, state.before.trials);
-    assert.deepEqual(Reflect.get(interrupted, 'previousStops'), [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]);
+    assert.deepEqual(interrupted.final, state.before.final); assert.deepEqual(interrupted.trials, state.before.trials);
+    assert.equal(interrupted.previousStops, undefined);
     const key = recoveryRequestId(state.receipt.conversationId, state.receipt.submissionId);
     const intent = (await state.host.harness.snapshot(Requests, context))!.requests[`request:${key}`]!;
-    assertFrozenInput(intent.input, state.input);
-    assert.deepEqual(Reflect.get(intent, 'recovery'), { previousSubmissionId: state.receipt.submissionId, mode: 'stopped' });
+    assert.equal(intent, undefined, 'a failed atomic submit leaves no recovery intent');
     state.faux.setResponses(responses()); await state.reopen();
     const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId);
     await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
     const facts = (await state.host.state(next.conversationId)).research!;
-    assert.equal(facts.trials.length, 2); assert.deepEqual(Reflect.get(facts, 'previousStops'), Reflect.get(interrupted, 'previousStops'));
+    assert.equal(facts.trials.length, 2); assert.deepEqual(facts.previousStops, [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]);
     const handle = (await state.host.harness.conversation(state.receipt.conversationId, context))!;
     const entries = JSON.stringify((await handle.context(context)).messages);
     assert.match(entries, /owner requests continuation/); assert.match(entries, /successor generations/);
@@ -112,15 +112,14 @@ test('saved continuation intent repairs only the missing native input after reop
   } finally { await state.close(); }
 });
 
-test('a later owner stop wins over interrupted continuation replay and startup repair', { timeout: 15_000 }, async () => {
+test('a failed continuation and later stop never enqueue work during reopen', { timeout: 15_000 }, async () => {
   const state = await stoppedStudy();
   try {
     interruptNextRecovery(state);
     await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /test_interruption_before_native_input/);
     await state.host.stop(state.receipt.conversationId);
     const stopped = (await state.host.state(state.receipt.conversationId)).research!;
-    assert.equal(stopped.final!.reason, 'owner_stop');
-    await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /research_already_final/);
+    assert.deepEqual(stopped.final, state.before.final);
     await state.reopen();
     assert.deepEqual((await state.host.state(state.receipt.conversationId)).research, stopped);
     assert.equal((await state.host.state(state.receipt.conversationId)).submission!.id, state.receipt.submissionId);
@@ -162,14 +161,14 @@ test('explicit maintenance stop resumes an actually aborted original submission,
   } finally { await state.close(); }
 });
 
-test('interrupted maintenance continuation repairs only the saved original native admission after restart', { timeout: 15_000 }, async () => {
+test('interrupted maintenance continuation remains atomic across restart and explicit retry', { timeout: 15_000 }, async () => {
   const state = await stoppedStudy(3, true);
   try {
     interruptNextRecovery(state); await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /test_interruption_before_native_input/);
-    const interrupted = (await state.host.state(state.receipt.conversationId)).research!; assert.equal(interrupted.final, null);
+    const interrupted = (await state.host.state(state.receipt.conversationId)).research!; assert.deepEqual(interrupted.final, state.before.final);
     state.faux.setResponses(responses()); await state.reopen(); const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId);
     await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
-    const facts = (await state.host.state(next.conversationId)).research!; assertFrozenInput(facts.input, state.input); assert.equal(facts.trials.length, 1); assert.deepEqual(facts.previousStops, interrupted.previousStops); assert.equal(facts.previousStops!.length, 1);
+    const facts = (await state.host.state(next.conversationId)).research!; assertFrozenInput(facts.input, state.input); assert.equal(facts.trials.length, 1); assert.deepEqual(facts.previousStops, [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]); assert.equal(facts.previousStops!.length, 1);
     assert.equal(state.faux.state.callCount, 3);
   } finally { await state.close(); }
 });

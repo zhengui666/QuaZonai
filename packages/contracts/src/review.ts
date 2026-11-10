@@ -82,8 +82,7 @@ export interface ReviewAllocationStart {
   requestId: string; name: string; portfolioIds: string[];
   memberCaps: ReviewAllocationPolicy['memberCaps']; clusterCaps: ReviewAllocationPolicy['clusterCaps'];
   currentWeights: ReviewAllocationPolicy['currentWeights']; maximumTurnover: string;
-  /** Legacy request field, ignored by execution. */
-  maximumScientificCalls?: number; reviewPolicy?: ReviewPolicy;
+  reviewPolicy?: ReviewPolicy;
   /** Explicit untouched dataset for a once-only test of the frozen configuration. */
   independentDatasetId?: string;
 }

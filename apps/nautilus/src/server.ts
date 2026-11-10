@@ -10,7 +10,7 @@ import { JsonReader, jsonChunks, canonicalJsonDigest } from '../../research/src/
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
-type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number; progressPath?: string };
+type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: string };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
 export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
@@ -26,6 +26,7 @@ export interface WorkerOptions {
   binary: string;
   /** Explicit matching native format for tick research; never inferred from catalog paths. */
   tickBinary?: string;
+  manifestPath?: string;
   dataDir: string;
   catalogRoots: string[];
   token?: string;
@@ -34,9 +35,6 @@ export interface WorkerOptions {
   maximumConcurrentTickExecutions?: number;
   /** Maximum threads per independent ensemble-calibration call; native code also checks cores and scratch size. */
   calibrationThreads?: number;
-  /** Legacy configuration accepted for compatibility; execution quotas are ignored. */
-  tickMaximumMemoryBytes?: number;
-  tickMaximumOutputBytes?: number;
 }
 
 function positiveLimit(value: number | undefined, fallback: number, code: string): number {
@@ -111,6 +109,12 @@ export async function createNautilusWorker(options: WorkerOptions) {
     return `sha256:${canonicalJsonDigest({ standard, tick })}`;
   }
   const implementationDigest = await implementationIdentity();
+  const buildIdentity = options.manifestPath ? JSON.parse(await readFile(options.manifestPath, 'utf8')) : undefined;
+  if (buildIdentity && (buildIdentity.schemaVersion !== 1 || !/^[a-f0-9]{40}$/.test(buildIdentity.nautilusRevision)
+    || buildIdentity.binaries?.job?.digest !== await digestFile(binary)
+    || options.tickBinary !== undefined && buildIdentity.binaries?.['job-high-precision']?.digest !== await digestFile(tickBinary))) {
+    throw new Error('nautilus_build_identity_mismatch');
+  }
   const root = resolve(options.dataDir);
   const receipts = join(root, 'executions'); const scratch = join(root, 'scratch');
   await mkdir(receipts, { recursive: true }); await mkdir(scratch, { recursive: true });
@@ -131,11 +135,19 @@ export async function createNautilusWorker(options: WorkerOptions) {
     try {
       const parser = new JsonReader();
       for await (const chunk of createReadStream(join(receipts, id, 'receipt.json'), { encoding: 'utf8' })) parser.write(chunk);
-      const receipt = parser.finish() as unknown as Receipt;
+      let receipt = parser.finish() as unknown as Receipt;
       // An old RUNNING receipt never grants permission to repeat an uncertain run.
       if (receipt.status === 'RUNNING') {
         const execution = active.get(id);
-        if (!execution) return { ...receipt, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' };
+        if (!execution) {
+          if (launching.has(id)) return receipt;
+          // A reader can have opened RUNNING just before the terminal rename
+          // and active-map removal. Reopen after observing no active owner.
+          const latest = new JsonReader();
+          for await (const chunk of createReadStream(join(receipts, id, 'receipt.json'), { encoding: 'utf8' })) latest.write(chunk);
+          receipt = latest.finish() as unknown as Receipt;
+          return receipt.status === 'RUNNING' ? { ...receipt, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' } : receipt;
+        }
         if (execution.progressPath) {
           try {
             const rows = (await readFile(execution.progressPath, 'utf8')).split('\n'); rows.pop();
@@ -187,7 +199,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const receipt = await read(request.requestId) ?? { schemaVersion: 1, requestId: request.requestId, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' } as Receipt;
-      return { promise: Promise.resolve(receipt), cancel() {}, observers: 0 };
+      return { promise: Promise.resolve(receipt), cancel() {} };
     }
     const running: Receipt = { schemaVersion: 1, requestId: request.requestId, status: 'RUNNING' };
     await save(running);
@@ -196,7 +208,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
       if (!child?.pid) return;
       try { process.kill(-child.pid, signal); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
     }
-    const execution: Active = { observers: 0, promise: undefined as unknown as Promise<Receipt>, cancel() {
+    const execution: Active = { promise: undefined as unknown as Promise<Receipt>, cancel() {
       if (cancelRequested) return;
       cancelRequested = true;
       signal('SIGTERM');
@@ -262,7 +274,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
         // A completed or uncertain original receipt remains readable even while
         // another tick invocation occupies the installation's capacity.
         const original = await read(request.requestId);
-        if (original) return { promise: Promise.resolve(original), cancel() {}, observers: 0 };
+        if (original) return { promise: Promise.resolve(original), cancel() {} };
         if (tickSlots.size >= tickConcurrency) rejectAdmission(request.requestId, 'nautilus_tick_capacity_exhausted', 429);
         tickSlots.add(request.requestId);
       }
@@ -280,7 +292,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
     try {
       if (request.method === 'GET' && request.url === '/health') return await send(response, closing ? 503 : 200, { ready: !closing });
       if (!authorized(request, options.token)) return await send(response, 401, { error: 'nautilus_authentication_required' });
-      if (request.method === 'GET' && request.url === '/v1/capabilities') return await send(response, 200, { schemaVersion: 1, implementationDigest, commands });
+      if (request.method === 'GET' && request.url === '/v1/capabilities') return await send(response, 200, { schemaVersion: 1, implementationDigest, commands, ...(buildIdentity ? { buildIdentity } : {}) });
       const match = /^\/v1\/executions\/([a-f0-9]{64})$/.exec(request.url ?? '');
       if (match && ['GET', 'DELETE'].includes(request.method ?? '')) {
         const execution = active.get(match[1]!);
@@ -296,17 +308,12 @@ export async function createNautilusWorker(options: WorkerOptions) {
       const value = validateRequest(await body(request, options.maximumRequestBytes ?? 256 * 1024 * 1024), implementationDigest);
       if (closing) return await send(response, 503, { error: 'nautilus_worker_closing' });
       const execution = await launch(value);
-      execution.observers++;
-      let detached = false;
-      const disconnect = () => {
-        if (detached) return;
-        detached = true; execution.observers--;
-        if (!response.writableFinished && execution.observers === 0 && active.has(value.requestId)) execution.cancel();
-      };
-      response.once('close', disconnect);
-      if (response.destroyed) disconnect();
-      await send(response, 200, await execution.promise);
-      disconnect();
+      // Admission outlives the HTTP connection. Only DELETE (or worker shutdown)
+      // cancels a running process; reconnecting reads this same physical receipt.
+      // launch() has persisted RUNNING before acknowledging admission.
+      void execution.promise.catch(() => {});
+      const receipt = await read(value.requestId) ?? await execution.promise;
+      await send(response, receipt.status === 'RUNNING' ? 202 : 200, receipt);
     } catch (error) {
       await send(response, typeof (error as { statusCode?: unknown }).statusCode === 'number' ? (error as { statusCode: number }).statusCode : 400,
         error instanceof Error && 'rejection' in error ? error.rejection : { error: error instanceof Error ? error.message : 'nautilus_request_failed' });

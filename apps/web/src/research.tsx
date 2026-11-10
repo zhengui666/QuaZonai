@@ -10,7 +10,7 @@ import { CapitalFields, capitalInput } from './capacity';
 import { datasetResearchSettings, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { labelHorizon, NativeInputFacts } from './native-input';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
-import { useResource } from './data-hooks';
+import { useResearchDetail, useResource } from './data-hooks';
 import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import { currentRoute, href, navigate, type Route } from './router';
 import { Copy, DraftNotice, Empty, ErrorNotice, EvidenceMetrics, Exact, Facts, Loading, MetricLabel, Metrics, PendingCommand, Status, Timestamp, useConfirm } from './ui';
@@ -55,7 +55,7 @@ function ResearchWorkspace({ route }: { route: Route }) {
   </section>;
 }
 function StudyDocument({ route, back }: { route: Route; back: string }) {
-  const cache = useQueryClient(); const query = useResource<ResearchDetail>(`/research/${encodeURIComponent(route.id!)}`, { poll: 2000 });
+  const cache = useQueryClient(); const query = useResearchDetail(route.id!);
   const [stopError, setStopError] = useState<unknown>(); const [stopping, setStopping] = useState(false);
   const confirm = useConfirm(); const detail = query.data;
   const tab = route.params.get('tab') ?? 'evidence'; const openTrialId = Number(route.params.get('trial')) || undefined;

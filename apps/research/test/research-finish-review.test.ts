@@ -1,10 +1,11 @@
+import { bool, num, obj, opt, str } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -42,16 +43,16 @@ async function fixture(pm=false,sealed=false) {
     async abort(task,runtime,ctx){await runtime.commit(async tx=>{const trial=(await tx.doc(Study,runtime.conversationId)).trials.find(row=>row.taskId===task.id);if(trial)trial.status='FAILED';return{status:'terminal',outcome:{status:'aborted'}};},ctx);}});
 
   const science=defineExtension({name:'test.finish-science',tools:[defineTool({name:'finish_trial',description:'TEST_ONLY evaluation receipt; not market/PIT evidence',
-    parameters:Type.Object({value:Type.Number(),hypothesisId:Type.Optional(Type.String()),portfolio:Type.Optional(Type.Boolean())}),replay:'safe',executionMode:'sequential',
+    parameters:obj({value:num(),hypothesisId:opt(str()),portfolio:opt(bool())}),replay:'safe',executionMode:'sequential',
     async execute(args,api,ctx) {return trialFeedback(api,ctx,()=>evaluateTrial(api,ctx,{hypothesis:'TEST_ONLY original candidate',...(args.portfolio?{members:[{model:'(module)',weight:'1'}]}:{model:'(module)'}),purpose:'FEASIBILITY',...(args.hypothesisId?{hypothesisId:args.hypothesisId}:{})},async()=>{
       computed++;return {partitions:[{partition:'VALIDATION',start_ns:'10',end_ns:'20',metric:{pearson_ic:{status:'AVAILABLE',value:args.value},counts:{observations:'10',included:'10'}}}]};
     }));},
-  }),defineTool({name:'finish_mark_pending',description:'TEST_ONLY owned pending task boundary',parameters:Type.Object({}),replay:'safe',executionMode:'sequential',
-    async execute(_args,api,ctx){pendingId=await api.commit(async tx=>{const id=await tx.createTask(Pending,{}, {ownership:{kind:'conversation'}});(await tx.doc(Study,api.conversationId)).trials.push({taskId:id,status:'STARTED',proposal:{model:'(module)',hypothesis:'TEST_ONLY_PENDING'},result:null});return id;},ctx);return{content:[{type:'text',text:JSON.stringify({taskId:pendingId})}]};}}),
-    defineTool({name:'finish_release_pending',description:'TEST_ONLY settle the original owned task',parameters:Type.Object({}),replay:'safe',executionMode:'sequential',
-      async execute(_args,api,ctx){releasePending();if(pendingId!==null)await api.waitForTask(pendingId,ctx);return{content:[{type:'text',text:'Original pending task settled.'}]};}})],tasks:[Pending]});
+  }),defineTool({name:'finish_mark_pending',description:'TEST_ONLY owned pending task boundary',parameters:obj({}),replay:'safe',executionMode:'sequential',
+    async execute(_args,api,ctx){pendingId=await api.commit(async tx=>{const id=await tx.createTask(Pending,{}, {ownership:{kind:'conversation'}});(await tx.doc(Study,api.conversationId)).trials.push({taskId:id,status:'STARTED',proposal:{model:'(module)',hypothesis:'TEST_ONLY_PENDING'},result:null});return id;},ctx);return{output:[{type:'text',text:JSON.stringify({taskId:pendingId})}]};}}),
+    defineTool({name:'finish_release_pending',description:'TEST_ONLY settle the original owned task',parameters:obj({}),replay:'safe',executionMode:'sequential',
+      async execute(_args,api,ctx){releasePending();if(pendingId!==null)await api.waitForTask(pendingId,ctx);return{output:[{type:'text',text:'Original pending task settled.'}]};}})],tasks:[Pending]});
   const options={database:join(directory,'research.sqlite'),models,extensions:[research,science]};let host=await openResearch(options);
-  const input:ResearchInput={goal:'TEST_ONLY explicit selected research finish',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:sealed?{sealed:{marker:'OWNER_ONLY_UNREAD_SUFFIX'}}:{},policy:{max_trials:4},...(pm?{campaign:binding(4)}:{})};
+  const input:ResearchInput={goal:'TEST_ONLY explicit selected research finish',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:sealed?{sealed:{marker:'OWNER_ONLY_UNREAD_SUFFIX'}}:{},policy:{},...(pm?{campaign:binding(4)}:{})};
   return {faux,input,get host(){return host;},get computed(){return computed;},async reopen(){await host.close();host=await openResearch(options);},async close(){await host.close();await rm(directory,{recursive:true,force:true});}};
 }
 function evaluate(pm:boolean,value:number) { return (transcript:{messages:readonly unknown[]})=>call('finish_trial',{value,...(pm?{hypothesisId:last(transcript,'research_hypothesis').id!}:{})}); }

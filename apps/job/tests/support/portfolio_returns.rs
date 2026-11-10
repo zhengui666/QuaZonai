@@ -3,7 +3,10 @@ use contracts::{
     evidence::MetricStatus,
     science::{NativeReturnsKind, NativeSimulationResultV1, NativeStatisticGroup},
 };
-use nautilus_analysis::{analyzer::PortfolioAnalyzer, statistics::max_drawdown::MaxDrawdown};
+use nautilus_analysis::{
+    analyzer::PortfolioAnalyzer,
+    statistics::{cagr::CAGR, max_drawdown::MaxDrawdown},
+};
 use std::sync::Arc;
 
 pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
@@ -18,6 +21,7 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
     // MaxDrawdown is 0; other statistics may be NaN. Neither creates daily data.
     let mut native = PortfolioAnalyzer::default();
     native.register_statistic(Arc::new(MaxDrawdown::new()));
+    native.register_statistic(Arc::new(CAGR::new(Some(252))));
     let expected = native.get_performance_stats_portfolio_returns();
     let observed = result
         .statistics

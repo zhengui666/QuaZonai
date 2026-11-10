@@ -265,8 +265,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         return undefined;
       }, context);
       if (parked) return;
-      await runtime.sleep(task.state.checkpoint.wakeAt, context);
-      await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'snapshot' } }), context);
+      await runtime.sleepUntil(task.state.checkpoint.wakeAt, { phase: 'snapshot' }, context);
     },
     async maintenance(task, runtime, context) { await runtime.commit(tx => resumeMaintenance(tx, task.id, 'qz.account-adjustment', task.state.checkpoint), context); },
   },

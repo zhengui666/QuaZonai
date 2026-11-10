@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { TaskId } from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { setup, studied } from './support.ts';
 
 test('owner data settings load extensions, survive restart and preserve captured research', async () => {
@@ -26,7 +28,9 @@ test('owner data settings load extensions, survive restart and preserve captured
     const saved = await request('PUT', path, { enabled: true, config: { path: 'dataset.json' } });
     assert.equal(saved.statusCode, 200, saved.body);
     const refreshed = await request('POST', `${path}/refresh`);
-    assert.equal(refreshed.statusCode, 200, refreshed.body);
+    assert.equal(refreshed.statusCode, 202, refreshed.body);
+    const task = await state.service.research.harness.waitForTask(refreshed.json().taskId as TaskId, BACKGROUND_CONTEXT);
+    assert.equal(task.state.outcome.status, 'completed');
     assert.deepEqual((await request('GET', '/api/v3/datasets')).json().map((value: { id: string }) => value.id), ['controlled', 'imported']);
     const disabled = await request('PATCH', `/api/v3/extensions/${local}`, { enabled: false });
     assert.equal(disabled.statusCode, 200, disabled.body);

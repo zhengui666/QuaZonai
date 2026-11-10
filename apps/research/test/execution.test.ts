@@ -15,10 +15,10 @@ import { executeNative } from '../plugins/native-portfolio.ts';
 import { classifyExecutionError, ExecutionFailure } from '../src/execution-errors.ts';
 import { researchSettings } from '../src/settings.ts';
 
-test('research adds no stream deadline, including retired configured deadlines', () => {
+test('research uses provider defaults and forwards explicitly configured native request options', () => {
   assert.equal(researchSettings().stream?.timeoutMs, undefined);
-  assert.equal(researchSettings({ stream: { timeoutMs: 1 } }).stream?.timeoutMs, undefined);
-  assert.equal(Object.hasOwn(researchSettings(JSON.parse('{"stream":{"maxTokens":1}}')).stream!, 'maxTokens'), false);
+  assert.equal(researchSettings({ stream: { timeoutMs: 1 } }).stream?.timeoutMs, 1);
+  assert.equal(researchSettings().stream?.maxRetries, 0);
 });
 
 test('native preparation preserves absent/null fuel and explicit scientific budgets', () => {
@@ -85,25 +85,25 @@ test('execution accepts the retained native serializer omitting null fuel withou
     const result = await evaluateWasm('(module)', data, BACKGROUND_CONTEXT);
     assert.equal(result.consumed_fuel, null);
     assert.equal(result.temporaryRoot, result.cwd);
-    assert.equal(Object.hasOwn(((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject, 'total_fuel'), false);
+    assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '1');
     assert.deepEqual(data, original);
   } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }
 });
 
-test('provider dispatch ignores output-token quotas retained in earlier native checkpoints', async () => {
+test('provider dispatch preserves explicit pi-ai options without a legacy checkpoint shim', async () => {
   const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider);
   const wrapped = subscriptionSpeed(models).models;
   faux.setResponses([(_context, options) => {
-    assert.equal(options?.maxTokens, undefined);
+    assert.equal(options?.maxTokens, 1);
     return fauxAssistantMessage('Original provider output is unmetered by the application.');
   }]);
   const result = await wrapped.completeSimple(faux.getModel(), { messages: [{ role: 'user', content: 'Resume the original request.', timestamp: Date.now() }] }, { maxTokens: 1 });
   assert.equal(result.stopReason, 'stop'); assert.equal(faux.state.callCount, 1);
 });
 
-test('native default row echoes accept omitted and legacy quotas while binding the original scientific clocks', async () => {
+test('native request echoes bind exact row and fuel contracts and scientific clocks', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-row-echo-')); const binary = join(directory, 'job'); const script = join(directory, 'echo.mjs');
-  const echo = `let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input);request.forecast.selection.maximum_rows??=0;`;
+  const echo = `let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input);`;
   try {
     await writeFile(script, echo + `console.log(JSON.stringify({request,consumed_fuel:null}));`);
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
@@ -112,7 +112,7 @@ test('native default row echoes accept omitted and legacy quotas while binding t
         selection: { event_start_ns: '0', event_end_ns: '30', ...legacy }, parameters: { total_fuel: '1' } } } };
       const original = structuredClone(data);
       const result = await evaluateWasm('(module)', data, BACKGROUND_CONTEXT, undefined, binary);
-      assert.equal(((result.request as JsonObject).forecast as JsonObject).parameters && Object.hasOwn(((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject, 'total_fuel'), false);
+      assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '1');
       assert.deepEqual(data, original, 'execution normalization never rewrites the frozen request');
     }
     await writeFile(script, echo + `request.forecast.selection.event_end_ns='31';console.log(JSON.stringify({request,consumed_fuel:null}));`);
@@ -122,13 +122,11 @@ test('native default row echoes accept omitted and legacy quotas while binding t
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('review causality binds legacy fuel input to the unmetered native result and default row echo', () => {
+test('review causality rejects changed fuel, rows and scientific clocks', () => {
   const input: ResearchInput = { goal: 'Protocol-only source review', model: { provider: 'test', modelId: 'test' }, policy: {}, data: {
     request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: { total_fuel: '1' } } } } };
   const original = structuredClone(input);
   const request = iterationRequest(input.data); const forecast = request.forecast as JsonObject;
-  delete (forecast.parameters as JsonObject).total_fuel;
-  (forecast.selection as JsonObject).maximum_rows = 0;
   const trial: JsonObject = { taskId: 1, status: 'COMPUTED', proposal: { model: '(module)' }, result: { request, partitions: [{ partition: 'VALIDATION' }] } };
   const checks = reviewSourceChecks(input, trial, [trial], 'test:validation');
   assert.equal(checks.find(check => check.id === 'no_leakage')?.status, 'PASS');

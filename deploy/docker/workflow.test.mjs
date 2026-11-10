@@ -22,12 +22,26 @@ test('native source integration workflows install and cache both exporter depend
 
 const results = ['success', 'failure', 'cancelled', 'skipped'];
 
+test('pushes build revision-bound native artifacts without running science CI', async () => {
+  const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const artifact = ci.split('\n  native-artifacts:\n')[1]?.split('\n  science-core:\n')[0];
+  const science = ci.split('\n  science-core:\n')[1];
+  assert.match(artifact, /if: github\.event_name == 'push'/);
+  assert.match(artifact, /native-build\.sh "\$PROFILE" "\$RUNNER_TEMP\/native-artifacts"/);
+  assert.match(artifact, /git rev-parse HEAD > "\$RUNNER_TEMP\/native-artifacts\/tested-revision"/);
+  assert.match(artifact, /name: native-\$\{\{ env\.TEST_REVISION \}\}/);
+  assert.match(science, /if: github\.event_name == 'workflow_dispatch'/);
+  assert.doesNotMatch(artifact, /check-science/);
+});
+
 test('CryptoHFTData conversion stays in the remote native image', async () => {
   const docker = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const context = await readFile(new URL('./Dockerfile.dockerignore', import.meta.url), 'utf8');
   const application = docker.split('FROM scratch AS application-source\n')[1].split('\nFROM application-source AS nautilus-source')[0];
   const native = docker.split('FROM application-source AS nautilus-source\n')[1].split('\nFROM node AS execution-base')[0];
-  assert.doesNotMatch(application, /runtimes\/data\/(?:hub\.py|sources\/hyperliquid\.json)/);
+  assert.doesNotMatch(application, /runtimes\/data\/cryptohftdata\.py/);
+  for (const name of ['source_units.py', 'hub.py', 'acquire.py', 'providers.py', 'snapshot.py', 'hf_dataset.py']) assert.ok(application.includes(`runtimes/data/${name}`));
+  assert.match(docker, /QZ_SOURCE_UNIT_TOOL=\/opt\/quazonai\/operator\/source_units\.py/);
   assert.ok(native.includes('runtimes/data/cryptohftdata.py'));
   assert.ok(context.includes('!runtimes/data/*.py'));
 });

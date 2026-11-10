@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { arr, bool, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { Study } from './documents.ts';
 import { CampaignResearchDoc, fact, nowNs } from './pm-campaign.ts';
@@ -8,9 +8,9 @@ import type { OwnerBoundary } from '../../../packages/contracts/src/pm.ts';
 
 export const strategyIntakeTool = defineTool({
   name: 'strategy_intake', description: 'Campaign-bound research only: interpret the ORIGINAL owner goal into an economic strategy proposal before experiments. Preserve the actual archetype; never translate event-driven/relative-value/microstructure into predictive alpha merely because an adapter is missing. Quote exact owner goal or authenticated clarification substrings for owner boundaries; no invented numerical limits. For an explicit no-leverage statement use LEVERAGE normalizedValue {maximumGrossNavRatio:"1",borrowingAllowed:false}; the versioned normalizer accepts exact supported statements and otherwise preserves the constraint for owner clarification. Previously accepted boundaries remain effective even when omitted by the model. Never turn a future maximum-drawdown wish into a return guarantee. Unresolved intent and unsupported capabilities are explicit outcomes.',
-  parameters: Type.Object({ name: Type.String(), archetype: Type.Union(['PREDICTIVE_ALPHA', 'RELATIVE_VALUE', 'EVENT_DRIVEN', 'MICROSTRUCTURE', 'PORTFOLIO_OVERLAY', 'FACTOR_RESEARCH'].map(value => Type.Literal(value))),
-    economicMechanism: Type.String(), falsificationConditions: Type.Array(Type.String()), requiredCapabilities: Type.Array(Type.String()), intendedHoldingHorizonRef: Type.String(), knownFailureModes: Type.Array(Type.String()),
-    ambiguities: Type.Array(Type.String()), ownerBoundaries: Type.Array(Type.Object({ kind: Type.Union(['LOSS', 'LEVERAGE', 'MARKET_SCOPE', 'LIQUIDITY_NEED', 'CAPITAL_COMMITMENT', 'DATA_USE'].map(value => Type.Literal(value))), sourceStatement: Type.String(), normalizedValue: Type.Optional(Type.Object({ maximumGrossNavRatio: Type.String(), borrowingAllowed: Type.Boolean() })) })) }),
+  parameters: obj({ name: str(), archetype: union(['PREDICTIVE_ALPHA', 'RELATIVE_VALUE', 'EVENT_DRIVEN', 'MICROSTRUCTURE', 'PORTFOLIO_OVERLAY', 'FACTOR_RESEARCH'].map(value => lit(value))),
+    economicMechanism: str(), falsificationConditions: arr(str()), requiredCapabilities: arr(str()), intendedHoldingHorizonRef: str(), knownFailureModes: arr(str()),
+    ambiguities: arr(str()), ownerBoundaries: arr(obj({ kind: union(['LOSS', 'LEVERAGE', 'MARKET_SCOPE', 'LIQUIDITY_NEED', 'CAPITAL_COMMITMENT', 'DATA_USE'].map(value => lit(value))), sourceStatement: str(), normalizedValue: opt(obj({ maximumGrossNavRatio: str(), borrowingAllowed: bool() })) })) }),
   replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const result = await api.commit(async tx => {
@@ -47,6 +47,6 @@ export const strategyIntakeTool = defineTool({
       campaign.intake = result;
       return result;
     }, context);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return { output: [{ type: 'text', text: JSON.stringify(result) }] };
   },
 });

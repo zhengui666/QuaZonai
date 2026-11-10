@@ -122,7 +122,7 @@ test('original PM evidence and scientific checkpoint survive official task resta
       schema_version: 1, selection: { event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] }, parameters: {} } };
     await state.restart();
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
-      requestId: 'evidence-storage', goal: 'Protocol storage acceptance only', datasetId: 'controlled', model: state.model, maxTrials: 1,
+      requestId: 'evidence-storage', goal: 'Protocol storage acceptance only', datasetId: 'controlled', model: state.model,
       funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000.000000000000000001', currency: 'USD' } },
     } });
     assert.equal(admitted.statusCode, 202, admitted.body);

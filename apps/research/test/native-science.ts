@@ -32,7 +32,7 @@ async function setup(extra: string[] = []) {
 }
 
 function input(model: { provider: string; modelId: string }) {
-  return { goal: 'Evaluate factors across two asset classes without targets. Select using validation IC, assess final unseen sample once and stop.', model, data: { ...fixture, sealed: fixture } as JsonObject, policy: { max_trials: 3, selection_metric: 'validation.pearson_ic' } };
+  return { goal: 'Evaluate factors across two asset classes without targets. Select using validation IC, assess final unseen sample once and stop.', model, data: { ...fixture, sealed: fixture } as JsonObject, policy: { selection_metric: 'validation.pearson_ic' } };
 }
 
 test('registered factor/evaluator additions run unattended on real multi-asset Nautilus data', { timeout: 120_000 }, async () => {
@@ -70,7 +70,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.deepEqual(study.trials.map((trial) => trial.status), ['COMPUTED', 'COMPUTED']);
     for (const trial of study.trials) {
       const result = trial.result as JsonObject;
-      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.67.0');
+      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.68.0');
       const validation = (result.partitions as JsonObject[])[1]!;
       assert.equal((validation.assets as JsonObject[]).length, 2);
       assert.equal(((validation.metric as JsonObject).pearson_ic as JsonObject).status, 'AVAILABLE');
@@ -178,14 +178,14 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
 
 function objectRequest(data: JsonObject): JsonObject { return data.request as JsonObject; }
 
-for (const fuel of ['omitted', 'null', 'legacy'] as const) {
-  test(`${fuel} fuel stays unmetered through iteration and finalization`, { timeout: 120_000 }, async () => {
+for (const fuel of ['omitted', 'null', 'metered'] as const) {
+  test(`${fuel} fuel is preserved through iteration and finalization`, { timeout: 120_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
     for (const data of [original.data, original.data.sealed as JsonObject]) {
       const parameters = ((data.request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      if (fuel === 'legacy') parameters.total_fuel = '1';
+      if (fuel === 'metered') parameters.total_fuel = '10000000';
       else if (fuel === 'null') parameters.total_fuel = null;
       else delete parameters.total_fuel;
     }
@@ -193,9 +193,11 @@ for (const fuel of ['omitted', 'null', 'legacy'] as const) {
       tool('factor_evaluate', { hypothesis: 'Evaluate without injecting a scientific fuel budget.', model: ema }),
       (transcript) => {
         const result = textResult(transcript, 'factor_evaluate');
-        assert.equal(result.consumed_fuel, null);
-        assert.equal(Object.hasOwn(((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject, 'total_fuel'), false);
-        return tool('factor_finalize', { reason: 'The original unmetered request and recorded result match.', trialId: result.trialId });
+        if (fuel === 'metered') assert.ok(BigInt(result.consumed_fuel as string) > 0n);
+        else assert.equal(result.consumed_fuel, null);
+        const parameters = ((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject;
+        assert.equal(parameters.total_fuel, fuel === 'metered' ? '10000000' : undefined);
+        return tool('factor_finalize', { reason: 'The original request and recorded result match.', trialId: result.trialId });
       },
     ]);
     const host = await openResearch(setup_.options);
@@ -206,9 +208,10 @@ for (const fuel of ['omitted', 'null', 'legacy'] as const) {
       assert.deepEqual(study.input, original);
       assert.equal(study.trials[0]!.status, 'COMPUTED');
       assert.equal(study.final!.status, 'COMPUTED');
-      assert.equal((study.final!.result as JsonObject).consumed_fuel, null);
+      if (fuel === 'metered') assert.ok(BigInt((study.final!.result as JsonObject).consumed_fuel as string) > 0n);
+      else assert.equal((study.final!.result as JsonObject).consumed_fuel, null);
       const echoed = (((study.final!.result as JsonObject).request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      assert.equal(Object.hasOwn(echoed, 'total_fuel'), false);
+      assert.equal(echoed.total_fuel, fuel === 'metered' ? '10000000' : undefined);
     } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
   });
 }

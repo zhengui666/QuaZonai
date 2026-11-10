@@ -1,9 +1,9 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { Type } from '@earendil-works/pi-ai';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
 import research from '../../research/plugins/research.ts';
@@ -21,13 +21,13 @@ async function stoppedPmResearch() {
   const state = await setup();
   let entered!: () => void; const enteredTool = new Promise<void>(resolve => { entered = resolve; });
   const probe = defineExtension({ name: 'test.deleted-pm-resume', tools: [defineTool({
-    name: 'deleted_pm_resume_probe', description: 'TEST_ONLY original trial and cancellation ownership', parameters: Type.Object({}), replay: 'safe',
+    name: 'deleted_pm_resume_probe', description: 'TEST_ONLY original trial and cancellation ownership', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       const hypothesis = await registerHypothesis(api, ctx, { economicFamilyId: 'test:deleted-pm-resume', mechanism: 'Exercise parent deletion after owner stop.',
         prediction: 'Removed parent cannot authorize a resumed child.', falsification: 'A new model turn appears after parent deletion.', requiredDataCapabilities: [], incrementalQuestion: 'Is the original stop retained?' });
       await evaluateTrial(api, ctx, { hypothesisId: hypothesis.id, hypothesis: 'TEST_ONLY control observation.' }, async () => ({ protocolOnly: true }));
       entered(); await awaitWithContext(new Promise<void>(() => {}), ctx);
-      return { content: [{ type: 'text', text: 'Unreachable after owner stop.' }] };
+      return { output: [{ type: 'text', text: 'Unreachable after owner stop.' }] };
     },
   })] });
   try {
@@ -43,7 +43,7 @@ async function stoppedPmResearch() {
       fauxAssistantMessage(fauxToolCall('deleted_pm_resume_probe', {}), { stopReason: 'toolUse' }),
     ]);
     const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
-      payload: { requestId: 'deleted-parent-original', goal: 'Control-only recovery of an original PM child', datasetId: 'controlled', model: state.model, maxTrials: 3,
+      payload: { requestId: 'deleted-parent-original', goal: 'Control-only recovery of an original PM child', datasetId: 'controlled', model: state.model,
         funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '1000', currency: 'USD' } } } });
     assert.equal(start.statusCode, 202, start.body); await enteredTool;
     const id = start.json<PmMandateView>().mandate.id;
@@ -116,7 +116,7 @@ test('PM deletion serializes with child resume through its final submit handoff'
       if (!handle || handle.id !== f.conversationId) return handle;
       return new Proxy(handle, { get(target, property, receiver) {
         if (property === 'submit') return async (...submitArgs: Parameters<typeof target.submit>) => {
-          if (submitArgs[0].requestId === recoveryId) { reached(); await released; }
+          if (submitArgs[1]?.requestId === recoveryId) { reached(); await released; }
           return target.submit(...submitArgs);
         };
         const value = Reflect.get(target, property, receiver); return typeof value === 'function' ? value.bind(target) : value;
@@ -126,7 +126,7 @@ test('PM deletion serializes with child resume through its final submit handoff'
       payload: { submissionId: f.submissionId } }).then(response => response);
     await submitting;
     const checkpoint = (await host.harness.snapshot(Study, f.conversationId, context))!;
-    assert.equal(checkpoint.final, null, 'the original recovery transaction has reached the submit handoff');
+    assert.equal(checkpoint.final?.reason, 'owner_stop', 'the stop remains visible until the atomic submit transaction commits');
     const deletion = f.state.service.app.inject({ method: 'DELETE', url: f.path, headers: f.state.headers }).then(response => response);
     const early = await Promise.race([deletion.then(() => 'deleted'), delay(50).then(() => 'waiting')]);
     assert.equal(early, 'waiting', 'parent deletion must wait for the child owner operation including its submit');

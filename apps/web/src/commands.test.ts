@@ -9,7 +9,7 @@ test('allocation uses exact 18-digit arithmetic without normalizing original str
 });
 test('nonsecret drafts survive route remounts in memory when storage is unavailable', () => {
   vi.stubGlobal('sessionStorage', { getItem() { throw new Error('unavailable'); }, setItem() { throw new Error('unavailable'); }, removeItem() { throw new Error('unavailable'); } });
-  const original = { goal: 'Original question', maxTrials: '0' }; saveDraft('memory-test', original); expect(readDraft('memory-test')).toEqual(original); removeDraft('memory-test'); expect(readDraft('memory-test')).toBeUndefined();
+  const original = { goal: 'Original question', rationale: 'Original rationale' }; saveDraft('memory-test', original); expect(readDraft('memory-test')).toEqual(original); removeDraft('memory-test'); expect(readDraft('memory-test')).toBeUndefined();
 });
 test('a malformed serialized draft does not break the authoring page', () => {
   vi.stubGlobal('sessionStorage', { getItem() { return '{invalid'; } }); expect(readDraft('malformed-test')).toBeUndefined();

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createHash, randomUUID } from 'node:crypto';
-import { createNautilusWorker, executionId } from '../src/server.ts';
+import { createNautilusWorker, executionId, type WorkerOptions } from '../src/server.ts';
 import type { NativeExecutionRequest, NativeExecutionReceipt } from '../../../packages/contracts/src/nautilus.ts';
 
 test('request hashing preserves original canonical identities across buffered Unicode and attachment boundaries', () => {
@@ -45,7 +45,7 @@ const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.read
 console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN,calibrationThreads:process.env.QZ_CALIBRATION_THREADS??null})); }
 `);
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-  const options = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token', calibrationThreads };
+  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token', calibrationThreads };
   let worker = await createNautilusWorker(options);
   async function listen() { worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening'); return `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`; }
   let url = await listen();
@@ -55,7 +55,15 @@ console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUT
     return { ...body, requestId: executionId(body) };
   }
   return { directory, catalog, count, options, headers, request, get worker() { return worker; }, get url() { return url; },
-    async post(body: NativeExecutionRequest) { return fetch(`${url}/v1/execute`, { method: 'POST', headers, body: JSON.stringify(body) }); },
+    async post(body: NativeExecutionRequest) {
+      let response = await fetch(`${url}/v1/execute`, { method: 'POST', headers, body: JSON.stringify(body) });
+      if ((body.input as { wait?: boolean })?.wait || !response.ok) return response;
+      for (let attempt = 0; attempt < 500 && response.status === 202; attempt++) {
+        await response.body?.cancel(); await new Promise(resolve => setTimeout(resolve, 10));
+        response = await fetch(`${url}/v1/executions/${body.requestId}`, { headers });
+      }
+      return response;
+    },
     async restart() { await worker.close(); worker = await createNautilusWorker(options); url = await listen(); },
     async cleanup() { await worker.close(); await rm(directory, { recursive: true, force: true }); },
   };
@@ -79,6 +87,22 @@ test('calibration capacity reaches the native process without widening the envir
     await assert.rejects(createNautilusWorker({ binary: '/unused', dataDir: '/unused', catalogRoots: [], calibrationThreads }),
       /nautilus_calibration_threads_invalid/);
   }
+});
+
+test('capabilities expose the verified build manifest of the actual executable', async () => {
+  const f = await fixture();
+  try {
+    const path = join(f.directory, 'native-manifest.json');
+    const manifest = { schemaVersion: 1, nautilusVersion: 'test', nautilusRevision: 'a'.repeat(40),
+      binaries: { job: { precision: 'standard', digest: `sha256:${createHash('sha256').update(await readFile(f.options.binary)).digest('hex')}` } } };
+    await writeFile(path, JSON.stringify(manifest)); f.options.manifestPath = path;
+    await f.restart();
+    const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
+    assert.deepEqual(capabilities.buildIdentity, manifest);
+    manifest.binaries.job.digest = `sha256:${'b'.repeat(64)}`;
+    await writeFile(path, JSON.stringify(manifest));
+    await assert.rejects(createNautilusWorker(f.options), /nautilus_build_identity_mismatch/);
+  } finally { await f.cleanup(); }
 });
 
 test('remote worker retains actual execution, attachments and original receipt across retries and restart', async () => {
@@ -140,7 +164,7 @@ test('cancellation joins the native process and never reexecutes the same reques
     const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
     assert.equal(cancelled.status, 'CANCELLED');
     assert.throws(() => process.kill(pid!, 0), { code: 'ESRCH' });
-    assert.deepEqual(await (await pending).json(), cancelled);
+    assert.equal((await (await pending).json()).status, 'RUNNING');
     assert.deepEqual(await (await f.post(body)).json(), cancelled);
     assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
   } finally { await f.cleanup(); }
@@ -163,7 +187,7 @@ test('a persisted uncertain run is readable but is neither repeated nor falsely 
   } finally { await f.cleanup(); }
 });
 
-test('disconnect stops the actual child and independent invocations do not reuse prior input results', async () => {
+test('admission detaches from HTTP and only explicit cancellation stops the child', async () => {
   const f = await fixture();
   try {
     const first = f.request({ sameInput: true });
@@ -182,14 +206,22 @@ test('disconnect stops the actual child and independent invocations do not reuse
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     assert.ok(pid);
-    controller.abort(); await assert.rejects(pending, { name: 'AbortError' });
+    const admitted = await pending; assert.equal(admitted.status, 202);
+    assert.equal((await admitted.json()).status, 'RUNNING');
+    controller.abort();
+    assert.doesNotThrow(() => process.kill(pid!, 0));
     let receipt: NativeExecutionReceipt | undefined;
     for (let attempt = 0; attempt < 100; attempt++) {
       receipt = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers })).json();
-      if (receipt?.status !== 'RUNNING') break;
+      if (receipt?.status === 'RUNNING') break;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    assert.equal(receipt?.status, 'CANCELLED');
+    assert.equal(receipt?.status, 'RUNNING');
+    const duplicate = await f.post(body); assert.equal(duplicate.status, 202);
+    assert.equal((await duplicate.json()).status, 'RUNNING');
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 3);
+    const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
+    assert.equal(cancelled.status, 'CANCELLED');
     assert.throws(() => process.kill(pid!, 0), { code: 'ESRCH' });
   } finally { await f.cleanup(); }
 });

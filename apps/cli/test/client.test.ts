@@ -114,7 +114,8 @@ test('bounded wait uses native settled submissions, not final/IDLE/empty tasks; 
   let status: string | null = 'placed'; const calls: string[] = [];
   const api = await server((request, response) => {
     calls.push(`${request.method} ${request.url}`);
-    json(response, { id: 42, status: 'IDLE', tasks: [], final: { status: 'COMPUTED' }, ...(status ? { submission: { id: 7, status } } : {}) });
+    response.setHeader('content-type', 'text/event-stream');
+    response.write(`event: research\ndata: ${JSON.stringify({ id: 42, status: 'IDLE', tasks: [], final: { status: 'COMPUTED' }, ...(status ? { submission: { id: 7, status } } : {}) })}\n\n`);
   });
   const config = await configuration(api.origin);
   try {
@@ -130,7 +131,7 @@ test('bounded wait uses native settled submissions, not final/IDLE/empty tasks; 
     assert.equal(result.watchEnded, 'detached');
     const unlimited = new AbortController();
     assert.equal(await run(['research', 'watch', '42'], () => { unlimited.abort(); }, unlimited.signal), 130);
-    assert.ok(calls.every((call) => call === 'GET /api/v3/research/42'));
+    assert.ok(calls.every((call) => call === 'GET /api/v3/research/42/events'));
   } finally { await config.close(); await api.close(); }
 });
 
@@ -284,7 +285,8 @@ test('portfolio watch reads running progress and partial equity until the same p
   const native = await server((request, response) => {
     requests.push(`${request.method} ${request.url}`);
     const finished = requests.length > 1;
-    json(response, { id: 'running-id', status: finished ? 'COMPUTED' : 'RUNNING', progress: { phase: finished ? 'COMPLETED' : 'SIMULATING', updatedAt: '2026-10-29T00:00:00Z' }, curve: [{ at: '2026-10-29T00:00:00Z', value: '100.000000000000000001' }] });
+    response.setHeader('content-type', 'text/event-stream');
+    response.end(`event: portfolio\ndata: ${JSON.stringify({ id: 'running-id', status: finished ? 'COMPUTED' : 'RUNNING', progress: { phase: finished ? 'COMPLETED' : 'SIMULATING', updatedAt: '2026-10-29T00:00:00Z' }, curve: [{ at: '2026-10-29T00:00:00Z', value: '100.000000000000000001' }] })}\n\n`);
   });
   const config = await configuration(native.origin);
   try {
@@ -294,7 +296,7 @@ test('portfolio watch reads running progress and partial equity until the same p
     assert.equal(receipts[0].progress.phase, 'SIMULATING');
     assert.equal(receipts[0].curve[0].value, '100.000000000000000001');
     assert.equal(receipts.at(-1).settled, true);
-    assert.deepEqual(requests, ['GET /api/v3/portfolios/running%2Fid', 'GET /api/v3/portfolios/running%2Fid']);
+    assert.deepEqual(requests, ['GET /api/v3/portfolios/running%2Fid/events', 'GET /api/v3/portfolios/running%2Fid/events']);
   } finally { await config.close(); await native.close(); }
 });
 
@@ -302,7 +304,7 @@ test('backtest wait timeout detaches without canceling or restarting the running
   const requests: string[] = [];
   const native = await server((request, response) => {
     requests.push(request.method!);
-    json(response, { id: 'running-id', status: 'RUNNING', curve: [] });
+    response.setHeader('content-type', 'text/event-stream'); response.write(`event: portfolio\ndata: ${JSON.stringify({ id: 'running-id', status: 'RUNNING', curve: [] })}\n\n`);
   });
   const config = await configuration(native.origin);
   try {
@@ -315,17 +317,15 @@ test('backtest wait timeout detaches without canceling or restarting the running
 });
 
 
-test('research goal flags need no quota and preserve legacy quota bytes for receipt replay', async () => {
+test('research goal flags reject retired execution quota options before admission', async () => {
   const sent: Record<string, unknown>[] = [];
   const api = await server((_request, response, bytes) => { sent.push(JSON.parse(bytes)); json(response, { conversationId: 41 }, 202); });
   const config = await configuration(api.origin);
   try {
     const args = ['research', 'start', '--goal', 'Uncapped original question', '--dataset', 'registered', '--model', 'faux:original', '--request-id', 'uncapped-original'];
     await run(args, () => {});
-    await run([...args, '--max-trials', '1'], () => {});
+    await assert.rejects(run([...args, '--max-trials', '1'], () => {}), /Unknown option/);
     assert.deepEqual(sent[0], { requestId: 'uncapped-original', goal: 'Uncapped original question', datasetId: 'registered', model: { provider: 'faux', modelId: 'original' } });
-    assert.deepEqual(sent[1], { ...sent[0], maxTrials: 1 });
-    await run([...args, '--max-trials', '1'], () => {});
-    assert.deepEqual(sent[2], sent[1]);
+    assert.equal(sent.length, 1);
   } finally { await config.close(); await api.close(); }
 });

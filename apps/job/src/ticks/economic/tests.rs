@@ -5,8 +5,6 @@ pub(super) fn request() -> NativeTickEconomicRequestV1 {
     let mut research = crate::ticks::tests::request();
     research.input.representation =
         Some(contracts::ticks::NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
-    research.input.maximum_rows = None;
-    research.input.maximum_source_rows = Some(counter(100).unwrap());
     research.input.event_end_ns = counter(5 * DAY).unwrap();
     research.input.decision_cutoff_ns = research.input.event_end_ns;
     research.train_end_ns = counter(3 * DAY).unwrap();
@@ -146,6 +144,15 @@ fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_el
     assert_eq!(train.valid_return_days.get(), 2);
     assert_eq!(train.sharpe_365, Some(0.0));
     assert!(train.conditional_annualized_return_365.unwrap() < 0.0);
+    let selected_day_cagr = (1.01_f64 * 0.99).powf(365.0 / 2.0) - 1.0;
+    assert!((train.conditional_annualized_return_365.unwrap() - selected_day_cagr).abs() < 1e-12);
+    let empty = reports
+        .iter()
+        .find(|report| report.regime == NativeTickRegimeV1::Bull)
+        .unwrap();
+    assert_eq!(empty.valid_return_days.get(), 0);
+    assert_eq!(empty.sharpe_365, None);
+    assert_eq!(empty.conditional_annualized_return_365, None);
 }
 
 #[test]

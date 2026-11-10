@@ -19,7 +19,7 @@ import { iterationRequest, normalizedRequest } from './native-wasm.ts';
 /** This UUID identifies a persisted bridge artifact, never the upstream data
  * producer's ID or a new authorization to access that producer. */
 export const ResearchDatasetBridge = defineDoc<{ artifact: JsonObject | null }>({
-  kind: 'qz.ensemble.dataset-bridge', version: 1, scope: 'task', initial: () => ({ artifact: null }),
+  kind: 'qz.ensemble.dataset-bridge', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ artifact: null }),
 });
 
 type Input = { mode: 'FIT'; data: JsonObject; members: FittedMember[]; binary: NativeTarget; reviewPriorBinding?: FittedReviewPriorBinding }
@@ -78,7 +78,7 @@ export const FittedEnsembleTask = defineTask<Input, { phase: 'compute' }, JsonOb
   } },
   async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
 });
-const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({ kind: 'qz.ensemble.child', version: 1, scope: 'task', initial: () => ({ taskId: null }) });
+const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({ kind: 'qz.ensemble.child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ taskId: null }) });
 export async function runFittedEnsemble(api: ResearchRuntime, context: Context, input: Input): Promise<JsonObject> {
   const id = await api.commit(async tx => {
     const child = await tx.doc(Child, api.taskId);

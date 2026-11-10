@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -88,7 +87,7 @@ export async function buildPmForward(input: PmForwardNativeInput, context: Conte
     const result = object(receipt.result, 'forward_native_result');
     if (result.schema_version !== 1 || result.kind !== 'OBSERVED_SPOT_FORWARD_BUILD'
       || result.basis !== 'FORWARD_MODEL_ESTIMATE_FROM_OBSERVED_SPOT_BALANCES'
-      || canonical(withoutExecutionQuotas(result.request!)) !== canonical(withoutExecutionQuotas(request))) throw new Problem('forward_native_result_basis_mismatch');
+      || canonical((result.request!)) !== canonical((request))) throw new Problem('forward_native_result_basis_mismatch');
     const valuation = object(result.valuation, 'forward_valuation');
     if (valuation.asof_ns !== cutoff || valuation.report_currency !== input.capture.basis.currency
       || BigInt(String(valuation.available_ns)) > BigInt(cutoff)) throw new Problem('forward_valuation_clock_or_currency_mismatch');

@@ -48,12 +48,6 @@ pub struct NativeTradeTickInputV1 {
     /// Absence retains the original native TradeTick representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<NativeTickRepresentationV1>,
-    /// Legacy selected-row allowance, retained as input evidence and ignored.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub maximum_rows: Option<u32>,
-    /// Legacy cache source-row allowance, retained as input evidence and ignored.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub maximum_source_rows: Option<DbCounter>,
     pub source_revision: String,
     pub availability: NativeTickAvailabilityV1,
 }
@@ -99,14 +93,6 @@ impl NativeTradeTickInputV1 {
                     "RECEIVED_TIME_COHORT_FLOW_CACHE_V1"
                 }
             })
-    }
-
-    pub fn source_row_limit(&self) -> Option<u64> {
-        if self.is_cohort_cache() {
-            self.maximum_source_rows.map(|value| value.get())
-        } else {
-            self.maximum_rows.map(u64::from)
-        }
     }
 }
 

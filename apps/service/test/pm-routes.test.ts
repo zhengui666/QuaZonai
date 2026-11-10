@@ -1,8 +1,8 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { TaskId } from '@earendil-works/pi-durable';
-import { Type } from '@earendil-works/pi-ai';
 import type { CapabilityDescriptor, DecisionCycle, PipelineAssessment, PmMandateView, PortfolioDecision, ResearchCampaign, StrategyVersion } from '../../../packages/contracts/src/pm.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
 import research from '../../research/plugins/research.ts';
@@ -19,10 +19,10 @@ async function fixture() {
       bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], maximum_rows: 100 }, parameters: {},
   } };
   await state.restart();
-  const start = async (requestId: string, maxTrials = 1) => {
+  const start = async (requestId: string, _trials = 1) => {
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId, goal: `Original ${requestId} evidence scope`, datasetId: 'controlled', model: state.model,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, maxTrials } });
+        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } } });
     assert.equal(response.statusCode, 202, response.body);
     return response.json<PmMandateView>();
   };
@@ -41,6 +41,7 @@ test('PM admission has no required or enforced trial allowance', async () => {
       const response = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: f.state.headers,
         payload: { requestId: `pm-no-quota-${maxTrials}`, goal: 'Protocol admission without a quota', datasetId: 'controlled', model: f.state.model,
           funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, ...(maxTrials === undefined ? {} : { maxTrials }) } });
+      if (maxTrials !== undefined) { assert.equal(response.statusCode, 400, response.body); continue; }
       assert.equal(response.statusCode, 202, response.body);
       const record = pmState(await f.state.service.pm.snapshot()).mandates[response.json<PmMandateView>().mandate.id]!;
       assert.equal(record.budget.maximumTrials, null);
@@ -81,7 +82,7 @@ async function activeControlFixture(maxTrials: number) {
   let entered!: () => void;
   const waiting = new Promise<void>(resolve => { entered = resolve; });
   const probe = defineExtension({ name: 'test.pm-control-probe', tools: [defineTool({
-    name: 'pm_control_probe', description: 'Protocol ledger and cancellation probe, no performance evidence.', parameters: Type.Object({}), replay: 'safe',
+    name: 'pm_control_probe', description: 'Protocol ledger and cancellation probe, no performance evidence.', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       const hypothesis = await registerHypothesis(api, ctx, { economicFamilyId: 'protocol:control', mechanism: 'Exercise original task ownership.',
         prediction: 'Owner control preserves the original ledger.', falsification: 'Recorded attempts disappear or execute twice.', requiredDataCapabilities: [], incrementalQuestion: 'Does pause retain the original attempt?' });
@@ -91,7 +92,7 @@ async function activeControlFixture(maxTrials: number) {
         const stop = () => reject(ctx.abortSignal?.reason ?? new Error('protocol_aborted'));
         if (ctx.abortSignal?.aborted) stop(); else ctx.abortSignal?.addEventListener('abort', stop, { once: true });
       });
-      return { content: [{ type: 'text', text: 'Unreachable after owner cancellation.' }] };
+      return { output: [{ type: 'text', text: 'Unreachable after owner cancellation.' }] };
     },
   })] });
   f.state.options.extensions = [research, probe]; await f.state.restart();

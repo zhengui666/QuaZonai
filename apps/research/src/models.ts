@@ -4,6 +4,12 @@ import type { Models, Provider } from '@earendil-works/pi-ai/models';
 import type { ServiceTier } from '../../../packages/contracts/src/index.ts';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { defineDoc } from '@earendil-works/pi-durable';
+
+export const ModelTiers = defineDoc<{ tiers: Record<string, ServiceTier> }>({
+  kind: 'qz.model-tiers', version: 1, scope: 'session', initial: () => ({ tiers: {} }),
+  checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
+});
 
 // Providers, catalogs and auth resolution belong to official pi-ai. Modules
 // are trusted host configuration; credentials never become research input.
@@ -21,23 +27,23 @@ export function supportsServiceTier(model: Model<Api>) {
   return model.api === 'openai-codex-responses' || model.provider === 'openai' && model.api === 'openai-responses';
 }
 
-export function subscriptionSpeed(models: Models) {
+export function subscriptionSpeed(models: Models, resolveTier?: (sessionId: string) => Promise<ServiceTier | undefined>) {
   // Index QZ-admitted studies before native work resumes, including compaction.
   const tiers = new Map<string, ServiceTier>();
   const streamSimple: Models['streamSimple'] = (model, transcript, supplied) => {
     // Also cover old Durable checkpoints which captured stream options before
     // the current host settings took effect. Keep provider/model native limits.
-    const { maxTokens: _legacyTokens, ...options } = supplied ?? {};
+    const options = supplied ?? {};
     if (!supportsServiceTier(model)) return models.streamSimple(model, transcript, options);
     return models.streamSimple(model, transcript, { ...options, async onPayload(payload, selected) {
       const transformed = await options?.onPayload?.(payload, selected);
-      const tier = options?.sessionId ? tiers.get(options.sessionId) : undefined;
+      const tier = options?.sessionId ? tiers.get(options.sessionId) ?? await resolveTier?.(options.sessionId) : undefined;
       // Durable and pi-ai's simple API omit serviceTier; use the public payload hook.
       return tier ? { ...(transformed ?? payload) as object, service_tier: tier } : transformed;
     } });
   };
   const completeSimple: Models['completeSimple'] = (model, transcript, supplied) => {
-    const { maxTokens: _legacyTokens, ...options } = supplied ?? {};
+    const options = supplied ?? {};
     return supportsServiceTier(model) ? streamSimple(model, transcript, options).result() : models.completeSimple(model, transcript, options);
   };
   return {

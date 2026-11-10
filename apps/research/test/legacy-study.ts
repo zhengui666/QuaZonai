@@ -23,5 +23,12 @@ export async function startLegacyResearch(host: ResearchHost, requestId: string,
     (await tx.doc(Study, conversation.id)).input = structuredClone(input);
     requests.requests[key] = { input, conversationId: conversation.id };
   }, BACKGROUND_CONTEXT);
-  return host.start(requestId, input);
+  const binding = (await host.harness.snapshot(Requests, BACKGROUND_CONTEXT))!.requests[`request:${requestId}`]!;
+  const handle = (await host.harness.conversation(binding.conversationId!, BACKGROUND_CONTEXT))!;
+  const submissionId = await host.harness.commit(async tx => {
+    const submissionId = await handle.submit(tx, { type: 'input', content: researchInstructions(input), requestId });
+    (await tx.doc(Requests)).requests[`request:${requestId}`]!.submissionId = submissionId;
+    return submissionId;
+  }, BACKGROUND_CONTEXT);
+  return { conversationId: handle.id, submissionId };
 }

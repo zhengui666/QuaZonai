@@ -70,23 +70,15 @@ def source_selection(args):
                                args.end_seconds, args.interval_seconds)
 
 
-def http_options(parser, download=False):
+def http_options(parser):
     parser.add_argument("--instrument", required=True)
     window_options(parser)
     parser.add_argument("--interval-seconds", type=int, required=True)
     parser.add_argument("--max-bytes", type=int, default=acquire.DEFAULT_MAX_BYTES)
-    if download:
-        parser.add_argument("--output", type=Path, required=True)
-        parser.add_argument("--terms-file", type=Path, required=True)
 
 
 def http_plan(provider_id, args):
     return acquire.plan(provider_id, source_selection(args), args.max_bytes)
-
-
-def http_download(provider_id, args):
-    return acquire.acquire(provider_id, source_selection(args), args.output,
-                           args.terms_file, args.max_bytes)
 
 
 def http_verify_options(parser):
@@ -152,22 +144,16 @@ def byte_budget_options(parser):
                         help="legacy option accepted for compatibility; downloads are not byte-budgeted")
 
 
-def snapshot_options(parser, download=False):
+def snapshot_options(parser):
     parser.add_argument("--dataset", required=True, help="public, ungated Hugging Face dataset ID")
     parser.add_argument("--include", action="append", required=True, help="explicit file glob; repeatable")
     parser.add_argument("--revision", help="resolved to an immutable commit by snapshot.py")
     parser.add_argument("--license", help="verified source terms if the dataset card omits a license")
     byte_budget_options(parser)
-    if download:
-        parser.add_argument("--output", type=Path, required=True)
 
 
 def snapshot_plan(args):
     return snapshot.plan(args.dataset, args.include, args.revision, args.max_bytes, args.license)
-
-
-def snapshot_download(args):
-    return snapshot.download(snapshot_plan(args), args.output)
 
 
 def snapshot_verify_options(parser):
@@ -302,7 +288,7 @@ def published_catalog(output):
 def published_native(output):
     report = load_json(snapshot.safe_local(output, "import-report.json"))
     if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
-            or report.get("native_version") != "0.67.0"
+            or report.get("native_version") != "0.68.0"
             or report.get("catalog_relative_path") != "catalog"
             or report.get("coverage") != "UNPROVEN"
             or report.get("historical_availability") != "UNVERIFIED"
@@ -801,8 +787,7 @@ def source_plugin(plugin_id, source_format, capabilities, limitations, *, valida
 def http_plugin(provider_id):
     return source_plugin(provider_id, "qz.public_acquisition/1", {
         "plan": Capability(http_options, partial(http_plan, provider_id)),
-        "download": Capability(partial(http_options, download=True), partial(http_download, provider_id),
-                               public_network=True),
+
         "verify": Capability(http_verify_options, partial(http_verify, provider_id)),
     }, ["Frozen provider descriptors remain unchanged; lifecycle capabilities are listed here",
         "Observed public data and saved terms do not establish permission or historical availability"])
@@ -810,11 +795,11 @@ def http_plugin(provider_id):
 
 def snapshot_capabilities():
     return {"plan": Capability(snapshot_options, snapshot_plan, public_network=True),
-            "download": Capability(partial(snapshot_options, download=True), snapshot_download, public_network=True),
+
             "verify": Capability(snapshot_verify_options, snapshot_verify)}
 
 
-def hf_dataset_options(parser, download=False):
+def hf_dataset_options(parser):
     parser.add_argument("--dataset", required=True, help="public Hugging Face dataset repository ID")
     parser.add_argument("--revision", help="ordinary branch/tag/ref; resolved once for this request")
     parser.add_argument("--include", action="append", help="explicit file glob; repeatable")
@@ -823,18 +808,11 @@ def hf_dataset_options(parser, download=False):
     parser.add_argument("--start-date", help="inclusive YYYY-MM-DD partition date")
     parser.add_argument("--end-date", help="exclusive YYYY-MM-DD partition date")
     byte_budget_options(parser)
-    if download:
-        parser.add_argument("--cache-dir", type=Path, required=True, help="reusable repository/revision file cache")
-        parser.add_argument("--output", type=Path, required=True, help="new request directory containing selection.json")
 
 
 def hf_dataset_plan(args):
     return hf_dataset.plan(args.dataset, args.include, args.revision, args.max_bytes,
                            args.manifest, args.market, args.start_date, args.end_date)
-
-
-def hf_dataset_download(args):
-    return hf_dataset.download(hf_dataset_plan(args), args.cache_dir, args.output)
 
 
 def hf_dataset_freeze_options(parser):
@@ -866,16 +844,6 @@ def polymarket_v2_plan(args):
         raise ValueError("Polymarket v2 plan output must be new")
     return polymarket_v2.publish(output, polymarket_v2.plan(
         args.start_date, args.end_date, args.token, args.revision, args.max_bytes))
-
-
-def polymarket_v2_download_options(parser):
-    parser.add_argument("--plan", type=Path, required=True, help="original fixed Polymarket v2 plan")
-    parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True, help="request directory; same-request retries resume")
-
-
-def polymarket_v2_download(args):
-    return hf_dataset.download(polymarket_v2.read_plan(local_path(args.plan)), args.cache_dir, args.output)
 
 
 def polymarket_v2_freeze(args):
@@ -1039,7 +1007,7 @@ PLUGINS["hf-snapshot"] = source_plugin("hf-snapshot", "immutable public Hugging 
     snapshot_capabilities(), ["Raw acquisition only; arbitrary Hugging Face Parquet has no native converter"])
 PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file partitions",
     {"plan": Capability(hf_dataset_options, hf_dataset_plan, public_network=True),
-     "download": Capability(partial(hf_dataset_options, download=True), hf_dataset_download, public_network=True),
+
      "freeze": Capability(hf_dataset_freeze_options, hf_dataset_freeze, public_network=False),
      "verify": Capability(hf_dataset_verify_options, lambda args: hf_dataset.verify(args.selection)),
      "convert": Capability(hf_history_options, hf_history_convert),
@@ -1052,7 +1020,7 @@ PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file
     validate_native=partial(history_publication, "hf-dataset"))
 PLUGINS[polymarket_v2.PLUGIN] = source_plugin(polymarket_v2.PLUGIN, polymarket_v2.FORMAT,
     {"plan": Capability(polymarket_v2_plan_options, polymarket_v2_plan, public_network=True),
-     "download": Capability(polymarket_v2_download_options, polymarket_v2_download, public_network=True),
+
      "freeze": Capability(hf_dataset_freeze_options, polymarket_v2_freeze),
      "verify": Capability(hf_dataset_verify_options, polymarket_v2_verify),
      "convert": Capability(polymarket_v2_convert_options, polymarket_v2_convert),

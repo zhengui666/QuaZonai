@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeListParameters, filterEntries, isPlainNavigationClick, listParameters, listQuery, normalizeResearchState } from './list-values';
+import { changeListParameters, filterEntries, isPlainNavigationClick, listParameters, listQuery } from './list-values';
 
 describe('collection navigation parameters', () => {
   it('preserves list conditions and the portfolio view while removing detail selections', () => {
@@ -46,17 +46,6 @@ describe('collection navigation parameters', () => {
   it('preserves valid single-currency and single-metric sorting when changing unrelated filters', () => {
     expect(changeListParameters(new URLSearchParams('currency=USD&capitalMin=1&sort=capital&order=asc'), { q: 'test' }).get('sort')).toBe('capital');
     expect(changeListParameters(new URLSearchParams('metric=pearson_ic&sort=criterionValue&order=desc'), { q: 'test' }).get('sort')).toBe('criterionValue');
-  });
-  it.each([['进行中', 'RUNNING,STARTED,QUEUED'], ['已计算', 'COMPUTED'], ['失败', 'FAILED'], ['已停止', 'STOPPED'], ['待处理', 'IDLE'], ['全部状态', null]])('keeps legacy %s bookmarks searchable', (state, status) => {
-    const result = normalizeResearchState(new URLSearchParams({ q: '中文', state, page: '3' }));
-    expect(result.get('status')).toBe(status);
-    expect(result.has('state')).toBe(false);
-    expect(result.get('q')).toBe('中文');
-    expect(result.get('page')).toBe('3');
-    expect(new URLSearchParams(listQuery(result)).has('state')).toBe(false);
-  });
-  it('keeps an explicit canonical status when a bookmark also has an old state', () => {
-    expect(normalizeResearchState(new URLSearchParams('status=STOPPED&state=失败')).get('status')).toBe('STOPPED');
   });
   it('only remembers navigation that leaves this tab, preventing later polling from stealing focus', () => {
     const primary = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false };

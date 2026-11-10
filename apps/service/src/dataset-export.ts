@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
 import { constants } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { link, lstat, mkdtemp, open, readFile, readdir, rm, unlink } from 'node:fs/promises';
@@ -157,7 +156,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     if (bytes !== receipt.metadata_bytes || metadata.schema_version !== 1 || metadata.provider_kind !== 'NAUTILUS_CATALOG' || metadata.data_kind !== 'BAR'
       || metadata.pit_status !== 'UNVERIFIED' || ns(metadata.row_count) < 1n
       || metadata.registered_ref !== hints.native_catalog_ref || metadata.storage_version !== hints.native_storage_version
-      || quality.schema_version !== 1 || quality.native_version !== 'nautilus-persistence/0.67.0'
+      || quality.schema_version !== 1 || quality.native_version !== 'nautilus-persistence/0.68.0'
       || !Array.isArray(quality.datasets) || quality.datasets.length !== 1
       || (heldout ? metadata.partition !== 'SEALED' : metadata.partition === 'SEALED')) throw new Error('prepared_metadata_mismatch');
     const measured = object(quality.datasets[0], 'measured_dataset');
@@ -219,7 +218,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     || sealed.definitionJson !== primary.definitionJson || sealed.window.bar_seconds !== primary.window.bar_seconds
     || sealed.window.start_seconds !== primary.window.start_seconds
     || Number(sealed.window.end_seconds) < Number(primary.window.end_seconds) || sealed.firstEvent !== primary.firstEvent
-    || canonical(withoutExecutionQuotas(iterationRequest({ request: primary.request }, clippedStrategy))) !== canonical(withoutExecutionQuotas(iterationRequest({ request: sealed.request }, clippedStrategy)))
+    || canonical((iterationRequest({ request: primary.request }, clippedStrategy))) !== canonical((iterationRequest({ request: sealed.request }, clippedStrategy)))
     || ns(object(object(sealed.request.forecast).selection).event_end_ns) <= ns(sealed.request.validation_end_ns))) throw new Error('heldout_criteria_mismatch');
   if (within(output, primary.catalog) || (sealed && within(output, sealed.catalog))) throw new Error('dataset_output_overlaps_catalog');
   const data: JsonObject = { catalog: primary.catalog, request: primary.request };

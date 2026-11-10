@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Creates only absent configuration. Never opens or initializes a research DB.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function configure(root, origin) {
@@ -16,22 +16,11 @@ export function configure(root, origin) {
   const researchDir = join(data, 'research');
   mkdirSync(join(data, 'home'), { recursive: true, mode: 0o700 });
   mkdirSync(researchDir, { recursive: true, mode: 0o700 });
-  const oldPath = [join(researchDir, 'config.json'), join(data, 'research.json')].find(existsSync);
-  const old = oldPath ? JSON.parse(readFileSync(oldPath, 'utf8')) : null;
-  if (old && typeof old.database !== 'string') throw new Error(`Research database path missing in ${oldPath}; refusing a fresh database.`);
-  const defaults = ['research.ts', 'factor-wasm.ts', 'heldout-wasm.ts'];
-  const shipped = [...defaults, 'factor-volume.ts', 'validation-compare.ts'];
-  const modulePath = (value) => {
-    const absolute = resolve(oldPath ? dirname(oldPath) : researchDir, value);
-    // Only exact former shipped modules move. Private extensions keep their paths.
-    const name = shipped.find((name) => absolute === `/opt/quazonai/research/plugins/${name}`);
-    return name ? `/opt/quazonai/apps/research/plugins/${name}` : absolute;
-  };
-  const database = old ? resolve(dirname(oldPath), old.database) : join(researchDir, 'research.sqlite');
-  if (old && !existsSync(database)) throw new Error(`Original database unavailable: ${database}; refusing a fresh database.`);
-  const research = { ...(old ?? {}), database,
-    modules: old?.modules ? old.modules.map(modulePath) : defaults.map((name) => `/opt/quazonai/apps/research/plugins/${name}`) };
-  if (research.providerModules) research.providerModules = research.providerModules.map(modulePath);
+  if ([join(researchDir, 'config.json'), join(data, 'research.json')].some(existsSync)) {
+    throw new Error('Prior research configuration is unsupported; use a fresh installation.');
+  }
+  const research = { database: join(researchDir, 'research.sqlite'),
+    modules: ['research.ts', 'factor-wasm.ts', 'heldout-wasm.ts'].map(name => `/opt/quazonai/apps/research/plugins/${name}`) };
   const config = { host: '0.0.0.0', port: 8080, dataDir: data, research,
     nautilus: {}, staticDir: '/opt/quazonai/web',
     datasets: [], connections: [], extensions: [], secureCookies: origin.startsWith('https:') };

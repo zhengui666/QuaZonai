@@ -20,8 +20,8 @@ export type { LiteratureSource, LiteraturePaper, LiteratureSearchResult, Literat
 export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
-export interface ModelRef { provider: string; modelId: string }
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ModelRef = import('@earendil-works/pi-durable').ModelRef;
+export type ThinkingLevel = import('@earendil-works/pi-ai').ModelThinkingLevel;
 export type ServiceTier = 'default' | 'priority';
 export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
 export type ModelAuthType = 'api_key' | 'oauth';
@@ -52,7 +52,7 @@ export interface ResearchSpecification {
 }
 export interface ResearchInput { goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
 export type ResearchStart = { requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
-  requestId: string; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials?: number;
+  requestId: string; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string;
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
@@ -109,7 +109,6 @@ export interface FactorView extends FactorReference {
 export interface FactorAllocation { factorId: string; weight: string }
 export interface PortfolioStart {
   independentDatasetId?: string;
-  maximumScientificCalls?: number;
   requestId: string; name: string; researchIds?: number[]; factors?: FactorAllocation[]; datasetId: string; capital: string;
   weights?: { researchId: number; weight: string }[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }

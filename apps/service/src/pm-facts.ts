@@ -7,7 +7,7 @@ import { json, nowNs, Problem } from './facts.ts';
 
 /** Business facts share the official Durable store; task state stays with Durable. */
 export const PmDocument = defineDoc<JsonObject>({
-  kind: 'qz.pm', version: 1, scope: 'session',
+  kind: 'qz.pm', version: 1, scope: 'session', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
   initial: () => json({ mandates: {}, datasets: {}, commands: {} }),
 });
 export interface PmCommandReceipt { original: JsonObject; mandateId: string; resourceId: string }
@@ -55,14 +55,6 @@ export const pmState = (value: unknown): PmState => (value ?? { mandates: {}, da
 export const pmRecord = (state: PmState, id: string): PmRecord => {
   const value = state.mandates[id]; if (!value) throw new Problem('mandate_not_found', 404); return value;
 };
-/** Quota failures remain historical facts, but no longer block new work. */
-export function retireResearchQuotaGaps(record: PmRecord): void {
-  for (const item of Object.values(record.gaps)) {
-    if (item.state === 'RESOLVED' || !['shared_research_budget', 'campaign_control'].includes(item.requiredCapability)
-      || !['shared_trial_budget_exhausted', 'trial_budget_exhausted', 'needs_budget_for_search_fit_joint_replay_and_capital_comparison'].includes(item.reasonCode)) continue;
-    revise(item); item.state = 'RESOLVED'; item.resolutionEvidenceRefs = [];
-  }
-}
 export function assertPmNotDeleted(record: PmRecord) {
   if (record.deletedAt) throw new Problem('mandate_deleted', 409);
 }

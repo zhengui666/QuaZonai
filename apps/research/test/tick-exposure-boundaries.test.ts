@@ -1,10 +1,11 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -27,7 +28,7 @@ function barData(catalog: string, instrument: string, aggregation = '1-SECOND'):
 function tickData(catalog: string, instrument: string, start = 9, end = 10): JsonObject {
   return { catalog, nativeInput: { modality: 'TRADE_TICK', request: { schema_version: 1,
     input: { modality: 'TRADE_TICK', instrument_ids: [instrument], event_start_ns: ns(start - 2), event_end_ns: ns(end),
-      decision_cutoff_ns: ns(end), maximum_rows: 100, source_revision: 'original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+      decision_cutoff_ns: ns(end), source_revision: 'original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
     sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 },
     parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: ns(start - 1), validation_end_ns: ns(start) } } };
 }
@@ -183,11 +184,11 @@ test('cross-modality exposure includes completed BAR source intervals while BAR 
   const failures: string[] = [];
   const reservation = defineExtension({ name: 'test.exposure-reservation', tools: [defineTool({
     name: 'reserve_original_input', description: 'Protocol-only original final window reservation; no calculation.',
-    parameters: Type.Object({}), replay: 'safe', executionMode: 'sequential',
+    parameters: obj({}), replay: 'safe', executionMode: 'sequential',
     async execute(_args, api, ctx) {
       try { await checkExposure(api, ctx, (await studyInput(api, ctx)).data, true); }
       catch (error) { failures.push((error as Error).message); throw error; }
-      return { content: [{ type: 'text', text: 'Original source exposure reserved; no numerical evidence.' }] };
+      return { output: [{ type: 'text', text: 'Original source exposure reserved; no numerical evidence.' }] };
     },
   })] });
   const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [research, reservation] });

@@ -9,7 +9,7 @@ use serde_json::json;
 
 pub(super) fn request() -> NativeTradeTickFactorEvaluationRequestV1 {
     serde_json::from_value(json!({"schema_version":1,
-        "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],"event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,"source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+        "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],"event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
         "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
         "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
         "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
@@ -300,8 +300,6 @@ fn flow_cache_delivers_explicit_eighth_feature_for_positive_negative_and_balance
         .unwrap();
     let mut request = request();
     request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
-    request.input.maximum_rows = None;
-    request.input.maximum_source_rows = Some(counter(9).unwrap());
     let prepared = temp.path().join("prepared");
     cohort_cache::prepare_views(&output.join("catalog"), &request, &prepared, 1_000_000).unwrap();
     let root = prepared.join("independent/catalog");
@@ -329,14 +327,7 @@ fn flow_cache_delivers_explicit_eighth_feature_for_positive_negative_and_balance
         },
     ] {
         request.target = target;
-        request.input.maximum_source_rows = Some(counter(1).unwrap());
-        let limited_legacy = evaluate(&root, &request, &wasm, true).unwrap();
-        request.input.maximum_source_rows = None;
         let result = evaluate(&root, &request, &wasm, true).unwrap();
-        assert_eq!(
-            limited_legacy.coverage.trade_count,
-            result.coverage.trade_count
-        );
         assert_eq!(result.methods["features"], FLOW_FEATURE_SCHEMA);
         assert_eq!(
             result.coverage.source_evidence["representation"],
@@ -433,7 +424,7 @@ fn a_cohort_is_one_prediction_and_oversized_cohorts_fail_without_truncation() {
 }
 
 #[test]
-fn tick_model_requires_explicit_feature_abi_and_preserves_legacy_row_fields() {
+fn tick_model_requires_explicit_feature_abi_and_valid_partition_boundaries() {
     let bar=wat::parse_str("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))").unwrap();
     assert_eq!(
         evaluate_series(&request(), series(), &bar, false)
@@ -442,9 +433,7 @@ fn tick_model_requires_explicit_feature_abi_and_preserves_legacy_row_fields() {
         "FEATURE_MODEL_ABI_MISMATCH"
     );
     let mut req = request();
-    req.input.maximum_rows = Some(1_000_001);
     assert!(evaluation_request(&req).is_ok());
-    req.input.maximum_rows = None;
     assert!(evaluation_request(&req).is_ok());
     req = request();
     req.validation_end_ns = req.train_end_ns;
@@ -511,8 +500,6 @@ fn derived_cache_prepares_bounded_views_and_preserves_native_factor_results() {
     native.parameters.total_fuel = Some(counter(1_000_000).unwrap());
     let mut cached = native.clone();
     cached.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
-    cached.input.maximum_rows = None;
-    cached.input.maximum_source_rows = Some(counter(8).unwrap());
     let prepared = temp.path().join("prepared");
     cohort_cache::prepare_views(&output.join("catalog"), &cached, &prepared, 1_000_000).unwrap();
     let relative = tempfile::Builder::new()

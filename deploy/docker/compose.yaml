@@ -1,25 +1,4 @@
 services:
-  # Retained for original PostgreSQL archives. No application SQL migration runs.
-  database:
-    image: ${DATABASE_IMAGE:?release manifest is required}
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: quazonai
-      POSTGRES_USER: quazonai
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?deployment secret is required}
-    ports:
-      - "127.0.0.1:${DATABASE_PORT:?}:5432"
-    volumes:
-      - postgres:/var/lib/postgresql
-    networks: [application]
-    healthcheck:
-      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
-      interval: 3s
-      timeout: 5s
-      retries: 30
-    logging:
-      driver: json-file
-      options: {max-size: 10m, max-file: '3'}
   app:
     image: ${APP_IMAGE:?release manifest is required}
     user: "${HOST_UID:?}:${HOST_GID:?}"
@@ -51,5 +30,3 @@ services:
 networks:
   application:
     driver: bridge
-volumes:
-  postgres:

@@ -11,15 +11,14 @@ export const Application = defineDoc<{
   sessions: Record<string, { digest: string; expires: number; kind: string; name: string }>;
   settings: JsonObject | null;
   extensionEnabled: Record<string, boolean>;
-  researchRequests: ResearchAdmissions;
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
   accountControls?: Record<string, JsonObject>;
   /** Service maintenance intent; execution checkpoints remain official Tasks. */
   maintenance?: JsonObject;
 }>({
-  kind: 'qz.application', version: 1, scope: 'session',
-  initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
+  kind: 'qz.application', version: 1, scope: 'session', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
+  initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, portfolios: {}, observations: {} }),
 });
 export interface PortfolioFact {
   deletedAt?: string;

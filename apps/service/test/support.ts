@@ -1,9 +1,10 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Study } from '../../research/src/documents.ts';
 import { evaluateTrial } from '../../research/src/trials.ts';
@@ -18,7 +19,7 @@ export { fauxAssistantMessage, fauxToolCall };
 export const wat = '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))';
 // Only protocol facts, NOT native evidence; production modules never install this extension.
 export const controlledResearch = defineExtension({ name: 'test.protocol-research', tools: [defineTool({
-  name: 'controlled_trial', description: 'Test-only model/science protocol', parameters: Type.Object({}), replay: 'safe',
+  name: 'controlled_trial', description: 'Test-only model/science protocol', parameters: obj({}), replay: 'safe',
   async execute(_args, api, ctx) {
     // This controlled tool reconstructs an already-qualified pre-review study;
     // it never claims to exercise the new production review/qualification chain.
@@ -27,7 +28,7 @@ export const controlledResearch = defineExtension({ name: 'test.protocol-researc
     const result: JsonObject = { request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }] };
     await evaluateTrial(api, ctx, { hypothesis: 'Controlled protocol', model: wat }, async () => result);
     await api.commit(async (tx) => { (await tx.doc(Study, api.conversationId)).final = { taskId: api.taskId, trialId: api.taskId, status: 'COMPUTED', result, reason: 'Protocol only' }; }, ctx);
-    return { content: [{ type: 'text', text: 'Protocol test ended, not scientific evidence.' }], control: { terminate: true } };
+    return { output: [{ type: 'text', text: 'Protocol test ended, not scientific evidence.' }], control: { terminate: true } };
   },
 })] });
 
@@ -54,7 +55,7 @@ export async function setup(owner = true, staticDir?: string, storage?: Storage)
 }
 export async function studied(state: Awaited<ReturnType<typeof setup>>, requestId = 'idea') {
   state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-  const input = { requestId, goal: 'Controlled model protocol', model: state.model, datasetId: 'controlled', maxTrials: 1 };
+  const input = { requestId, goal: 'Controlled model protocol', model: state.model, datasetId: 'controlled' };
   const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: input }); assert.equal(response.statusCode, 202, response.body);
   const receipt = response.json(); await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
   return { input, receipt };

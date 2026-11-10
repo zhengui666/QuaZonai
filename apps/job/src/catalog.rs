@@ -1,7 +1,10 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
+#[cfg(any(feature = "market-history", feature = "polymarket-history"))]
+pub mod aggregation;
 pub mod currencies;
 mod file_batches;
+pub mod publish;
 pub use file_batches::{file_batch_session, FileBatchSession};
 
 use anyhow::{ensure, Result};
@@ -55,6 +58,93 @@ pub struct NativeMarketData {
     pub rows: usize,
     pub execution_fees: Option<contracts::catalogs::FrozenMakerTakerFeesV1>,
     pub fee_selection: Option<NativeBarSelectionV1>,
+}
+
+/// The close of an explicitly right-open, internally aggregated native time bar.
+/// External venue bars do not imply this convention.
+/// Availability remains `ts_init` and may be later than this boundary.
+pub fn right_open_bar_close_ns(bar: &Bar) -> Result<u64> {
+    ensure!(
+        bar.bar_type.is_internally_aggregated()
+            && !bar.bar_type.is_composite()
+            && bar.bar_type.spec().is_time_aggregated(),
+        "RIGHT_OPEN_INTERNAL_TIME_BAR_REQUIRED"
+    );
+    bar.ts_event
+        .as_u64()
+        .checked_add(nautilus_model::data::bar::get_bar_interval_ns(&bar.bar_type).as_u64())
+        .ok_or_else(|| anyhow::anyhow!("BAR_CLOSE_TIME_RANGE"))
+}
+
+/// A frozen aggregate is supplied from outside the consuming backtest runtime.
+/// Keep the source type in its catalog; the official engine/risk cache consumes
+/// this declared transport projection rather than synthesizing quotes or trades.
+pub fn runtime_bar_type(source: BarType) -> BarType {
+    if source.is_externally_aggregated() {
+        return source;
+    }
+    BarType::new(
+        source.instrument_id(),
+        source.spec(),
+        nautilus_model::enums::AggregationSource::External,
+    )
+}
+
+pub fn runtime_bar(mut source: Bar) -> Result<Bar> {
+    if source.bar_type.is_internally_aggregated() {
+        let close = right_open_bar_close_ns(&source)?;
+        ensure!(
+            close <= source.ts_init.as_u64(),
+            "CATALOG_BAR_AVAILABLE_BEFORE_CLOSE"
+        );
+        source.ts_event = close.into();
+        source.bar_type = runtime_bar_type(source.bar_type);
+    }
+    Ok(source)
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+    use nautilus_model::types::{Price, Quantity};
+
+    fn source(kind: &str, event: u64, available: u64) -> Bar {
+        let price = Price::from("1.25");
+        Bar::new(
+            kind.parse().unwrap(),
+            price,
+            price,
+            price,
+            price,
+            Quantity::from("2"),
+            event.into(),
+            available.into(),
+        )
+    }
+
+    #[test]
+    fn runtime_projection_keeps_source_open_and_actual_availability_separate() {
+        let original = source("TOKEN/QUOTE.VENUE-1-SECOND-LAST-INTERNAL", 0, 3_000_000_000);
+        let runtime = runtime_bar(original).unwrap();
+        assert!(original.bar_type.is_internally_aggregated());
+        assert_eq!(original.ts_event.as_u64(), 0);
+        assert!(runtime.bar_type.is_externally_aggregated());
+        assert_eq!(runtime.ts_event.as_u64(), 1_000_000_000);
+        assert_eq!(runtime.ts_init, original.ts_init);
+        assert_eq!(
+            (runtime.open, runtime.close, runtime.volume),
+            (original.open, original.close, original.volume)
+        );
+        let external = source("TOKEN/QUOTE.VENUE-1-SECOND-LAST-EXTERNAL", 100, 200);
+        assert_eq!(runtime_bar(external).unwrap(), external);
+    }
+
+    #[test]
+    fn a_frozen_aggregate_cannot_be_delivered_before_its_native_close() {
+        let early = source("TOKEN/QUOTE.VENUE-1-SECOND-LAST-INTERNAL", 0, 999_999_999);
+        assert!(runtime_bar(early).is_err());
+        assert!(validate_price_bar(&early, None).is_err());
+    }
 }
 
 /// Select original baseline plus updates without copying earlier or future versions.
@@ -133,7 +223,7 @@ pub fn measure_catalog(
 pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
     Ok(NativeDataQualityReportV1 {
         schema_version: SchemaV1,
-        native_version: "nautilus-persistence/0.67.0".into(),
+        native_version: "nautilus-persistence/0.68.0".into(),
         checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
             .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
         datasets,
@@ -209,7 +299,7 @@ pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
         let spec = bar_type.spec();
         ensure!(bar_type.to_string() == *text, "NONCANONICAL_BAR_TYPE");
         ensure!(
-            bar_type.is_externally_aggregated()
+            !bar_type.is_composite()
                 && spec.price_type == PriceType::Last
                 && matches!(
                     spec.aggregation,
@@ -379,6 +469,12 @@ pub(crate) fn load_price_bars(
 }
 
 pub(crate) fn validate_price_bar(bar: &Bar, previous: Option<&Bar>) -> Result<()> {
+    if bar.bar_type.is_internally_aggregated() {
+        ensure!(
+            right_open_bar_close_ns(bar)? <= bar.ts_init.as_u64(),
+            "CATALOG_BAR_AVAILABLE_BEFORE_CLOSE"
+        );
+    }
     if let Some(previous) = previous {
         ensure!(
             previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
@@ -463,16 +559,7 @@ fn validate_native_mode(
             "CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"
         );
         let instrument = selected.instrument_at(available)?;
-        if let Some(previous) = selected.bars.last() {
-            ensure!(
-                // A source response may publish several distinct historical bars
-                // together. Native APIs preserve equal receipt times; never invent
-                // per-row offsets. Event identities and availability order still
-                // reject duplicates, revisions and time travel.
-                previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
-                "CATALOG_NONUNIQUE_OR_REVISED_BAR"
-            );
-        }
+        validate_price_bar(&bar, selected.bars.last())?;
         let precision = instrument.price_precision();
         for price in [bar.open, bar.high, bar.low, bar.close] {
             ensure!(
@@ -489,19 +576,7 @@ fn validate_native_mode(
                         .is_none_or(|maximum| price <= maximum),
                 "CATALOG_PRICE_OUTSIDE_INSTRUMENT_BOUNDS"
             );
-            ensure!(
-                price.as_f64().is_finite() && price.as_f64() > 0.0,
-                "UNSUPPORTED_NONPOSITIVE_PRICE"
-            );
         }
-        ensure!(
-            bar.high >= bar.open
-                && bar.high >= bar.close
-                && bar.high >= bar.low
-                && bar.low <= bar.open
-                && bar.low <= bar.close,
-            "CATALOG_OHLC_INVALID"
-        );
         instrument.try_normalize_qty(bar.volume)?;
         selected.bars.push(bar);
         rows += 1;

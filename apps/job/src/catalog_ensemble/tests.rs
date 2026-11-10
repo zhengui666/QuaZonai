@@ -68,7 +68,7 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
             .unwrap();
     for token in ["100", "200"] {
         let kind =
-            BarType::from_str(&format!("{token}.POLYMARKET-1-MINUTE-LAST-EXTERNAL")).unwrap();
+            BarType::from_str(&format!("{token}.POLYMARKET-1-MINUTE-LAST-INTERNAL")).unwrap();
         let bars = (1..=4_u64)
             .map(|minute| {
                 let value = if token == "100" {
@@ -84,7 +84,7 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
                     price,
                     price,
                     Quantity::from("10000.000000"),
-                    (minute * MINUTE).into(),
+                    ((minute - 1) * MINUTE).into(),
                     (minute * MINUTE).into(),
                 )
                 .unwrap()
@@ -161,9 +161,9 @@ fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
 fn request() -> NativeCatalogEnsembleRequestV1 {
     NativeCatalogEnsembleRequestV1 {
         schema_version: SchemaV1,
-        event_start_ns: count(1),
+        event_start_ns: count(0),
         evaluation_start_ns: count(2 * MINUTE),
-        event_end_ns: count(4 * MINUTE + 1),
+        event_end_ns: count(4 * MINUTE),
         decision_cutoff_ns: count(4 * MINUTE + 1000),
         source: POLYMARKET_V2_SOURCE.into(),
         revision: "synthetic-regression".into(),
@@ -440,7 +440,7 @@ fn complete_source_scope_counts_boundary_groups_and_ignores_outside_window_serie
     let (catalog, manifest) = fixture(directory.path());
     let native =
         ParquetDataCatalog::from_uri(catalog.to_str().unwrap(), None, None, None, None).unwrap();
-    let kind = BarType::from_str("300.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let kind = BarType::from_str("300.POLYMARKET-1-MINUTE-LAST-INTERNAL").unwrap();
     let price = Price::from("0.500000");
     native
         .write_to_parquet(
@@ -451,7 +451,7 @@ fn complete_source_scope_counts_boundary_groups_and_ignores_outside_window_serie
                 price,
                 price,
                 Quantity::from("1.000000"),
-                (6 * MINUTE).into(),
+                (5 * MINUTE).into(),
                 (6 * MINUTE).into(),
             )
             .unwrap()],

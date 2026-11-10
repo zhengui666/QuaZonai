@@ -1,3 +1,7 @@
+import { createModels } from '@earendil-works/pi-ai';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { TaskId } from '@earendil-works/pi-durable';
+import { openResearch } from '../../research/src/host.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -20,30 +24,23 @@ async function archive() {
   return { dataDir, root, manifest, save, clean: () => rm(dataDir, { recursive: true, force: true }) };
 }
 
-test('CryptoHFTData replaces the old Hyperliquid provider and retains its historical dataset lookup', async () => {
+test('CryptoHFTData refresh uses official durable tasks without importing retired source configuration', async () => {
   const f = await archive();
-  const oldDataset = { id: 'hyperliquid-history', name: 'Original HF dataset', assetClass: 'CRYPTO', currency: 'MULTI',
-    source: 'original', start: null, end: null, ready: false, data: { acquisition: '/original/market-data.json' } };
-  await writeFile(join(f.dataDir, 'data-sources.json'), JSON.stringify({ 'qz.data.hyperliquid': {
-    config: { acquisitionDirectory: '/original' }, enabled: true, datasets: [oldDataset], lastLoadedAt: null, error: null,
-  } }));
   const config = configDefaults({ dataDir: f.dataDir });
   const sources = await dataSources(config);
+  const host = await openResearch({ database: join(f.dataDir, 'sources.sqlite'), models: createModels(), extensions: [sources.extension], deferResume: true });
+  await sources.connect(host);
   try {
     assert.equal(sources.has('qz.data.hyperliquid'), false);
     const source = sources.view().find(value => value.name === 'qz.data.cryptohftdata')!;
-    assert.equal(source.enabled, false); assert.equal(source.lastLoadedAt, null);
-    assert.equal(config.datasets.length, 0);
-    assert.deepEqual(existingDataset(config, oldDataset.id), oldDataset);
+    assert.equal(source.enabled, false); assert.equal(config.datasets.length, 0);
     await sources.save(source.name, { enabled: true, config: { archiveDirectory: 'archive' } });
-    await sources.refresh(source.name);
-    assert.deepEqual(sources.view().find(value => value.name === source.name)!.datasetIds,
-      ['cryptohftdata-hyperliquid-2026-02-12-2026-10-13']);
+    const admitted = await sources.refresh(source.name);
+    const result = await host.harness.waitForTask(admitted.taskId as TaskId, BACKGROUND_CONTEXT);
+    assert.equal(result.state.outcome.status, 'completed');
+    assert.deepEqual(sources.view().find(value => value.name === source.name)!.datasetIds, ['cryptohftdata-hyperliquid-2026-02-12-2026-10-13']);
     assert.equal(config.datasets[0]!.ready, false);
-    assert.deepEqual(existingDataset(config, oldDataset.id), oldDataset);
-    const stored = JSON.parse(await readFile(join(f.dataDir, 'data-sources.json'), 'utf8'));
-    assert.deepEqual(stored['qz.data.hyperliquid'].datasets, [oldDataset]);
-  } finally { await sources.close(); await f.clean(); }
+  } finally { await sources.close(); await host.close(); await f.clean(); }
 });
 
 test('archive loading uses manifest dates and counts without claiming BAR or TradeTick preparation', async () => {

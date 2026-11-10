@@ -825,8 +825,6 @@ export interface PmMandateStart {
   model: ModelRef;
   thinkingLevel?: ThinkingLevel;
   serviceTier?: ServiceTier;
-  /** Legacy request field, ignored by execution. */
-  maxTrials?: number;
   operatingAuthority?: MandateRevision['operatingAuthority'];
   businessPreference?: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER';
 }

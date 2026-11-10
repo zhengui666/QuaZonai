@@ -59,7 +59,7 @@ export const MaintenanceGate = defineTask<{ epoch: string }, { phase: 'hold' }, 
       if (!released(watch.value)) {
         let release!: () => void;
         const changed = new Promise<void>(resolve => { release = resolve; });
-        watch.start(async value => { if (released(value)) release(); });
+        watch.start(async call => { if (call.kind === 'value' && released(call.value)) release(); });
         if (!released(watch.value)) await awaitWithContext(changed, ctx);
       }
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
@@ -107,7 +107,7 @@ export function createMaintenance(host: ResearchHost) {
     return host.harness.commit(async tx => {
       const application = await tx.doc(Application); const state = maintenanceState(application);
       const blockingTasks: { taskId: number; kind: string; status: string; reason: string }[] = []; const parkedTaskIds: number[] = [];
-      for (const status of ['pending', 'running', 'waiting', 'completing'] as const) {
+      for (const status of ['pending', 'running', 'waiting', 'sleeping', 'completing'] as const) {
         let cursor: import('@earendil-works/pi-durable').Cursor | undefined;
         do {
           const page = await tx.scanTasks({ status }, 100, cursor);

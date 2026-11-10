@@ -32,7 +32,7 @@ fn two_markets() -> NativeMarketData {
     };
     pair.id = InstrumentId::from("456.POLYMARKET");
     pair.raw_symbol = Symbol::new("456");
-    other.bar_type = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    other.bar_type = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-INTERNAL").unwrap();
     for bar in &mut other.bars {
         bar.bar_type = other.bar_type;
     }
@@ -83,26 +83,23 @@ fn per_market_original_fee_files_load_only_selected_markets_and_preserve_fifo() 
 }
 
 #[test]
-fn legacy_original_file_remains_authoritative_and_invalid_legacy_never_falls_back() {
+fn retired_single_file_cannot_bypass_partition_validation() {
     let root = tempfile::tempdir().unwrap();
-    write_part(root.path(), "123.POLYMARKET", &source("123.POLYMARKET"));
-    let legacy = root.path().join(RECORDED_FEES_FILE);
     std::fs::write(
-        &legacy,
+        root.path().join(RECORDED_FEES_FILE),
         serde_json::to_vec(&source("123.POLYMARKET")).unwrap(),
     )
     .unwrap();
+    assert!(RecordedFeeModel::load(root.path(), &market(), clock())
+        .unwrap_err()
+        .to_string()
+        .contains("RECORDED_FEE_FILE_REQUIRED"));
+    write_part(root.path(), "123.POLYMARKET", &source("123.POLYMARKET"));
     std::fs::write(
         root.path().join("recorded-fees/123.POLYMARKET.json"),
-        "invalid unused partition",
+        "invalid partition",
     )
     .unwrap();
-    let model = RecordedFeeModel::load(root.path(), &market(), clock()).unwrap();
-    assert_eq!(
-        charge(&model, "5.000000").unwrap().as_decimal(),
-        Decimal::from_str("0.06").unwrap()
-    );
-    std::fs::write(&legacy, "invalid original source").unwrap();
     assert!(RecordedFeeModel::load(root.path(), &market(), clock())
         .unwrap_err()
         .to_string()

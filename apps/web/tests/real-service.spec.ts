@@ -68,12 +68,12 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     await expect(page.locator('.error-notice')).toContainText('研究请求的独立指标不可用'); expect(await (await page.request.get(`${url}/api/v3/portfolios`)).json()).toEqual([]); expect(offers).toBe(0);
     const factor = (await (await page.request.get(`${url}/api/v3/factors`)).json() as FactorView[])[0]!; expect(factor.combinable).toBe(false); expect(factor.reason).toBe('research_criterion_insufficient');
     await page.goto(`${url}/#/factors/${factor.id}`); await expect(page.getByRole('button', { name: '加入组合', exact: true })).toBeDisabled(); await expect(page.locator('.capacity-section')).toContainText('research_criterion_insufficient');
-    // Keep the target/receipt protocol coverage on the intentional legacy path, not fabricated structured evidence.
-    const legacy = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-legacy-transport', goal: 'Legacy HTTP transport protocol, not scientific qualification', model: original.input.model, datasetId: original.datasetId, maxTrials: 1 } }); expect(legacy.status()).toBe(202); const legacyId = (await legacy.json()).conversationId as number;
-    await page.goto(`${url}/#/research/${legacyId}`); await page.getByRole('button', { name: '创建组合', exact: true }).click();
+    // A direct-research fixture covers target receipts without claiming independent scientific qualification.
+    const transport = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-direct-transport', goal: 'HTTP transport protocol, not scientific qualification', model: original.input.model, datasetId: original.datasetId } }); expect(transport.status(), await transport.text()).toBe(202); const transportId = (await transport.json()).conversationId as number;
+    await page.goto(`${url}/#/research/${transportId}`); await page.getByRole('button', { name: '创建组合', exact: true }).click();
     await page.locator('.ant-select-selection-item').filter({ hasText: `#${id} / ${original.title}` }).locator('.ant-select-selection-item-remove').click();
-    await page.getByLabel(`研究 ${legacyId} 权重`, { exact: true }).fill('1'); await page.getByLabel('组合名称', { exact: true }).fill('Legacy HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();
-    await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '1000.000000000000000001', exact: true })).toBeVisible(); const portfolios = await (await page.request.get(`${url}/api/v3/portfolios`)).json() as PortfolioView[]; expect(portfolios).toHaveLength(1); expect(portfolios[0]!.weights).toEqual([{ researchId: legacyId, weight: '1' }]);
+    await page.getByLabel(`研究 ${transportId} 权重`, { exact: true }).fill('1'); await page.getByLabel('组合名称', { exact: true }).fill('HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();
+    await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '1000.000000000000000001', exact: true })).toBeVisible(); const portfolios = await (await page.request.get(`${url}/api/v3/portfolios`)).json() as PortfolioView[]; expect(portfolios).toHaveLength(1); expect(portfolios[0]!.weights).toEqual([{ researchId: transportId, weight: '1' }]);
     await page.getByRole('button', { name: '交付目标', exact: true }).click(); await page.getByLabel('连接', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol-only paper connection' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待核对'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(offers).toBe(1);
     const before = (await (await page.request.get(`${url}/api/v3/observations`)).json() as ObservationView[])[0]!; expect(before.receipt?.status).toBe('UNCERTAIN'); await state.restart(); await page.reload(); await expect(page.locator('.receipt-section')).toContainText('待核对'); await page.getByRole('button', { name: '核对回执' }).click(); await expect(page.locator('.receipt-section')).toContainText('已接收'); await expect(page.getByRole('heading', { name: '权益数值未提供' })).toBeVisible(); await expect(page.locator('[data-testid="equity-chart"]')).toHaveCount(0); await expect(page.locator('.positions-section')).toContainText('无持仓');
     await page.getByText('来源与身份', { exact: true }).click(); await expect(page.locator('.receipt-section .provenance-disclosure')).toContainText('9007199254740997'); await expect(page.locator('.receipt-section .provenance-disclosure')).toContainText(clock);
@@ -118,8 +118,8 @@ test('object deletion confirms the original resource, reconciles a lost response
     const models = await (await page.request.get(`${url}/api/v3/research/models`)).json() as ModelCatalog['models'];
     const model = models.find(item => item.provider === 'faux')!;
     const datasets = await (await page.request.get(`${url}/api/v3/datasets`)).json() as { id: string }[];
-    const created = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-delete-original-study', goal: 'Deletion HTTP lifecycle, not scientific qualification', model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id, maxTrials: 1 } });
-    expect(created.status()).toBe(202);
+    const created = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-delete-original-study', goal: 'Deletion HTTP lifecycle, not scientific qualification', model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id } });
+    expect(created.status(), await created.text()).toBe(202);
     let study!: ResearchDetail;
     await expect.poll(async () => {
       const studies = await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>;
@@ -252,9 +252,9 @@ test('real full-collection tables search older records, sort before pagination a
       const goal = index === 0 ? 'Target-oldest searchable question' : `Row-${String(index).padStart(2, '0')}`;
       const response = await page.request.post(`${url}/api/v3/research`, { data: {
         requestId: `TEST_ONLY-list-${index}`, goal,
-        model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id, maxTrials: 1,
+        model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id,
       } });
-      expect(response.status()).toBe(202);
+      expect(response.status(), await response.text()).toBe(202);
     }
     const initialResponse = await page.request.get(`${url}/api/v3/research/list?pageSize=20`);
     expect(initialResponse.status()).toBe(200);

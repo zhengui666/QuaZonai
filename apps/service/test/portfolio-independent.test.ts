@@ -21,7 +21,7 @@ test('new reviewed portfolios require a frozen independent dataset and never bor
   assert.equal(captured.catalog, '/component-sealed');
 });
 
-test('legacy admitted portfolio keeps its original independent consumer semantics', () => {
+test('portfolios without an admitted review policy do not request a separate review dataset', () => {
   const captured = input(); delete captured.review;
   assert.equal(portfolioIndependentData(captured), undefined);
 });
@@ -46,14 +46,14 @@ test('fresh windows cannot change reviewed forecast parameters or the BAR horizo
   assert.throws(() => portfolioIndependentData(captured), /portfolio_independent_forecast_contract_changed/);
 });
 
-test('a frozen independent dataset retains legacy fuel without changing the reviewed scientific method', () => {
+test('independent scientific limits must match the frozen validation contract exactly', () => {
   for (const total_fuel of ['1', '100000000']) {
     const captured = input();
     const original = request();
     captured.review!.independentData = { catalog: '/fresh', request: { ...original,
       forecast: { ...original.forecast, parameters: { ...original.forecast.parameters, total_fuel } } } };
     const frozen = structuredClone(captured);
-    assert.equal(portfolioIndependentData(captured), captured.review!.independentData);
+    assert.throws(() => portfolioIndependentData(captured), /portfolio_independent_forecast_contract_changed/);
     assert.deepEqual(captured, frozen, 'Validation must retain both the native result and frozen independent fuel history');
     const changed = structuredClone(captured);
     const data = changed.review!.independentData!;

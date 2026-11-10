@@ -1,5 +1,5 @@
 use super::*;
-use crate::recorded_fees::tests::{charge, market, model, native_scenario, set_time};
+use crate::recorded_fees::tests::{charge, market, model, native_scenario, set_time, write_source};
 use nautilus_model::{identifiers::InstrumentId, orders::OrderTestBuilder};
 
 fn ioc(side: OrderSide, quantity: &str) -> OrderAny {
@@ -157,7 +157,7 @@ fn seeded_official_probability_sequence_is_preserved_without_pre_slipping_books(
 fn recorded_settings(request: &mut contracts::science::NativeSimulationRequestV1) {
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_LIQUIDITY",
-        "native_version":"0.67.0",
+        "native_version":"0.68.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
@@ -235,7 +235,7 @@ fn native_oversized_ioc_is_partial_with_one_adverse_tick_and_exact_native_accoun
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL",
         "upstream_class":"nautilus_execution::models::fill::DefaultFillModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
@@ -337,13 +337,22 @@ fn native_swallowed_liquidity_callback_is_observed_without_default_fallback() {
                 strategy_id: Some(StrategyId::from("DOUBLE-001")),
                 ..Default::default()
             }),
-            kind: data.series[0].bar_type,
+            kind: crate::catalog::runtime_bar_type(data.series[0].bar_type),
             submitted: false,
         })
         .unwrap();
     engine
         .add_data(
-            data.series[0].bars.iter().copied().map(Data::Bar).collect(),
+            data.series[0]
+                .bars
+                .iter()
+                .copied()
+                .map(crate::catalog::runtime_bar)
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .into_iter()
+                .map(Data::Bar)
+                .collect(),
             None,
             true,
             true,
@@ -368,7 +377,7 @@ fn native_partial_reduction_cancels_the_remainder_without_assuming_a_full_exit()
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     for record in &mut source.records {
@@ -421,7 +430,7 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"60000000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -441,7 +450,7 @@ fn native_ioc_fills_at_declared_positive_latency_not_the_next_bar() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0",
+        "upstream_version":"0.68.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"1000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -461,9 +470,9 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
     let gap = 2 * 86_400_000_000_000;
     for bar in data.series[0].bars.iter_mut().skip(1) {
         bar.ts_init = (bar.ts_init.as_u64() + gap).into();
-        bar.ts_event = bar.ts_init;
+        bar.ts_event = (bar.ts_event.as_u64() + gap).into();
     }
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     for record in &mut source.records {
@@ -556,11 +565,11 @@ fn native_open_position_does_not_add_daily_zero_returns_in_an_empty_tail() {
 }
 
 #[test]
-fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
+fn recorded_fees_reject_availability_before_native_bar_close() {
     let (directory, mut data, _) = native_scenario();
-    data.series[0].bars[0].ts_init = (8 * MINUTE_NS).into();
+    data.series[0].bars[0].ts_init = (MINUTE_NS - 1).into();
     let source: RecordedTradeFeesV1 = serde_json::from_reader(
-        std::fs::File::open(directory.path().join(RECORDED_FEES_FILE)).unwrap(),
+        std::fs::File::open(directory.path().join("recorded-fees/123.POLYMARKET.json")).unwrap(),
     )
     .unwrap();
     let (_, clock) = model();
@@ -577,7 +586,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
     let id = InstrumentId::from("456.POLYMARKET");
-    let kind = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let kind = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-INTERNAL").unwrap();
     let mut second = data.series.remove(0);
     let InstrumentAny::CurrencyPair(pair) = &mut second.instrument else {
         unreachable!();
@@ -607,7 +616,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     catalog
         .write_to_parquet(&second.bars, None, None, None)
         .unwrap();
-    let path = directory.path().join(RECORDED_FEES_FILE);
+    let path = directory.path().join("recorded-fees/123.POLYMARKET.json");
     let mut source: RecordedTradeFeesV1 =
         serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
     let second_records = source
@@ -625,7 +634,7 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
         })
         .collect::<Vec<_>>();
     source.records.extend(second_records);
-    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    write_source(directory.path(), &source);
     request.selection.bar_types.push(kind.to_string());
     request.selection.maximum_rows = 12;
     request.target_points.truncate(1);
@@ -675,14 +684,14 @@ fn cross_market_scenario() -> (
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.67.0","parameters":{
+        "upstream_version":"0.68.0","parameters":{
             "base_latency_ns":"1000000","insert_latency_ns":"0",
             "update_latency_ns":"0","cancel_latency_ns":"0"
         }
     }))
     .unwrap();
     let source: RecordedTradeFeesV1 = serde_json::from_reader(
-        std::fs::File::open(original.path().join(RECORDED_FEES_FILE)).unwrap(),
+        std::fs::File::open(original.path().join("recorded-fees/123.POLYMARKET.json")).unwrap(),
     )
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -716,7 +725,7 @@ fn cross_market_scenario() -> (
         };
         pair.id = id;
         pair.raw_symbol = Symbol::new(name.split('.').next().unwrap());
-        series.bar_type = format!("{name}-1-MINUTE-LAST-EXTERNAL").parse().unwrap();
+        series.bar_type = format!("{name}-1-MINUTE-LAST-INTERNAL").parse().unwrap();
         series
             .bars
             .retain(|bar| clocks.contains(&(bar.ts_init.as_u64() / MINUTE_NS)));
@@ -770,11 +779,7 @@ fn cross_market_scenario() -> (
             records.push(record);
         }
     }
-    std::fs::write(
-        directory.path().join(RECORDED_FEES_FILE),
-        serde_json::to_vec(&RecordedTradeFeesV1 { records, ..source }).unwrap(),
-    )
-    .unwrap();
+    write_source(directory.path(), &RecordedTradeFeesV1 { records, ..source });
     request.selection.maximum_rows = 8;
     request.target_points = [
         (1, vec!["123.POLYMARKET"], ["0.1", "0"], "0.9"),
@@ -1056,11 +1061,11 @@ fn native_cross_market_legacy_omission_still_waits_for_synchronized_assets() {
 #[test]
 fn native_cross_market_retains_zero_exposure_market_without_in_window_bars() {
     let (directory, mut request) = cross_market_scenario();
-    request.selection.event_start_ns = DbCounter::new(5 * MINUTE_NS).unwrap();
-    request.selection.event_end_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    request.selection.event_start_ns = DbCounter::new(4 * MINUTE_NS).unwrap();
+    request.selection.event_end_ns = DbCounter::new(5 * MINUTE_NS).unwrap();
     request.selection.decision_cutoff_ns = request.selection.event_end_ns;
     request.target_points = vec![request.target_points[4].clone()];
-    // B has original metadata/training data, but no real BAR in [5,6).
+    // B has original metadata/training data, but no real source BAR in [4,5); A closes at minute 5.
     // Its expired desired signal is cash, not a manufactured mark or liquidation.
     request.target_points[0].targets[0].weight = "0.1".parse().unwrap();
     request.target_points[0].targets[1].weight = "0".parse().unwrap();

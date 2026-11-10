@@ -200,7 +200,7 @@ fn actual_managed_catalog_validation_publishes_native_counts_and_no_pit_claim() 
     attach_catalog(&f, id, catalog.path());
     assert!(execute(&f));
     let report: NativeDataQualityReportV1 = result(&f, "qz.data_quality");
-    assert_eq!(report.native_version, "nautilus-persistence/0.67.0");
+    assert_eq!(report.native_version, "nautilus-persistence/0.68.0");
     assert_eq!(report.datasets[0].row_count.get(), 40);
     assert_eq!(report.datasets[0].instrument_ids.len(), 2);
     assert_eq!(report.datasets[0].dataset_revision_id, id);
@@ -1884,6 +1884,11 @@ fn forward_daily_statistics_use_original_reports_and_fixed_native_methods() {
     assert_eq!(metrics[0].observation_count.get(), 3);
     assert_eq!(metrics[1].annualization_factor, Some(365.0));
     assert_eq!(metrics[2].source_artifact_id, artifact);
+    assert_eq!(metrics[3].metric_code, "FORWARD_CAGR_365");
+    assert_eq!(metrics[3].annualization_factor, Some(365.0));
+    assert_eq!(metrics[3].method_id, "nautilus-analysis.CAGR");
+    let annualized = ((1.03_f64 * 1.02 * 0.99).powf(365.0 / 3.0)) - 1.0;
+    assert!((result.statistics[3].value.unwrap() - annualized).abs() < 1e-10);
     assert!(metrics
         .iter()
         .all(|m| m.frequency == "UTC_DAY" && m.scope == "forward"));
@@ -1904,6 +1909,7 @@ fn forward_daily_statistics_use_original_reports_and_fixed_native_methods() {
     assert_eq!(constant_result.statistics[0].value, Some(0.0));
     assert_eq!(constant_result.statistics[1].value, Some(0.0));
     assert_eq!(constant_result.statistics[2].value, None);
+    assert_eq!(constant_result.statistics[3].value, Some(0.0));
     assert_eq!(
         constant_result.statistics[2].reason_code.as_deref(),
         Some("NATIVE_STATISTIC_UNAVAILABLE")

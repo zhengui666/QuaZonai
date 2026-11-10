@@ -19,7 +19,7 @@ async function preparedCache(target: NativeTickFactorRequest['target'] = { kind:
   const dayNs = 86_400_000_000_000n; const clock = (value: string | number) => String(BigInt(value) * (regimes ? dayNs : 1n));
   const directory = await mkdtemp(join(tmpdir(), 'qz-cohort-export-')); const prepared = join(directory, 'prepared');
   const request: NativeTickFactorRequest = { schema_version: 1,
-    input: { modality: 'TRADE_TICK', representation, maximum_source_rows: '1308222597',
+    input: { modality: 'TRADE_TICK', representation,
       instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '0', event_end_ns: clock(80), decision_cutoff_ns: clock(80),
       source_revision: 'controlled-source-not-market-evidence', availability: received ? 'RECEIVED_TIME_OBSERVED' : 'EVENT_TIME_PROXY_UNVERIFIED',
       ...(received ? { maximum_receive_delay_ns: '1' } : {}) },
@@ -275,7 +275,7 @@ test('configured research admits the published cache snapshot after producer byt
     state.options.extensions.push(factorWasm, heldoutWasm); state.options.config.datasets = [exported]; await state.restart();
     state.faux.setResponses([fauxAssistantMessage('Controlled snapshot admission only; no numerical result claimed.')]);
     const started = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-      payload: { requestId: 'cohort-snapshot-admission', goal: 'Retain the original published source', datasetId: exported.id, model: state.model, maxTrials: 0 } });
+      payload: { requestId: 'cohort-snapshot-admission', goal: 'Retain the original published source', datasetId: exported.id, model: state.model } });
     assert.equal(started.statusCode, 202, started.body); const receipt = started.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const detail = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });

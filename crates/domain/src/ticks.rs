@@ -223,63 +223,44 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn cache_representation_preserves_legacy_row_fields_without_execution_quotas() {
-        let native: NativeTradeTickFactorEvaluationRequestV1 = serde_json::from_value(json!({
+    fn explicit_cache_representations_reject_retired_row_allowances() {
+        let wire = json!({
             "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
-                "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,
+                "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80",
                 "source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
             "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
             "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
             "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
             "train_end_ns":"30","validation_end_ns":"50"
-        })).unwrap();
-        let legacy = serde_json::to_value(&native).unwrap();
-        assert_eq!(legacy["input"]["maximum_rows"], 100);
-        assert!(!legacy["input"]
-            .as_object()
-            .unwrap()
-            .contains_key("representation"));
-        assert!(!legacy["input"]
-            .as_object()
-            .unwrap()
-            .contains_key("maximum_source_rows"));
+        });
+        let mut native: NativeTradeTickFactorEvaluationRequestV1 =
+            serde_json::from_value(wire.clone()).unwrap();
         assert!(evaluation_request(&native).is_ok());
-        let mut cache = native.clone();
-        cache.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
-        cache.input.maximum_rows = None;
-        cache.input.maximum_source_rows = Some(DbCounter::new(4_500_000_000).unwrap());
-        assert!(evaluation_request(&cache).is_ok());
-        assert_eq!(cache.input.source_row_limit(), Some(4_500_000_000));
-        let encoded = serde_json::to_value(&cache).unwrap();
-        assert_eq!(encoded["input"]["maximum_source_rows"], "4500000000");
-        assert!(!encoded["input"]
-            .as_object()
-            .unwrap()
-            .contains_key("maximum_rows"));
-        let mut flow = cache.clone();
-        flow.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
-        assert!(evaluation_request(&flow).is_ok());
-        assert!(flow.input.is_cohort_cache() && flow.input.is_flow_cache());
-        assert_eq!(
-            flow.input.cache_representation(),
-            Some("EVENT_TIME_COHORT_FLOW_CACHE_V1")
-        );
-        assert_eq!(
-            serde_json::to_value(&flow).unwrap()["input"]["representation"],
-            "EVENT_TIME_COHORT_FLOW_CACHE_V1"
-        );
-        assert_eq!(flow.input.source_row_limit(), Some(4_500_000_000));
-        cache.input.maximum_rows = Some(100);
-        assert!(evaluation_request(&cache).is_ok());
-        cache.input.maximum_rows = None;
-        cache.input.maximum_source_rows = None;
-        assert!(evaluation_request(&cache).is_ok());
-        let mut invalid_native = native;
-        invalid_native.input.maximum_source_rows = Some(DbCounter::new(1).unwrap());
-        assert!(evaluation_request(&invalid_native).is_ok());
-        invalid_native.input.maximum_source_rows = None;
-        invalid_native.input.maximum_rows = Some(MAXIMUM_TICK_ROWS + 1);
-        assert!(evaluation_request(&invalid_native).is_ok());
+        for representation in [
+            NativeTickRepresentationV1::EventTimeCohortCacheV1,
+            NativeTickRepresentationV1::EventTimeCohortFlowCacheV1,
+        ] {
+            native.input.representation = Some(representation);
+            assert!(evaluation_request(&native).is_ok());
+            assert!(native.input.is_cohort_cache());
+            let encoded = serde_json::to_value(&native).unwrap();
+            assert!(!encoded["input"]
+                .as_object()
+                .unwrap()
+                .contains_key("maximum_rows"));
+            assert!(!encoded["input"]
+                .as_object()
+                .unwrap()
+                .contains_key("maximum_source_rows"));
+        }
+        for field in ["maximum_rows", "maximum_source_rows"] {
+            let mut invalid = wire.clone();
+            invalid["input"][field] = json!(100);
+            assert!(
+                serde_json::from_value::<NativeTradeTickFactorEvaluationRequestV1>(invalid)
+                    .is_err()
+            );
+        }
     }
     #[test]
     fn target_duration_is_exact_positive_and_cannot_mix_old_fields() {
@@ -294,15 +275,17 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<NativeTickTargetV1>(invalid).is_err());
         }
-        let mut req: NativeTradeTickFactorEvaluationRequestV1 = serde_json::from_value(serde_json::json!({
-            "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["A.SIM"],
-                "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,
-                "source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
-            "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
-            "target":{"kind":"FIXED_EVENT_TIME","horizon_ns":"9007199254740993"},
-            "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
-            "train_end_ns":"30","validation_end_ns":"50"
-        })).unwrap();
+        let mut req: NativeTradeTickFactorEvaluationRequestV1 =
+            serde_json::from_value(serde_json::json!({
+                "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["A.SIM"],
+                    "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80",
+                    "source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+                "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+                "target":{"kind":"FIXED_EVENT_TIME","horizon_ns":"9007199254740993"},
+                "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+                "train_end_ns":"30","validation_end_ns":"50"
+            }))
+            .unwrap();
         assert!(evaluation_request(&req).is_ok());
         for horizon in [0, i64::MAX as u64] {
             req.target = NativeTickTargetV1::FixedEventTime {
@@ -329,7 +312,7 @@ mod regime_tests {
             "schema_version":1,"input":{"modality":"TRADE_TICK","representation":"EVENT_TIME_COHORT_FLOW_CACHE_V1",
                 "instrument_ids":["BTC-USD-PERP.HYPERLIQUID"],"event_start_ns":(32*UTC_DAY_NS).to_string(),
                 "event_end_ns":(36*UTC_DAY_NS).to_string(),"decision_cutoff_ns":(36*UTC_DAY_NS).to_string(),
-                "maximum_source_rows":"100","source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+                "source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
             "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
             "target":{"kind":"FIXED_EVENT_TIME","horizon_ns":"60000000000"},
             "parameters":{"fast_period_cohorts":8,"slow_period_cohorts":32},

@@ -24,6 +24,7 @@ use nautilus_common::{
 use nautilus_execution::models::{
     fee::{FeeModelAny, MakerTakerFeeModel},
     fill::{DefaultFillModel, FillModelAny},
+    latency::{LatencyModelAny, StaticLatencyModel},
 };
 use nautilus_live::node::{config::LiveDataEngineConfig, LiveNode, NodeRunMode};
 use nautilus_model::{
@@ -82,8 +83,10 @@ pub enum PaperDataSource {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PaperLatencyModel {
-    /// Native Sandbox has no StaticLatencyModel configuration seam.
+    /// No additional modeled inbound latency.
     NativeWallClock,
+    /// Apply the original target's frozen inbound latency through native Sandbox.
+    FrozenStatic,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -583,8 +586,10 @@ pub fn preflight_envelope(
         instrument_ids,
         bar_types,
         fee_basis: "explicit simulated venue policy 0.001; not account commission rates",
-        latency_basis:
-            "native wall clock; Sandbox does not apply the historical StaticLatencyModel",
+        latency_basis: match config.paper_latency {
+            PaperLatencyModel::NativeWallClock => "native wall clock; no modeled inbound latency",
+            PaperLatencyModel::FrozenStatic => "official Sandbox StaticLatencyModel; frozen inbound submit/modify/cancel latency; venue event latency is not modeled",
+        },
         connects_market_data: false,
         execution_supported: matches!(claim.package, TargetPackageEnvelopeV2::TargetDecision(_)),
         execution_blocker: matches!(claim.package, TargetPackageEnvelopeV2::Forecast(_))
@@ -666,7 +671,7 @@ impl PaperNode {
             unreachable!("Forecast initialization was rejected before native construction")
         };
         let settings = &original.execution_settings;
-        let (fill, _) = domain::portfolio::simulation_models(settings)?;
+        let (fill, latency) = domain::portfolio::simulation_models(settings)?;
         let currency = Currency::from_str(&settings.base_currency)?;
         let fee_model = MakerTakerFeeModel::new(
             rust_decimal::Decimal::new(1, 3),
@@ -719,6 +724,17 @@ impl PaperNode {
                         .ok_or_else(|| anyhow!("PAPER_FILL_RANGE"))?,
                     Some(fill.random_seed.get()),
                 )?)),
+                latency_model: match config.paper_latency {
+                    PaperLatencyModel::NativeWallClock => None,
+                    PaperLatencyModel::FrozenStatic => {
+                        Some(LatencyModelAny::Static(StaticLatencyModel::new(
+                            nautilus_core::DurationNanos::new(latency.base_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.insert_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.update_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.cancel_latency_ns.get()),
+                        )))
+                    }
+                },
                 // Quotes drive native matching. Internal bars only schedule targets.
                 bar_execution: false,
                 trade_execution: false,

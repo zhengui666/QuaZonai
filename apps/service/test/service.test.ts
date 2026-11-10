@@ -1,3 +1,4 @@
+import { readResearchAdmissions } from '../src/admissions.ts';
 import { assertFrozenInput } from '../../research/test/frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -10,18 +11,13 @@ import { Requests } from '../../research/src/documents.ts';
 import { acceptSnapshot } from '../src/downstream.ts';
 
 const api = '/api/v3';
-test('owner research admission accepts no trial quota and ignores a legacy zero quota', async () => {
+test('owner research admission rejects retired execution quota fields', async () => {
   const state = await setup();
   try {
-    for (const legacy of [false, true]) {
-      state.faux.setResponses([fauxAssistantMessage('No scientific result claimed.')]);
-      const response = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
-        payload: { requestId: `no-quota-${legacy}`, goal: 'Research without an execution quota', model: state.model, datasetId: 'controlled', ...(legacy ? { maxTrials: 0 } : {}) } });
-      assert.equal(response.statusCode, 202, response.body);
-      await (await state.service.research.harness.submission(response.json().submissionId, context))!.wait(context);
-      const detail = await state.service.research.state(response.json().conversationId);
-      assert.equal(detail.research!.input!.policy.max_trials, legacy ? 0 : undefined);
-    }
+    const response = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
+      payload: { requestId: 'retired-quota', goal: 'Research', model: state.model, datasetId: 'controlled', maxTrials: 0 } });
+    assert.equal(response.statusCode, 400); assert.equal(response.json().error, 'research_field_unsupported');
+    assert.equal(state.faux.state.callCount, 0);
   } finally { await state.cleanup(); }
 });
 test('shared-source snapshot equality normalizes only known transport aliases, keeps native facts and validates every binding', () => {
@@ -62,7 +58,7 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     assert.equal(state.faux.state.callCount, 0);
     const { input, receipt } = await studied(state);
     const replay = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: input }); assert.deepEqual(replay.json(), receipt);
-    assert.equal((await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...input, maxTrials: 2 } })).statusCode, 409);
+    assert.equal((await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...input, goal: 'Changed objective' } })).statusCode, 409);
     const detail = (await app.inject({ url: `${api}/research/${receipt.conversationId}`, headers: state.headers })).json();
     assert.equal(detail.trialRecords.length, 1); assert.equal(detail.final.metrics.find((item: { key: string }) => item.key.endsWith('pearson_ic')).value, null);
     assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: input.requestId });
@@ -76,32 +72,19 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     const invalid = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
       payload: { requestId: 'invalid-full-input', input: { ...original, policy: { budget: 9007199254740992 } } } });
     assert.equal(invalid.statusCode, 400); assert.equal(invalid.json().error, 'invalid_json_number');
-    assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests['request:invalid-full-input'], undefined);
+    assert.equal((await readResearchAdmissions(state.service.research))['request:invalid-full-input'], undefined);
     assert.equal((await state.service.research.harness.snapshot(Requests, context))!.requests['request:invalid-full-input'], undefined);
     state.faux.setResponses([fauxAssistantMessage('Original conversation retained.')]);
     const legacyInput = { goal: 'Existing durable admission', model: state.model, data: { previousCatalog: 'retired-original-source' }, policy: {} };
     const legacy = await state.service.research.start('existing-native-request', legacyInput);
     await (await state.service.research.harness.submission(legacy.submissionId, context))!.wait(context);
     assert.deepEqual((await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'existing-native-request', input: legacyInput } })).json(), legacy);
+    const metadata = (await readResearchAdmissions(state.service.research))[`request:${input.requestId}`]!;
+    assert.deepEqual(metadata.original, input);
     const calls = state.faux.state.callCount;
-    const captured = { goal: 'Original outer-only admission', model: state.model, data: { formerDataset: 'no-longer-configured' }, policy: { max_trials: 1, budget: '9007199254740995' } };
-    const outer = { requestId: 'outer-only', input: captured };
-    await state.service.research.harness.commit(async (tx) => { (await tx.doc(Application)).researchRequests['request:outer-only'] = { original: json(outer), input: json(captured) }; }, context);
-    assert.equal((await state.service.research.harness.snapshot(Requests, context))!.requests['request:outer-only'], undefined);
-    state.options.config.datasets = []; // Recovery uses captured inputs, not the current registry.
-    state.faux.setResponses([fauxAssistantMessage('Original outer admission recovered once.')]);
     await state.restart();
-    const binding = (await state.service.research.harness.snapshot(Requests, context))!.requests['request:outer-only']!;
-    assert.deepEqual(binding.input, captured);
-    const originalSubmission = (await state.service.research.view(binding.conversationId)).submission!;
-    await (await state.service.research.harness.submission(originalSubmission.id, context))!.wait(context);
-    const recovered = { conversationId: binding.conversationId, submissionId: originalSubmission.id };
-    assert.deepEqual((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: outer })).json(), recovered);
     assert.deepEqual((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: input })).json(), receipt);
-    assert.equal(state.faux.state.callCount, calls + 1);
-    await state.restart();
-    assert.deepEqual((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: outer })).json(), recovered);
-    assert.equal(state.faux.state.callCount, calls + 1);
+    assert.equal(state.faux.state.callCount, calls);
     const device = (await state.service.app.inject({ method: 'POST', url: `${api}/devices/login`, payload: { password: 'local-owner-test', name: 'CLI test' } })).json();
     const headers = { authorization: `Bearer ${device.token}` };
     assert.equal((await state.service.app.inject({ url: `${api}/settings`, headers })).statusCode, 200);
@@ -166,7 +149,7 @@ test('connected controlled-model → explicit native protocol → shared-account
   } finally { delete process.env.QZ_TEST_PROVIDER_SECRET; await state.cleanup(); await remote.downstream.close(); }
 });
 
-test('uncertain remote delivery reconciles after restart without a second POST; extension changes take effect only on restart', { timeout: 20_000 }, async () => {
+test('uncertain remote delivery reconciles after restart without a second POST; extension changes use the official live registry', { timeout: 20_000 }, async () => {
   const state = await setup(); const remote = await connection(state, true);
   try {
     const { view } = await built(state);
@@ -174,7 +157,8 @@ test('uncertain remote delivery reconciles after restart without a second POST; 
     const observed = await settledObservation(state.service, response.json().id); assert.equal(observed.receipt!.status, 'UNCERTAIN'); assert.equal(observed.equity, null);
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { requestId: 'second-unknown', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' } })).statusCode, 409);
     await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/stop`, headers: state.headers });
-    const extension = await state.service.app.inject({ method: 'PATCH', url: `${api}/extensions/test.protocol-research`, headers: state.headers, payload: { enabled: false } }); assert.equal(extension.json().state, 'pending_restart');
+    const extension = await state.service.app.inject({ method: 'PATCH', url: `${api}/extensions/test.protocol-research`, headers: state.headers, payload: { enabled: false } }); assert.equal(extension.json().state, 'disabled');
+    assert.equal(state.service.research.registry.snapshot().extension('test.protocol-research'), undefined);
     await state.restart();
     const views = (await state.service.app.inject({ url: `${api}/extensions`, headers: state.headers })).json(); assert.equal(views.find((item: { name: string }) => item.name === 'test.protocol-research').state, 'disabled');
     assert.equal(state.service.research.registry.snapshot().extension('test.protocol-research'), undefined);
@@ -190,7 +174,7 @@ test('missing independent evidence and native failures disclose errors, never an
   const state = await setup();
   try {
     state.faux.setResponses([fauxAssistantMessage('No evaluation was performed.')]);
-    const start = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'no-evidence', goal: 'Missing evidence', model: state.model, datasetId: 'controlled', maxTrials: 1 } });
+    const start = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'no-evidence', goal: 'Missing evidence', model: state.model, datasetId: 'controlled' } });
     await (await state.service.research.harness.submission(start.json().submissionId, context))!.wait(context);
     const absent = await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: { requestId: 'absent', name: 'Absent', researchIds: [start.json().conversationId], datasetId: 'controlled', capital: '1' } });
     assert.equal(absent.statusCode, 422); assert.equal(absent.json().error, 'independent_evidence_missing');

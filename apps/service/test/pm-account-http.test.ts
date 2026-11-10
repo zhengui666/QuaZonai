@@ -140,8 +140,7 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
     script(state, source);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
       requestId: 'original-observed-native-account', goal: 'Research predictive alpha from causal bar factors; compare complete net daily account outcomes with retaining original spot quantities. No leverage.',
-      datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model,
-      maxTrials: 12, businessPreference: 'NET_RETURN', operatingAuthority: 'RESEARCH_ONLY' } });
+      datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model, businessPreference: 'NET_RETURN', operatingAuthority: 'RESEARCH_ONLY' } });
     assert.equal(response.statusCode, 202, response.body); let view = response.json<PmMandateView>(); const id = view.mandate.id; mandateId = id;
     // The historical campaign must be admitted while its original archived
     // state is still the actually known basis. A later failed current refresh

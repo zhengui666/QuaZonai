@@ -1,6 +1,6 @@
-import { Type } from '@earendil-works/pi-ai';
+import { num, obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.ts';
+import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { runFactor } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
@@ -10,8 +10,8 @@ import { isTickResearchInput, nativeResearchRequest, withNativeResearchRequest }
 export default defineExtension({
   name: 'qz.factor-volume',
   tools: [defineTool({
-    name: 'factor_volume', description: 'Additional factor plugin: signed volume deviation, computed by the same native Wasm evaluator. No positions or portfolio required.',
-    parameters: Type.Object({ hypothesis: Type.String(), center: Type.Number() }), replay: 'safe', executionMode: 'sequential',
+    name: 'factor_volume', structuredOutputSchema: trialFeedbackSchema, description: 'Additional factor plugin: signed volume deviation, computed by the same native Wasm evaluator. No positions or portfolio required.',
+    parameters: obj({ hypothesis: str(), center: num() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       const model = `(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) local.get 4 f64.const ${args.center} f64.sub))`;
@@ -22,7 +22,7 @@ export default defineExtension({
         const data = catalog ? await catalogScope(api, context, input.data) : input.data;
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
         return runFactor(api, context, model, withNativeResearchRequest(data, request));
-      }));
+      }), true);
     },
   })],
 });

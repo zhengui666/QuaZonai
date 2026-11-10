@@ -2,18 +2,19 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
-import { configure, createRegistry, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
+import { configure, createRegistry, defineTask, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId, Tx } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
+import { canonicalJsonDigest } from './native-json.ts';
 import { canonical, Requests, Study } from './documents.ts';
 import { ReviewLedger } from './review-documents.ts';
 import { freezeReviewPolicies } from './review-workflow.ts';
 import { reviewExtensionWithUsage } from '../plugins/review.ts';
 import { ReviewFactorAccountTask } from './review-factor-account.ts';
-import { bindReviewSourceEvidence, ReviewSourceValidationTask } from './review-source.ts';
+import { bindReviewSourceEvidence, ReviewSourceValidationTask, reviewSourceCaptureIdentity } from './review-source.ts';
 import type { CapturedReviewSource } from './review-source.ts';
 import { ReviewNativeTask } from './review-native-task.ts';
 import { IndependentReviewTask } from './review-runtime.ts';
@@ -22,7 +23,7 @@ import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import type { ResearchInput } from './documents.ts';
-import { configuredModels, subscriptionSpeed, supportsServiceTier } from './models.ts';
+import { configuredModels, subscriptionSpeed, supportsServiceTier, ModelTiers } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from './native-remote-receipts.ts';
@@ -30,11 +31,14 @@ import { Continuation, researchContinuation } from './continuation.ts';
 import { CampaignResearchDoc } from './pm-campaign.ts';
 import { settleCampaignTrial } from './pm-ledger.ts';
 
+import { NativeExecutionTask, withNativeExecutionHost } from './native-execution.ts';
+import { ResearchIntakeTask } from './intake.ts';
 import { isRecoveryRequestId, modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
 const context = BACKGROUND_CONTEXT;
 
 export async function openResearch(options: {
   database: string;
+  deferResume?: boolean;
   extensions?: readonly Extension[];
   modules?: readonly string[];
   providerModules?: readonly string[];
@@ -44,8 +48,9 @@ export async function openResearch(options: {
   thinkingLevel?: ModelThinkingLevel;
   /** Service-owned parent admission, applied to original native recovery too. */
   authorizeResume?: (tx: Tx, id: ConversationId) => Promise<void>;
+  authorizeAdmission?: (tx: Tx, input: ResearchInput, metadata?: import('@earendil-works/pi-durable').JsonObject) => Promise<void>;
 }) {
-  const settings = researchSettings(options.settings);
+  const settings = researchSettings(typeof options.settings === 'function' ? options.settings() : options.settings);
   const requestedThinking = options.thinkingLevel ?? 'medium';
   if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
   const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
@@ -54,9 +59,17 @@ export async function openResearch(options: {
   let harness!: Harness;
   let storage!: Storage;
   const registry = createRegistry();
+  const OwnerStopTask = defineTask<{ conversationId: ConversationId }, { phase: 'stop' }, null>({
+    name: 'qz.research.owner-stop', version: 1, initial: () => ({ phase: 'stop' }),
+    phases: { async stop(task, runtime, taskContext) {
+      await settleOwnerStop(task.input.conversationId, taskContext);
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), taskContext);
+    } },
+    abort: (_task, runtime, taskContext) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), taskContext),
+  });
   try {
     models = options.models ?? await configuredModels(options.providerModules, credentials);
-    speed = subscriptionSpeed(models);
+    speed = subscriptionSpeed(models, async id => (await harness.snapshot(ModelTiers, context))?.tiers[id]);
     models = speed.models;
     for (const extension of options.extensions ?? []) registry.install(extension);
     for (const path of options.modules ?? []) {
@@ -64,7 +77,7 @@ export async function openResearch(options: {
       registry.install(module.default as Extension);
     }
     registry.install(reviewExtensionWithUsage(() => harness));
-    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
+    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
@@ -88,86 +101,39 @@ export async function openResearch(options: {
     return value;
   }
 
-  async function rememberTier(id: ConversationId, value: unknown) {
-    const tier = (value as ResearchInput).serviceTier;
-    if (tier === undefined) return;
-    const provider = await harness.snapshot(ProviderDoc, id, context);
-    if (!provider) throw new Error('provider_session_required');
-    speed.tiers.set(provider.sessionId, tier);
-  }
+  // The official scheduler resumes intake phases and admitted work.
+  if (!options.deferResume) harness.resume();
+  const controller = await harness.root(context);
 
-  // Repair recorded admission→submit gaps only, never repeat a native input.
-  // A later final/owner stop takes precedence over a pending recovery intent.
-  try {
-    const requests = await harness.snapshot(Requests, context);
-    await Promise.all(Object.values(requests?.requests ?? {}).map(request => rememberTier(request.conversationId, request.input)));
-    // Repair a persisted owner-stop intent before submitting any new work.
-    for (const id of new Set(Object.values(requests?.requests ?? {}).map(request => request.conversationId))) {
-      const campaign = await harness.snapshot(CampaignResearchDoc, id, context);
-      if (campaign?.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
-    }
-    for (const [key, request] of Object.entries(requests?.requests ?? {})) {
-      const requestId = key.slice('request:'.length);
-      const missing = await harness.commit(async (tx) => {
-        if (await tx.submissionByRequest(request.conversationId, requestId)) return false;
-        return (await tx.doc(Study, request.conversationId)).final === null;
-      }, context);
-      if (!missing) continue;
-      if (request.recovery) {
-        if ((await latestSubmission(request.conversationId))?.id === request.recovery.previousSubmissionId) await resume(request.conversationId, request.recovery.previousSubmissionId);
-      } else await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInstructions(researchInput(request.input)), requestId }, context);
-    }
-    harness.resume();
-  } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
-
-  async function start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
+  async function start(requestId: string, value: ResearchInput, _originalAdmission = false, sourceEvidence?: CapturedReviewSource, metadata?: import('@earendil-works/pi-durable').JsonObject) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
-    const input = researchInput(value);
-    const id = await harness.commit(async (tx) => {
-      const requests = await tx.doc(Requests);
-      const key = `request:${requestId}`;
+    if (isRecoveryRequestId(requestId)) throw new Error('request_id_conflict');
+    const input = structuredClone(researchInput(value));
+    const inputDigest = canonicalJsonDigest(input);
+    const taskId = await controller.commit(async tx => {
+      const requests = await tx.doc(Requests); const key = `request:${requestId}`;
       const existing = requests.requests[key];
       if (existing) {
-        if (existing.recovery) throw new Error('request_id_conflict');
-        if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
-        if (sourceEvidence && (!existing.sourceEvidence || canonical(existing.sourceEvidence) !== canonical(JSON.parse(JSON.stringify(sourceEvidence))))) throw new Error('review_source_identity_conflict');
-        return existing.conversationId;
+        if (existing.conversationId !== null && (await tx.doc(Study, existing.conversationId)).deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
+        if (existing.recovery || existing.inputDigest !== inputDigest || !existing.taskId) throw new Error('request_id_conflict');
+        if (sourceEvidence && (!existing.sourceEvidence || canonical(reviewSourceCaptureIdentity(existing.sourceEvidence as unknown as CapturedReviewSource)) !== canonical(reviewSourceCaptureIdentity(sourceEvidence)))) throw new Error('review_source_identity_conflict');
+        if (metadata && canonical(existing.metadata ?? null) !== canonical(metadata)) throw new Error('request_id_conflict');
+        return existing.taskId;
       }
-      if (isRecoveryRequestId(requestId)) {
-        // Only the service's persisted original admission may repair this old gap;
-        // even that cannot clone an actual legacy native continuation receipt.
-        const priorConversation = Number(requestId.split(':')[1]);
-        if (!originalAdmission || Number.isSafeInteger(priorConversation) && await tx.submissionByRequest(priorConversation as ConversationId, requestId)) throw new Error('request_id_conflict');
-      }
-      const model = models.getModel(input.model.provider, input.model.modelId);
-      if (!model) throw new Error('model_unavailable');
-      if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
-      if (input.serviceTier !== undefined && !supportsServiceTier(model)) throw new Error('service_tier_unsupported');
-      const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
-      const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-      await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
-      (await tx.doc(Study, created.id)).input = freezeReviewPolicies(input);
-      if (sourceEvidence) await bindReviewSourceEvidence(tx, created.id, input.data, sourceEvidence);
-      if (input.campaign) {
-        const campaign = await tx.doc(CampaignResearchDoc, created.id);
-        campaign.binding = input.campaign;
-        // Versioned technical allowance, not a market or scientific threshold.
-        campaign.orchestration = { policyVersion: 'qz.research.resources/1', generationTaskIds: [] };
-      }
-      requests.requests[key] = { input, conversationId: created.id, ...(sourceEvidence ? { sourceEvidence: JSON.parse(JSON.stringify(sourceEvidence)) } : {}) };
-      return created.id;
+      await options.authorizeAdmission?.(tx, input, metadata);
+    const model = models.getModel(input.model.provider, input.model.modelId);
+    if (!model) throw new Error('model_unavailable');
+    if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
+    if (input.serviceTier !== undefined && !supportsServiceTier(model)) throw new Error('service_tier_unsupported');
+    const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
+      const source = sourceEvidence ? JSON.parse(JSON.stringify(sourceEvidence)) : undefined;
+      const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
+      requests.requests[key] = { input, inputDigest, conversationId: null, submissionId: null, taskId, ...(source ? { sourceEvidence: source } : {}), ...(metadata ? { metadata } : {}) };
+      return taskId;
     }, context);
-    await rememberTier(id, input);
-    // Admission and owner stop share the same original Conversation boundary.
-    // A final-state read alone cannot fence a later native submit after abort.
-    return ownerChange(id, async () => {
-      if ((await harness.snapshot(Study, id, context))?.deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
-      const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
-      if (previous) return { conversationId: id, submissionId: previous.id };
-      if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
-      const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
-      return { conversationId: id, submissionId: submission.id };
-    });
+    const task = await harness.waitForTask(taskId, context);
+    if (task.state.outcome.status !== 'completed') throw new Error('error' in task.state.outcome ? task.state.outcome.error?.message ?? 'research_intake_failed' : 'research_intake_failed');
+    return task.state.outcome.result;
   }
   async function submissionFor(id: number) {
     const requests = await harness.snapshot(Requests, context);
@@ -180,14 +146,14 @@ export async function openResearch(options: {
     let cursor: Cursor | undefined;
     do {
       const page = await storage.scanSubmissions({ conversationId: id as ConversationId, order: 'descending' }, 100, cursor, context);
-      const input = page.items.find((item) => item.type === 'input');
+      const input = page.items.find((item) => item.type !== 'write');
       if (input) return input;
       cursor = page.next;
     } while (cursor);
     return null;
   }
-  async function settleOwnerStop(id: ConversationId) {
-    await (await conversation(id)).abort(context, { background: true });
+  async function settleOwnerStop(id: ConversationId, stopContext = context) {
+    await (await conversation(id)).abort(stopContext, { background: true });
     await harness.commit(async tx => {
       const campaign = await tx.doc(CampaignResearchDoc, id);
       if (!campaign.binding) {
@@ -207,7 +173,7 @@ export async function openResearch(options: {
         study.final.errorDetail = { operation: 'independent_evaluation', stage: 'owner_stop' };
       }
       campaign.state = 'CONCLUDED';
-    }, context);
+    }, stopContext);
   }
   async function state(id: number) {
     await conversation(id);
@@ -237,11 +203,11 @@ export async function openResearch(options: {
       return tx.submissionByRequest(handle.id, requestId);
     }, context);
     if (existing) {
-      if (existing.type !== 'input' || existing.id <= previousId || existing.conversationId !== handle.id) throw new Error('recovery_request_conflict');
+      if (!['input', 'continue'].includes(existing.type) || existing.id <= previousId || existing.conversationId !== handle.id) throw new Error('recovery_request_conflict');
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
     const current = await state(id);
-    const mode = await harness.commit(async (tx) => {
+    const nextId = await harness.commit(async (tx) => {
       await options.authorizeResume?.(tx, handle.id);
       const study = await tx.doc(Study, handle.id);
       const requests = await tx.doc(Requests); const key = `request:${requestId}`;
@@ -257,25 +223,26 @@ export async function openResearch(options: {
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
       const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
+      const submissionId = await handle.submit(tx, mode === 'model_error' ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode), requestId, whenBusy: 'reject' });
       if (!intent) {
         const campaign = await tx.doc(CampaignResearchDoc, handle.id);
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
-        campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null;
+        campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null; delete campaign.ownerStopTaskId;
         delete (await tx.doc(Continuation, handle.id)).evidenceSignature;
         requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode } };
       }
-      return mode;
+      return submissionId;
     }, context);
-    const next = await handle.submit({ type: 'input', content: recoveryInput(previousId, mode), requestId, whenBusy: 'reject' }, context);
-    return { conversationId: id, submissionId: next.id, previousSubmissionId: previousId };
+    return { conversationId: id, submissionId: nextId, previousSubmissionId: previousId };
   }
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry, withOwnerChange: ownerChange,
-    async start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
+    withNativeHost<T>(operation: () => T): T { return withNativeExecutionHost(harness, controller.id, operation); },
+    async start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource, metadata?: import('@earendil-works/pi-durable').JsonObject) {
       if (!accepting) throw new Error('research_closing');
-      const admission = start(requestId, value, originalAdmission, sourceEvidence);
+      const admission = start(requestId, value, originalAdmission, sourceEvidence, metadata);
       admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },
@@ -320,7 +287,8 @@ export async function openResearch(options: {
       try { return await admission; } finally { admissions.delete(admission); }
     },
     async list(cursor?: Cursor) {
-      return harness.commit((tx) => tx.scanConversations({ order: 'descending' }, 100, cursor), context);
+      const page = await harness.commit((tx) => tx.scanConversations({ order: 'descending' }, 100, cursor), context);
+      return { ...page, items: page.items.filter(item => item.id !== controller.id) };
     },
     /** Collection projections do not load literature, campaign records or task receipts. */
     async listState(id: number) {
@@ -352,13 +320,16 @@ export async function openResearch(options: {
       return ownerChange(id, async () => {
         const study = await conversation(id);
         if ((await harness.snapshot(Study, study.id, context))?.deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
-        await harness.commit(async (tx) => {
+        const stopTaskId = await harness.commit(async (tx) => {
           const facts = await tx.doc(Study, study.id);
           facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
           const campaign = await tx.doc(CampaignResearchDoc, study.id);
-          if ((campaign.binding || campaign.closureTaskId !== null) && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
+          if (campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
+          campaign.ownerStopTaskId ??= await tx.createTask(OwnerStopTask, { conversationId: study.id }, { conversationId: controller.id, ownership: { kind: 'conversation' } });
+          return campaign.ownerStopTaskId;
         }, context);
-        await settleOwnerStop(study.id);
+        const stopped = await harness.waitForTask(stopTaskId, context);
+        if (stopped.state.outcome.status !== 'completed') throw new Error('research_owner_stop_failed');
         return this.view(id);
       });
     },

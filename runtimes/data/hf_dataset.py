@@ -303,14 +303,6 @@ def manifest_bytes(value):
     return (json.dumps(value, indent=2, allow_nan=False) + "\n").encode()
 
 
-def same_request(left, right):
-    # main/tag/returned-commit aliases can identify the exact same selected
-    # revision. Preserve the original spelling without blocking that retry.
-    return (isinstance(left, dict) and isinstance(right, dict)
-            and {k: v for k, v in left.items() if k != "requested_revision"}
-            == {k: v for k, v in right.items() if k != "requested_revision"})
-
-
 def freeze_observation(path):
     """Ordinary identity/stat observation, without hashing or following symlinks."""
     snapshot.safe_local(path.parent, path.name)
@@ -394,45 +386,6 @@ def freeze(plan_path, cache_dir, output):
         unchanged()
         snapshot.publish_bytes(manifest_path, manifest_bytes(result))
         return result
-
-
-def download(selection, cache_dir, output):
-    validate_plan(selection)
-    output = Path(os.path.abspath(output))
-    manifest_path = snapshot.safe_local(output, "selection.json")
-    request_path = snapshot.safe_local(output, "request.json")
-    lock = snapshot.safe_local(output, ".hf-request.lock")
-    if output.exists() and (not output.is_dir() or any(
-            p.name not in ("request.json", "selection.json", ".hf-request.lock")
-            and not p.name.startswith(".snapshot-") for p in output.iterdir())):
-        raise ValueError("existing selection output contains unrelated files")
-    output.mkdir(parents=True, exist_ok=True)
-    with snapshot.cache_lock(lock):
-        return download_locked(selection, cache_dir, output, manifest_path, request_path)
-
-
-def download_locked(selection, cache_dir, output, manifest_path, request_path):
-    request_exists = request_path.exists()
-    if request_exists:
-        original = snapshot.fetch_local_manifest(request_path) if request_path.is_file() else None
-        if not same_request(original, selection):
-            raise ValueError("existing selection output belongs to a different request")
-        validate_plan(original)
-        selection = original
-    if manifest_path.exists():
-        existing = snapshot.fetch_local_manifest(manifest_path)
-        if not same_request(existing.get("plan"), selection):
-            raise ValueError("existing selection output belongs to a different request")
-        verify(manifest_path)
-        return existing
-    if not request_exists:
-        snapshot.publish_bytes(request_path, manifest_bytes(selection))
-    root = cache_root(cache_dir, selection)
-    files = [{**item, **snapshot.acquire_cached_file(root, item, inspect_file)} for item in selection["files"]]
-    result = selection_result(selection, root, files,
-        datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"))
-    snapshot.publish_bytes(manifest_path, manifest_bytes(result))
-    return result
 
 
 def verify(selection_path):

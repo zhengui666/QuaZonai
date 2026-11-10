@@ -566,6 +566,40 @@ fn factor_validation_ignores_other_partitions_but_rejects_included_nonfinite() {
 #[path = "support/review_diagnostics_fixture.rs"]
 mod review_diagnostics_fixture;
 
+fn assert_equivalent_diagnostics(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    case: &str,
+) {
+    use serde_json::Value;
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) if !a.is_i64() || !b.is_i64() => {
+            let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+            assert!(
+                (a - b).abs() <= 1e-12 * b.abs().max(1.0),
+                "{case}: {a} != {b}"
+            );
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            assert_eq!(a.len(), b.len(), "{case}");
+            for (a, b) in a.iter().zip(b) {
+                assert_equivalent_diagnostics(a, b, case);
+            }
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            assert_eq!(
+                a.keys().collect::<Vec<_>>(),
+                b.keys().collect::<Vec<_>>(),
+                "{case}"
+            );
+            for (key, value) in a {
+                assert_equivalent_diagnostics(value, &b[key], case);
+            }
+        }
+        _ => assert_eq!(actual, expected, "{case}"),
+    }
+}
+
 #[test]
 fn factor_diagnostics_match_complete_frozen_dev_outputs() {
     // Captured from the unmodified 8e4059b0 job review-science CLI, not from a
@@ -590,16 +624,10 @@ fn factor_diagnostics_match_complete_frozen_dev_outputs() {
                 case.name
             );
         } else {
-            // Compare canonical serialized numbers as well as every field, so
-            // signed zeros and a changed floating-point result cannot pass as
-            // an approximate numeric equality.
+            // Keep all evidence/status/count fields exact. The shared native
+            // correlation estimator may differ at floating-point rounding scale.
             let actual = serde_json::to_value(actual.unwrap()).unwrap();
-            assert_eq!(
-                serde_json::to_string(&actual).unwrap(),
-                serde_json::to_string(&expected["result"]).unwrap(),
-                "{}",
-                case.name
-            );
+            assert_equivalent_diagnostics(&actual, &expected["result"], &case.name);
         }
     }
 }

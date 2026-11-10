@@ -1,6 +1,6 @@
-import { Type } from '@earendil-works/pi-ai';
+import { arr, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.ts';
+import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { FactorTask, runFactor } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
@@ -10,9 +10,9 @@ import { nativeResearchRequest, withNativeResearchRequest } from '../../../packa
 export default defineExtension({
   name: 'qz.factor-wasm', tasks: [FactorTask, CatalogScopeTask],
   tools: [defineTool({
-    name: 'factor_evaluate',
+    name: 'factor_evaluate', structuredOutputSchema: trialFeedbackSchema,
     description: 'Evaluate an arbitrary factor, not a position. Standalone research uses hypothesis and model without campaign IDs; campaign-bound experiments supply the registered hypothesisId and actual lineage. BAR models export predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Explicit TRADE_TICK models use feature ABI v2 and the explicit cohort feature schema in research_brief (seven base features, or eight with signed quantity for FLOW_CACHE); BAR slots are never reinterpreted. Values may have any finite sign or scale. Validation statistics are feedback, not profitability or qualification.',
-    parameters: Type.Object({ hypothesis: Type.String(), model: Type.String(), hypothesisId: Type.Optional(Type.String()), parentTrialIds: Type.Optional(Type.Array(Type.String())) }), replay: 'safe', executionMode: 'sequential',
+    parameters: obj({ hypothesis: str(), model: str(), hypothesisId: opt(str()), parentTrialIds: opt(arr(str())) }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       // Record the proposal before input preparation, so missing/invalid data is
@@ -25,7 +25,7 @@ export default defineExtension({
         const data = catalog ? await catalogScope(api, context, input.data) : input.data;
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
         return runFactor(api, context, args.model, withNativeResearchRequest(data, request));
-      }));
+      }), true);
     },
   })],
 });

@@ -23,7 +23,7 @@ import heldout from '../plugins/heldout-wasm.ts';
 const context = BACKGROUND_CONTEXT;
 const tick = (instrument = 'A.SIM', end = '40'): NativeTickFactorRequest => ({ schema_version: 1,
   input: { modality: 'TRADE_TICK', instrument_ids: [instrument], event_start_ns: '0', event_end_ns: end,
-    decision_cutoff_ns: '40', maximum_rows: 1_000_000, source_revision: 'pinned-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+    decision_cutoff_ns: '40', source_revision: 'pinned-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
   sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100_000 },
   target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 }, parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 },
   train_end_ns: '10', validation_end_ns: '20' });
@@ -37,8 +37,8 @@ const tool = (name: string, args: JsonObject = {}) => fauxAssistantMessage(fauxT
 
 const dayNs = 86_400_000_000_000n;
 function regimeRequest(): NativeTickFactorRequest {
-  const request = tick(); const { maximum_rows: _rows, ...input } = request.input;
-  return { ...request, input: { ...input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '100',
+  const request = tick(); const input = request.input;
+  return { ...request, input: { ...input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1',
     event_start_ns: String(31n * dayNs), event_end_ns: String(35n * dayNs), decision_cutoff_ns: String(35n * dayNs) },
     train_end_ns: String(32n * dayNs), validation_end_ns: String(33n * dayNs),
     evaluation_regimes: { kind: 'BTC_COMPLETED_30_DAY_RETURN_V1', days: Array.from({ length: 4 }, (_, index) => {
@@ -54,7 +54,7 @@ test('tick regime evaluation binds a complete causal UTC calendar and exact posi
   const invalid = (mutate: (value: NativeTickFactorRequest) => void) => {
     const value = structuredClone(request); mutate(value); assert.throws(() => validateNativeTickFactorRequest(value));
   };
-  invalid(value => { delete value.input.representation; value.input.maximum_rows = 100; delete value.input.maximum_source_rows; });
+  invalid(value => { delete value.input.representation; });
   invalid(value => { value.evaluation_regimes!.days.pop(); });
   invalid(value => { value.evaluation_regimes!.days[1]!.day_start_ns = value.evaluation_regimes!.days[0]!.day_start_ns; });
   invalid(value => { value.evaluation_regimes!.days[1]!.previous!.event_ns = value.evaluation_regimes!.days[1]!.day_start_ns; });
@@ -167,26 +167,23 @@ test('received-time contract binds sampling, label clock, cache layout and a con
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
 });
 
-test('legacy row allowances do not limit admitted tick or full-source cache requests', () => {
-  const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
-  const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597' } };
+test('tick requests reject removed row allowances and retain actual scientific parameters', () => {
+  const original = tick(); const input = original.input;
+  const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1' } };
   assert.deepEqual(validateNativeTickFactorRequest(cache), cache);
-  for (const input of [{ ...cache.input, maximum_rows: 0 }, { ...cache.input, maximum_source_rows: '0' }, { ...original.input, maximum_rows: 1_000_001 }, { ...original.input, maximum_source_rows: '100' }]) assert.deepEqual(validateNativeTickFactorRequest({ ...cache, input }).input, input);
-  const withoutLegacyLimits = { ...input };
-  assert.deepEqual(validateNativeTickFactorRequest({ ...original, input: withoutLegacyLimits, parameters: { ...original.parameters, total_fuel: '0' } }).input, withoutLegacyLimits);
+  for (const field of [{ maximum_rows: 0 }, { maximum_rows: 1_000_001 }, { maximum_source_rows: '0' }, { maximum_source_rows: '1308222597' }]) {
+    assert.throws(() => validateNativeTickFactorRequest({ ...cache, input: { ...cache.input, ...field } }));
+  }
+  assert.deepEqual(validateNativeTickFactorRequest({ ...original, parameters: { ...original.parameters, total_fuel: '0' } }).input, input);
   const clipped = iterationRequest({ catalog: '/controlled/cache-view', ...tagged(cache) });
-  assert.equal((clipped.input as JsonObject).maximum_source_rows, '1308222597');
   assert.equal((clipped.input as JsonObject).event_end_ns, original.validation_end_ns);
-  for (const invalid of [
-    { ...cache, input: { ...cache.input, maximum_source_rows: 1308222597 } },
-    { ...cache, input: { ...cache.input, maximum_source_rows: '9223372036854775808' } },
-  ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
+  assert.equal(Object.hasOwn(clipped.input as JsonObject, 'maximum_source_rows'), false);
 });
 
 test('signed-flow cache exposes an explicit eighth feature and preserves old seven-feature briefs', () => {
-  const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
+  const original = tick(); const input = original.input;
   const flow: NativeTickFactorRequest = { ...original, input: { ...input,
-    representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '1308222597' } };
+    representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' } };
   assert.deepEqual(validateNativeTickFactorRequest(flow), flow);
   const brief = modelBriefInput({ data: tagged(flow), policy: {} }).data.feature_model as JsonObject;
   assert.equal(brief.schema, 'qz.tick-cohort-flow-features.v1');
@@ -198,8 +195,8 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
   assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
   assert.equal(((modelBriefInput({ data: tagged(original), policy: {} }).data.feature_model as JsonObject).features as string[]).length, 7);
-  assert.deepEqual(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }).input, { ...flow.input, maximum_rows: 100 });
-  assert.equal(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }).input.maximum_source_rows, '0');
+  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }));
+  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }));
 });
 
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {
@@ -247,7 +244,7 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
   const ownerModel = { provider: faux.provider.id, modelId: faux.getModel().id };
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [research, factor, volume, heldout] };
   const input = { goal: 'Tick protocol without scientific qualification', model: ownerModel,
-    data: { catalog, ...tagged(tick('A.SIM', '20')), sealed: { catalog, ...tagged(tick()) } }, policy: { max_trials: 2 } };
+    data: { catalog, ...tagged(tick('A.SIM', '20')), sealed: { catalog, ...tagged(tick()) } }, policy: { } };
   let host = await openResearch(options);
   try {
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Protocol only', model }), async () => {

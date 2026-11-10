@@ -37,18 +37,20 @@ COPY --chmod=755 LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
 COPY --chmod=755 licenses/ /usr/share/doc/quazonai/licenses/
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 COPY --chmod=755 deploy/docker/configure.mjs deploy/docker/maintenance.mjs /opt/quazonai/deploy/docker/
+COPY --chmod=755 runtimes/data/source_units.py runtimes/data/hub.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py /opt/quazonai/operator/
 
 FROM application-source AS nautilus-source
 COPY --chmod=755 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
 COPY --chmod=755 apps/nautilus/src /opt/quazonai/apps/nautilus/src
 COPY --chmod=755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history /opt/quazonai/operator/bin/
-COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py runtimes/data/cryptohftdata.py /opt/quazonai/operator/
+COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py runtimes/data/cryptohftdata.py /opt/quazonai/operator/
 
 FROM node AS execution-base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl bash tini libssl3 libstdc++6 libxml2 python3 zstd \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/quazonai
+ENV QZ_SOURCE_UNIT_TOOL=/opt/quazonai/operator/source_units.py
 
 # Deploy this image on the separately configured Nautilus host. It is never
 # started by the application Compose project and is not copied into that image.
@@ -66,6 +68,7 @@ RUN --mount=type=bind,from=native,source=/,target=/native \
     mkdir -p /opt/quazonai/bin /opt/quazonai/operator/bin \
  && install -m755 /native/job /opt/quazonai/bin/job \
  && install -m755 /native/job-high-precision /opt/quazonai/bin/job-high-precision \
+ && install -m644 /native/native-manifest.json /opt/quazonai/bin/native-manifest.json \
  && install -m755 /native/catalog-prepare-high-precision /opt/quazonai/operator/bin/catalog-prepare-high-precision \
  && install -m755 /native/market-history /opt/quazonai/operator/bin/market-history \
  && install -m755 /native/source-tools /opt/quazonai/operator/bin/source-tools \
@@ -77,7 +80,7 @@ LABEL org.opencontainers.image.title="QuaZonai remote Nautilus" \
       org.opencontainers.image.source="https://github.com/zhengui666/QuaZonai" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
-ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
+ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision QZ_NATIVE_MANIFEST=/opt/quazonai/bin/native-manifest.json QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
 USER node
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \

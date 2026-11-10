@@ -117,5 +117,8 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       facts.accountControls ??= {}; facts.accountControls[key] = json(state); return { requestId, state: 'PENDING', result: null };
     }, context);
   }
-  return { refreshCapital, previewCapital, commandCapital };
+  function scoped<A extends unknown[], R>(operation: (...args: A) => R): (...args: A) => R {
+    return (...args) => host.withNativeHost(() => operation(...args));
+  }
+  return { refreshCapital: scoped(refreshCapital), previewCapital: scoped(previewCapital), commandCapital: scoped(commandCapital) };
 }

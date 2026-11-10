@@ -47,14 +47,14 @@ async function fixture(partition: 'DISCOVERY' | 'SEALED' = 'DISCOVERY', fullPrim
     availability_provenance: 'Explicit fixture; no historical availability claim',
     universe: { instrument_definitions: [{ BinaryOption: { id: instrument, raw_symbol: token, currency: 'pUSD',
       ts_event: 'original-native-u64-not-a-research-input', ts_init: 'original-native-u64-not-a-research-input' } }] },
-    quality: { schema_version: 1, native_version: 'nautilus-persistence/0.67.0', checked_at: '2026-10-14T00:00:00Z', datasets: [{ ...native,
+    quality: { schema_version: 1, native_version: 'nautilus-persistence/0.68.0', checked_at: '2026-10-14T00:00:00Z', datasets: [{ ...native,
       row_count: full ? '9' : '4', instrument_ids: [instrument], first_event_ns: at(60),
       last_event_ns: at(full ? 540 : 240), available_through_ns: at(900), last_bar_notionals: null }] } };
   const metadataPath = join(prepared, 'catalog-metadata.json');
   const receiptPath = join(prepared, 'preparation.json');
   const requestPath = join(directory, 'original-factor.json');
   const reportPath = join(directory, 'original-import-report.json');
-  const report = { schema_version: 1, native_version: '0.67.0', source_reference: source, bars: 10,
+  const report = { schema_version: 1, native_version: '0.68.0', source_reference: source, bars: 10,
     coverage: 'UNPROVEN', historical_availability: 'UNVERIFIED', registered_in_quazonai: false,
     limitations: ['Configuration fixture only, not a native result'] };
   const reportBytes = JSON.stringify(report);
@@ -110,7 +110,7 @@ test('native prepared export publishes immutable revisions and an original PM mo
     state.options.config.datasets = [first]; await state.restart();
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: 'export-source-monitor', goal: 'Observe complete source revisions within the original one-trial budget', datasetId: first.id,
-        model: state.model, maxTrials: 1, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'pUSD' } } } });
+        model: state.model, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'pUSD' } } } });
     assert.equal(admitted.statusCode, 202, admitted.body);
     const id = admitted.json().mandate.id;
     const initial = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
@@ -144,7 +144,7 @@ test('offline export preserves original requests and exact decimal strings, with
   try {
     const originalMetadata = await readFile(f.metadataPath);
     const originalRequest = await readFile(f.requestPath);
-    const policy = { max_trials: 2, budget: '9007199254740995', cost: '0.000000000000000001' };
+    const policy = { budget: '9007199254740995', cost: '0.000000000000000001' };
     const strategy = { name: 'original-owner-policy', kind: 'factor-threshold', instrumentId: instrument,
       threshold: 0.1, investedWeight: '0.250000000000000001', targetTtlNs: '9007199254740995', simulationSettings: { base_currency: 'pUSD' } };
     const policyPath = join(f.directory, 'policy.json'); const strategyPath = join(f.directory, 'strategy.json');
@@ -237,12 +237,6 @@ test('a wide declared primary selection cannot hide prefix-only conversion from 
 test('compatible heldout request uses the same clipped criteria and keeps full original suffix in its own binding', async () => {
   const primary = await fixture(); const sealed = await fixture('SEALED');
   try {
-    await sealed.saveRequest({ ...sealed.request, forecast: { ...sealed.request.forecast,
-      selection: { ...sealed.request.forecast.selection, maximum_rows: 0 },
-      parameters: { ...sealed.request.forecast.parameters, total_fuel: null } } });
-    const { total_fuel: _fuel, ...parameters } = primary.request.forecast.parameters;
-    const { maximum_rows: _legacyRows, ...selection } = primary.request.forecast.selection;
-    await primary.saveRequest({ ...primary.request, forecast: { ...primary.request.forecast, selection, parameters } });
     const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath, ready: true });
     assert.equal(result.ready, true);
     assert.deepEqual(result.data.request, JSON.parse(await readFile(primary.requestPath, 'utf8')));
@@ -355,7 +349,7 @@ const invalid: [string, (f: Fixture) => Promise<void>][] = [
   ['empty measured data', async (f) => { f.metadata.row_count = '0'; await f.saveMetadata(); }],
   ['non-BAR metadata', async (f) => { f.metadata.data_kind = 'TRADE'; await f.saveMetadata(); }],
   ['non-native provider', async (f) => { f.metadata.provider_kind = 'TimeSeventeen/Polymarket-v2'; await f.saveMetadata(); }],
-  ['import version substituted for native quality version', async (f) => { f.metadata.quality.native_version = '0.67.0'; await f.saveMetadata(); }],
+  ['import version substituted for native quality version', async (f) => { f.metadata.quality.native_version = '0.68.0'; await f.saveMetadata(); }],
   ['wrong collateral', async (f) => { f.metadata.universe.instrument_definitions[0].BinaryOption.currency = 'USDC.e'; await f.saveMetadata(); }],
   ['wrong token mapping', async (f) => { f.receipt.source_request.tokens = ['123']; await f.saveReceipt(); }],
   ['unverified source window widened', async (f) => { f.receipt.source_window.end_seconds -= 500; await f.saveReceipt(); }],

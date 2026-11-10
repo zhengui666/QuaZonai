@@ -21,7 +21,7 @@ async function fixture() {
     schema_version: 1, selection: { event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] }, parameters: {},
   } };
   await state.restart();
-  const input = { requestId: 'delete-original-pm', goal: 'Original controlled deletion boundary', datasetId: 'controlled', model: state.model, maxTrials: 1,
+  const input = { requestId: 'delete-original-pm', goal: 'Original controlled deletion boundary', datasetId: 'controlled', model: state.model,
     funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000.000000000000000001', currency: 'USD' } } };
   const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', payload: input, headers: state.headers });
   assert.equal(start.statusCode, 202, start.body);

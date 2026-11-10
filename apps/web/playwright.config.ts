@@ -9,7 +9,7 @@ export default defineConfig({
   outputDir: resolve(scratch, 'quazonai-web-playwright'), reporter: 'list',
   use: { actionTimeout: 10_000, baseURL: `http://127.0.0.1:${port}`, viewport: { width: 1440, height: 1000 }, screenshot: 'only-on-failure', trace: 'off', ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } } : {}) },
   webServer: {
-    command: `npm run dev -- --port ${port}`,
+    command: `npm run ${process.env.QUAZONAI_WEB_E2E_PREVIEW === '1' ? 'preview' : 'dev'} -- --port ${port}`,
     url: `http://127.0.0.1:${port}`, reuseExistingServer: !process.env.CI,
     env: { QUAZONAI_WEB_CACHE_DIR: resolve(scratch, 'quazonai-web-vite') },
   },

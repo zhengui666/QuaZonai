@@ -1,3 +1,4 @@
+import { readResearchAdmissions } from '../src/admissions.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -19,10 +20,10 @@ const request = { schema_version: 1, event_start_ns: '0', evaluation_start_ns: '
   members: [{ weight: '0.5' }, { weight: '0.5' }], gross_exposure: '0.9', target_ttl_ns: '5',
   settings: { schema_version: 1, base_currency: 'pUSD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
     exposure_tolerance: '0.000001', snapshot_interval_ms: 1000, fee_rates: [],
-    fee_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.67.0', parameters: {} },
-    fill_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.67.0',
+    fee_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.68.0', parameters: {} },
+    fill_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.68.0',
       parameters: { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '1' } },
-    latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.67.0',
+    latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.68.0',
       parameters: { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } } } };
 const specification = researchSpecification({ version: 1, name: 'Catalog ensemble protocol', question: 'Protocol only, no profitability claim', rationale: 'Original complete ensemble',
   evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' },
@@ -71,11 +72,11 @@ test('catalog ensemble admission requires original manifest and matching account
       await state.restart();
       const requestId = `catalog-invalid-${index}`;
       const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-        payload: { requestId, goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
+        payload: { requestId, goal: specification.question, specification, model: state.model, datasetId: dataset.id } });
       assert.equal(response.statusCode, 400, response.body);
       assert.equal(response.json().error, error);
       assert.equal(state.faux.state.callCount, 0);
-      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await readResearchAdmissions(state.service.research))[`request:${requestId}`], undefined);
       assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
     }
   } finally { await state.cleanup(); }
@@ -123,7 +124,7 @@ test('selected catalog ensemble replays one original shared account without copy
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: original.research!.trials[0]!.taskId, reason: 'Original protocol selection' }), { stopReason: 'toolUse' });
       },
     ]);
-    const receipt = await state.service.work.startResearch({ requestId: 'catalog-account-study', goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 1 });
+    const receipt = await state.service.work.startResearch({ requestId: 'catalog-account-study', goal: specification.question, specification, model: state.model, datasetId: dataset.id });
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const original = (await state.service.research.view(receipt.conversationId)).research!;
     assert.equal(original.final?.status, 'COMPUTED', JSON.stringify(original.final));

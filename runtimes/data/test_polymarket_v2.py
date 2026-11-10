@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import source_units
 import hf_dataset
 import polymarket_v2 as source
 import snapshot
@@ -78,7 +79,7 @@ class PolymarketV2Test(unittest.TestCase):
             selected = snapshot.fetch_local_manifest(Path(argv[argv.index("--selection") + 1]))
             definitions = json.loads(Path(argv[argv.index("--instruments") + 1]).read_text())
             reference = f"{snapshot.HUB}/datasets/{source.REPOSITORY}/tree/{COMMIT}"
-            report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
+            report = {"schema_version": 1, "native_version": "0.68.0", "instruments": 1,
                       "instrument_versions": 1, "bars": 2, "trades": 2, "quotes": 0, "deltas": 0, "closes": 0,
                       "catalog_relative_path": "catalog", "coverage": "UNPROVEN",
                       "historical_availability": "UNVERIFIED", "registered_in_quazonai": False,
@@ -110,9 +111,9 @@ class PolymarketV2Test(unittest.TestCase):
         inventory = {item["id"]: item for item in plugins.plugin_descriptors()}
         self.assertIn(source.PLUGIN, inventory)
         descriptor = inventory[source.PLUGIN]
-        self.assertEqual(descriptor["public_network_operations"], ["download", "plan"])
+        self.assertEqual(descriptor["public_network_operations"], ["plan"])
         self.assertEqual(descriptor["capabilities"],
-                         ["convert", "download", "export-dataset", "freeze", "plan", "prepare", "verify"])
+                         ["convert", "export-dataset", "freeze", "plan", "prepare", "verify"])
         self.assertFalse(descriptor["admission"]["research_qualified"])
         self.assertFalse(descriptor["admission"]["registered_in_quazonai"])
 
@@ -186,18 +187,21 @@ class PolymarketV2Test(unittest.TestCase):
 
     def test_saved_plan_download_reuses_cache_without_resolving_mutable_refs(self):
         selected = self.selection()
-        args = self.args("download", "--plan", self.plan_path, "--cache-dir", self.cache, "--output", self.root / "download")
+        work, output = self.root / "unit-work", self.root / "download"
+        plan = selected["plan"]
         with patch.object(snapshot, "repository_metadata", side_effect=AssertionError("must not resolve refs")), \
                 patch.object(snapshot.urllib.request, "urlopen", side_effect=AssertionError("cached")):
-            result = args.run(args)
-            self.assertEqual(args.run(args), result)
+            for unit in source_units.descriptor("hf", plan)["units"]:
+                source_units.execute("hf", plan, work, unit["index"], self.cache)
+            result = source_units.publish("hf", plan, work, output, cache_dir=self.cache)
+            self.assertEqual(source_units.publish("hf", plan, work, output, cache_dir=self.cache), result)
         self.assertEqual(result["plan"], selected["plan"])
         self.assertEqual(result["downloaded_bytes"], 0)
         self.assertEqual(result["cached_files"], 1)
         changed = deepcopy(result["plan"])
         changed["polymarket_v2"]["tokens"] = ["123"]
         with self.assertRaises(ValueError):
-            hf_dataset.download(changed, self.cache, args.output)
+            source_units.publish("hf", changed, work, output, cache_dir=self.cache)
 
     def test_freeze_and_verify_are_offline_and_missing_source_does_not_publish(self):
         selected = self.selection()

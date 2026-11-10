@@ -3,7 +3,6 @@
 
 import argparse
 from contextlib import contextmanager
-import datetime
 import fnmatch
 import hashlib
 import http.client
@@ -198,46 +197,6 @@ def acquire_file(root, item):
         return digest
 
 
-def download(selection, output):
-    if not selection["license"]:
-        raise ValueError("dataset card has no license; supply the verified source terms with --license")
-    root = Path(os.path.abspath(output))
-    manifest_path = safe_local(root, "snapshot.json")
-    for item in selection["files"]:
-        safe_local(root, item["path"])
-    identity = {key: selection[key] for key in ("repository", "revision", "license", "license_reference")}
-    if manifest_path.exists():
-        existing = fetch_local_manifest(manifest_path)
-        if (existing.get("schema_version") != 1
-                or any(existing.get(key) != value for key, value in identity.items())
-                or not isinstance(existing.get("files"), list)
-                or len(existing["files"]) != len(selection["files"])):
-            raise ValueError("existing snapshot manifest conflicts with selection")
-        for recorded, item in zip(existing["files"], selection["files"]):
-            if (not isinstance(recorded, dict)
-                    or any(recorded.get(key) != item[key] for key in ("path", "size", "url"))
-                    or not isinstance(recorded.get("sha256"), str)
-                    or not re.fullmatch(r"[0-9a-f]{64}", recorded["sha256"])
-                    or (item["sha256"] and item["sha256"] != recorded["sha256"])):
-                raise ValueError("existing snapshot manifest conflicts with file metadata")
-            target = safe_local(root, item["path"])
-            if (not target.is_file() or target.stat().st_size != item["size"]
-                    or file_hash(target, item["git_blob"]) != recorded["sha256"]):
-                raise ValueError("existing snapshot file size or SHA-256 mismatch")
-        return existing
-    root.mkdir(parents=True, exist_ok=True)
-    files = []
-    for item in selection["files"]:
-        digest = acquire_file(root, item)
-        files.append({key: item[key] for key in ("path", "size", "url")} | {"sha256": digest})
-    manifest = {"schema_version": 1, **identity,
-                "retrieved_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-                "files": files}
-    safe_local(root, "snapshot.json")
-    publish_bytes(manifest_path, (json.dumps(manifest, indent=2) + "\n").encode())
-    return manifest
-
-
 def fetch_local_manifest(path):
     with path.open("rb") as stream:
         body = stream.read()
@@ -376,20 +335,17 @@ def acquire_cached_file(root, item, inspect):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "download"))
+    parser.add_argument("command", choices=("plan",))
     parser.add_argument("--dataset", required=True, help="public Hugging Face dataset ID")
     parser.add_argument("--include", action="append", required=True, help="explicit repository glob (repeatable)")
     parser.add_argument("--revision", help="branch, tag or immutable commit; resolved before file selection")
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
                         help="legacy option accepted for compatibility; downloads are not byte-budgeted")
     parser.add_argument("--license", help="verified source terms, only when dataset card omits a license")
-    parser.add_argument("--output", type=Path, help="snapshot directory (required for download)")
     args = parser.parse_args(argv)
-    if args.command == "download" and args.output is None:
-        parser.error("download requires --output")
     try:
         selection = plan(args.dataset, args.include, args.revision, args.max_bytes, args.license)
-        result = download(selection, args.output) if args.command == "download" else selection
+        result = selection
         print(json.dumps(result, indent=2))
         return 0
     except urllib.error.HTTPError as error:

@@ -38,7 +38,6 @@ const reasons: Reason[] = [
   { codes: ['TICK_FEATURE_NONFINITE', 'TICK_LABEL_NONFINITE'], category: 'data', message: '逐笔派生特征或目标产生非有限数值。', action: '检查原始成交与明确的特征／目标语义；不以零值替代无效计算。' },
   { codes: ['tick_factor_volume_unsupported', 'tick_portfolio_unsupported', 'tick_capacity_unsupported'], category: 'request', message: '所选因子或组合能力尚不支持逐笔输入。', action: '首版逐笔研究使用显式特征 v2 的 Wasm 因子；原 BAR 因子、组合与模拟不会被隐式改成逐笔语义。' },
   { codes: ['nautilus_backtest_not_configured', 'nautilus_credentials_missing'], category: 'runtime', message: '远程 Nautilus 回测实例或连接凭据未配置。', action: '配置回测实例和对应凭据后核对原任务；不会回退到本地引擎。' },
-  { codes: ['legacy_local_nautilus_task_requires_migration'], category: 'runtime', message: '原任务仍绑定旧的本地 Nautilus，不能自动改到其他实例。', action: '保留原任务与证据，完成明确的远程执行迁移后再提交新的工作。' },
   { codes: ['nautilus_execution_unknown', 'nautilus_cancellation_unknown'], category: 'runtime', message: '远程科学执行或取消的结果尚未确认。', action: '按原远程回执核对实例状态；连接断开不代表任务已经取消。' },
   { codes: ['nautilus_execution_cancelled'], category: 'cancelled', message: '远程 Nautilus 已确认停止本次科学执行。', action: '保留原任务、试验和停止记录；没有计算成功结论。' },
   { codes: ['QZ_NATIVE_JOB_MEMORY_LIMIT'], category: 'resource', message: '原生编译器触及内存限制。', action: '检查本机可用内存和模型复杂度；本次失败已记录，不会自动重算。' },

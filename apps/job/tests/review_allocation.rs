@@ -63,6 +63,9 @@ fn quality_risk_and_exact_simplex_are_reported_with_sources() {
     assert_eq!(output.members[0].source_report_id, "ra");
     assert!(output.requires_new_candidate && output.requires_shared_account_study);
     assert!(output.objective.is_finite() && output.lambda > 0.0);
+    assert!((output.covariance[0][0] - 0.006 / 59.0).abs() < 1e-15);
+    assert!((output.covariance[1][1] - 0.003 / 59.0).abs() < 1e-15);
+    assert!(output.covariance[0][1].abs() < 1e-15);
     assert!(output.primal_residual < 1e-8 && output.dual_residual < 1e-8);
 }
 #[test]
@@ -91,6 +94,11 @@ fn infeasible_caps_do_not_return_fallback_weights() {
 fn missing_zero_risk_or_unapproved_input_is_refused() {
     let mut input = request();
     input.members[0].observations = vec![0.0; 60];
+    assert!(job::review_allocate::allocate(&input)
+        .unwrap_err()
+        .to_string()
+        .contains("ZERO_RISK"));
+    input.members[0].observations = vec![0.1; 60];
     assert!(job::review_allocate::allocate(&input)
         .unwrap_err()
         .to_string()

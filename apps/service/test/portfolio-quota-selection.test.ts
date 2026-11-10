@@ -7,7 +7,7 @@ import { context, setup, studied } from './support.ts';
 
 // Controlled old qualified-study records exercise owner HTTP admission only;
 // these protocol fixtures make no native/performance qualification claim.
-test('portfolio member admission ignores only retired row quotas across the original selected results', async () => {
+test('portfolio member admission compares original scientific row limits exactly', async () => {
   const state = await setup();
   try {
     const first = await studied(state, 'first-quota'); const second = await studied(state, 'second-quota');
@@ -23,8 +23,8 @@ test('portfolio member admission ignores only retired row quotas across the orig
     const input = { requestId: 'different-retired-row-quotas', name: 'TEST_ONLY selected members', datasetId: 'controlled', capital: '1000',
       researchIds: ids, weights: ids.map(researchId => ({ researchId, weight: '0.5' })) };
     const accepted = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input });
-    assert.equal(accepted.statusCode, 202, accepted.body);
-    await state.service.research.harness.waitForTask(accepted.json().taskId as TaskId, context);
+    assert.equal(accepted.statusCode, 422, accepted.body);
+    assert.equal(accepted.json().error, 'strategy_selection_mismatch');
     await state.service.research.harness.commit(async tx => {
       const study = await tx.doc(Study, ids[1]);
       object(object(object(study.final!.result).request).forecast).selection = { maximum_rows: 2, bar_types: ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'] };

@@ -1,10 +1,11 @@
+import { bool, num, obj, str } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -45,7 +46,7 @@ async function fixture(maximumTrials: number, frontier = false, sealed = false) 
   const afterCommit = new Promise<void>(resolve => { committed = resolve; });
   const duringCompute = new Promise<void>(resolve => { enteredCompute = resolve; });
   const science = defineExtension({ name: 'test.pm.science', tools: [defineTool({ name: 'pm_trial', description: 'Test-only ledger evidence, never market data',
-    parameters: Type.Object({ hypothesisId: Type.String(), value: Type.Number(), fail: Type.Boolean() }), replay: 'safe', executionMode: 'sequential',
+    parameters: obj({ hypothesisId: str(), value: num(), fail: bool() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, ctx) {
       // These PM ledger/selection regressions reconstruct the pre-review frozen
       // campaign. New admission and reviewer execution are covered separately.
@@ -58,7 +59,7 @@ async function fixture(maximumTrials: number, frontier = false, sealed = false) 
   })] });
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [research, science, heldout] };
   let host = await openResearch(options);
-  const input: ResearchInput = { goal: 'Protocol-only evidence; do not claim alpha', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: sealed ? { sealed: { marker: 'MUST_NOT_BE_READ' } } : {}, policy: { max_trials: maximumTrials }, campaign: binding(maximumTrials, frontier) };
+  const input: ResearchInput = { goal: 'Protocol-only evidence; do not claim alpha', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: sealed ? { sealed: { marker: 'MUST_NOT_BE_READ' } } : {}, policy: {  }, campaign: binding(maximumTrials, frontier) };
   return { faux, input, get host() { return host; }, get computed() { return computed; }, async reopen() { await host.close(); host = await openResearch(options); },
     pauseAfterCommit() { paused = true; return afterCommit; }, resumeAfterCommit() { paused = false; },
     pauseDuringCompute() { computePaused = true; return duringCompute; },
@@ -217,7 +218,7 @@ test('legacy group finalization cannot bypass a campaign comparison or its indep
 test('registered comparison scope must match actual native validation interval and scenario capital', () => {
   const campaign = binding(2); campaign.scopes[0]!.capital = { amount: '3000.00', currency: 'USD' };
   const input = { goal: 'Input admission protocol', model: { provider: 'fixture', modelId: 'fixture' }, campaign,
-    data: { request: { train_end_ns: '10', validation_end_ns: '20' } }, policy: { max_trials: 2, strategy: { simulationSettings: { starting_capital: '3000', base_currency: 'USD' } } } };
+    data: { request: { train_end_ns: '10', validation_end_ns: '20' } }, policy: { strategy: { simulationSettings: { starting_capital: '3000', base_currency: 'USD' } } } };
   assert.deepEqual(researchInput(input), input);
   assert.throws(() => researchInput({ ...input, data: { request: { train_end_ns: '10', validation_end_ns: '30' } } }), /campaign_native_interval_mismatch/);
   const mismatched = structuredClone(input); mismatched.campaign.scopes[0]!.capital!.amount = '1000';
@@ -228,7 +229,7 @@ test('registered comparison scope must match actual native validation interval a
 
 test('legacy resource allowances remain historical metadata and do not reject admission', () => {
   const campaign = binding(2);
-  const input = { goal: 'Meter admission protocol', model: { provider: 'fixture', modelId: 'fixture' }, data: {}, policy: { max_trials: 2 }, campaign };
+  const input = { goal: 'Meter admission protocol', model: { provider: 'fixture', modelId: 'fixture' }, data: {}, policy: { }, campaign };
   for (const budget of [{ ...campaign.budget, nativeComputeSeconds: 10 }, { ...campaign.budget, modelSpend: { amount: '1', currency: 'USD' } }, { ...campaign.budget, dataBytes: '1000' }]) {
     assert.deepEqual(researchInput({ ...input, campaign: { ...campaign, budget } }), { ...input, campaign: { ...campaign, budget } });
   }
@@ -271,10 +272,12 @@ test('reopening repairs original campaign owner-stop intent interrupted before t
     const receipt = await f.host.start('interrupted-owner-stop', f.input); await committed;
     const original = f.host.harness.conversation.bind(f.host.harness);
     f.host.harness.conversation = async (id, ctx) => { const handle = await original(id, ctx); if (!handle) return handle;
-      const abort = handle.abort.bind(handle); handle.abort = async (inner, options) => { entered(); await gate; return abort(inner, options); }; return handle; };
+      const abort = handle.abort.bind(handle); handle.abort = async (inner, options) => { entered(); await awaitWithContext(gate, inner); return abort(inner, options); }; return handle; };
     const stopping = f.host.stop(receipt.conversationId).catch(() => null); await boundary;
     assert.equal((await f.host.state(receipt.conversationId)).campaignResearch!.state, 'CLOSING');
     await f.host.close(); release(); await stopping; await f.reopen();
+    const resumed = (await f.host.state(receipt.conversationId)).campaignResearch!.ownerStopTaskId!;
+    await f.host.harness.waitForTask(resumed, context);
     const repaired = await f.host.state(receipt.conversationId);
     assert.equal(repaired.campaignResearch!.state, 'CONCLUDED'); assert.equal(repaired.campaignResearch!.closingReason, 'owner_stop');
     assert.equal(repaired.research!.trials[0]!.status, 'COMPUTED'); assert.equal(repaired.research!.final!.reason, 'owner_stop');

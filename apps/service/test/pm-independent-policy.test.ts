@@ -63,7 +63,7 @@ test('PM independent recovery keeps its admitted policy after a legitimate concu
     ]);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
       payload: { requestId: 'independent-policy-recovery', goal: 'Research causal predictive alpha and complete daily account outcomes.', datasetId: dataset.id,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model, businessPreference: 'NET_RETURN', maxTrials: 12 } });
+        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model, businessPreference: 'NET_RETURN' } });
     assert.equal(response.statusCode, 202, response.body); const initial = response.json<Pm.PmMandateView>();
     const id = initial.mandate.id; const deadline = Date.now() + 180_000;
     while (!await exists(reached) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 40));

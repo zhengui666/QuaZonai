@@ -60,7 +60,7 @@ test('review reports remain owner-only and preserve identity through projection 
 });
 
 test('new admission executes an isolated reviewer and persists its gate before any independent computation', { timeout: 30_000 }, async () => {
-  const { Type } = await import('@earendil-works/pi-ai');
+  const { obj } = await import('@earendil-works/pi-schema');
   const { defineExtension, defineTool } = await import('@earendil-works/pi-durable');
   const { evaluateTrial } = await import('../../research/src/trials.ts');
   const { finalizeFactor } = await import('../../research/plugins/final-evaluation.ts');
@@ -70,7 +70,7 @@ test('new admission executes an isolated reviewer and persists its gate before a
   try {
     state.options.extensions = [defineExtension({ name: 'test.new-review-pipeline', tools: [defineTool({
       name: 'review_candidate', description: 'Controlled candidate for review orchestration only, no native or market evidence.',
-      parameters: Type.Object({}), replay: 'safe',
+      parameters: obj({}), replay: 'safe',
       async execute(_args, api, ctx) {
         const input = (await api.snapshot((await import('../../research/src/documents.ts')).Study, api.conversationId, ctx))!.input!;
         await evaluateTrial(api, ctx, { model: wat, hypothesis: 'Controlled protocol review candidate' }, async () => json({
@@ -80,7 +80,7 @@ test('new admission executes an isolated reviewer and persists its gate before a
           ],
         }));
         await finalizeFactor({ trialId: api.taskId, reason: 'Controlled attempt at independent evaluation.' }, api, ctx);
-        return { content: [{ type: 'text', text: 'Original review gate settled.' }], control: { terminate: true } };
+        return { output: [{ type: 'text', text: 'Original review gate settled.' }], control: { terminate: true } };
       },
     })] })];
     state.options.config.datasets[0]!.data.request = { train_end_ns: '10', validation_end_ns: '20', forecast: {
@@ -103,7 +103,7 @@ test('new admission executes an isolated reviewer and persists its gate before a
       },
     ]);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-      payload: { requestId: 'actual-review-admission', goal: 'Controlled review pipeline, not market evidence.', model: state.model, datasetId: 'controlled', maxTrials: 1 } });
+      payload: { requestId: 'actual-review-admission', goal: 'Controlled review pipeline, not market evidence.', model: state.model, datasetId: 'controlled' } });
     assert.equal(response.statusCode, 202, response.body);
     const receipt = response.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);

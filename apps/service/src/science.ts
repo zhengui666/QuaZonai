@@ -1,3 +1,4 @@
+import { ScientificStage } from './scientific-stages.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -87,7 +88,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         phase = progress.phase;
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
-          fact.view.status = 'RUNNING'; fact.view.progress = progress;
+          fact.view.progress = progress;
           if (curve) fact.view.curve = curve;
           facts.portfolios[task.input.id] = json(fact); return undefined;
         }, context);
@@ -106,8 +107,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         }, 3);
         // Original task-keyed reservation/results survive restart. Incomplete
         // remote effects remain under the existing receipt reconciliation path.
-        const saved = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent', maximumCalls,
-          async () => json(await computePortfolio(task.input, context, scope, report, { partition: 'HELDOUT', data: independentData })));
+        const saved = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent', maximumCalls, { kind: 'portfolio', input: task.input, scope: scope, partition: 'HELDOUT', data: independentData });
         return saved as unknown as Awaited<ReturnType<typeof computePortfolio>>;
       });
       let qualifiedReview: ReviewReport | null = review;
@@ -120,10 +120,8 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
           directory = await mkdtemp(join(task.input.dataDir, 'portfolio-independent-'));
           const request = structuredClone(object(result.native.simulationRequest, 'independent_shared_account_request'));
           request.target_points = (request.target_points as JsonObject[]).map(point => ({ ...point, cash_weight: '1', targets: (point.targets as JsonObject[]).map(target => ({ ...target, weight: '0' })) }));
-          const cash = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent-cash', 1,
-            () => nativeJob(task.input.binary, 'simulate', request, ['--catalog', String(independentData.catalog)], directory!, context));
-          const diagnostic = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent-outcome', 1,
-            async () => json(await accountReviewMetrics({ candidate: object(result.native.simulation), baseline: cash, binary: task.input.binary, evidenceRef: reference, context })));
+          const cash = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent-cash', 1, { kind: 'native', command: 'simulate', input: request, args: ['--catalog', String(independentData.catalog)] });
+          const diagnostic = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent-outcome', 1, { kind: 'account-metrics', candidate: object(result.native.simulation), baseline: cash, evidenceRef: reference });
           const metrics = diagnostic.metrics as unknown as ReviewMetric[];
           check = reviewIndependentOutcomeCheck(review.policy, metrics, reference);
           const constraints = allocationCapacityCheck(json(result.capacity), task.input.capital, object(result.native.simulation), reference);
@@ -280,4 +278,4 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
     }, context);
   },
 });
-export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand] });
+export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand, ScientificStage] });

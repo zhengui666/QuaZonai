@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import release
 import smoke
-from release_support import DATABASE_IMAGE, validate_manifest, version
+from release_support import validate_manifest, version
 
 REVISION = 'a' * 40
 class ReleaseTests(unittest.TestCase):
@@ -120,7 +120,7 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Successful exact-push core CI is required'):
                 release.ci_run_id(REVISION)
 
-    def test_original_main_dev_tag_policy_and_schema4_bundle(self):
+    def test_original_main_dev_tag_policy_and_schema5_bundle(self):
         self.assertEqual(version('v2.0.0-dev.20260930123456.123'), 'v2.0.0-dev.20260930123456.123')
         for tag in ['latest', 'v01.2.3', 'v1.2.3-01', 'v1.2.3+build']:
             with self.assertRaises(ValueError): version(tag)
@@ -129,8 +129,8 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as temporary:
             root = Path(temporary)
             manifest = release.bundle('v2.0.0', REVISION, 'sha256:' + 'b' * 64, root, runtime_image='sha256:' + 'c' * 64)
-            self.assertEqual(manifest['schema_version'], 4)
-            self.assertEqual(manifest['database_image'], DATABASE_IMAGE)
+            self.assertEqual(manifest['schema_version'], 5)
+            self.assertNotIn('database_image', manifest)
             with tarfile.open(root / 'quazonai-deploy.tar.gz') as archive:
                 self.assertEqual(set(archive.getnames()), release.BUNDLE_FILES)
                 self.assertEqual(json.load(archive.extractfile('release.json')), manifest)

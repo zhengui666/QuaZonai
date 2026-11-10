@@ -8,7 +8,7 @@ export function economicRequest() {
     schema_version: 1,
     research: { schema_version: 1, input: { modality: 'TRADE_TICK', instrument_ids: ['BTC-USDT0.HYPERLIQUID'],
       event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000',
-      representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '1308222597', source_revision: 'original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+      representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', source_revision: 'original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
       sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100000 },
       target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '10000000000' }, parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 },
       train_end_ns: '259200000000000', validation_end_ns: '432000000000000' },

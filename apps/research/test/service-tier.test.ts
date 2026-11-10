@@ -14,7 +14,7 @@ import { openResearch } from '../src/host.ts';
 import research from '../plugins/research.ts';
 
 const context = BACKGROUND_CONTEXT;
-const input = (goal: string) => ({ goal, model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'max' as const, data: {}, policy: { max_trials: 3 } });
+const input = (goal: string) => ({ goal, model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'max' as const, data: {}, policy: { } });
 type RequestBody = { instructions: string; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
 
 function controlledProvider(provider: Provider = openaiCodexProvider()) {
@@ -80,7 +80,7 @@ test('official Codex serializes max and per-study Fast choices without mixing co
     assert.equal(controlled.requests.at(-1)!.composition_marker, 'preserved');
     assert.equal(controlled.requests.at(-1)!.service_tier, 'priority');
     await assert.rejects(host.start('ultra', { ...input('ultra'), thinkingLevel: 'ultra' } as never), /invalid_thinking_level/);
-    await assert.rejects(host.start('unsupported-max', { ...input('unsupported max'), model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex-spark' } }), /thinking_level_unsupported/);
+    await assert.rejects(host.start('unsupported-max', { ...input('unsupported max'), model: { provider: other.provider.id, modelId: 'other' } }), /thinking_level_unsupported/);
     await assert.rejects(host.start('unsupported-fast', { ...input('unsupported Fast'), model: { provider: other.provider.id, modelId: 'other' }, thinkingLevel: 'off', serviceTier: 'priority' }), /service_tier_unsupported/);
     assert.equal(controlled.requests.length, choices.length + 1);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }

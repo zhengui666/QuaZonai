@@ -1,11 +1,12 @@
+import { obj, opt, str } from '@earendil-works/pi-schema';
 import { closeResearch } from '../src/closure.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -40,11 +41,11 @@ async function fixture(pm=false) {
   await writeFile(binary,`#!/bin/sh\nexec '${process.execPath}' '${script}' '${log}' "$@"\n`,{mode:0o700});
   const previous=process.env.QZ_JOB_BINARY;process.env.QZ_JOB_BINARY=binary;
   const faux=fauxProvider({tokensPerSecond:100000});const models=createModels();models.setProvider(faux.provider);let computed=0;let selected=0;let root=0;
-  const science=defineExtension({name:'test.selection-source',tasks:[CacheProbe],tools:[defineTool({name:'close_selection',description:'TEST_ONLY original selection closure',parameters:Type.Object({}),replay:'safe',async execute(_args,api,ctx){await closeResearch(api,ctx,'owner_selection_complete');return {control:{terminate:true}};}}),defineTool({name:'selection_trial',description:'TEST_ONLY controlled trial receipt',parameters:Type.Object({hypothesisId:Type.Optional(Type.String())}),replay:'safe',executionMode:'sequential',
+  const science=defineExtension({name:'test.selection-source',tasks:[CacheProbe],tools:[defineTool({name:'close_selection',description:'TEST_ONLY original selection closure',parameters:obj({}),replay:'safe',async execute(_args,api,ctx){await closeResearch(api,ctx,'owner_selection_complete');return {control:{terminate:true}};}}),defineTool({name:'selection_trial',description:'TEST_ONLY controlled trial receipt',parameters:obj({hypothesisId:opt(str())}),replay:'safe',executionMode:'sequential',
     async execute(args,api,ctx){selected=api.taskId;return trialFeedback(api,ctx,()=>evaluateTrial(api,ctx,{hypothesis:'TEST_ONLY selected candidate',model:'(module)',purpose:'FEASIBILITY',...(args.hypothesisId?{hypothesisId:args.hypothesisId}:{})},async()=>{computed++;return{partitions:[{partition:'VALIDATION',start_ns:'10',end_ns:'20',metric:{pearson_ic:{status:'AVAILABLE',value:0.7},counts:{observations:'10',included:'10'}}}]};}));}})]});
   const options={database:join(directory,'research.sqlite'),models,extensions:[research,science]};let host=await openResearch(options);
   let entered!:()=>void;const pending=new Promise<void>(resolve=>{entered=resolve;});
-  const input:ResearchInput={goal:'TEST_ONLY modern automatic selection closure recovery',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:pm?{sealed:{marker:'OWNER_ONLY_NEVER_READ'}}:{},policy:{max_trials:1,selection_metric:'validation.pearson_ic'},...(pm?{campaign:binding()}:{})};
+  const input:ResearchInput={goal:'TEST_ONLY modern automatic selection closure recovery',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:pm?{sealed:{marker:'OWNER_ONLY_NEVER_READ'}}:{},policy:{selection_metric:'validation.pearson_ic'},...(pm?{campaign:binding()}:{})};
   const source:CapturedReviewSource={schemaVersion:1,partition:'VALIDATION',datasetId:'TEST_ONLY_SOURCE',sourceId:'TEST_ONLY_OWNER',sourceRevision:'TEST_ONLY_REVISION',snapshotDigest:'TEST_ONLY_SOURCE_BYTES',inputDataDigest:reviewSourceDataDigest(input.data),metadataDigest:'TEST_ONLY_METADATA',licenseDigest:'TEST_ONLY_GRANT',
     metadata:{partition:'VALIDATION',origin:'REAL',pit_status:'VERIFIED',revision_policy:'AS_KNOWN_THEN',provenance_reference:'TEST_ONLY_REFERENCE',availability_provenance:'TEST_ONLY_CLOCK_ASSERTION'},
     license:{schemaVersion:1,datasetId:'TEST_ONLY_SOURCE',sourceId:'TEST_ONLY_OWNER',sourceRevision:'TEST_ONLY_REVISION',datasetRevisionId:'TEST_ONLY_NATIVE',grantId:'TEST_ONLY_GRANT',issuer:'TEST_ONLY_ISSUER',reference:'TEST_ONLY_AUTHORIZATION',status:'ACTIVE',purposes:['RESEARCH'],validFromNs:'0',validUntilNs:'9223372036854775807'},receivedAt:'2026-11-02T00:00:00Z',validationStartNs:'10',validationEndNs:'20'};
@@ -99,7 +100,7 @@ test('standalone owner stop persists its intent before abort and startup cannot 
     const calls=f.faux.state.callCount;const native=await f.nativeCalls();
     const original=f.host.harness.conversation.bind(f.host.harness);
     f.host.harness.conversation=async(id,ctx)=>{const handle=await original(id,ctx);if(!handle||id!==receipt.conversationId)return handle;
-      const abort=handle.abort.bind(handle);handle.abort=async(inner,options)=>{entered();await gate;return abort(inner,options);};return handle;};
+      const abort=handle.abort.bind(handle);handle.abort=async(inner,options)=>{entered();await awaitWithContext(gate,inner);return abort(inner,options);};return handle;};
     // Use the real owner command, then crash after its marker commits but before the official abort.
     const stopping=f.host.stop(receipt.conversationId).catch(()=>null);await boundary;
     const admitted=await f.host.state(receipt.conversationId);assert.equal(admitted.campaignResearch!.state,'CLOSING');assert.equal(admitted.campaignResearch!.closingReason,'owner_stop');assert.deepEqual(admitted.research!.final,before.research!.final);

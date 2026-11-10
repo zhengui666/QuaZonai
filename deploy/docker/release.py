@@ -18,9 +18,9 @@ import tempfile
 import time
 
 
-from release_support import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, run, validate_manifest, version, version_precedence
+from release_support import BUNDLE, BUNDLE_FILES, REPOSITORY, run, validate_manifest, version, version_precedence
 
-# Exact-push core CI owns the tested native release artifacts. Publication does
+# Exact-push CI builds revision-bound native release artifacts. Publication does
 # not rerun Rust regression for dev or rebuild those binaries.
 CI_PATHS = {".github/workflows/ci.yml"}
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
@@ -190,8 +190,8 @@ def verify(tag: str, revision: str) -> None:
 def bundle(tag: str, revision: str, image: str, destination: Path, *,
            runtime_image: str, published: bool = False) -> dict:
     release = validate_manifest({
-        "schema_version": 4, "version": tag, "revision": revision,
-        "image": image, "database_image": DATABASE_IMAGE,
+        "schema_version": 5, "version": tag, "revision": revision,
+        "image": image,
         "runtime_image": runtime_image,
     }, published=published)
     destination.mkdir(parents=True, exist_ok=True)
@@ -252,7 +252,7 @@ def publish(assets: Path) -> None:
 
 def archive_images(assets: Path) -> None:
     release = validate_manifest(json.loads((assets / "release.json").read_text()), published=True)
-    for component, field in (("application", "image"), ("runtime", "runtime_image"), ("database", "database_image")):
+    for component, field in (("application", "image"), ("runtime", "runtime_image")):
         reference = release[field]
         run(["docker", "pull", "--platform", "linux/amd64", reference])
         identity = run(["docker", "image", "inspect", "--format", "{{.Id}}", reference], capture=True)

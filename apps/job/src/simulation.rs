@@ -7,7 +7,7 @@ use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_analysis::{
     analyzer::{PortfolioAnalyzer, Statistic},
     statistics::{
-        max_drawdown::MaxDrawdown, returns_volatility::ReturnsVolatility,
+        cagr::CAGR, max_drawdown::MaxDrawdown, returns_volatility::ReturnsVolatility,
         sharpe_ratio::SharpeRatio, sortino_ratio::SortinoRatio,
     },
 };
@@ -60,6 +60,14 @@ use std::{
 };
 
 pub(crate) mod calendar_returns;
+
+fn replay_bar_close_ns(bar: &Bar) -> Result<u64> {
+    if bar.bar_type.aggregation_source() == nautilus_model::enums::AggregationSource::Internal {
+        crate::catalog::right_open_bar_close_ns(bar)
+    } else {
+        Ok(bar.ts_event.as_u64())
+    }
+}
 
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
@@ -115,6 +123,7 @@ pub(crate) struct ReplayStatus {
     pub(crate) failure: Option<&'static str>,
     callback_error: Option<anyhow::Error>,
     order_rejection: Option<String>,
+    order_denial: Option<String>,
     submitted_after_ns: u64,
     study_infeasible: bool,
     settled_replay_ns: Option<u64>,
@@ -145,8 +154,14 @@ impl ReplayStatus {
     fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
         self.check_callback_error()?;
         if let Some(code) = self.failure {
-            let error = match (code, self.order_rejection.as_deref()) {
+            let detail = if code == "NATIVE_ORDER_DENIED" {
+                self.order_denial.as_deref()
+            } else {
+                self.order_rejection.as_deref()
+            };
+            let error = match (code, detail) {
                 ("NATIVE_ORDER_REJECTED", Some(reason)) => anyhow::anyhow!("{code}: {reason}"),
+                ("NATIVE_ORDER_DENIED", Some(reason)) => anyhow::anyhow!("{code}: {reason}"),
                 _ => anyhow::anyhow!(code),
             };
             return Err(error.context("NATIVE_TARGET_REPLAY_FAILED"));
@@ -165,6 +180,7 @@ pub(crate) struct StudyInput {
 
 pub(crate) struct CatalogReplayFrame {
     pub instruments: Vec<InstrumentAny>,
+    pub bar_types: Vec<BarType>,
     pub point: NativeTargetPointV1,
     pub bar_end_ns: u64,
 }
@@ -243,8 +259,10 @@ impl fmt::Debug for TargetReplay {
 }
 
 nautilus_strategy!(TargetReplay, {
-    fn on_order_denied(&mut self, _event: OrderDenied) {
-        self.status.borrow_mut().failure = Some("NATIVE_ORDER_DENIED");
+    fn on_order_denied(&mut self, event: OrderDenied) {
+        let mut status = self.status.borrow_mut();
+        status.order_denial = Some(event.reason.to_string());
+        status.failure = Some("NATIVE_ORDER_DENIED");
     }
     fn on_order_rejected(&mut self, event: OrderRejected) {
         let mut status = self.status.borrow_mut();
@@ -722,7 +740,7 @@ impl TargetReplay {
                         "SIMULATION_SCOPE_BAR_FROM_FUTURE"
                     );
                     ready &= if let Some(inbox) = &self.catalog {
-                        observed.ts_event.as_u64() == inbox.borrow().bar_end_ns
+                        replay_bar_close_ns(observed)? == inbox.borrow().bar_end_ns
                     } else {
                         observed.ts_init.as_u64() == point.asof_ns.get()
                     };
@@ -1119,23 +1137,17 @@ impl DataActor for TargetReplay {
                 self.instruments = frame.instruments;
                 inbox.borrow_mut().bar_end_ns = frame.bar_end_ns;
                 self.bar_types = frame
-                    .point
-                    .targets
-                    .iter()
-                    .map(|target| {
-                        BarType::from_str(&format!(
-                            "{}-1-MINUTE-LAST-EXTERNAL",
-                            target.instrument_id
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .bar_types
+                    .into_iter()
+                    .map(crate::catalog::runtime_bar_type)
+                    .collect();
                 for kind in self.bar_types.clone() {
                     self.subscribe_bars(kind, None, None);
                     let observed = self.cache().bar(&kind).ok_or_else(|| {
                         anyhow::anyhow!("CATALOG_ENSEMBLE_NATIVE_BAR_NOT_DELIVERED")
                     })?;
                     ensure!(
-                        observed.ts_event.as_u64() == frame.bar_end_ns
+                        replay_bar_close_ns(&observed)? == frame.bar_end_ns
                             && observed.ts_init.as_u64() <= frame.point.asof_ns.get(),
                         "CATALOG_ENSEMBLE_NATIVE_BAR_NOT_CURRENT"
                     );
@@ -1336,7 +1348,7 @@ pub(crate) fn catalog_simulation_result(
         spot_cash_report: None,
         recorded_fee_replay: Some(fees.report()),
         schema_version: SchemaV1,
-        native_version: "0.67.0".into(),
+        native_version: crate::NAUTILUS_VERSION.into(),
         iterations: count(native.iterations)?,
         events: count(native.total_events)?,
         orders: count(native.total_orders)?,
@@ -1756,6 +1768,7 @@ fn portfolio_return_analysis(
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     let period = domain::prediction::portfolio_annualization_days(&settings.fee_model);
+    analyzer.register_statistic(Arc::new(CAGR::new(Some(period))));
     if domain::prediction::uses_native_fee(&settings.fee_model) {
         let replacements: [(Statistic, Statistic); 3] = [
             (
@@ -2002,6 +2015,33 @@ fn run_with_strategy_and_spot(
         .map(|c| (c.instrument_id, *c))
         .collect::<BTreeMap<_, _>>();
     let settled_ids = settlement_events.keys().copied().collect::<Vec<_>>();
+    let projected_bar_types = market
+        .series
+        .iter()
+        .filter(|series| {
+            series.bar_type.aggregation_source()
+                == nautilus_model::enums::AggregationSource::Internal
+        })
+        .map(|series| {
+            serde_json::json!({
+                "source_type": series.bar_type.to_string(),
+                "runtime_type": crate::catalog::runtime_bar_type(series.bar_type).to_string(),
+                "source_event_clock": "RIGHT_OPEN_INTERVAL_START",
+                "runtime_event_clock": "THEORETICAL_INTERVAL_CLOSE",
+                "availability_clock": "UNCHANGED_SOURCE_TS_INIT",
+                "external_means": "SUPPLIED_FROM_OUTSIDE_THIS_BACKTEST_RUNTIME",
+            })
+        })
+        .collect::<Vec<_>>();
+    let projected_bar_evidence = (!projected_bar_types.is_empty())
+        .then(|| serde_json::to_string(&projected_bar_types))
+        .transpose()?;
+    let covered_through = market
+        .series
+        .iter()
+        .flat_map(|series| series.bars.iter().map(|bar| bar.ts_init.as_u64()))
+        .chain(closes.iter().map(|close| close.ts_init.as_u64()))
+        .max();
     let venue = market.series[0].instrument.venue();
     if let Some(balances) = &observed_balances {
         let allowed: BTreeSet<_> = market
@@ -2030,7 +2070,11 @@ fn run_with_strategy_and_spot(
                 .build()?,
         )?,
         instruments: market.series.iter().map(|s| s.instrument.clone()).collect(),
-        bar_types: market.series.iter().map(|s| s.bar_type).collect(),
+        bar_types: market
+            .series
+            .iter()
+            .map(|s| crate::catalog::runtime_bar_type(s.bar_type))
+            .collect(),
         latest: BTreeMap::new(),
         points: request.target_points.clone(),
         study_inputs,
@@ -2228,7 +2272,15 @@ fn run_with_strategy_and_spot(
             // insertion priority on ties, matching the original series order.
             // Scoped selections may legitimately have an empty asset series.
             if !series.bars.is_empty() {
-                engine.add_data_batch(DataBatch::Bar(series.bars.into()), None, true, true)?;
+                // Frozen source evidence keeps INTERNAL/RightOpen semantics.
+                // The consuming native engine requires explicitly external
+                // delivery with a closed event label; no quote/trade is invented.
+                let bars = series
+                    .bars
+                    .into_iter()
+                    .map(crate::catalog::runtime_bar)
+                    .collect::<Result<Vec<_>>>()?;
+                engine.add_data_batch(DataBatch::Bar(bars.into()), None, true, true)?;
             }
         }
         for batch in settlement_batches(closes) {
@@ -2238,11 +2290,21 @@ fn run_with_strategy_and_spot(
         // Scoped orders may also need arrival callbacks after the data cutoff;
         // their original expiry bounds execution, while settled-final-BAR
         // shutdown still prevents manufacturing an empty account-return tail.
+        // Final latency alerts must run with the strategy active: end() stops
+        // it before draining commands and therefore cannot consume their callbacks.
         let replay_end = scoped_end
             .or(spot_end.map(|end| end.get()))
             .or_else(|| {
                 recorded_liquidity(&request.settings)
-                    .then(|| request.selection.event_end_ns.get() - 1)
+                    .then(|| {
+                        request
+                            .target_points
+                            .iter()
+                            .map(|point| point.valid_until_ns.get())
+                            .chain(covered_through)
+                            .max()
+                    })
+                    .flatten()
             })
             .map(Into::into);
         let native_result = engine.run(None, replay_end, None, false);
@@ -2369,6 +2431,10 @@ fn run_with_strategy_and_spot(
         } else {
             (contracts::evidence::MetricStatus::Ok, None)
         };
+        let mut summary: BTreeMap<String, String> = native.summary.into_iter().collect();
+        if let Some(evidence) = projected_bar_evidence {
+            summary.insert("qz.source_runtime_bar_projection".into(), evidence);
+        }
         Ok(Some(NativeSimulationResultV1 {
             settled_replay_ns: observed
                 .settled_replay_ns
@@ -2380,13 +2446,13 @@ fn run_with_strategy_and_spot(
                 .as_ref()
                 .map(crate::recorded_fees::RecordedFeeModel::report),
             schema_version: SchemaV1,
-            native_version: "0.67.0".into(),
+            native_version: crate::NAUTILUS_VERSION.into(),
             iterations: count(native.iterations)?,
             events: count(native.total_events)?,
             orders: count(native.total_orders)?,
             positions: count(native.total_positions)?,
             consumed_target_points: count(observed.consumed)?,
-            summary: native.summary.into_iter().collect(),
+            summary,
             statistics,
             returns_kind: NativeReturnsKind::PortfolioDaily,
             returns_status,

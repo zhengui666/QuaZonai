@@ -24,6 +24,7 @@ function calibrated(kind: 'PORTFOLIO' | 'ALLOCATION', id: string): ReviewPolicy 
 // Controlled receipts establish the real Durable/HTTP/tool/data flow only. Native scientific
 // estimators and Clarabel are separately checked by the Rust tests, not by this executable.
 for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT', 'REMOTE_RESERVATION_GAP'] as const) test(`allocation ${mode}: reserved native recovery, evidence gate and original reviewer identity`, { timeout: 60_000 }, async () => {
+  let afterRestart = false;
   const state = await setup(); let remote: ReturnType<typeof createServer> | undefined; const remotePosts: any[] = []; const log = join(state.directory,'allocation-protocol.log');
   try {
     const binary = join(state.directory,'allocation-job'); const fixture = new URL('./review-allocation-job.mjs',import.meta.url).pathname;
@@ -36,7 +37,7 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
     const strategy = {name:'TEST_ONLY',kind:'factor-threshold',instrumentId:'TEST.SIM',threshold:0,investedWeight:'1',targetTtlNs:String(2n*DAY),simulationSettings:settings};
     const dataset = state.options.config.datasets[0]!;
     dataset.data.request = request; dataset.strategy = strategy as any;
-    const { total_fuel: _retiredFuel, ...independentParameters } = request.forecast.parameters;
+    const independentParameters = request.forecast.parameters;
     state.options.config.datasets.push({...dataset,id:'independent-test-only',data:{...dataset.data,request:{...request,validation_end_ns:String(400n*DAY),forecast:{...request.forecast,parameters:independentParameters,selection:{...request.forecast.selection,event_end_ns:String(600n*DAY),decision_cutoff_ns:String(600n*DAY)}}}}});
     // A configured source-owner snapshot fixture exercises the authority boundary only;
     // its TEST_ONLY native validator is not evidence of actual historical market PIT.
@@ -61,6 +62,7 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
       remote=createServer(async(request,response)=>{
         const send=(body:unknown)=>{response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify(body));};
         if(request.url==='/v1/capabilities')return send({schemaVersion:1,implementationDigest:`sha256:${'a'.repeat(64)}`,commands:['forecast','simulate']});
+        if(request.method==='GET'&&request.url?.startsWith('/v1/executions/'))return send({schemaVersion:1,requestId:request.url.split('/').at(-1),status:afterRestart?'UNKNOWN':'RUNNING',...(afterRestart?{error:'controlled_original_receipt_unavailable'}:{})});
         if(request.method==='DELETE')return send({schemaVersion:1,requestId:request.url!.split('/').at(-1),status:'CANCELLED'});
         if(request.method==='POST'&&request.url==='/v1/execute'){
           let body='';for await(const part of request)body+=String(part);const execution=JSON.parse(body);remotePosts.push(execution);
@@ -68,7 +70,7 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
             const selection=execution.input.selection;const start=BigInt(selection.event_start_ns),end=BigInt(selection.event_end_ns);
             return send({schemaVersion:1,requestId:execution.requestId,status:'COMPLETED',result:{points:Array.from({length:Number((end-start)/DAY)},(_,i)=>({instrument_id:'TEST.SIM',ordinal:i,event_ns:String(start+BigInt(i)*DAY),available_ns:String(start+BigInt(i)*DAY),forecast:1}))}});
           }
-          if(execution.command==='simulate'){await writeFile(log+'.entered','remote POST admitted; response unavailable until restart');return;}
+          if(execution.command==='simulate'){await writeFile(log+'.entered','remote POST admitted; original receipt retained');return send({schemaVersion:1,requestId:execution.requestId,status:'RUNNING'});}
         }
         response.writeHead(404);response.end();
       });
@@ -100,17 +102,18 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
       return call('review_finish',{narrative:'Controlled complete evidence protocol.',findings:[],mechanism:['mechanism','availability','direction','implementation','complexity'].map(criterion=>({criterion,supported:true,evidenceRefs}))});
     }]);
     await writeFile(log+'.pause','pause first native simulation');
-    const body={requestId:'allocation-test',name:'TEST_ONLY',portfolioIds:['portfolio-a','portfolio-b'],memberCaps:[{id:'portfolio-a',maximumWeight:'0.8'},{id:'portfolio-b',maximumWeight:'0.8'}],clusterCaps:[],currentWeights:[{id:'portfolio-a',weight:'0'},{id:'portfolio-b',weight:'0'}],maximumTurnover:'1',maximumScientificCalls:21,reviewPolicy:calibrated('ALLOCATION','allocation-policy'),independentDatasetId:'independent-test-only'};
+    const body={requestId:'allocation-test',name:'TEST_ONLY',portfolioIds:['portfolio-a','portfolio-b'],memberCaps:[{id:'portfolio-a',maximumWeight:'0.8'},{id:'portfolio-b',maximumWeight:'0.8'}],clusterCaps:[],currentWeights:[{id:'portfolio-a',weight:'0'},{id:'portfolio-b',weight:'0'}],maximumTurnover:'1',reviewPolicy:calibrated('ALLOCATION','allocation-policy'),independentDatasetId:'independent-test-only'};
     const forged=structuredClone(body);forged.requestId='forged-policy';forged.reviewPolicy.calibration!.rootCount=999;
     const refused=await state.service.app.inject({method:'POST',url:'/api/v3/review-allocations',headers:state.headers,payload:forged});assert.equal(refused.statusCode,422,refused.body);assert.equal(refused.json().error,'review_policy_not_registered');
     const response=await state.service.app.inject({method:'POST',url:'/api/v3/review-allocations',headers:state.headers,payload:body});assert.equal(response.statusCode,202,response.body);const admitted=response.json();
     let entered=false;for(let n=0;n<200;n++){try{await readFile(log+'.entered');entered=true;break;}catch{await setTimeout(10);}}assert.equal(entered,true,'native operation started');
+    afterRestart = true;
     await state.restart();
     const settled=await state.service.research.harness.waitForTask(admitted.taskId as TaskId,context);
     if(mode==='REMOTE_RESERVATION_GAP'){
       assert.equal(settled.state.outcome.status,'failed');
       const read=await state.service.app.inject({url:`/api/v3/review-allocations/${admitted.id}`,headers:state.headers});const failed=read.json();
-      assert.equal(failed.error,'review_allocation_remote_stage_result_unknown_reconciliation_required');assert.equal(failed.consumedScientificCalls,2);
+      assert.match(failed.error,/^nautilus_execution_unknown:[a-f0-9]{64}$/);assert.equal(failed.consumedScientificCalls,2);
       assert.equal(remotePosts.filter(row=>row.command==='simulate').length,1,'unknown original admission cannot create a replacement invocation');
       assert.equal(new Set(remotePosts.map(row=>row.invocationId)).size,2);assert.equal(state.faux.state.callCount,0);
       assert.ok(remotePosts.filter(row=>row.command==='forecast').every(row=>row.input.selection.event_end_ns===String(300n*DAY)&&row.input.selection.decision_cutoff_ns===String(300n*DAY)));

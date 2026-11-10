@@ -89,37 +89,31 @@ impl RecordedFeeModel {
             )
             .context("RECORDED_FEE_INVALID_SOURCE")
         };
-        let legacy = root.join(RECORDED_FEES_FILE);
-        let source = if legacy.is_file() {
-            // Existing original catalogs retain their exact single-file behavior.
-            read(&legacy)?
-        } else {
-            let mut combined: Option<RecordedTradeFeesV1> = None;
-            let mut loaded = BTreeSet::new();
-            for series in &market.series {
-                let id = series.instrument.id().to_string();
-                if !loaded.insert(id.clone()) {
-                    continue;
-                }
-                let part = read(&root.join("recorded-fees").join(format!("{id}.json")))?;
-                ensure!(
-                    part.records.iter().all(|record| record.instrument_id == id),
-                    "RECORDED_FEE_PARTITION_INSTRUMENT_MISMATCH"
-                );
-                if let Some(source) = combined.as_mut() {
-                    ensure!(
-                        source.source == part.source
-                            && source.revision == part.revision
-                            && source.currency == part.currency,
-                        "RECORDED_FEE_PARTITION_SOURCE_MISMATCH"
-                    );
-                    source.records.extend(part.records);
-                } else {
-                    combined = Some(part);
-                }
+        let mut combined: Option<RecordedTradeFeesV1> = None;
+        let mut loaded = BTreeSet::new();
+        for series in &market.series {
+            let id = series.instrument.id().to_string();
+            if !loaded.insert(id.clone()) {
+                continue;
             }
-            combined.context("RECORDED_FEE_SOURCE_REQUIRED")?
-        };
+            let part = read(&root.join("recorded-fees").join(format!("{id}.json")))?;
+            ensure!(
+                part.records.iter().all(|record| record.instrument_id == id),
+                "RECORDED_FEE_PARTITION_INSTRUMENT_MISMATCH"
+            );
+            if let Some(source) = combined.as_mut() {
+                ensure!(
+                    source.source == part.source
+                        && source.revision == part.revision
+                        && source.currency == part.currency,
+                    "RECORDED_FEE_PARTITION_SOURCE_MISMATCH"
+                );
+                source.records.extend(part.records);
+            } else {
+                combined = Some(part);
+            }
+        }
+        let source = combined.context("RECORDED_FEE_SOURCE_REQUIRED")?;
         Self::new(source, market, clock)
     }
 
@@ -150,13 +144,14 @@ impl RecordedFeeModel {
                     && series
                         .bar_type
                         .to_string()
-                        .ends_with("-1-MINUTE-LAST-EXTERNAL"),
+                        .ends_with("-1-MINUTE-LAST-INTERNAL"),
                 "RECORDED_FEE_CASH_TOKEN_REQUIRED"
             );
             for bar in &series.bars {
-                let end = bar.ts_init.as_u64();
+                let open = bar.ts_event.as_u64();
+                let end = crate::catalog::right_open_bar_close_ns(bar)?;
                 ensure!(
-                    end == bar.ts_event.as_u64() && end.is_multiple_of(MINUTE_NS),
+                    end <= bar.ts_init.as_u64() && open.is_multiple_of(MINUTE_NS),
                     "RECORDED_FEE_BAR_CLOCK_MISMATCH"
                 );
                 ensure!(

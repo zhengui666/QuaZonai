@@ -12,7 +12,7 @@ import factorWasm from '../../research/plugins/factor-wasm.ts';
 import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 
 const request: NativeTickFactorRequest = { schema_version: 1,
-  input: { modality: 'TRADE_TICK', instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '900719925474099300', event_end_ns: '900719925474099900', decision_cutoff_ns: '900719925474100000', maximum_rows: 100, source_revision: 'pinned-test-source-not-market-evidence', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+  input: { modality: 'TRADE_TICK', instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '900719925474099300', event_end_ns: '900719925474099900', decision_cutoff_ns: '900719925474100000', source_revision: 'pinned-test-source-not-market-evidence', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
   sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 2 },
   parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '900719925474099500', validation_end_ns: '900719925474099700' };
 const research = { ...request, input: { ...request.input, event_end_ns: request.validation_end_ns } };
@@ -49,16 +49,16 @@ test('tick export preserves exact selection and separate partitions with operati
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test('tick publication compares scientific inputs across retired row and fuel echoes without rewriting source requests', async () => {
+test('tick publication requires the exact original scientific fuel contract without rewriting source requests', async () => {
   const f = await preparedFixture();
   try {
     const original = { ...request, parameters: { ...request.parameters, total_fuel: '1000000' } };
     await writeFile(f.options.request, JSON.stringify(original));
-    const metadata = { ...f.metadata,
-      request: { ...request, input: { ...request.input, maximum_rows: 0 } },
-      research_request: { ...research, input: { ...research.input, maximum_rows: 1 } } };
-    await writeFile(f.options.prepared, JSON.stringify(metadata));
     const bytes = await readFile(f.options.request);
+    await assert.rejects(exportDataset(f.options), /tick_prepared_request_mismatch/);
+    const metadata = { ...f.metadata, request: original,
+      research_request: { ...research, parameters: original.parameters } };
+    await writeFile(f.options.prepared, JSON.stringify(metadata));
     const exported = await exportDataset(f.options);
     assert.deepEqual((exported.data.sealed as { nativeInput: unknown }).nativeInput, { modality: 'TRADE_TICK', request: original });
     assert.deepEqual(exported.data.nativeInput, { modality: 'TRADE_TICK', request: metadata.research_request });
@@ -86,7 +86,7 @@ test('HTTP registration and replay retain one explicit tick contract and prevent
     const data = { catalog: join(state.directory, 'catalog'), nativeInput: { modality: 'TRADE_TICK', request: research }, sealed: { catalog: join(state.directory, 'catalog'), nativeInput: { modality: 'TRADE_TICK', request } } };
     state.options.config.datasets = [{ id: 'ticks', name: 'Ticks', assetClass: 'CRYPTO', currency: 'MULTI', source: 'Controlled protocol only', start: null, end: null, ready: true, nativeModality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' }, data }];
     await state.restart(); state.faux.setResponses([fauxAssistantMessage('Input accepted; no scientific calculation claimed.')]);
-    const payload = { requestId: 'tick-admission', goal: 'Controlled tick admission', datasetId: 'ticks', model: state.model, maxTrials: 0 };
+    const payload = { requestId: 'tick-admission', goal: 'Controlled tick admission', datasetId: 'ticks', model: state.model };
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload });
     assert.equal(response.statusCode, 202, response.body); const receipt = response.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
@@ -107,7 +107,7 @@ test('HTTP registration and replay retain one explicit tick contract and prevent
 
 test('factor library keeps process-independent tick metrics visibly exploratory and non-combinable', () => {
   const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: 0.2 } } }] };
-  const input = { goal: 'Ticks', model: { provider: 'test', modelId: 'test' }, data: { nativeInput: { modality: 'TRADE_TICK', request: research } }, policy: { max_trials: 1 } };
+  const input = { goal: 'Ticks', model: { provider: 'test', modelId: 'test' }, data: { nativeInput: { modality: 'TRADE_TICK', request: research } }, policy: { } };
   const factor = factorViews(1, { input, trials: [{ taskId: 2, status: 'COMPUTED', proposal: { model: wat }, result }], final: { status: 'COMPUTED', trialId: 2, result } })[0]!;
   assert.equal(factor.evidence, 'independent'); assert.equal(factor.nativeModality, 'TRADE_TICK');
   assert.equal(factor.availability, 'EVENT_TIME_PROXY_UNVERIFIED'); assert.equal(factor.scientificQualification, 'UNQUALIFIED_EXPLORATORY');

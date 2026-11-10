@@ -1,5 +1,7 @@
 """Offline regression checks: python3 -m unittest discover -s runtimes/data -v."""
 
+from _source_test_fixtures import snapshot_acquisition
+
 import contextlib
 import hashlib
 import io
@@ -79,12 +81,12 @@ class SnapshotTest(unittest.TestCase):
         self.assertGreater(selection["total_bytes"], 1)
         self.assertEqual(self.http.call_count, 2)
         self.assertFalse(self.output.exists())
-        manifest = snapshot.download(selection, self.output)
+        manifest = snapshot_acquisition(selection, self.output)
         self.assertEqual(sum(item["size"] for item in manifest["files"]), selection["total_bytes"])
 
     def test_download_and_completed_reuse_validate_every_hash(self):
         selection = self.plan()
-        manifest = snapshot.download(selection, self.output)
+        manifest = snapshot_acquisition(selection, self.output)
         self.assertEqual(set(manifest), {"schema_version", "repository", "revision", "license",
                                         "license_reference", "retrieved_at", "files"})
         self.assertEqual(manifest["schema_version"], 1)
@@ -94,12 +96,12 @@ class SnapshotTest(unittest.TestCase):
             self.assertEqual(item["sha256"], hashlib.sha256(self.content[item["path"]]).hexdigest())
         saved = (self.output / "snapshot.json").read_bytes()
         self.http.reset_mock()
-        self.assertEqual(snapshot.download(selection, self.output), manifest)
+        self.assertEqual(snapshot_acquisition(selection, self.output), manifest)
         self.http.assert_not_called()
         target = self.output / "data/2022.parquet"
         target.write_bytes(b"x" * target.stat().st_size)
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-            snapshot.download(selection, self.output)
+            snapshot_acquisition(selection, self.output)
         self.assertEqual((self.output / "snapshot.json").read_bytes(), saved)
 
     def test_interruption_leaves_no_manifest_and_reuses_verified_complete_files(self):
@@ -119,51 +121,52 @@ class SnapshotTest(unittest.TestCase):
 
         self.http.side_effect = interrupted
         with self.assertRaises(OSError):
-            snapshot.download(selection, self.output)
+            snapshot_acquisition(selection, self.output)
         self.assertFalse((self.output / "snapshot.json").exists())
         self.assertFalse(list(self.output.rglob("*.partial")))
-        self.assertTrue((self.output / "data/2022.parquet").is_file())
+        self.assertTrue((Path(self.temp.name) / "snapshot-cache" / DATASET / COMMIT / "data/2022.parquet").is_file())
         self.http.reset_mock()
         self.http.side_effect = original
-        snapshot.download(selection, self.output)
+        snapshot_acquisition(selection, self.output)
         self.assertNotIn(BASE + "data/2022.parquet", [call.args[0] for call in self.http.call_args_list])
         self.assertTrue((self.output / "snapshot.json").is_file())
 
     def test_modified_manifest_cannot_authorize_corrupt_regular_git_file(self):
         selection = self.plan()
-        manifest = snapshot.download(selection, self.output)
+        manifest = snapshot_acquisition(selection, self.output)
         readme = self.output / "README.md"
         corrupt = b"x" * readme.stat().st_size
         readme.write_bytes(corrupt)
         manifest["files"][0]["sha256"] = hashlib.sha256(corrupt).hexdigest()
         (self.output / "snapshot.json").write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "Git blob mismatch"):
-            snapshot.download(selection, self.output)
+            snapshot_acquisition(selection, self.output)
 
     def test_integrity_failures_never_publish_manifest_or_corrupt_file(self):
         selection = self.plan()
         for body in (b"x" * 17, b"short", b"too many bytes for this file"):
             with self.subTest(body=body), patch.dict(self.content, {"data/2022.parquet": body}):
                 with self.assertRaises(ValueError):
-                    snapshot.download(selection, self.output)
+                    snapshot_acquisition(selection, self.output)
                 self.assertFalse((self.output / "data/2022.parquet").exists())
                 self.assertFalse((self.output / "snapshot.json").exists())
                 self.assertFalse(list(self.output.rglob("*.partial")))
 
     def test_existing_conflicts_and_symlinks_are_never_overwritten(self):
         selection = self.plan()
-        self.output.mkdir()
-        readme = self.output / "README.md"
+        cache = Path(self.temp.name) / "snapshot-cache" / DATASET / COMMIT
+        cache.mkdir(parents=True)
+        readme = cache / "README.md"
         readme.write_bytes(b"private file")
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-            snapshot.download(selection, self.output)
+            snapshot_acquisition(selection, self.output)
         self.assertEqual(readme.read_bytes(), b"private file")
         readme.unlink()
         outside = Path(self.temp.name) / "outside"
         outside.write_bytes(b"outside")
         readme.symlink_to(outside)
         with self.assertRaisesRegex(ValueError, "symlinks"):
-            snapshot.download(selection, self.output)
+            snapshot_acquisition(selection, self.output)
         self.assertEqual(outside.read_bytes(), b"outside")
         self.assertFalse((self.output / "snapshot.json").exists())
 
@@ -171,14 +174,14 @@ class SnapshotTest(unittest.TestCase):
         with patch.dict(self.metadata, {"cardData": {}}):
             selection = self.plan()
             with self.assertRaisesRegex(ValueError, "no license"):
-                snapshot.download(selection, self.output)
+                snapshot_acquisition(selection, self.output)
             self.assertFalse(self.output.exists())
             self.assertEqual(self.plan(license="verified-custom-terms")["license"], "verified-custom-terms")
         selection = self.plan()
-        snapshot.download(selection, self.output)
+        snapshot_acquisition(selection, self.output)
         saved = (self.output / "snapshot.json").read_bytes()
-        with self.assertRaisesRegex(ValueError, "conflicts"):
-            snapshot.download(self.plan(revision="main") | {"revision": "b" * 40}, self.output)
+        with self.assertRaisesRegex(ValueError, "conflicts|another plan"):
+            snapshot_acquisition(self.plan(revision="main") | {"revision": "b" * 40}, self.output)
         self.assertEqual((self.output / "snapshot.json").read_bytes(), saved)
 
     def test_cli_does_not_echo_sensitive_exception_text(self):

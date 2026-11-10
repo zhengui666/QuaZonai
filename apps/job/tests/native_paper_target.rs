@@ -42,7 +42,7 @@ use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Bar, Data, QuoteTick},
     enums::OrderSide,
-    events::{OrderEventAny, OrderFilled, PortfolioSnapshot},
+    events::{OrderEventAny, OrderFilled, OrderSubmitted, PortfolioSnapshot},
     identifiers::{AccountId, ClientId, InstrumentId, StrategyId, Venue},
     instruments::{stubs::currency_pair_btcusdt, InstrumentAny},
     types::{Money, Price, Quantity},
@@ -171,6 +171,7 @@ struct NativeEvents {
     quotes: Vec<QuoteTick>,
     bars: Vec<Bar>,
     fills: Vec<OrderFilled>,
+    submissions: Vec<OrderSubmitted>,
     snapshots: Vec<PortfolioSnapshot>,
 }
 
@@ -428,7 +429,13 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV2) {
     assert!(engine.time_bars_skip_first_non_full_bar);
     assert!(engine.time_bars_timestamp_on_close && engine.validate_data_sequence);
     let document = serde_json::to_value(config).unwrap();
-    assert_eq!(document["paper_latency"], "NATIVE_WALL_CLOCK");
+    assert_eq!(
+        document["paper_latency"],
+        match config.paper_latency {
+            PaperLatencyModel::NativeWallClock => "NATIVE_WALL_CLOCK",
+            PaperLatencyModel::FrozenStatic => "FROZEN_STATIC",
+        }
+    );
     let mut unknown_source = document.clone();
     unknown_source["source"]["kind"] = json!("ARBITRARY_LIVE_EXECUTION");
     assert!(serde_json::from_value::<PaperConfig>(unknown_source).is_err());
@@ -503,7 +510,8 @@ fn quote(marked: bool) -> QuoteTick {
 #[tokio::test(flavor = "current_thread")]
 async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown() {
     let directory = tempfile::tempdir().unwrap();
-    let (config, claim) = fixture(directory.path());
+    let (mut config, claim) = fixture(directory.path());
+    config.paper_latency = PaperLatencyModel::FrozenStatic;
     // This live-clock Paper source has an installed venue policy, not a
     // historical catalog. The actual fill below must still charge 0.001.
     assert!(!directory
@@ -570,6 +578,9 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         let orders = TypedHandler::from(move |event: &OrderEventAny| {
             if let OrderEventAny::Filled(fill) = event {
                 observed.borrow_mut().fills.push(fill.clone());
+            }
+            if let OrderEventAny::Submitted(submitted) = event {
+                observed.borrow_mut().submissions.push(submitted.clone());
             }
         });
         let observed = events.clone();
@@ -686,6 +697,15 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         "original native Sandbox must fill exactly one target order"
     );
     let fill = &captured.fills[0];
+    let submitted = captured
+        .submissions
+        .iter()
+        .find(|submitted| submitted.client_order_id == fill.client_order_id)
+        .unwrap();
+    assert!(
+        fill.ts_init.as_u64() >= submitted.ts_init.as_u64() + 1_000_000,
+        "native Sandbox must apply the frozen 1ms inbound insertion latency"
+    );
     assert_eq!(fill.account_id, AccountId::from(ACCOUNT));
     assert_eq!(fill.strategy_id, StrategyId::from("QZ-TARGET-001"));
     assert_eq!(fill.instrument_id, InstrumentId::from(INSTRUMENT));

@@ -67,7 +67,7 @@ class HfBridgeTest(unittest.TestCase):
 
     def artifacts(self):
         reference = f"{snapshot.HUB}/datasets/example/history/tree/{COMMIT}"
-        report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1, "instrument_versions": 1,
+        report = {"schema_version": 1, "native_version": "0.68.0", "instruments": 1, "instrument_versions": 1,
                   "bars": 2, "trades": 2, "quotes": 0, "deltas": 0, "closes": 0,
                   "catalog_relative_path": "catalog", "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
                   "registered_in_quazonai": False, "limitations": ["Offline native output fixture"],
@@ -138,8 +138,7 @@ class HfBridgeTest(unittest.TestCase):
                 patch.object(snapshot, "acquire_cached_file", side_effect=AssertionError("no acquisition")), \
                 patch.object(snapshot, "file_hash", side_effect=AssertionError("no checksum")):
             self.manifest = hf_dataset.freeze(plan_path, cache, request)
-            pinned = {**original_plan, "requested_revision": COMMIT}
-            self.assertEqual(hf_dataset.download(pinned, cache, request), self.manifest)
+            self.assertEqual(hf_dataset.verify(request / "selection.json")["files"], 1)
             self.selection = request / "selection.json"
             self.args.selection = self.selection
             report, evidence = self.artifacts()
@@ -370,7 +369,7 @@ class HfBridgeTest(unittest.TestCase):
 
     def test_parser_and_plugin_expose_actual_offline_bridge_capabilities(self):
         descriptor = next(p for p in plugins.plugin_descriptors() if p["id"] == "hf-dataset")
-        self.assertEqual(descriptor["public_network_operations"], ["download", "plan"])
+        self.assertEqual(descriptor["public_network_operations"], ["plan"])
         argv = ["convert", "hf-dataset", "--selection", str(self.selection), "--format", "moose-fills",
                 "--instruments", str(self.instruments), "--start-seconds", str(START), "--end-seconds", str(END),
                 "--bar-seconds", "60", "--native-bin", str(self.binary), "--output", str(self.output)]

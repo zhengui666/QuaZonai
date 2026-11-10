@@ -19,6 +19,7 @@ import { context, setup } from './support.ts';
 // native research/qualification path has a separate acceptance suite.
 async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['mandate']['operatingAuthority'] = 'AUTHORIZED_TARGETS', dataPlugin = false) {
   const state = await setup();
+  const datasetId = dataPlugin ? 'controlled-plugin' : 'controlled';
   const remote = Fastify();
   try {
     const posts: JsonObject[] = []; const accepted: JsonObject[] = []; const gets: string[] = [];
@@ -58,6 +59,7 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
     state.options.config.datasets[0]!.data.request = { protocol_version: 1, train_end_ns: '100', validation_end_ns: '200', forecast: { schema_version: 1,
       selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '300', decision_cutoff_ns: '300', maximum_rows: 100 }, parameters: {} } };
     if (dataPlugin) {
+      state.options.config.datasets[0]!.id = datasetId;
       await writeFile(join(state.directory, 'pm-plugin-datasets.json'), JSON.stringify(state.options.config.datasets));
       state.options.config.datasets = [];
     }
@@ -66,7 +68,9 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
       const source = '/api/v3/data-sources/qz.data.local-config';
       assert.equal((await state.service.app.inject({ method: 'PUT', url: source, headers: state.headers, payload: { enabled: true, config: { path: 'pm-plugin-datasets.json' } } })).statusCode, 200);
       const loaded = await state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: state.headers });
-      assert.equal(loaded.statusCode, 200, loaded.body);
+      assert.equal(loaded.statusCode, 202, loaded.body);
+      const refreshTask = await state.service.research.harness.waitForTask(loaded.json().taskId as TaskId, context);
+      assert.equal(refreshTask.state.outcome.status, 'completed', JSON.stringify(refreshTask.state.outcome));
     }
     const observedAtNs = (BigInt(nowNs()) - 1_000_000_000n).toString();
     const account: ObservationFact = {
@@ -90,8 +94,8 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
       recordCapitalControl(application.accountControls, connection, initialControl);
     }, context);
     const input = {
-      requestId: 'controlled-target-mandate', goal: 'Controlled target receipt operations; no investment qualification is asserted.', datasetId: 'controlled',
-      funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model, maxTrials: 1,
+      requestId: 'controlled-target-mandate', goal: 'Controlled target receipt operations; no investment qualification is asserted.', datasetId,
+      funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model,
       businessPreference: 'NET_RETURN', operatingAuthority,
     };
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: input });
@@ -142,8 +146,8 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
       if (keepMonitor) {
         const application = await tx.doc(Application);
         const portfolio: PortfolioFact = { input: { requestId: 'controlled-prior-portfolio', name: 'Controlled prior account binding',
-          researchIds: [record.conversationId], datasetId: 'controlled', capital: '1000.000000000000000001' },
-          view: { id: account.input.portfolioId, name: 'Controlled prior account binding', researchIds: [record.conversationId], datasetId: 'controlled',
+          researchIds: [record.conversationId], datasetId, capital: '1000.000000000000000001' },
+          view: { id: account.input.portfolioId, name: 'Controlled prior account binding', researchIds: [record.conversationId], datasetId,
             status: 'COMPUTED', capital: '1000.000000000000000001', currency: 'USD', createdAt: new Date().toISOString(), taskId: null,
             metrics: [], curve: [], targets: [], error: null }, evidence: [], policy: {}, native: null, target: {} };
         application.portfolios[account.input.portfolioId] = json(portfolio);
@@ -193,7 +197,8 @@ test('PM monitoring retains plugin source lookup after disable, omitted datasets
     await f.state.service.app.inject({ method: 'PATCH', url: '/api/v3/extensions/qz.data.local-config', headers: f.state.headers, payload: { enabled: true } });
     await writeFile(join(f.state.directory, 'pm-plugin-datasets.json'), '[]');
     const loaded = await f.state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: f.state.headers });
-    assert.equal(loaded.statusCode, 200, loaded.body);
+    assert.equal(loaded.statusCode, 202, loaded.body);
+    await f.state.service.research.harness.waitForTask(loaded.json().taskId as TaskId, context);
     assert.deepEqual(f.state.service.config.datasets, []);
     await f.state.restart();
     await nextMonitorRounds();
@@ -351,7 +356,7 @@ function flatSnapshot(original: JsonObject, sequence: string, orders?: number): 
   const money = (amount: string) => ({ amount, currency: 'USD' });
   snapshot.controlRevision = '3';
   snapshot.nativeObservation = { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.67.0' },
+    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.68.0' },
     sequence, dropped_events: '0', observed_at_ns: snapshot.nativeClockNs!, connection: 'CONNECTED',
     snapshot: { account_id: 'CONTROLLED-ACCOUNT', account_type: 'CASH', base_currency: null,
       balances: [{ total: money('1000.000000000000000001'), locked: money('0'), free: money('1000.000000000000000001') }],

@@ -43,7 +43,7 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
 
 // A complete ensemble has its own child binding; never reuse FactorTask's one-model child.
 const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.strategy-portfolio-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
+  kind: 'qz.strategy-portfolio-child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 
 export async function runPortfolio(api: ResearchRuntime, context: Context, input: PortfolioEvaluationInput): Promise<JsonObject> {

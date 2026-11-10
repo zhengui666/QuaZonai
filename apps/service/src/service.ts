@@ -1,9 +1,7 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
-import { Pool } from 'pg';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Cursor, Extension, TaskId } from '@earendil-works/pi-durable';
@@ -18,9 +16,11 @@ import { tickEconomicExtension, tickEconomicWorkbench, registerTickEconomicRoute
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
-import { dataSources, registerDataSources } from './data-sources.ts';
+import { DataSourceState, dataSources, registerDataSources } from './data-sources.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
+import { eventStream } from './event-stream.ts';
+import { readResearchAdmissions } from './admissions.ts';
 import { listFactors, readFactor } from './factors.ts';
 import { factorCapacity, portfolioCapacity } from './capacity.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
@@ -34,6 +34,9 @@ import { Study } from '../../research/src/documents.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 import { reviewAllocationExtension, registerReviewAllocationRoutes } from './review-allocation.ts';
+import { freezeReviewedFactors } from './reviewed-factor-admission.ts';
+import { canonical } from '../../research/src/documents.ts';
+import { assertBusinessAdmission } from './pm-maintenance.ts';
 import { registerReviewPolicyRoutes } from './review-policy.ts';
 import { registerListRoutes } from './lists.ts';
 
@@ -43,60 +46,92 @@ export async function createService(options: ServiceOptions) {
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
   const sources = await dataSources(config);
-  const extensionFile = join(config.dataDir, 'extensions.json');
-  let desired: Record<string, boolean> = {};
-  let moduleNames: Record<string, string> = {};
-  try {
-    const saved = JSON.parse(await readFile(extensionFile, 'utf8'));
-    desired = saved.enabled ?? saved; moduleNames = saved.modules ?? {};
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const definitions = new Map<string, Extension>();
+  const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension];
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension, sources.extension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
     if (extensions.has(extension.name) || sources.has(extension.name)) throw new Problem('extension_name_conflict');
-    const wanted = desired[extension.name] ?? enabled;
-    if (wanted) installed.push(extension);
-    extensions.set(extension.name, { name: extension.name, version, enabled: wanted, kind, state: wanted ? 'loaded' : 'disabled', error: null });
+    definitions.set(extension.name, extension); defaults.set(extension.name, enabled); installed.push(extension);
+    extensions.set(extension.name, { name: extension.name, version, enabled, kind, state: 'loaded', error: null });
   }
   install(tickEconomicExtension, true, '1', 'science');
   requiredExtensions.add(tickEconomicExtension.name);
   for (const extension of options.extensions ?? []) install(extension);
   for (const path of config.research.modules ?? []) {
-    const name = moduleNames[path];
-    if (name && desired[name] === false) extensions.set(name, { name, version: null, enabled: false, kind: 'research', state: 'disabled', error: null });
-    else { const extension = (await import(pathToFileURL(path).href)).default as Extension; moduleNames[path] = extension.name; install(extension); }
+    install((await import(pathToFileURL(path).href)).default as Extension);
   }
   for (const configured of config.extensions.filter(item => item.kind !== 'data')) {
     if (extensions.has(configured.name)) throw new Problem('extension_name_conflict');
-    const enabled = desired[configured.name] ?? configured.enabled;
     try {
-      if (enabled) {
-        const extension = (await import(pathToFileURL(configured.module).href)).default as Extension;
-        if (extension.name !== configured.name) throw new Problem('extension_module_name_mismatch');
-        install(extension, configured.enabled, configured.version ?? null, configured.kind);
-      } else extensions.set(configured.name, { name: configured.name, version: configured.version ?? null, enabled: false, kind: configured.kind ?? 'research', state: 'disabled', error: null });
-    } catch { extensions.set(configured.name, { name: configured.name, version: configured.version ?? null, enabled, kind: configured.kind ?? 'research', state: 'error', error: 'extension_load_failed' }); }
+      const extension = (await import(pathToFileURL(configured.module).href)).default as Extension;
+      if (extension.name !== configured.name) throw new Problem('extension_module_name_mismatch');
+      install(extension, configured.enabled, configured.version ?? null, configured.kind);
+    } catch {
+      defaults.set(configured.name, configured.enabled);
+      extensions.set(configured.name, { name: configured.name, version: configured.version ?? null, enabled: configured.enabled,
+        kind: configured.kind ?? 'research', state: 'error', error: 'extension_load_failed' });
+    }
   }
   if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
   requiredExtensions.add(fittedEnsemble.name);
-  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage,
+  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage, deferResume: true,
+    authorizeAdmission: async (tx, input, metadata) => {
+      assertBusinessAdmission(await tx.doc(Application));
+      if (input.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), input.campaign.mandateRevisionId));
+      const original = metadata?.original;
+      if (original && typeof original === 'object' && !Array.isArray(original) && original.reviewedFactorIds !== undefined) {
+        const current = await freezeReviewedFactors(tx, original.reviewedFactorIds, input.data, config);
+        if (canonical(json(current)) !== canonical(input.policy.reviewedFactorSources ?? null)) throw new Problem('reviewed_factor_admission_changed', 409);
+      }
+    },
     authorizeResume: async (tx, id) => {
       const parent = (await tx.doc(Study, id)).input?.campaign?.mandateRevisionId;
       if (parent) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), parent));
     },
   });
+  await sources.connect(research);
   for (const extension of research.registry.snapshot().installed()) if (!extensions.has(extension.name)) {
     requiredExtensions.add(extension.name);
     extensions.set(extension.name, { name: extension.name, version: null, enabled: true, kind: 'host', state: 'loaded', error: null });
   }
+  for (const extension of research.registry.snapshot().installed()) {
+    definitions.set(extension.name, extension);
+    if (!defaults.has(extension.name)) defaults.set(extension.name, true);
+  }
+  const enabledPreferences = await research.harness.commit(async tx => {
+    const app = await tx.doc(Application);
+    for (const [name, enabled] of defaults) app.extensionEnabled[name] ??= enabled;
+    for (const name of requiredExtensions) app.extensionEnabled[name] = true;
+    return { ...app.extensionEnabled };
+  }, context);
+  function applyExtensions(enabled: Record<string, boolean>) {
+    for (const [name, definition] of definitions) {
+      const loaded = !!research.registry.snapshot().extension(name);
+      const wanted = requiredExtensions.has(name) || (enabled[name] ?? defaults.get(name) ?? true);
+      if (wanted && !loaded) research.registry.install(definition);
+      else if (!wanted && loaded) research.registry.uninstall(definition);
+    }
+  }
+  applyExtensions(enabledPreferences);
+  const extensionWatch = await research.harness.watchDoc(Application, context);
+  extensionWatch?.start(async call => { if (call.kind === 'value' && call.value) applyExtensions(call.value.extensionEnabled); });
+  async function extensionViews(): Promise<ExtensionView[]> {
+    const enabled = (await research.harness.snapshot(Application, context))?.extensionEnabled ?? {};
+    const registry = research.registry.snapshot();
+    return [...extensions.values()].map(item => ({ ...item, enabled: enabled[item.name] ?? defaults.get(item.name) ?? true,
+      required: requiredExtensions.has(item.name), state: item.error ? 'error' : registry.extension(item.name) ? 'loaded' : 'disabled' }));
+  }
+  research.harness.resume();
   const readTasks = researchTaskViews(research);
   const detail = (id: number) => researchDetail(research, id, readTasks);
+  const eventStreams = new Set<() => Promise<void>>();
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
-  const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2 }) : null;
-  app.addHook('preClose', async () => { await sources.close(); });
-  app.addHook('onClose', async () => { await instances.close(); await research.close(); await archive?.end(); });
+  app.addHook('onRequest', (_request, _reply, done) => research.withNativeHost(done));
+  app.addHook('preClose', async () => { await Promise.all([...eventStreams].map(close => close())); await sources.close(); });
+  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); });
   try {
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
@@ -124,7 +159,6 @@ export async function createService(options: ServiceOptions) {
     app.delete<{ Params: { id: string } }>(`${API}/${path}/:id`, request => remove(request.params.id));
   }
   const capital = capitalWorkbench(research, config);
-  await work.recoverResearch();
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
   app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => {
@@ -133,15 +167,23 @@ export async function createService(options: ServiceOptions) {
   }));
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
-    const [page, facts, inspection] = await Promise.all([research.list(cursor), work.snapshot(), research.harness.inspect(context)]);
+    const [page, facts, inspection] = await Promise.all([research.list(cursor), readResearchAdmissions(research), research.harness.inspect(context)]);
     const items: ResearchSummary[] = []; const active = new Set(inspection.tasks.map(task => task.record.conversationId));
     for (const row of page.items) {
       const state = await research.state(row.id);
-      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts?.researchRequests, active.has(row.id)));
+      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts, active.has(row.id)));
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
+    const id = Number(request.params.id);
+    await detail(id);
+    const conversation = await research.harness.conversation(id as import('@earendil-works/pi-durable').ConversationId, context);
+    if (!conversation) throw new Problem('research_not_found', 404);
+    const watches = await Promise.all([conversation.watch(context), research.harness.watchTaskGraph(context)]);
+    await eventStream(reply, 'research', () => detail(id), watches, eventStreams);
+  });
   app.get<{ Params: { id: string } }>(`${API}/research/:id/reviews`, async request => (await detail(Number(request.params.id))).reviews ?? []);
   app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, async request => { await detail(Number(request.params.id)); return research.diagnostics(Number(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
@@ -159,13 +201,20 @@ export async function createService(options: ServiceOptions) {
       outputTokens: sources.length ? sources.reduce((sum, value) => sum + value.output, 0) : null,
       cost: null, activeTasks: (await research.harness.inspect(context)).tasks.length };
   });
-  app.get(`${API}/factors`, async () => listFactors(research, (await work.snapshot())?.researchRequests));
+  app.get(`${API}/factors`, async () => listFactors(research, await readResearchAdmissions(research)));
   app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
   app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
-  app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
-  app.get<{ Params: { id: string } }>(`${API}/factors/:id/review`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view.review ?? null);
-  app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(portfolioView));
+  app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, await readResearchAdmissions(research))).view);
+  app.get<{ Params: { id: string } }>(`${API}/factors/:id/review`, async request => (await readFactor(research, request.params.id, await readResearchAdmissions(research))).view.review ?? null);
+  app.get(`${API}/portfolios`, async () => Promise.all(Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(async item => portfolioView(await work.getPortfolio(item.view.id)))));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/events`, async (request, reply) => {
+    await work.getPortfolio(request.params.id);
+    const [document, graph] = await Promise.all([research.harness.watchDoc(Application, context), research.harness.watchTaskGraph(context)]);
+    if (!document) { await graph.stop(); throw new Problem('portfolio_not_found', 404); }
+    await eventStream(reply, 'portfolio', async () => portfolioView(await work.getPortfolio(request.params.id)), [document, graph], eventStreams);
+  });
+
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/review`, async request => (await work.getPortfolio(request.params.id)).view.review ?? null);
   app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
     const assumptions = researchCapital(request.body);
@@ -192,6 +241,15 @@ export async function createService(options: ServiceOptions) {
   registerModels(app, research, work.getSettings);
   registerInstanceSettings(app, instances);
   registerDataSources(app, sources);
+  app.get<{ Params: { name: string }; Querystring: { taskId?: string } }>(`${API}/data-sources/:name/events`, async (request, reply) => {
+    const taskId = request.query.taskId === undefined ? undefined : Number(request.query.taskId);
+    if (taskId !== undefined && (!Number.isSafeInteger(taskId) || taskId < 1)) throw new Problem('data_source_task_id_invalid');
+    await sources.taskStatus(request.params.name, taskId);
+    const [document, graph] = await Promise.all([research.harness.watchDoc(DataSourceState, context), research.harness.watchTaskGraph(context)]);
+    if (!document) { await graph.stop(); throw new Problem('data_source_not_found', 404); }
+    await eventStream(reply, 'data-source', () => sources.taskStatus(request.params.name, taskId), [document, graph], eventStreams);
+  });
+
   app.get(`${API}/workspace`, async (): Promise<WorkspaceView> => {
     const facts = (await work.snapshot())!; const views = Object.values(facts.observations).map(observation);
     return { name: config.name, connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
@@ -199,7 +257,7 @@ export async function createService(options: ServiceOptions) {
         && fact.connection.tokenEnv === connection.tokenEnv && fact.connection.credentialRef === connection.credentialRef
         && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
   });
-  app.get(`${API}/extensions`, async (): Promise<ExtensionView[]> => [...[...extensions.values()].map(item => ({ ...item, required: requiredExtensions.has(item.name) })), ...sources.extensions()]);
+  app.get(`${API}/extensions`, async (): Promise<ExtensionView[]> => [...await extensionViews(), ...sources.extensions()]);
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {
     if (sources.has(request.params.name)) {
       await sources.toggle(request.params.name, object(request.body).enabled as boolean);
@@ -208,24 +266,10 @@ export async function createService(options: ServiceOptions) {
     const found = extensions.get(request.params.name); if (!found) throw new Problem('extension_not_found', 404);
     const enabled = object(request.body).enabled; if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
     if (!enabled && requiredExtensions.has(found.name)) throw new Problem('service_extension_required', 409);
-    await research.harness.commit(async (tx) => {
-      const next = { ...desired, [found.name]: enabled };
-      const temporary = `${extensionFile}.${crypto.randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify({ enabled: next, modules: moduleNames }), { mode: 0o600 });
-      await rename(temporary, extensionFile); desired = next;
-      (await tx.doc(Application)).extensionEnabled[found.name] = enabled;
-      found.enabled = enabled; const loaded = !!research.registry.snapshot().extension(found.name);
-      found.state = loaded === enabled ? enabled ? 'loaded' : 'disabled' : 'pending_restart';
-    }, context);
-    return { ...found, required: requiredExtensions.has(found.name) };
-  });
-  if (archive) for (const kind of ['projects', 'runs'] as const) app.get(`${API}/archive/${kind}`, async () => {
-    const client = await archive.connect().catch(() => { throw new Problem('archive_unavailable', 503); });
-    try {
-      await client.query('BEGIN READ ONLY');
-      const sql = kind === 'projects' ? 'SELECT id, name, state, revision::text, created_at::text, updated_at::text FROM app.projects ORDER BY app.projects.created_at DESC LIMIT 100' : 'SELECT id, project_id, kind, state, revision::text, created_at::text, started_at::text, finished_at::text, terminal_reason_code FROM app.runs ORDER BY app.runs.created_at DESC LIMIT 100';
-      const result = await client.query(sql); await client.query('COMMIT'); return { items: result.rows };
-    } catch { await client.query('ROLLBACK'); throw new Problem('archive_unavailable', 503); } finally { client.release(); }
+    if (enabled && !definitions.has(found.name)) throw new Problem('extension_load_failed', 409);
+    await research.harness.commit(async tx => { (await tx.doc(Application)).extensionEnabled[found.name] = enabled; }, context);
+    applyExtensions((await research.harness.snapshot(Application, context))!.extensionEnabled);
+    return (await extensionViews()).find(item => item.name === found.name)!;
   });
   if (config.staticDir) {
     await app.register(staticPlugin, { root: config.staticDir });
@@ -233,7 +277,7 @@ export async function createService(options: ServiceOptions) {
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
-  } catch (error) { await research.close(); await archive?.end(); throw error; }
+  } catch (error) { await extensionWatch?.stop(); await research.close(); throw error; }
 }
 export const buildService = createService;
 export type Service = Awaited<ReturnType<typeof createService>>;

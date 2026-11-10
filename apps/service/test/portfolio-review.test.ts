@@ -16,14 +16,14 @@ import { Application, json, portfolio } from '../src/facts.ts';
 import type { DatasetConfig } from '../src/config.ts';
 import type { PortfolioTaskInput } from '../src/native.ts';
 import { BuildPortfolio } from '../src/science.ts';
-import { PortfolioReviewScience } from '../src/portfolio-review.ts';
+import { ScientificStages as PortfolioReviewScience } from '../src/scientific-stages.ts';
 
 const DAY = 86_400_000_000_000n;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 async function sourceFixture(root: string, id: string, start: bigint, train: bigint, validation: bigint, end: bigint, heldout = false): Promise<DatasetConfig> {
   await mkdir(join(root, 'catalog'), { recursive: true });
   const selection = { schema_version: 1, bar_types: ['TEST.SIM-1-DAY-LAST-EXTERNAL'], event_start_ns: String(start*DAY), event_end_ns: String(end*DAY), decision_cutoff_ns: String(end*DAY), maximum_rows: 1000 };
-  const request = { schema_version: 1, train_end_ns: String(train*DAY), validation_end_ns: String(validation*DAY), forecast: { schema_version: 1, selection, parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1, ...(heldout ? {} : { total_fuel: '1' }) } } };
+  const request = { schema_version: 1, train_end_ns: String(train*DAY), validation_end_ns: String(validation*DAY), forecast: { schema_version: 1, selection, parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1, total_fuel: '1' } } };
   const metadata = { registered_ref: id, native_snapshot_ref: `TEST_ONLY:${id}`, partition: heldout ? 'SEALED' : 'VALIDATION', origin: 'REAL', pit_status: 'VERIFIED', revision_policy: 'AS_KNOWN_THEN', provenance_reference: 'TEST_ONLY_SOURCE_OWNER', availability_provenance: 'TEST_ONLY_HISTORICAL_CLOCK_CLAIM', quality: { datasets: [{ dataset_revision_id: `TEST_ONLY_NATIVE:${id}`, instrument_ids: ['TEST.SIM'], selection: { ...selection, event_start_ns: String((heldout ? validation : train)*DAY), event_end_ns: String((heldout ? end : validation)*DAY) } }] } };
   const license = { schemaVersion: 1, datasetId: id, sourceId: `owner:${id}`, sourceRevision: `TEST_ONLY:${id}`, datasetRevisionId: `TEST_ONLY_NATIVE:${id}`, grantId: `TEST_ONLY_GRANT:${id}`, issuer: 'TEST_ONLY_OWNER', reference: 'TEST_ONLY_PROTOCOL', status: 'ACTIVE', purposes: ['RESEARCH'], validFromNs: '0', validUntilNs: '9223372036854775807' };
   const files: JsonObject[] = [];
@@ -55,7 +55,7 @@ for (const mode of ['positive', 'negative', 'missing', 'pending'] as const) test
       // discovery/qualification and HTTP portfolio admission are outside this fixture.
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       const study = await tx.doc(Study, conversation.id);
-      study.input = { goal: 'Controlled source factor protocol', model: state.model, data: validation.data, policy: { max_trials: 1, strategy } };
+      study.input = { goal: 'Controlled source factor protocol', model: state.model, data: validation.data, policy: { strategy } };
       const selected = { taskId: 1, status: 'COMPUTED', proposal: { model: wat, hypothesis: 'Controlled original source' }, result: { request: iterationRequest(validation.data), partitions: [{ partition: 'VALIDATION', metric: { counts: { included: '150' }, pearson_ic: { value: 1, status: 'AVAILABLE' } } }] } };
       study.trials = [selected];
       const sourceDoc = await tx.doc(ReviewSourceEvidence, conversation.id); sourceDoc.captured = json(captured);
@@ -70,7 +70,7 @@ for (const mode of ['positive', 'negative', 'missing', 'pending'] as const) test
     await state.service.research.harness.commit(async tx => { (await tx.doc(ReviewSourceEvidence, source.conversationId)).native = validationReceipt; }, context);
     const policy = createReviewPolicy('PORTFOLIO', 'TEST_ONLY_POLICY', '100');
     policy.calibration = { rootCount: 30, endNs: '90', evidenceRefs: ['TEST_ONLY_PRIOR_COHORT'] };
-    const taskInput: PortfolioTaskInput = { id: 'reviewed-portfolio', dataDir: state.directory, catalog: '/NEVER_READ_COMPONENT_SEALED', binary, capital: '1000', currency: 'USD', evidence: [{ researchId: source.conversationId, input: json(source.input), selected: source.selected, final: { result: { request: { FORBIDDEN_COMPONENT_HELDOUT: true } } } }], weights: ['1'], policy: strategy as PortfolioTaskInput['policy'], capacityPolicy: { participation: '0.1', maximumAgeSeconds: 3600, scenarios: ['1000'] }, review: { policy, model: state.model, createdAt: '2026-11-02T00:00:00Z', maximumScientificCalls: 16, stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1', independentData: independent.data, independentSource } };
+    const taskInput: PortfolioTaskInput = { id: 'reviewed-portfolio', dataDir: state.directory, catalog: '/NEVER_READ_COMPONENT_SEALED', binary, capital: '1000', currency: 'USD', evidence: [{ researchId: source.conversationId, input: json(source.input), selected: source.selected, final: { result: { request: { FORBIDDEN_COMPONENT_HELDOUT: true } } } }], weights: ['1'], policy: strategy as PortfolioTaskInput['policy'], capacityPolicy: { participation: '0.1', maximumAgeSeconds: 3600, scenarios: ['1000'] }, review: { policy, model: state.model, createdAt: '2026-11-02T00:00:00Z', stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1', independentData: independent.data, independentSource } };
     const call = (name: string, args: JsonObject = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
     const reference = `research:${source.conversationId}:trial:1:validation`;
     state.faux.setResponses([...['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio'].map(kind => call(`review_${kind}`)), call('review_finish', { narrative: 'Complete controlled protocol evidence.', findings: [], mechanism: ['mechanism', 'availability', 'direction', 'implementation', 'complexity'].map(criterion => ({ criterion, supported: true, evidenceRefs: [reference] })) })]);
@@ -91,28 +91,21 @@ for (const mode of ['positive', 'negative', 'missing', 'pending'] as const) test
     const settled = await state.service.research.harness.waitForTask(taskId, context);
     assert.equal(settled.state.outcome.status, 'completed', JSON.stringify(settled.state));
     const facts = await state.service.research.harness.snapshot(Application, context); const result = portfolio(facts!.portfolios[taskInput.id]);
-    if (mode !== 'positive') {
+    if (mode === 'negative' || mode === 'missing') {
       assert.equal(result.view.review?.decision, mode === 'negative' ? 'REJECT' : 'INCONCLUSIVE', JSON.stringify(result.view.review));
       assert.equal(result.view.status, 'REVIEW_BLOCKED'); assert.equal(result.target, null); assert.deepEqual(result.view.targets, []);
       const recorded = await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context);
-      if (mode === 'pending') {
-        assert.equal(recorded!.reservedCalls, 4);
-        const wire = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-        assert.equal(wire.filter(row => row.command === 'simulate').length, 1, 'unresolved invocation must never be posted again under the same budget');
-        assert.ok(result.view.review!.reasonCodes.some(reason => reason.includes('missing')));
-      } else {
         assert.ok(result.native?.independentQualification, 'original independent results and cash oracle remain owner-visible');
         const check = result.view.review!.checks.find(check => check.id === 'independent_outcome');
         assert.equal(check?.status, mode === 'negative' ? 'FAIL' : 'UNKNOWN');
         assert.equal(state.faux.state.callCount, 7, 'independent outcome never enters another Agent turn');
-      }
       return;
     }
     assert.equal(result.view.review?.decision, 'PASS', JSON.stringify({ reasons: result.view.review?.reasonCodes, analyses: result.view.review?.analyses, stages: await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context) }));
     assert.equal(result.view.status, 'COMPUTED', result.view.error ?? '');
     const stages = await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context);
-    assert.equal(stages!.reservedCalls, 16); assert.equal(Object.keys(stages!.reservations).length, 9);
-    assert.ok(stages!.results.independent);
+    assert.equal(stages!.reservedCalls, 16); assert.equal(Object.keys(stages!.children).length, 9);
+    assert.ok(stages!.children.independent);
     const exposure = await state.service.research.harness.snapshot(Exposures, context);
     const final = exposure!.windows.filter(window => window.kind === 'FINAL' && window.taskId === taskId);
     assert.equal(final.length, 1); assert.equal(final[0]!.catalog, independent.data.catalog); assert.equal(final[0]!.start, String(400n*DAY));

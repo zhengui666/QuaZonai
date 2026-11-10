@@ -121,11 +121,10 @@ def smoke(args):
     with tempfile.TemporaryDirectory(prefix='quazonai-node-smoke-', dir=scratch) as temporary:
         directory = Path(temporary); root = directory / 'installation'
         bundle = make_bundle(directory, 'v0.0.0-ci.1', revision, app, science)
-        port, database_port = free_port(), free_port()
-        while port == database_port: database_port = free_port()
+        port = free_port()
         config = None
         try:
-            manage(bundle, root, 'deploy', '--port', str(port), '--database-port', str(database_port))
+            manage(bundle, root, 'deploy', '--port', str(port))
             config = json.loads((root / 'installation.json').read_text())
             origin = f'http://localhost:{port}'
             jar = http.cookiejar.CookieJar(); opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -209,13 +208,13 @@ def smoke(args):
             target = make_bundle(directory, 'v0.0.0-ci.2', revision, app, science)
             manage(target, root, 'apply-update')
             updated = json.loads((root / 'installation.json').read_text())
-            for key in ('root', 'uid', 'gid', 'project', 'password', 'port', 'database_port'):
+            for key in ('root', 'uid', 'gid', 'project', 'port'):
                 assert updated[key] == config[key]
             assert path.read_bytes() == previous_config
             assert api(opener, origin, 'research', command) == receipt
             manage(target, root, 'backup')
             backup = max((root / 'backups').iterdir(), key=lambda item: item.stat().st_mtime_ns)
-            assert (backup / 'database.dump').is_file()
+            assert not (backup / 'database.dump').exists()
             if (backup / 'data').is_dir():
                 assert (backup / 'data/service.json').read_bytes() == path.read_bytes()
             else:
@@ -240,7 +239,7 @@ def smoke(args):
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app,
                  '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
             scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real remote HTTP Nautilus factor and review refusal'
-            print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite/PG backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
+            print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
         finally:
             if (root / 'installation.json').exists():
                 config = json.loads((root / 'installation.json').read_text())

@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -14,6 +13,8 @@ import { isRecoveryRequestId } from '../../research/src/recovery.ts';
 import { exactWeights, maxDbCounter, replayCatalog, resolvePortfolioPolicy, strategyMembers, thresholdPolicy, validateCatalogEnsembleRequest, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
 import { iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { ServiceConfig } from './config.ts';
+import { portfolioRuntime } from './runtime-views.ts';
+import { readResearchAdmissions } from './admissions.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
 import { factorReference, factorViews } from './factors.ts';
@@ -68,23 +69,17 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (!found.ready) throw new Problem('dataset_not_ready', 409);
     return found;
   };
-  async function recoverResearch() {
-    const [facts, native] = await Promise.all([snapshot(), host.harness.snapshot(Requests, context)]);
-    for (const [key, request] of Object.entries(facts?.researchRequests ?? {})) {
-      // The host repairs its own native admission gap; never resubmit its stopped/final studies.
-      if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput, true, request.sourceEvidence as unknown as CapturedReviewSource | undefined);
-    }
-  }
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
+    if (Object.keys(body).some(key => !['requestId', 'input', 'reviewedFactorIds', 'goal', 'model', 'datasetId', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier'].includes(key))) throw new Problem('research_field_unsupported');
+    const original = json(body); const old = (await readResearchAdmissions(host))[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
     const priorInput = (old?.input ?? nativeAdmission?.input) as NativeResearchInput | undefined;
     if (priorInput?.campaign) await host.harness.commit(async tx => assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), priorInput.campaign!.mandateRevisionId)), context);
     if (nativeAdmission?.recovery || !nativeAdmission && !old && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      return host.start(requestId, old.input as NativeResearchInput, true, old.sourceEvidence as unknown as CapturedReviewSource | undefined);
+      return host.start(requestId, old.input as NativeResearchInput, undefined, old.sourceEvidence as unknown as CapturedReviewSource | undefined, nativeAdmission?.metadata);
     }
     const submission = body as unknown as ResearchStart;
     let input: ResearchInput;
@@ -99,25 +94,19 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const native = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
       if (native) {
         if (canonical(native.input) !== canonical(json(submission.input))) throw new Problem('request_id_conflict', 409);
-        await host.harness.commit(async (tx) => {
-          const facts = await tx.doc(Application); const existing = facts.researchRequests[`request:${requestId}`];
-          if ((native.input as NativeResearchInput).campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), (native.input as NativeResearchInput).campaign!.mandateRevisionId));
-          if (existing && canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-          facts.researchRequests[`request:${requestId}`] ??= { original, input: json(native.input) };
-        }, context);
-        return host.start(requestId, native.input as NativeResearchInput);
+        return host.start(requestId, native.input as NativeResearchInput, undefined, native.sourceEvidence as unknown as CapturedReviewSource | undefined, native.metadata);
       }
       input = structuredClone(submission.input);
       object(input, 'research_input'); text(input.goal, 'goal');
       publicLiteratureQueries(input.publicLiteratureQueries);
       const data = object(input.data, 'dataset');
-      const registered = config.datasets.find((dataset) => dataset.ready && canonical(withoutExecutionQuotas(scienceDataWithoutBinding(json(dataset.data)))) === canonical(withoutExecutionQuotas(scienceDataWithoutBinding(data))));
+      const registered = config.datasets.find((dataset) => dataset.ready && canonical((scienceDataWithoutBinding(json(dataset.data)))) === canonical((scienceDataWithoutBinding(data))));
       if (!registered) throw new Problem('dataset_input_unregistered');
       sourceDataset = registered;
       input.data = retainedNautilusTarget ? bindScienceData(registered.data, retainedNautilusTarget) : structuredClone(registered.data);
       if (input.specification) {
         const inherited = { ...registered.policy, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
-        if (canonical(withoutExecutionQuotas(json(input.policy))) !== canonical(withoutExecutionQuotas(json(inherited)))) throw new Problem('research_policy_unregistered');
+        if (canonical((json(input.policy))) !== canonical((json(inherited)))) throw new Problem('research_policy_unregistered');
         capturedDataset = captureDataset(registered);
       }
     } else {
@@ -131,7 +120,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
       const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
       input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
-        policy: { ...configured.policy, ...(submission.maxTrials !== undefined ? { max_trials: submission.maxTrials } : {}), ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
+        policy: { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
     const available = await host.availableModels(String(model.provider));
@@ -209,20 +198,18 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         else if (validated.data.sealed && !registry.tools().some(item => item.extension.name === 'qz.heldout-wasm' && item.tool.name === 'factor_finalize')) throw new Problem('registered_final_evaluator_required');
       } catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_request_invalid'); }
     }
-    const admitted = await host.harness.commit(async (tx) => {
-      const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
+    await host.harness.commit(async tx => {
+      assertBusinessAdmission(await tx.doc(Application));
       if (validated.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), validated.campaign.mandateRevisionId));
-      if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      if (!current) assertBusinessAdmission(facts);
-      if (!current && submission.reviewedFactorIds !== undefined) {
+      if (submission.reviewedFactorIds !== undefined) {
         const sources = await freezeReviewedFactors(tx, submission.reviewedFactorIds, validated.data, config);
         if (sources) validated.policy.reviewedFactorSources = json(sources);
       }
-      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}), ...(sourceEvidence ? { sourceEvidence: json(sourceEvidence) } : {}) };
-      return json(facts.researchRequests[`request:${requestId}`]);
     }, context);
-    return host.start(requestId, admitted.input as NativeResearchInput, false, admitted.sourceEvidence as unknown as CapturedReviewSource | undefined);
+    return host.start(requestId, validated, undefined, sourceEvidence ?? undefined,
+      { original, ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) });
   }
+
   async function assertMembersAvailable(tx: Tx, researchIds: number[], input: PortfolioStart) {
     for (const id of researchIds) {
       const study = await tx.doc(Study, id as ConversationId);
@@ -297,13 +284,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function getPortfolio(id: string) {
     const found = (await snapshot())!.portfolios[id]; if (!found || portfolio(found).deletedAt) throw new Problem('portfolio_not_found', 404);
-    return portfolio(found);
+    return portfolioRuntime(host, portfolio(found));
   }
   async function startPortfolio(value: unknown) {
     const input = object(value) as unknown as PortfolioStart;
     text(input.requestId, 'request_id'); text(input.name, 'name');
     const old = Object.values((await snapshot())!.portfolios).map(portfolio).find((item) => item.input.requestId === input.requestId);
-    if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); if ('deletedAt' in old && old.deletedAt) throw new Problem('portfolio_deleted', 409); return old.view; }
+    if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); if ('deletedAt' in old && old.deletedAt) throw new Problem('portfolio_deleted', 409); return (await portfolioRuntime(host, old)).view; }
     const configured = dataset(text(input.datasetId, 'dataset_id'));
     if (nativeResearchInput(configured.data)?.modality === 'TRADE_TICK') throw new Problem('tick_portfolio_unsupported', 422);
     const capital = decimal(input.capital, 'capital'); if (decimalUnits(capital) <= 0n) throw new Problem('capital_invalid');
@@ -343,7 +330,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const conversationId = id as ConversationId;
         if (!await tx.conversation(conversationId)) throw new Problem('research_not_found', 404);
         const study = await tx.doc(Study, conversationId);
-        if (!study.input || canonical(withoutExecutionQuotas(scienceDataWithoutBinding(study.input.data))) !== canonical(withoutExecutionQuotas(scienceDataWithoutBinding(json(configured.data))))) throw new Problem('research_dataset_mismatch', 422);
+        if (!study.input || canonical((scienceDataWithoutBinding(study.input.data))) !== canonical((scienceDataWithoutBinding(json(configured.data))))) throw new Problem('research_dataset_mismatch', 422);
         if (canonical(study.input.policy.strategy ?? null) !== canonical(json(configured.strategy))) throw new Problem('strategy_policy_not_admitted_with_research', 422);
         const final = study.final; const selected = study.trials.find((trial) => trial.taskId === final?.trialId);
         if (final?.status !== 'COMPUTED' || selected?.status !== 'COMPUTED' || !final.result) throw new Problem('independent_evidence_missing', 422);
@@ -372,7 +359,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           if (!factor?.combinable) throw new Problem(factor?.reason ?? 'factor_not_found', 422);
         }
         if (study.input.data.sealed) replayCatalog(study.input.data, object(result.registered_request ?? result.request, 'independent_request'));
-        const current = canonical(withoutExecutionQuotas(catalogEnsemble ? object(result.registered_request ?? result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!));
+        const current = canonical((catalogEnsemble ? object(result.registered_request ?? result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!));
         if (selection !== undefined && selection !== current) throw new Problem('strategy_selection_mismatch', 422);
         selection = current;
         records.push(json({ researchId: id, ...(input.factors ? { factorId: input.factors[index]!.factorId } : {}), input: study.input, selected, final }));
@@ -422,7 +409,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         fact.view.taskId = taskId; facts.portfolios[id] = json(fact); return fact.view;
       }, context);
       if (!catalogEnsemble && admitted.id !== id) await rm(capture, { recursive: true, force: true });
-      return admitted;
+      return (await getPortfolio(admitted.id)).view;
     } catch (error) { if (!catalogEnsemble) await rm(capture, { recursive: true, force: true }); throw error; }
   }
   async function getObservation(id: string) {
@@ -562,5 +549,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (abortId !== undefined) { await host.harness.abortTask(abortId as TaskId, context); await host.harness.waitForTask(abortId as TaskId, context); }
     return (await getObservation(id)).view;
   }
-  return { snapshot, getSettings, recoverResearch, startResearch, removeResearch, removeFactor, removePortfolio, startPortfolio, getPortfolio, startObservation, getObservation, refreshObservation, configureAutomatic };
+  function scoped<A extends unknown[], R>(operation: (...args: A) => R): (...args: A) => R {
+    return (...args) => host.withNativeHost(() => operation(...args));
+  }
+  return { snapshot: scoped(snapshot), getSettings: scoped(getSettings), startResearch: scoped(startResearch), removeResearch: scoped(removeResearch),
+    removeFactor: scoped(removeFactor), removePortfolio: scoped(removePortfolio), startPortfolio: scoped(startPortfolio), getPortfolio: scoped(getPortfolio),
+    startObservation: scoped(startObservation), getObservation: scoped(getObservation), refreshObservation: scoped(refreshObservation), configureAutomatic: scoped(configureAutomatic) };
 }

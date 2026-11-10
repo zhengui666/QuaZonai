@@ -12,7 +12,7 @@ use nautilus_common::{
     actor::DataActor,
     cache::config::CacheConfig,
     logging::logger::LoggerConfig,
-    msgbus::{get_message_bus, set_message_bus, MessageBus},
+    msgbus::{self, get_message_bus, set_message_bus, MessageBus, TypedHandler},
 };
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::{
@@ -24,12 +24,15 @@ use nautilus_model::{
         margin_model::{MarginModel, MarginModelHandle},
         Account,
     },
-    data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate, OrderBookDeltas, QuoteTick},
-    enums::{
-        AccountType, AggregationSource, BarAggregation, BookType, OmsType, OrderSide, PriceType,
-        TimeInForce,
+    data::{
+        Bar, BarSpecification, BarType, Data, FundingRateUpdate, MarkPriceUpdate, OrderBookDeltas,
+        QuoteTick,
     },
-    events::{OrderDenied, OrderFilled, OrderRejected},
+    enums::{
+        AccountType, AggregationSource, BarAggregation, BookType, OmsType, OrderSide,
+        PositionAdjustmentType, PriceType, TimeInForce,
+    },
+    events::{OrderDenied, OrderFilled, OrderRejected, PositionEvent},
     identifiers::{InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orderbook::OrderBook,
@@ -200,9 +203,8 @@ impl FeeModel for ScenarioFee {
         price: Price,
         instrument: &InstrumentAny,
     ) -> Result<Money> {
-        let notional = arithmetic(quantity.as_decimal().checked_mul(price.as_decimal()))?;
-        let notional = arithmetic(notional.checked_mul(instrument.multiplier().as_decimal()))?;
-        let amount = arithmetic(notional.checked_mul(self.0))?;
+        let notional = instrument.try_calculate_notional_value(quantity, price, None)?;
+        let amount = arithmetic(notional.as_decimal().checked_mul(self.0))?;
         let currency = if matches!(instrument, InstrumentAny::CurrencyPair(_)) {
             instrument.quote_currency()
         } else {
@@ -225,10 +227,9 @@ impl ScenarioMargin {
         price: Price,
         fraction: Decimal,
     ) -> Result<Money> {
-        let notional = arithmetic(quantity.as_decimal().checked_mul(price.as_decimal()))?;
-        let notional = arithmetic(notional.checked_mul(instrument.multiplier().as_decimal()))?;
+        let notional = instrument.try_calculate_notional_value(quantity, price, None)?;
         Ok(Money::from_decimal(
-            arithmetic(notional.checked_mul(fraction))?,
+            arithmetic(notional.as_decimal().abs().checked_mul(fraction))?,
             instrument.settlement_currency(),
         )?)
     }
@@ -277,6 +278,10 @@ struct State {
     capacities: BTreeMap<InstrumentId, Decimal>,
     inventory_targets: BTreeSet<InstrumentId>,
     summary: NativeSummary,
+    funding_settled: BTreeMap<InstrumentId, u64>,
+    capture_conversion_fills: bool,
+    first_conversion_fill: Option<OrderFilled>,
+    last_conversion_fill: Option<OrderFilled>,
     failure: Option<String>,
 }
 struct CohortStrategy {
@@ -306,6 +311,12 @@ nautilus_strategy!(CohortStrategy, {
     fn on_order_filled(&mut self, event: &OrderFilled) {
         let mut state = self.state.borrow_mut();
         state.summary.fills += 1;
+        if state.capture_conversion_fills {
+            state
+                .first_conversion_fill
+                .get_or_insert_with(|| event.clone());
+            state.last_conversion_fill = Some(event.clone());
+        }
         let Some(commission) = event.commission else {
             state.failure = Some("TICK_ECONOMIC_COMMISSION_MISSING".into());
             return;
@@ -665,6 +676,44 @@ pub(super) struct NativeMark {
 pub(super) struct NativeRate {
     pub instrument_id: InstrumentId,
     pub rate: Decimal,
+    /// Source-qualified mark for standard native funding. None selects the
+    /// venue extension for oracle pricing.
+    pub settlement_mark: Option<(u64, Decimal)>,
+}
+
+impl NativeRate {
+    fn append_events(
+        &self,
+        event: u64,
+        instrument: &InstrumentAny,
+        events: &mut Vec<Data>,
+    ) -> Result<()> {
+        ensure!(
+            instrument.id() == self.instrument_id,
+            "TICK_ECONOMIC_FUNDING_INSTRUMENT_UNKNOWN"
+        );
+        if let Some((source_event, mark)) = self.settlement_mark {
+            ensure!(
+                source_event <= event,
+                "TICK_ECONOMIC_FUNDING_MARK_FROM_FUTURE"
+            );
+            events.push(Data::MarkPrice(MarkPriceUpdate::new(
+                self.instrument_id,
+                Price::from_decimal(mark)?,
+                source_event.into(),
+                event.into(),
+            )));
+        }
+        events.push(Data::FundingRate(FundingRateUpdate::new(
+            self.instrument_id,
+            self.rate,
+            None,
+            self.settlement_mark.map(|_| event.into()),
+            event.into(),
+            event.into(),
+        )));
+        Ok(())
+    }
 }
 
 pub(super) struct NativeBook {
@@ -767,6 +816,41 @@ impl NativeLedger {
         taker_fee_bps: Decimal,
         extra_cost_bps: Decimal,
     ) -> Result<Self> {
+        Self::conversion(
+            instrument,
+            initial_base,
+            taker_fee_bps,
+            extra_cost_bps,
+            true,
+            false,
+        )
+    }
+
+    pub fn new_conversion_scenario(
+        instrument: InstrumentAny,
+        initial_base: Money,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+        synthetic_quote_ioc: bool,
+    ) -> Result<Self> {
+        Self::conversion(
+            instrument,
+            initial_base,
+            taker_fee_bps,
+            extra_cost_bps,
+            false,
+            synthetic_quote_ioc,
+        )
+    }
+
+    fn conversion(
+        instrument: InstrumentAny,
+        initial_base: Money,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+        observed_l2: bool,
+        synthetic_quote_ioc: bool,
+    ) -> Result<Self> {
         ensure!(
             instrument.base_currency() == Some(initial_base.currency)
                 && initial_base.as_decimal() > Decimal::ZERO,
@@ -781,12 +865,15 @@ impl NativeLedger {
             extra_cost_bps,
             Decimal::ONE,
             Decimal::new(5, 1),
-            false,
-            true,
+            synthetic_quote_ioc,
+            observed_l2,
             false,
             Some(initial_base),
         )?;
         ledger.inventory_target_instruments(&[id])?;
+        // Retain bounded original receipts before the native cache's routine
+        // completed-order purge; conversion proof must survive that lifecycle.
+        ledger.state.borrow_mut().capture_conversion_fills = true;
         Ok(ledger)
     }
     #[allow(clippy::too_many_arguments)]
@@ -832,7 +919,7 @@ impl NativeLedger {
             arithmetic(taker_fee_bps.checked_add(extra_cost_bps))?
                 .checked_div(Decimal::from(10000)),
         )?;
-        let mut engine = BacktestEngine::new(BacktestEngineConfig {
+        let mut config = BacktestEngineConfig {
             cache: Some(
                 CacheConfig::builder()
                     .bar_capacity(1)
@@ -847,10 +934,20 @@ impl NativeLedger {
             shutdown_on_error: true,
             bypass_logging: true,
             ..Default::default()
-        })?;
+        };
+        if observed_l2 {
+            let data = config.data_engine.get_or_insert_default();
+            data.emit_quotes_from_book = true;
+            data.buffer_deltas = true;
+        }
+        let mut engine = BacktestEngine::new(config)?;
         let bus = get_message_bus();
         let adjustments = Adjustments {
-            nominal_settlement: margin,
+            nominal_settlement: margin
+                && instruments.iter().any(|instrument| {
+                    instrument.cost_currency() == Currency::USD()
+                        && instrument.settlement_currency() == Currency::USDC()
+                }),
             ..Default::default()
         };
         let mut balances = BTreeMap::from([("USDC".to_owned(), (Currency::USDC(), initial_usdc))]);
@@ -924,6 +1021,43 @@ impl NativeLedger {
             engine.add_instrument(instrument)?;
         }
         let state = Rc::new(RefCell::new(State::default()));
+        let funding_state = state.clone();
+        let nominal_settlement = adjustments.nominal_settlement;
+        msgbus::subscribe_position_events(
+            "events.position.*".into(),
+            TypedHandler::from(move |event: &PositionEvent| {
+                let PositionEvent::PositionAdjusted(adjusted) = event else {
+                    return;
+                };
+                if adjusted.adjustment_type != PositionAdjustmentType::Funding {
+                    return;
+                }
+                if let Some(amount) = adjusted.pnl_change {
+                    let mut state = funding_state.borrow_mut();
+                    state
+                        .funding_settled
+                        .insert(adjusted.instrument_id, adjusted.ts_event.as_u64());
+                    state.summary.adjustments_applied += 1;
+                    // The same explicit nominal USD->USDC module settles this
+                    // cash movement. Keep venue reporting in that declared unit.
+                    let currency = if nominal_settlement && amount.currency == Currency::USD() {
+                        Currency::USDC()
+                    } else {
+                        amount.currency
+                    };
+                    let entry = state
+                        .summary
+                        .adjustment_totals
+                        .entry(currency.to_string())
+                        .or_default();
+                    match entry.checked_add(amount.as_decimal()) {
+                        Some(total) => *entry = total,
+                        None => state.failure = Some("TICK_ECONOMIC_FUNDING_OVERFLOW".into()),
+                    }
+                }
+            }),
+            None,
+        );
         engine.add_strategy(CohortStrategy {
             core: StrategyCore::new(StrategyConfig {
                 strategy_id: Some(StrategyId::from(if margin {
@@ -998,8 +1132,8 @@ impl NativeLedger {
         self.step_batch_with_rates(event, rows, &[])
     }
 
-    /// Actual rates are clock carriers with no native interval/next boundary; only the
-    /// already-computed scenario adjustment is booked by the module, never native funding.
+    /// Standard mark funding uses the native boundary; venue-specific oracle or
+    /// settlement-unit extensions remain acknowledged module adjustments.
     pub fn funding_batch(&mut self, event: u64, rows: &[NativeRate]) -> Result<()> {
         self.step_batch_with_rates(event, &[], rows)
     }
@@ -1043,14 +1177,7 @@ impl NativeLedger {
                 self.instruments.contains_key(&row.instrument_id),
                 "TICK_ECONOMIC_FUNDING_INSTRUMENT_UNKNOWN"
             );
-            events.push(Data::FundingRate(FundingRateUpdate::new(
-                row.instrument_id,
-                row.rate,
-                None,
-                None,
-                event.into(),
-                event.into(),
-            )));
+            row.append_events(event, &self.instruments[&row.instrument_id], &mut events)?;
         }
         for row in rows {
             let instrument = self
@@ -1105,7 +1232,8 @@ impl NativeLedger {
                 event.into(),
             )?));
         }
-        self.run_events(event, events)
+        self.run_events(event, events)?;
+        self.check_funding_rates(event, rates)
     }
 
     pub fn step_books(
@@ -1136,14 +1264,7 @@ impl NativeLedger {
                 self.instruments.contains_key(&rate.instrument_id),
                 "TICK_ECONOMIC_FUNDING_INSTRUMENT_UNKNOWN"
             );
-            events.push(Data::FundingRate(FundingRateUpdate::new(
-                rate.instrument_id,
-                rate.rate,
-                None,
-                None,
-                event.into(),
-                event.into(),
-            )));
+            rate.append_events(event, &self.instruments[&rate.instrument_id], &mut events)?;
         }
         for mut row in rows {
             let id = row.snapshot.instrument_id;
@@ -1181,23 +1302,11 @@ impl NativeLedger {
                 .deltas
                 .iter()
                 .find(|delta| delta.order.side == Some(OrderSide::Sell));
-            let update_book =
-                first_book || row.target_quantity.is_some() || bid.is_none() || ask.is_none();
-            match (bid, ask) {
-                (Some(bid), Some(ask)) if update_book || needs_clock && events.is_empty() => {
-                    // Official market-order risk checks read cached quotes, not the L2 book.
-                    events.push(Data::Quote(QuoteTick::new(
-                        id,
-                        bid.order.price,
-                        ask.order.price,
-                        bid.order.size,
-                        ask.order.size,
-                        row.snapshot.ts_event,
-                        row.snapshot.ts_init,
-                    )));
-                }
-                _ => {}
-            }
+            let update_book = first_book
+                || row.target_quantity.is_some()
+                || bid.is_none()
+                || ask.is_none()
+                || needs_clock && events.is_empty();
             // IOC orders finish within a run; refresh depth before every target and preserve resets.
             if update_book {
                 events.push(Data::BookDeltas(Box::new(row.snapshot)));
@@ -1207,10 +1316,33 @@ impl NativeLedger {
         if !events.is_empty() {
             self.run_events(event, events)?;
         }
+        self.check_funding_rates(event, rates)?;
         ensure!(
             self.state.borrow().targets.is_empty(),
             "TICK_ECONOMIC_BOOK_TARGET_NOT_CONSUMED"
         );
+        Ok(())
+    }
+
+    fn check_funding_rates(&self, event: u64, rates: &[NativeRate]) -> Result<()> {
+        let cache = self.engine.kernel().cache.borrow();
+        for rate in rates.iter().filter(|rate| rate.settlement_mark.is_some()) {
+            if !cache
+                .positions_open_refs(
+                    Some(&self.venue),
+                    Some(&rate.instrument_id),
+                    None,
+                    None,
+                    None,
+                )
+                .is_empty()
+            {
+                ensure!(
+                    self.state.borrow().funding_settled.get(&rate.instrument_id) == Some(&event),
+                    "TICK_ECONOMIC_NATIVE_FUNDING_UNSETTLED"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1223,9 +1355,9 @@ impl NativeLedger {
         let day = event / 86_400_000_000_000;
         if self.purge_day != Some(day) {
             let mut cache = self.engine.kernel().cache.borrow_mut();
-            cache.purge_closed_orders(event.into(), 0);
-            cache.purge_closed_positions(event.into(), 0);
-            cache.purge_account_events(event.into(), 0);
+            cache.purge_closed_orders(event.into(), 0, false)?;
+            cache.purge_closed_positions(event.into(), 0, false)?;
+            cache.purge_account_events(event.into(), 0, false)?;
             self.purge_day = Some(day);
         }
         Ok(())
@@ -1283,6 +1415,51 @@ impl NativeLedger {
         };
         result
     }
+
+    /// Value an open instrument through the authoritative Portfolio, with the
+    /// caller's source-qualified mark. This does not replace cached market data.
+    pub fn unrealized_pnl_at(&self, id: InstrumentId, mark: Decimal) -> Result<Money> {
+        ensure!(
+            self.instruments.contains_key(&id),
+            "ECONOMIC_POSITION_OUTSIDE_SCOPE"
+        );
+        let price = Price::from_decimal(mark)?;
+        self.engine
+            .kernel()
+            .portfolio
+            .borrow_mut()
+            .unrealized_pnl_for_account(&id, Some(price), None, None)
+            .context("TICK_ECONOMIC_NATIVE_PNL_UNAVAILABLE")
+    }
+
+    /// Use the very model installed on the native account; only mark selection
+    /// and the research decision to exit remain application policy.
+    pub fn maintenance_at(&self, id: InstrumentId, mark: Decimal) -> Result<Money> {
+        let instrument = self
+            .instruments
+            .get(&id)
+            .context("ECONOMIC_POSITION_OUTSIDE_SCOPE")?;
+        let cache = self.engine.kernel().cache.borrow();
+        let account = cache
+            .account_for_venue(&self.venue)
+            .context("TICK_ECONOMIC_MARGIN_ACCOUNT_MISSING")?;
+        let nautilus_model::accounts::AccountAny::Margin(account) = &*account else {
+            anyhow::bail!("TICK_ECONOMIC_MARGIN_ACCOUNT_REQUIRED");
+        };
+        let quantity = cache
+            .positions_open_refs(Some(&self.venue), Some(&id), None, None, None)
+            .into_iter()
+            .map(|p| p.signed_decimal_qty())
+            .sum::<Decimal>()
+            .abs();
+        account.margin_model().calculate_maintenance_margin(
+            instrument,
+            Quantity::from_decimal(quantity)?,
+            Price::from_decimal(mark)?,
+            account.default_leverage,
+            None,
+        )
+    }
     pub fn open_instrument_ids(&self) -> Vec<InstrumentId> {
         self.engine
             .kernel()
@@ -1312,10 +1489,42 @@ impl NativeLedger {
     }
     pub fn summary(&self) -> NativeSummary {
         let mut summary = self.state.borrow().summary.clone();
-        summary.adjustments_applied = self.adjustments.state.borrow().applied;
-        summary.adjustment_totals = self.adjustments.state.borrow().applied_totals.clone();
+        summary.adjustments_applied += self.adjustments.state.borrow().applied;
+        for (currency, amount) in &self.adjustments.state.borrow().applied_totals {
+            *summary
+                .adjustment_totals
+                .entry(currency.clone())
+                .or_default() += *amount;
+        }
         summary.nominal_settlement_usdc = self.adjustments.state.borrow().nominal_settlement_usdc;
         summary
+    }
+
+    pub fn conversion_evidence(&self) -> Result<String> {
+        let summary = self.summary();
+        let cache = self.engine.kernel().cache.borrow();
+        let orders = cache
+            .orders_refs(None, None, None, None, None)
+            .into_iter()
+            .map(|order| serde_json::to_value(order.cloned()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(serde_json::to_string(&serde_json::json!({
+            "purpose": "INITIAL_CAPITAL_CONVERSION",
+            "environment": "BACKTEST_SIMULATION",
+            "authority": "OFFICIAL_NATIVE_ORDERS_AND_ACCOUNT_BALANCES",
+            "native_version": crate::NAUTILUS_VERSION,
+            "native_session_id": self.engine.instance_id().to_string(),
+            "execution_data": if self.observed_l2 { "OBSERVED_BOOK_SNAPSHOTS" }
+                else if self.synthetic_quote_ioc { "DECLARED_SYNTHETIC_QUOTE_IOC" }
+                else { "DECLARED_COHORT_BAR_PROXY" },
+            "native_fill_count": summary.fills.to_string(),
+            "first_native_fill": self.state.borrow().first_conversion_fill,
+            "last_native_fill": self.state.borrow().last_conversion_fill,
+            "fees_by_currency": summary.commissions.into_iter()
+                .map(|(currency, value)| (currency, value.to_string())).collect::<BTreeMap<_, _>>(),
+            "final_native_balances": self.balances(),
+            "cached_native_orders": orders,
+        }))?)
     }
     #[cfg(test)]
     pub fn orders(&self) -> Vec<OrderAny> {
@@ -1425,6 +1634,75 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn standard_mark_funding_updates_native_position_and_balance_once() {
+        let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
+            unreachable!()
+        };
+        definition.quote_currency = Currency::USDC();
+        let instrument = InstrumentAny::CryptoPerpetual(definition);
+        let mut native = ledger(&instrument, true, Decimal::ZERO);
+        native
+            .step(1_000_000_000, &instrument, 100.0, 10.0, None)
+            .unwrap();
+        native
+            .step(2_000_000_000, &instrument, 100.0, 10.0, Some(Decimal::ONE))
+            .unwrap();
+        let before = native.balance(Currency::USDC()).unwrap().as_decimal();
+        let rate = NativeRate {
+            instrument_id: instrument.id(),
+            rate: Decimal::new(1, 2),
+            settlement_mark: Some((3_000_000_000, Decimal::from(100))),
+        };
+        native.funding_batch(3_000_000_000, &[rate]).unwrap();
+        assert_eq!(
+            native.balance(Currency::USDC()).unwrap().as_decimal(),
+            before - Decimal::ONE
+        );
+        assert_eq!(native.summary().adjustment_totals["USDC"], -Decimal::ONE);
+        assert_eq!(native.summary().adjustments_applied, 1);
+        assert!(native.positions()[0].realized_pnl.unwrap().as_decimal() < Decimal::ZERO);
+        native
+            .step(4_000_000_000, &instrument, 100.0, 10.0, None)
+            .unwrap();
+        assert_eq!(native.summary().adjustments_applied, 1);
+        native.finish().unwrap();
+    }
+
+    #[test]
+    fn synthetic_conversion_uses_native_fills_fees_and_inventory() {
+        let instrument = spot();
+        let mut native = NativeLedger::new_conversion_scenario(
+            instrument.clone(),
+            Money::from("2 BTC"),
+            Decimal::from(100),
+            Decimal::ZERO,
+            true,
+        )
+        .unwrap();
+        native
+            .step(1_000_000_000, &instrument, 100.0, 10.0, None)
+            .unwrap();
+        native
+            .step(2_000_000_000, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
+            .unwrap();
+        assert_eq!(
+            native.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            native.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(198)
+        );
+        assert_eq!(native.summary().commissions["USDC"], Decimal::from(2));
+        assert_eq!(native.summary().fills, 1);
+        assert!(native
+            .orders()
+            .iter()
+            .any(|order| order.filled_qty().as_decimal() == Decimal::from(2)));
+        native.finish().unwrap();
     }
     #[test]
     fn original_perp_quote_and_settlement_remain_distinct() {
@@ -1552,6 +1830,7 @@ mod tests {
                 &[NativeRate {
                     instrument_id: instrument.id(),
                     rate: Decimal::new(1, 2),
+                    settlement_mark: None,
                 }],
             )
             .unwrap();
@@ -1609,6 +1888,7 @@ mod tests {
                 &[NativeRate {
                     instrument_id: perp.id(),
                     rate: Decimal::new(1, 2),
+                    settlement_mark: None,
                 }],
             )
             .unwrap();
@@ -1701,6 +1981,7 @@ mod tests {
                 &[NativeRate {
                     instrument_id: perp.id(),
                     rate: Decimal::new(1, 2),
+                    settlement_mark: None,
                 }],
             )
             .unwrap();
@@ -2086,8 +2367,14 @@ mod tests {
                 assert_eq!(quote.bid_price.precision, instrument.price_precision());
                 assert_eq!(quote.ask_size.precision, 5);
                 assert_eq!(quote.bid_price.raw(), raw.deltas[1].order.price.raw());
-                assert_eq!(quote.ts_event.as_u64(), 2_000_000_000 - 100);
-                assert_eq!(quote.ts_init.as_u64(), 2_000_000_000);
+                // Native BookUpdater emits only changed BBO values. A new
+                // identical source snapshot refreshes the book, not the quote.
+                assert_eq!(quote.ts_event.as_u64(), 1_000_000_000 - 100);
+                assert_eq!(quote.ts_init.as_u64(), 1_000_000_000);
+                assert_eq!(
+                    cache.order_book(&id).unwrap().ts_last.as_u64(),
+                    2_000_000_000 - 100
+                );
             }
             let mut off_lot = raw_snapshot(3_000_000_000);
             off_lot.deltas[1].order.size = Quantity::from("0.001231");
@@ -2327,6 +2614,7 @@ mod tests {
                     let rates = [NativeRate {
                         instrument_id: id,
                         rate: Decimal::new(5, 2),
+                        settlement_mark: None,
                     }];
                     if funding_with_book {
                         ledger

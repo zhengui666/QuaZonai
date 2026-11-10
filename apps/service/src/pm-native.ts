@@ -1,4 +1,4 @@
-import { boundScienceTarget, withoutExecutionQuotas } from './science-binding.ts';
+import { boundScienceTarget } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -69,7 +69,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   const source = object(frozen.nativeSource, 'fitted_native_source');
   const sourceRequest = object(source.request, 'fitted_source_request');
   const studyInput = object(object(frozen.research, 'frozen_research').input, 'frozen_research_input');
-  if (canonical(object(studyInput.data, 'frozen_research_data')) !== canonical(data) || canonical(withoutExecutionQuotas(sourceRequest)) !== canonical(withoutExecutionQuotas(iterationRequest(data, true)))) return unavailable('fitted_evidence_dataset_revision_mismatch');
+  if (canonical(object(studyInput.data, 'frozen_research_data')) !== canonical(data) || canonical((sourceRequest)) !== canonical((iterationRequest(data, true)))) return unavailable('fitted_evidence_dataset_revision_mismatch');
   const fit = object(source.fit, 'frozen_fit');
   if (!Array.isArray(fit.members) || !fit.members.length) return unavailable('fitted_factor_members_missing');
   const ensembleId = identity('ensemble', [cycle.strategyVersionId, fit]);

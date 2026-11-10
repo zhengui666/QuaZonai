@@ -20,7 +20,7 @@ use domain::spot_cash::SpotCashContext;
 use nautilus_analysis::{
     analyzer::{PortfolioAnalyzer, Statistic},
     statistics::{
-        max_drawdown::MaxDrawdown, returns_volatility::ReturnsVolatility,
+        cagr::CAGR, max_drawdown::MaxDrawdown, returns_volatility::ReturnsVolatility,
         sharpe_ratio::SharpeRatio, sortino_ratio::SortinoRatio,
     },
 };
@@ -68,7 +68,7 @@ fn scenario(request: &NativeSimulationRequestV1) -> Result<&FrozenSpotFeeScenari
         return Err(anyhow!("SPOT_EXPLICIT_FEE_SCENARIO_ACCEPTANCE_REQUIRED"));
     };
     ensure!(
-        native_version == "0.67.0"
+        native_version == crate::NAUTILUS_VERSION
             && matches!(
                 parameters.acceptance,
                 SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability
@@ -376,6 +376,7 @@ fn report_statistics(returns: &ReportCurrencyDailyReturnsV1) -> Vec<NativeStatis
     }
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
+    analyzer.register_statistic(Arc::new(CAGR::new(Some(365))));
     let replacements: [(Statistic, Statistic); 3] = [
         (
             Arc::new(ReturnsVolatility::new(None)),

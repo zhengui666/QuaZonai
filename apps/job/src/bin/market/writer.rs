@@ -185,41 +185,7 @@ impl Writer {
             }
             // Split contiguous native encodings, not all equal precisions across intervening versions.
             for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
-                if !self.verify_only {
-                    self.catalog.write_data_enum(items, None, None, None)?;
-                }
-                let start = Some(items[0].ts_init());
-                let end = Some(items.last().unwrap().ts_init());
-                let ids = Some(vec![key.1.clone()]);
-                let query = CatalogQuery::new(NautilusDataType::from_data(&items[0]))
-                    .with_identifiers(ids)
-                    .with_range(start, end);
-                let mut session = job::catalog::file_batch_session(
-                    &self.catalog,
-                    query,
-                    None,
-                    items.len().saturating_add(1).min(4096),
-                )?;
-                let mut observed = 0;
-                while let Some(batch) = session.next_batch()? {
-                    for index in 0..batch.len() {
-                        // Compare as rows arrive, including the first excess row;
-                        // never collect an unrestricted readback before checking it.
-                        let expected = items
-                            .get(observed)
-                            .context("NATIVE_RECORD_READBACK_MISMATCH")?;
-                        let actual = batch
-                            .get(index)
-                            .context("NATIVE_RECORD_READBACK_MISMATCH")?;
-                        ensure!(
-                            serde_json::to_value(actual.to_owned_data())?
-                                == serde_json::to_value(expected)?,
-                            "NATIVE_RECORD_READBACK_MISMATCH"
-                        );
-                        observed += 1;
-                    }
-                }
-                ensure!(observed == items.len(), "NATIVE_RECORD_READBACK_MISMATCH");
+                job::catalog::publish::publish_batch(&self.catalog, items, self.verify_only)?;
                 self.last_written
                     .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
                 *self
@@ -357,8 +323,8 @@ mod tests {
         assert_eq!(bars[1].close, Price::from("1.24"));
         assert_eq!(bars[0].volume, Quantity::from("2"));
         assert_eq!(bars[1].volume, Quantity::from("1"));
-        assert_eq!(bars[0].ts_event.as_u64(), 60_000_000_000);
-        assert_eq!(bars[1].ts_event.as_u64(), 120_000_000_000);
+        assert_eq!(bars[0].ts_event.as_u64(), 0);
+        assert_eq!(bars[1].ts_event.as_u64(), 60_000_000_000);
         for bar in bars {
             assert_eq!(bar.ts_init.as_u64(), 180_000_000_000);
             assert_eq!(bar.open.precision, 4);

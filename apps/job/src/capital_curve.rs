@@ -1,4 +1,4 @@
-//! Fresh-account native replay, not a rescaling of previously observed fills.
+//! Capital planning only. The durable owner runs each fresh-account native replay.
 use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, RoundingMode, Zero};
 use contracts::{capital_curve::*, DbCounter, DecimalValue, Id, SchemaV1};
@@ -147,29 +147,12 @@ fn plan(capital: &DecimalValue, anchor: &DecimalValue, maximum: u32) -> Result<V
     Ok(points)
 }
 
-pub fn evaluate(
-    catalog: &Path,
-    request: &NativeCapitalCurveRequestV1,
-    dataset_revision_id: Option<Id>,
-) -> Result<NativeCapitalCurveResultV1> {
-    run(catalog, request, dataset_revision_id, false)
-}
-
 /// Native catalog planning for a caller which will perform a fresh allocation
 /// and shared-account study at every amount. Planned amounts are not observations.
 pub fn plan_only(
     catalog: &Path,
     request: &NativeCapitalCurveRequestV1,
     dataset_revision_id: Option<Id>,
-) -> Result<NativeCapitalCurveResultV1> {
-    run(catalog, request, dataset_revision_id, true)
-}
-
-fn run(
-    catalog: &Path,
-    request: &NativeCapitalCurveRequestV1,
-    dataset_revision_id: Option<Id>,
-    plan_only: bool,
 ) -> Result<NativeCapitalCurveResultV1> {
     let started = Instant::now();
     let basis = &request.capital_basis;
@@ -264,7 +247,7 @@ fn run(
             elapsed_ms: DbCounter::ZERO,
             completed_native_events: DbCounter::ZERO,
         },
-        termination: NativeCapitalCurveTerminationV1::Completed,
+        termination: NativeCapitalCurveTerminationV1::PlannedOnly,
         economic_capacity_status: NativeCapitalEconomicStatusV1::Unavailable,
         limitations: vec![
             "FRESH_ACCOUNT_FROZEN_TARGET_PATH_NOT_EXISTING_HOLDINGS_OR_REOPTIMIZATION".into(),
@@ -272,8 +255,7 @@ fn run(
             "COMPLETED_REPLAY_IS_NOT_TARGET_ACHIEVEMENT_OR_ECONOMIC_FEASIBILITY".into(),
             "NO_INTERPOLATION_MONOTONICITY_OR_CAPACITY_UPPER_BOUND".into(),
             "NO_IDENTIFIED_SCALE_IMPACT_SPREAD_AND_EXIT_MODEL".into(),
-            "LEGACY_ELAPSED_BUDGET_IGNORED_NATIVE_OWNER_RETAINS_CANCELLATION".into(),
-            "FAILED_RUN_NATIVE_EVENTS_CPU_MEMORY_AND_FUEL_UNMETERED".into(),
+            "PLANNING_ONLY_EACH_POINT_REQUIRES_AN_OWNED_DURABLE_NATIVE_TASK".into(),
         ],
     };
     if !deployable_capital.is_positive() {
@@ -305,52 +287,7 @@ fn run(
         &report.generation.lower_planning_anchor,
         request.budget.maximum_simulations,
     )?;
-    if plan_only {
-        report.termination = NativeCapitalCurveTerminationV1::PlannedOnly;
-        report.resources.elapsed_ms = elapsed(started)?;
-        return Ok(report);
-    }
-    for capital in &report.generation.planned_capitals {
-        let mut simulation = request.simulation.clone();
-        simulation.settings.starting_capital = capital.clone();
-        report.resources.attempted_simulations += 1;
-        let point_started = Instant::now();
-        let outcome =
-            crate::simulation::simulate_explicit(catalog, &simulation, dataset_revision_id);
-        let duration = elapsed(point_started)?;
-        let (status, result, reason_code) = match outcome {
-            Ok(result) => {
-                report.resources.completed_simulations += 1;
-                report.resources.completed_native_events = count(
-                    report
-                        .resources
-                        .completed_native_events
-                        .get()
-                        .checked_add(result.events.get())
-                        .ok_or_else(|| anyhow::anyhow!("CAPITAL_EVENT_COUNTER_OVERFLOW"))?,
-                )?;
-                (NativeCapitalReplayStatusV1::Completed, Some(result), None)
-            }
-            Err(error) => {
-                report.resources.failed_simulations += 1;
-                (
-                    NativeCapitalReplayStatusV1::Failed,
-                    None,
-                    Some(format!("{error:#}")),
-                )
-            }
-        };
-        report.points.push(NativeCapitalCurvePointV1 {
-            capital: capital.clone(),
-            kind: NativeCapitalPointKindV1::TestedPoint,
-            lower: capital.clone(),
-            upper: capital.clone(),
-            status,
-            elapsed_ms: duration,
-            result,
-            reason_code,
-        });
-    }
+    report.termination = NativeCapitalCurveTerminationV1::PlannedOnly;
     report.resources.elapsed_ms = elapsed(started)?;
     Ok(report)
 }

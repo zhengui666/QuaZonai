@@ -1,7 +1,7 @@
 import { requireTrialReview } from './review-workflow.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
-import type { JsonObject } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Study } from './documents.ts';
 import { CampaignResearchDoc } from './pm-campaign.ts';
 import { compareCampaign, legacySelection } from './pm-comparison.ts';
@@ -10,15 +10,14 @@ import type { ResearchRuntime } from './research-runtime.ts';
 import { finalizeFactor, finalizePortfolio } from '../plugins/final-evaluation.ts';
 
 /** One official owned task closes search; no model call or secondary scheduler. */
-export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'close' }, JsonObject>({
-  name: 'qz.research.close', version: 1, initial: () => ({ phase: 'close' }),
-  phases: { async close(task, runtime, context) {
+export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'wait' | 'close' }, JsonObject>({
+  name: 'qz.research.close', version: 1, initial: () => ({ phase: 'wait' }),
+  phases: { async wait(_task, runtime, context) {
+    const pending = (await runtime.snapshot(Study, runtime.conversationId, context))?.trials.filter(item => item.status === 'STARTED').map(item => item.taskId as TaskId) ?? [];
+    await runtime.commit(() => pending.length ? { status: 'waiting', checkpoint: { phase: 'close' }, on: pending, policy: 'allSettled' } : { status: 'running', checkpoint: { phase: 'close' } }, context);
+  }, async close(task, runtime, context) {
     const api = researchRuntime(runtime);
     try {
-      // Already-admitted tools own their computation and must settle before the
-      // common comparison basis freezes. Rejected closing callers are not waited.
-      const pending = (await runtime.snapshot(Study, runtime.conversationId, context))?.trials.filter(item => item.status === 'STARTED') ?? [];
-      for (const trial of pending) await runtime.waitForTask(trial.taskId as Parameters<typeof runtime.waitForTask>[0], context);
       const selection = await api.commit(async tx => {
         const study = await tx.doc(Study, api.conversationId); const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (study.final) {

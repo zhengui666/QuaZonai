@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ConversationId } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask, type TaskId, type ConversationId } from '@earendil-works/pi-durable';
 import { Study, Requests } from '../../research/src/documents.ts';
 import { ReviewLedger } from '../../research/src/review-documents.ts';
 import { Application, json } from '../src/facts.ts';
@@ -21,8 +21,7 @@ async function seed(state: State, count: number) {
       const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '20' }, pearson_ic: { value: i === 1 ? null : (i - 2) / 1000, status: i === 1 ? 'CONSTANT_SCORE' : 'AVAILABLE' } } }] };
       study.trials = [{ taskId: 1000 + i, proposal: { hypothesis: i === 0 ? 'Hidden hypothesis ancient-hypothesis-needle' : `Hidden hypothesis phrase ${i}`, model: wat }, status: 'COMPUTED', result }];
       study.final = { trialId: 1000 + i, status: 'COMPUTED', result };
-      requests.requests[`request:record-${i}`] = { conversationId: id, input };
-      app.researchRequests[`request:record-${i}`] = { original: { datasetId: 'controlled' }, input: {}, dataset: { id: 'controlled', name: 'Frozen dataset', currency: 'USD' } };
+      requests.requests[`request:record-${i}`] = { conversationId: id, input, metadata: { original: { datasetId: 'controlled' }, dataset: { id: 'controlled', name: 'Frozen dataset', currency: 'USD' } } };
     }
     await tx.createConversation({ ownership: { kind: 'ownerless' } });
     return ids;
@@ -74,6 +73,11 @@ test('portfolio, replay and allocation summaries preserve source names, exact ca
   const state = await setup();
   try {
     const [researchId] = await seed(state, 1);
+    const Receipt = defineTask<null, { phase: 'complete' }, null>({ name: 'test.list-receipt', version: 1, initial: () => ({ phase: 'complete' }),
+      phases: { complete: (_task, runtime, ctx) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx) },
+      abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx) });
+    state.service.research.registry.install(defineExtension({ name: 'test.list-receipt', tasks: [Receipt] }));
+    let allocationTaskId!: TaskId<null>;
     await state.service.research.harness.commit(async tx => {
       const app = await tx.doc(Application);
       app.portfolios['lower'] = json(fact('lower', 'Lower', researchId!, '9007199254740993.000000000000000001', 'USD', -2, -0.3));
@@ -82,9 +86,11 @@ test('portfolio, replay and allocation summaries preserve source names, exact ca
       app.portfolios['deleted'] = json({ ...fact('deleted', 'Deleted', researchId!), deletedAt: '2026-11-01T00:00:00Z' });
       (await tx.doc(TickEconomicReplays)).runs['tick'] = json({ original: { datasetId: 'controlled', factorId: `r${researchId}.t1000.m0`, request: { scenario: {} } },
         view: { id: 'tick', requestId: 'tick-request', datasetId: 'controlled', factorId: `r${researchId}.t1000.m0`, taskId: 123456, status: 'COMPUTED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null } });
-      (await tx.doc(ReviewAllocations)).records['allocation'] = json({ view: { id: 'allocation', requestId: 'request', name: 'Combined', status: 'COMPUTED', portfolioIds: ['lower', 'higher'], taskId: null,
+      allocationTaskId = await tx.createTask(Receipt, null, { conversationId: researchId as ConversationId, ownership: { kind: 'conversation' } });
+      (await tx.doc(ReviewAllocations)).records['allocation'] = json({ view: { id: 'allocation', requestId: 'request', name: 'Combined', status: 'COMPUTED', portfolioIds: ['lower', 'higher'], taskId: allocationTaskId,
         consumedScientificCalls: 100, weights: null, review: null, error: null, createdAt: '2026-11-01T00:00:00.000Z' }, sources: [{ view: { id: 'lower', name: 'Frozen Lower' } }, { view: { id: 'higher', name: 'Frozen Higher' } }] });
     }, context);
+    await state.service.research.harness.waitForTask(allocationTaskId, context);
     const first = await get(state, 'portfolios/list?q=Frozen%20original%20source'); assert.equal(first.total, 3);
     assert.equal(first.facets.source[0].label, 'Frozen original source name'); assert.equal(first.items[0].datasetName, 'Frozen dataset');
     assert.equal((await get(state, 'portfolios/list?sort=sharpe&order=desc')).items[0].id, 'higher');
@@ -135,7 +141,8 @@ test('renamed dataset IDs retain each portfolio and replay source admission name
     await state.service.research.harness.commit(async tx => {
       const app = await tx.doc(Application); const replays = await tx.doc(TickEconomicReplays);
       for (const [index, name] of ['Dataset Alpha', 'Dataset Beta'].entries()) {
-        app.researchRequests[`request:record-${index}`]!.dataset!.name = name;
+        const request = (await tx.doc(Requests)).requests[`request:record-${index}`]!;
+        (request.metadata!.dataset as Record<string, unknown>).name = name;
         const id = `portfolio-${index}`; app.portfolios[id] = json(fact(id, `Portfolio ${index}`, ids[index]!));
         const factorId = `r${ids[index]}.t${1000 + index}.m0`;
         replays.runs[`replay-${index}`] = json({ original: { datasetId: 'controlled', factorId, request: { scenario: {} } },
@@ -159,7 +166,7 @@ test('renamed dataset IDs retain each portfolio and replay source admission name
     await state.restart();
     for (const collection of ['portfolios', 'tick-economic-replays']) assert.equal((await get(state, `${collection}/list?q=Beta`)).items[0].datasetName, 'Dataset Beta');
     await state.service.research.harness.commit(async tx => {
-      delete (await tx.doc(Application)).researchRequests['request:record-1']!.dataset!.name;
+      delete ((await tx.doc(Requests)).requests['request:record-1']!.metadata!.dataset as Record<string, unknown>).name;
     }, context);
     for (const collection of ['portfolios', 'tick-economic-replays']) {
       assert.equal((await get(state, `${collection}/list?q=Beta`)).total, 0);

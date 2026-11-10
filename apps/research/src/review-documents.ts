@@ -4,7 +4,7 @@ import type { ReviewReport } from '../../../packages/contracts/src/review.ts';
 
 /** Original review receipts live on the same official Durable transaction line. */
 export const ReviewLedger = defineDoc<{ records: Record<string, JsonObject> }>({
-  kind: 'qz.review-ledger', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ records: {} }),
+  kind: 'qz.review-ledger', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ records: {} }),
 });
 /** This document belongs exclusively to the isolated reviewer conversation. */
 export const ReviewSession = defineDoc<{
@@ -12,7 +12,7 @@ export const ReviewSession = defineDoc<{
   narrative: string | null; findings: JsonObject[];
   nativeResults: JsonObject[];
 }>({
-  kind: 'qz.review-session', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  kind: 'qz.review-session', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ binding: null, evidence: null, reads: [], calls: 0, finished: false, narrative: null, findings: [], nativeResults: [] }),
 });
 

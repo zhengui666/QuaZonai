@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import { copyNativeFile, nativeDestination } from './native-files.mjs';
+import { nativeManifest } from './build-identity.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const { values } = parseArgs({ options: {
@@ -76,6 +77,9 @@ try {
   if (!timeoutVersion.includes('GNU coreutils')) throw new Error('Native GNU timeout required');
   const sourceCommit = run('tested-source', 'git', ['rev-parse', 'HEAD']).stdout.trim();
   copyNative(executable, '/usr/local/bin/job');
+  const identity = await nativeManifest({ job: executable });
+  fs.mkdirSync(destination('/usr/share/doc/quazonai'), { recursive: true, mode: 0o755 });
+  fs.writeFileSync(destination('/usr/share/doc/quazonai/native-manifest.json'), JSON.stringify(identity, null, 2) + '\n');
   copyNative(timeoutBinary, '/usr/bin/timeout');
   for (const binary of archiveBinaries) copyNative(binary, binary);
   fs.mkdirSync(destination('/opt/rust'), { recursive: true, mode: 0o755 });

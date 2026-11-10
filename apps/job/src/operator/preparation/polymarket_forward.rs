@@ -123,7 +123,7 @@ fn original_price(instrument: &InstrumentAny, price: nautilus_model::types::Pric
 /// cannot be assigned these meanings merely because their values look similar.
 fn quote_fields<'a>(schema: &'a [FeatureDefinitionV1], instrument: &str) -> Result<Vec<&'a str>> {
     domain::execution::features::schema(schema)?;
-    let expected = format!("nautilus-polymarket/0.67.0/quote/{instrument}");
+    let expected = format!("nautilus-polymarket/0.68.0/quote/{instrument}");
     schema
         .iter()
         .map(|f| {
@@ -729,7 +729,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         roundtrip.row_count.get() == bars.len() as u64,
         "FORWARD_NATIVE_READBACK"
     );
-    let receipt = json!({"schema_version":1,"status":"PREPARED_UNREGISTERED","native_version":"0.67.0","native_source_session_id":observed.native_session_id,"source_plan":plan.source,"warmup_rows":series.bars.len(),"new_bars":observed.bars.len(),"feature_observations":rows.len(),"catalog":"prepared/catalog","metadata":"prepared/catalog-metadata.json","features":"forward-features.json","pit":"UNVERIFIED","warmup_model_replay":"NOT_PERFORMED_CURRENT_DECISION_RECHECKS_ORIGINAL_POLICY","orders":false});
+    let receipt = json!({"schema_version":1,"status":"PREPARED_UNREGISTERED","native_version":"0.68.0","native_source_session_id":observed.native_session_id,"source_plan":plan.source,"warmup_rows":series.bars.len(),"new_bars":observed.bars.len(),"feature_observations":rows.len(),"catalog":"prepared/catalog","metadata":"prepared/catalog-metadata.json","features":"forward-features.json","pit":"UNVERIFIED","warmup_model_replay":"NOT_PERFORMED_CURRENT_DECISION_RECHECKS_ORIGINAL_POLICY","orders":false});
     write_new(
         &args.output.join("forward-preparation.json"),
         &serde_json::to_vec_pretty(&receipt)?,

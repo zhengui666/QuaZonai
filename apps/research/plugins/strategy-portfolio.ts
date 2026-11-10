@@ -1,8 +1,8 @@
+import { arr, int, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import { finalizePortfolio } from './final-evaluation.ts';
-import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.ts';
+import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { resolvePortfolioPolicy, strategyMembers } from '../src/strategy.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
@@ -13,10 +13,10 @@ import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.
 export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
   tools: [defineTool({
-    name: 'strategy_portfolio_evaluate',
+    name: 'strategy_portfolio_evaluate', structuredOutputSchema: trialFeedbackSchema,
     description: 'Register one complete causal Wasm ensemble with exact positive member weights summing to 1. For catalog-ensemble use the registered v2 feature ABI and at least two members: every source market is scanned and capital follows fresh opportunities dynamically; do not supply instrumentId or allocations. Proposed member count and weights are search variables. Scientific execution is unmetered; historical fuel settings do not limit proposed members. For cross-market-threshold use allocations:"ALL_EQUAL" or explicit admitted allocations; legacy factor-threshold optionally selects instrumentId. All markets share the original TOTAL account capital, never capital per market. ONE native shared account trades VALIDATION; conditional source/proxy assumptions remain explicit and computation is not qualification. Historical mode and all failures/controls retain the original trial ledger.',
-    parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), parentTrialIds: Type.Optional(Type.Array(Type.String())), members: Type.Array(Type.Object({ model: Type.String(), weight: Type.String() })), instrumentId: Type.Optional(Type.String()),
-      allocations: Type.Optional(Type.Union([Type.Literal('ALL_EQUAL'), Type.Array(Type.Object({ instrumentId: Type.String(), weight: Type.String() }))])) }),
+    parameters: obj({ hypothesis: str(), hypothesisId: opt(str()), parentTrialIds: opt(arr(str())), members: arr(obj({ model: str(), weight: str() })), instrumentId: opt(str()),
+      allocations: opt(union([lit('ALL_EQUAL'), arr(obj({ instrumentId: str(), weight: str() }))])) }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
@@ -34,15 +34,15 @@ export default defineExtension({
         const data = policy.kind === 'catalog-ensemble' ? await catalogScope(api, context, input.data) : input.data;
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
         return runPortfolio(api, context, { members, policy, data: policy.kind === 'catalog-ensemble' ? data : { ...data, request }, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
-      }));
+      }), true);
     },
   }), defineTool({
     name: 'strategy_portfolio_finalize',
     description: 'Select an original COMPUTED ensemble for ONE owner-only HELDOUT shared-account final evaluation using the original sealed binding/policy. Default exposure rules require independent data; an original HISTORICAL_REASSESSMENT binding permits only explicitly exposed historical reassessment, not unseen evidence. Ends research. Final metrics are NEVER returned for tuning. Call alone in the final round.',
-    parameters: Type.Object({ trialId: Type.Integer(), reason: Type.String() }), replay: 'safe', executionMode: 'sequential',
+    parameters: obj({ trialId: int(), reason: str() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       await finalizePortfolio(args, api, context);
-      return { content: [{ type: 'text', text: 'Research ended. Original ensemble selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
+      return { output: [{ type: 'text', text: 'Research ended. Original ensemble selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
     },
   })],
 });

@@ -63,7 +63,7 @@ function readCredentialState(value: unknown): CredentialState {
     ...(typeof state.backtestTokenEnv === 'string' ? { backtestTokenEnv: state.backtestTokenEnv } : {}), connectionTokenEnvs: readEnvs(state.connectionTokenEnvs) };
 }
 
-function migrateLegacyTokens<T extends Pick<InstanceSettingsView, 'backtest' | 'connections'>>(value: T): T {
+function resolveConfiguredTokens<T extends Pick<InstanceSettingsView, 'backtest' | 'connections'>>(value: T): T {
   const migrate = <T extends { token?: string; tokenEnv?: string }>(item: T): T => {
     const token = !Object.hasOwn(item, 'token') && item.tokenEnv ? process.env[item.tokenEnv] : undefined;
     const { tokenEnv: _tokenEnv, credentialRef: _credentialRef, ...rest } = item as T & { credentialRef?: string };
@@ -72,7 +72,7 @@ function migrateLegacyTokens<T extends Pick<InstanceSettingsView, 'backtest' | '
   return { ...value, backtest: value.backtest ? migrate(value.backtest) : null, connections: value.connections.map(migrate) };
 }
 
-function legacyTokenEnvs(value: InstanceSettingsView): Pick<CredentialState, 'backtestTokenEnv' | 'connectionTokenEnvs'> {
+function configuredTokenEnvs(value: InstanceSettingsView): Pick<CredentialState, 'backtestTokenEnv' | 'connectionTokenEnvs'> {
   return { ...(value.backtest?.tokenEnv && !Object.hasOwn(value.backtest, 'token') ? { backtestTokenEnv: value.backtest.tokenEnv } : {}),
     connectionTokenEnvs: Object.fromEntries(value.connections.filter(connection => connection.tokenEnv && !Object.hasOwn(connection, 'token')).map(connection => [connection.id, connection.tokenEnv!])) };
 }
@@ -161,15 +161,15 @@ export async function instanceSettings(config: ServiceConfig) {
     const stored = JSON.parse(await readFile(path, 'utf8')) as StoredSettings;
     const { credentialState, ...view } = stored;
     credentials = readCredentialState(credentialState);
-    const legacy = legacyTokenEnvs(view as InstanceSettingsView);
+    const legacy = configuredTokenEnvs(view as InstanceSettingsView);
     credentials = { ...credentials, ...(!credentials.backtestTokenEnv && legacy.backtestTokenEnv ? { backtestTokenEnv: legacy.backtestTokenEnv } : {}),
       connectionTokenEnvs: { ...legacy.connectionTokenEnvs, ...credentials.connectionTokenEnvs } };
-    current = migrateLegacyTokens(validate(view, 'revision') as InstanceSettingsView);
+    current = resolveConfiguredTokens(validate(view, 'revision') as InstanceSettingsView);
     loaded = true;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 
-  if (!loaded) credentials = { ...credentials, ...legacyTokenEnvs(current) };
-  current = migrateLegacyTokens(current);
+  if (!loaded) credentials = { ...credentials, ...configuredTokenEnvs(current) };
+  current = resolveConfiguredTokens(current);
   const assigned = assignCurrentRefs(current, credentials);
   credentials = assigned.state;
   for (const [reference, token] of Object.entries(credentials.history)) setRemoteNativeCredential(reference, token);
@@ -181,8 +181,8 @@ export async function instanceSettings(config: ServiceConfig) {
   const view = () => structuredClone(current);
   function save(value: unknown): Promise<InstanceSettingsView> {
     const raw = validate(value, 'expectedRevision') as InstanceSettingsUpdate;
-    const input = migrateLegacyTokens(raw);
-    const legacy = legacyTokenEnvs(raw as unknown as InstanceSettingsView);
+    const input = resolveConfiguredTokens(raw);
+    const legacy = configuredTokenEnvs(raw as unknown as InstanceSettingsView);
     const pending = tail.then(async () => {
       if (closing) throw new Problem('service_closing', 503);
       // PUT reconciliation after a lost successful response preserves the newer

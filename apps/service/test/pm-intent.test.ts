@@ -1,7 +1,7 @@
+import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { Type } from '@earendil-works/pi-ai';
 import type { ConversationId, JsonObject } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
 import type { PmIntentClarification } from '../../../packages/contracts/src/pm-intent.ts';
@@ -18,14 +18,14 @@ import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts
 // native no-borrow enforcement or investment qualification.
 const probe = defineExtension({ name: 'test.pm-intent-protocol', tools: [defineTool({
   name: 'pm_intent_protocol_attempt', description: 'A protocol-only attempt with no scientific or economic qualification.',
-  parameters: Type.Object({}), replay: 'safe',
+  parameters: obj({}), replay: 'safe',
   async execute(_args, api, ctx) {
     const hypothesis = await registerHypothesis(api, ctx, { economicFamilyId: 'protocol:intent-recovery',
       mechanism: 'Verify authenticated clarification restores permitted research admission.',
       prediction: 'The original shared budget records one attempt.', falsification: 'An unresolved constraint is ignored or the budget resets.',
       requiredDataCapabilities: [], incrementalQuestion: 'Can the clarified campaign preserve its inherited constraints and ledger?' });
     await evaluateTrial(api, ctx, { hypothesisId: hypothesis.id, hypothesis: 'Only a protocol observation.' }, async () => ({ protocolOnly: true }));
-    return { content: [{ type: 'text', text: 'Protocol attempt recorded; no performance or no-borrow evidence.' }] };
+    return { output: [{ type: 'text', text: 'Protocol attempt recorded; no performance or no-borrow evidence.' }] };
   },
 })] });
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
@@ -56,7 +56,7 @@ async function start(state: Fixture, goal: string, requestId: string) {
   const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
     // One owner-authorized protocol attempt gives the accepted research a real
     // finite stop condition. This budget cannot qualify a native PM strategy.
-    requestId, goal, datasetId: 'controlled', model: state.model, maxTrials: 1, businessPreference: 'NET_RETURN',
+    requestId, goal, datasetId: 'controlled', model: state.model, businessPreference: 'NET_RETURN',
     funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, operatingAuthority: 'RESEARCH_ONLY' } });
   assert.equal(response.statusCode, 202, response.body); return response.json<PmMandateView>();
 }

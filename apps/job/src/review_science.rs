@@ -1,6 +1,14 @@
 //! Deterministic diagnostics. Inputs are evidence, never forecasts of profitability.
 use anyhow::{ensure, Result};
 use contracts::{factors::*, review_science::*, SchemaV1};
+use nautilus_analysis::{
+    statistic::PortfolioStatistic,
+    statistics::{max_drawdown::MaxDrawdown, returns_avg::ReturnsAverage},
+    Returns,
+};
+use nautilus_core::UnixNanos;
+use ndarray::{Array2, ArrayView1};
+use ndarray_stats::CorrelationExt;
 use std::collections::{BTreeMap, BTreeSet};
 
 const METHOD: &str = "qz.review-science.v1";
@@ -37,22 +45,16 @@ fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len() as f64
 }
 fn correlation(x: &[f64], y: &[f64]) -> Option<f64> {
-    if x.len() < 3 || x.len() != y.len() {
+    if x.len() < 3
+        || x.len() != y.len()
+        || x.iter().all(|value| *value == x[0])
+        || y.iter().all(|value| *value == y[0])
+    {
         return None;
     }
-    let mx = mean(x);
-    let my = mean(y);
-    let mut xx = 0.0;
-    let mut yy = 0.0;
-    let mut xy = 0.0;
-    for (x, y) in x.iter().zip(y) {
-        xx += (x - mx).powi(2);
-        yy += (y - my).powi(2);
-        xy += (x - mx) * (y - my);
-    }
-    (xx > 0.0 && yy > 0.0)
-        .then(|| xy / xx.sqrt() / yy.sqrt())
-        .filter(|v| v.is_finite())
+    let matrix = Array2::from_shape_vec((2, x.len()), x.iter().chain(y).copied().collect()).ok()?;
+    let value = matrix.pearson_correlation().ok()?[[0, 1]];
+    value.is_finite().then_some(value)
 }
 /// Reuse ranking storage across synchronized groups and bootstrap replicates.
 /// Reuse one contiguous column cache for both scores and labels. Sorting reads
@@ -357,15 +359,30 @@ fn validate_returns(
     }
     Ok(())
 }
-fn sharpe(values: &[f64]) -> Option<f64> {
-    if values.len() < 3 {
+/// Keep original observation timestamps and frequency. The native SharpeRatio
+/// down-samples to UTC days, which would change DSR/CSCV's sample and trial ranks.
+fn observation_returns(values: &[f64], timestamps: &[contracts::DbCounter]) -> Returns {
+    timestamps
+        .iter()
+        .zip(values)
+        .map(|(at, value)| (UnixNanos::from(at.get()), *value))
+        .collect()
+}
+
+fn raw_observation_sharpe(returns: &Returns) -> Option<f64> {
+    if returns.len() < 3
+        || returns
+            .first_key_value()
+            .is_some_and(|(_, first)| returns.values().all(|value| value == first))
+    {
         return None;
     }
-    let m = mean(values);
-    let variance = values.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
-    (variance > 0.0)
-        .then(|| m / variance.sqrt())
-        .filter(|v| v.is_finite())
+    let statistic = ReturnsAverage {};
+    let average = statistic.calculate_from_returns(returns)?;
+    let std = statistic.calculate_std(returns);
+    (std.is_finite() && std > 0.0)
+        .then(|| average / std)
+        .filter(|value| value.is_finite())
 }
 // Standard normal CDF, Abramowitz-Stegun 26.2.17; absolute approximation error < 7.5e-8.
 fn normal_cdf(x: f64) -> f64 {
@@ -420,22 +437,19 @@ fn interval_mean(values: &[f64], block: usize) -> Option<(f64, f64)> {
         quantile(&mut samples, 0.975)?,
     ))
 }
-fn max_drawdown(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
+fn native_max_drawdown(returns: &Returns) -> Option<f64> {
+    if returns.is_empty() {
         return None;
     }
-    let mut nav = 1.0_f64;
-    let mut peak = 1.0_f64;
-    let mut loss = 0.0_f64;
-    for r in values {
-        nav *= 1.0 + r;
-        if !nav.is_finite() {
-            return None;
-        }
-        peak = peak.max(nav);
-        loss = loss.max(1.0 - nav / peak);
-    }
-    Some(loss)
+    // Native MaxDrawdown has no overflow/missing-evidence guard. Keep this input
+    // validity check outside the statistic, without calculating drawdown again.
+    returns.values().try_fold(1.0_f64, |nav, value| {
+        let next = nav * (1.0 + value);
+        next.is_finite().then_some(next)
+    })?;
+    MaxDrawdown::new()
+        .calculate_from_returns(returns)
+        .filter(|value| value.is_finite())
 }
 
 pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewScienceResultV1> {
@@ -509,7 +523,12 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
             } else {
                 "DSR_REQUIRES_COMPARABLE_SHARPE_DISTRIBUTION"
             };
-            let sharpes: Vec<_> = trials.iter().filter_map(|s| sharpe(&s.returns)).collect();
+            let sharpes: Vec<_> = trials
+                .iter()
+                .filter_map(|series| {
+                    raw_observation_sharpe(&observation_returns(&series.returns, timestamps_ns))
+                })
+                .collect();
             let dsr = if *ledger_complete
                 && *block_length == 1
                 && *total_trials >= 1
@@ -520,18 +539,20 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
             {
                 let s = &trials[selected].returns;
                 let sr = sharpes[selected];
-                let m = mean(s);
-                let sd = (s.iter().map(|v| (v - m).powi(2)).sum::<f64>() / s.len() as f64).sqrt();
+                let original_returns = observation_returns(s, timestamps_ns);
+                let native = ReturnsAverage {};
+                let m = native.calculate_from_returns(&original_returns).unwrap();
+                // DSR's empirical moments use population dispersion, while its
+                // Sharpe uses ddof=1. Convert the native sample estimator rather
+                // than silently substituting bias-corrected skew/kurtosis.
+                let sd = native.calculate_std(&original_returns)
+                    * (((s.len() - 1) as f64) / s.len() as f64).sqrt();
                 let skew = s.iter().map(|v| ((v - m) / sd).powi(3)).sum::<f64>() / s.len() as f64;
                 let kurt = s.iter().map(|v| ((v - m) / sd).powi(4)).sum::<f64>() / s.len() as f64;
                 let variance = if sharpes.len() == 1 {
                     0.0
                 } else {
-                    sharpes
-                        .iter()
-                        .map(|v| (v - mean(&sharpes)).powi(2))
-                        .sum::<f64>()
-                        / (sharpes.len() - 1) as f64
+                    ArrayView1::from(sharpes.as_slice()).var(1.0)
                 };
                 let n = *total_trials as f64;
                 let gamma = 0.5772156649015329;
@@ -561,7 +582,7 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 && timestamps_ns.len() >= 32
                 && timestamps_ns.len() / 8 >= *block_length as usize
             {
-                pbo(trials)
+                pbo(trials, timestamps_ns)
             } else {
                 None
             };
@@ -575,6 +596,7 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 },
             ));
             out.limitations.push("DSR uses all recorded attempts as conservative independent-trial count, per-observation unannualized Sharpe and empirical skew/kurtosis. It assumes independent return observations; declared dependence (block_length > 1) is unsupported rather than inflating sample size. Missing/failed return rows are never zero-filled.".into());
+            out.limitations.push("Observation Sharpe uses native ReturnsAverage and sample standard deviation (ddof=1) on original timestamps, without UTC-day resampling or annualization. Nonfinite dispersion is unavailable.".into());
             if *total_trials == 1 {
                 out.limitations.push("Explicit complete single-trial ledger: zero selection-inflation benchmark, the probabilistic Sharpe special case. Missing ledgers never imply a single trial.".into());
             }
@@ -596,6 +618,8 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
             )?;
             out.scope = "SHARED_ACCOUNT".into();
             out.observations = timestamps_ns.len().try_into()?;
+            let candidate_returns = observation_returns(&candidate.returns, timestamps_ns);
+            let baseline_returns = observation_returns(&baseline.returns, timestamps_ns);
             let delta: Vec<_> = candidate
                 .returns
                 .iter()
@@ -667,25 +691,26 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 ),
                 metric(
                     "drawdown_reduction",
-                    max_drawdown(&baseline.returns)
-                        .zip(max_drawdown(&candidate.returns))
-                        .map(|(b, a)| b - a),
+                    native_max_drawdown(&candidate_returns)
+                        .zip(native_max_drawdown(&baseline_returns))
+                        .map(|(candidate, baseline)| candidate - baseline),
                     "NONFINITE_EQUITY",
                 ),
                 metric(
                     "sharpe_delta",
-                    sharpe(&candidate.returns)
-                        .zip(sharpe(&baseline.returns))
+                    raw_observation_sharpe(&candidate_returns)
+                        .zip(raw_observation_sharpe(&baseline_returns))
                         .map(|(a, b)| a - b),
                     "CONSTANT_OR_INSUFFICIENT_RETURNS",
                 ),
             ];
             out.limitations.push("Paired differences require original shared-account net returns with matching currency, frequency, interval, costs and initial state, verified by the caller. No curves are summed and no missing returns are imputed.".into());
+            out.limitations.push("Drawdown uses native MaxDrawdown negative fractions; improvement is candidate minus baseline. Sharpe differences use original-observation native mean/sample standard deviation, without resampling or annualization.".into());
         }
     }
     Ok(out)
 }
-fn pbo(trials: &[NativeReviewReturnSeriesV1]) -> Option<f64> {
+fn pbo(trials: &[NativeReviewReturnSeriesV1], timestamps: &[contracts::DbCounter]) -> Option<f64> {
     let n = trials[0].returns.len();
     let mut failures = 0;
     let mut splits = 0;
@@ -693,8 +718,8 @@ fn pbo(trials: &[NativeReviewReturnSeriesV1]) -> Option<f64> {
         if mask.count_ones() != 4 {
             continue;
         }
-        let mut train = vec![Vec::new(); trials.len()];
-        let mut test = vec![Vec::new(); trials.len()];
+        let mut train = vec![Returns::new(); trials.len()];
+        let mut test = vec![Returns::new(); trials.len()];
         for block in 0..8 {
             for (row, series) in trials.iter().enumerate() {
                 let target = if mask & (1 << block) != 0 {
@@ -702,11 +727,21 @@ fn pbo(trials: &[NativeReviewReturnSeriesV1]) -> Option<f64> {
                 } else {
                     &mut test[row]
                 };
-                target.extend_from_slice(&series.returns[n * block / 8..n * (block + 1) / 8]);
+                let range = n * block / 8..n * (block + 1) / 8;
+                target.extend(observation_returns(
+                    &series.returns[range.clone()],
+                    &timestamps[range],
+                ));
             }
         }
-        let train: Vec<_> = train.iter().map(|v| sharpe(v)).collect::<Option<_>>()?;
-        let test: Vec<_> = test.iter().map(|v| sharpe(v)).collect::<Option<_>>()?;
+        let train: Vec<_> = train
+            .iter()
+            .map(raw_observation_sharpe)
+            .collect::<Option<_>>()?;
+        let test: Vec<_> = test
+            .iter()
+            .map(raw_observation_sharpe)
+            .collect::<Option<_>>()?;
         let best = train.iter().copied().max_by(f64::total_cmp)?;
         let winners: Vec<_> = train
             .iter()
@@ -727,4 +762,60 @@ fn pbo(trials: &[NativeReviewReturnSeriesV1]) -> Option<f64> {
         splits += 1;
     }
     (splits == 70).then(|| failures as f64 / splits as f64)
+}
+
+#[cfg(test)]
+mod native_statistic_tests {
+    use super::*;
+    use nautilus_analysis::statistics::sharpe_ratio::SharpeRatio;
+
+    fn observed(values: &[f64]) -> Returns {
+        observation_returns(
+            values,
+            &(0..values.len())
+                .map(|index| {
+                    contracts::DbCounter::new(1_700_000_000_000_000_000 + index as u64).unwrap()
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn raw_sharpe_preserves_intraday_observations_and_sample_dispersion() {
+        let returns = observed(&[0.1, -0.05, 0.1]);
+        assert_eq!(returns.len(), 3);
+        assert!((raw_observation_sharpe(&returns).unwrap() - 1.0 / 3.0_f64.sqrt()).abs() < 1e-14);
+        // The same observations form one UTC day, so the standard native Sharpe
+        // cannot provide the raw observation statistic needed by DSR/CSCV.
+        assert!(!SharpeRatio::new(Some(1))
+            .calculate_from_returns(&returns)
+            .unwrap()
+            .is_finite());
+        assert_eq!(raw_observation_sharpe(&observed(&[0.1; 3])), None);
+        assert_eq!(raw_observation_sharpe(&observed(&[0.1, -0.1])), None);
+        assert_eq!(raw_observation_sharpe(&Returns::new()), None);
+        assert_eq!(
+            raw_observation_sharpe(&observed(&[f64::MAX, -0.1, f64::MAX])),
+            None
+        );
+    }
+
+    #[test]
+    fn native_negative_drawdown_reports_improvement_and_rejects_unknown_equity() {
+        let baseline = native_max_drawdown(&observed(&[-0.2, 0.25])).unwrap();
+        let candidate = native_max_drawdown(&observed(&[-0.1, 1.0 / 9.0])).unwrap();
+        assert!((baseline + 0.2).abs() < 1e-14);
+        assert!((candidate - baseline - 0.1).abs() < 1e-14);
+        assert_eq!(native_max_drawdown(&observed(&[-1.0])), Some(-1.0));
+        assert_eq!(native_max_drawdown(&Returns::new()), None);
+        assert_eq!(native_max_drawdown(&observed(&[f64::MAX, f64::MAX])), None);
+    }
+
+    #[test]
+    fn native_correlation_keeps_undefined_inputs_unavailable() {
+        assert_eq!(correlation(&[1.0, 1.0, 1.0], &[1.0, 2.0, 3.0]), None);
+        assert_eq!(correlation(&[0.1, 0.1, 0.1], &[1.0, 2.0, 3.0]), None);
+        assert_eq!(correlation(&[1.0, 2.0], &[1.0, 2.0]), None);
+        assert!((correlation(&[1.0, 2.0, 3.0], &[3.0, 2.0, 1.0]).unwrap() + 1.0).abs() < 1e-14);
+    }
 }

@@ -18,13 +18,13 @@ async function fixture() {
   return state;
 }
 const input = (state: State, requestId: string): PmMandateStart => ({ requestId, goal: 'Preserve the chosen research execution settings.',
-  datasetId: 'controlled', funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '1000', currency: 'USD' } }, model: state.model, maxTrials: 1 });
+  datasetId: 'controlled', funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '1000', currency: 'USD' } }, model: state.model });
 const start = (state: State, value: object) => state.service.app.inject({ method: 'POST', url: `${api}/mandates`, headers: state.headers, payload: value });
 async function nativeStudy(state: State, view: PmMandateView) {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const admission = (await state.service.research.harness.snapshot(Requests, context))?.requests[`request:pm:${view.campaigns[0]!.id}`];
-    if (admission) return { id: admission.conversationId, study: (await state.service.research.harness.snapshot(Study, admission.conversationId, context))! };
+    if (admission?.conversationId != null) return { id: admission.conversationId, study: (await state.service.research.harness.snapshot(Study, admission.conversationId, context))! };
     assert.ok(Date.now() < deadline, 'The admitted mandate must reach its original native research.');
     await new Promise(resolve => setTimeout(resolve, 10));
   }

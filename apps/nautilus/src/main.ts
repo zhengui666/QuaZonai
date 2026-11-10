@@ -6,6 +6,7 @@ if (!Array.isArray(roots) || !roots.every(root => typeof root === 'string' && ro
 const worker = await createNautilusWorker({
   binary: process.env.QZ_JOB_BINARY ?? '/opt/quazonai/bin/job',
   tickBinary: process.env.QZ_TICK_JOB_BINARY,
+  manifestPath: process.env.QZ_NATIVE_MANIFEST,
   dataDir: resolve(process.env.QZ_NAUTILUS_DATA_DIR ?? 'data/nautilus'),
   catalogRoots: roots,
   token: process.env.QZ_NAUTILUS_TOKEN,

@@ -47,6 +47,7 @@ function frozenCycle(target?: RemoteNativeTarget) {
 }
 
 test('resumed PM computation uses its frozen remote instance and refuses legacy local work', { timeout: 20_000 }, async () => {
+  const host = await setup();
   const first = await boundary('original'); const second = await boundary('replacement');
   const root = await mkdtemp(join(tmpdir(), 'qz-pm-binding-')); const strict = process.env.QZ_REQUIRE_REMOTE_NAUTILUS;
   try {
@@ -54,16 +55,16 @@ test('resumed PM computation uses its frozen remote instance and refuses legacy 
     const recovered = JSON.parse(await readFile(saved, 'utf8')) as ReturnType<typeof frozenCycle>;
     const config = configDefaults({ dataDir: root, nautilus: { backtest: second.target } });
     process.env.QZ_REQUIRE_REMOTE_NAUTILUS = '1';
-    await assert.rejects(computePmDecision(recovered.record, recovered.cycle, config, BACKGROUND_CONTEXT), /original_transport_boundary/);
+    await assert.rejects(host.service.research.withNativeHost(() => computePmDecision(recovered.record, recovered.cycle, config, BACKGROUND_CONTEXT)), /original_transport_boundary/);
     assert.deepEqual(first.requests, ['GET /v1/capabilities', 'POST /v1/execute']);
     assert.deepEqual(second.requests, [], 'new application configuration cannot redirect a recovered PM cycle');
     const legacy = frozenCycle();
-    await assert.rejects(computePmDecision(legacy.record, legacy.cycle, config, BACKGROUND_CONTEXT), /legacy_local_nautilus_task_requires_migration/);
+    await assert.rejects(computePmDecision(legacy.record, legacy.cycle, config, BACKGROUND_CONTEXT), /local_nautilus_target_disabled/);
     assert.equal(first.requests.length, 2); assert.equal(second.requests.length, 0);
-    assert.throws(() => boundScienceTarget(config, {}), /legacy_local_nautilus_task_requires_migration/);
+    assert.throws(() => boundScienceTarget(config, {}), /local_nautilus_target_disabled/);
   } finally {
     if (strict === undefined) delete process.env.QZ_REQUIRE_REMOTE_NAUTILUS; else process.env.QZ_REQUIRE_REMOTE_NAUTILUS = strict;
-    await first.app.close(); await second.app.close(); await rm(root, { recursive: true, force: true });
+    await first.app.close(); await second.app.close(); await host.cleanup(); await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -87,7 +88,7 @@ test('new PM mandates freeze distinct configured instances without rewriting a s
       state.options.config.nautilus = { backtest: target }; dataset.data = bindScienceData(dataset.data, target); await state.restart();
       const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
         payload: { requestId: `configured-instance-${index}`, goal: 'Retain source facts and the newly admitted remote instance.', datasetId: dataset.id,
-          model: state.model, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, maxTrials: 1 } });
+          model: state.model, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } } });
       assert.equal(response.statusCode, 202, response.body); ids.push(response.json<Pm.PmMandateView>().mandate.id);
       const stored = pmState(await state.service.research.harness.snapshot(PmDocument, context));
       const current = stored.mandates[ids[index]!]!;

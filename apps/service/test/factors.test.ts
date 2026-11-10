@@ -48,7 +48,7 @@ test('catalog ensemble account metrics remain on the research and are never attr
 
 test('real member diagnostics retain their own values without inheriting the shared account criterion', () => {
   const result = { ...account('HELDOUT'), components: [{ summary: { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: 0.1 } } }] } }] };
-  const input = researchInput({ goal: specification.question, specification, model: { provider: 'test', modelId: 'test' }, data: {}, policy: { max_trials: 1 } });
+  const input = researchInput({ goal: specification.question, specification, model: { provider: 'test', modelId: 'test' }, data: {}, policy: { } });
   const factors = factorViews(3, { input, trials: [{ taskId: 17, status: 'COMPUTED', proposal, result }], final: { status: 'COMPUTED', trialId: 17, result } });
   assert.equal(factors[0]!.metrics.find(metric => metric.key === 'HELDOUT.pearson_ic')!.value, 0.1);
   assert.equal(factors[0]!.metrics.some(metric => metric.key.includes('portfolio')), false);
@@ -60,7 +60,7 @@ test('real member diagnostics retain their own values without inheriting the sha
 
 test('legacy single-factor results keep their metrics and qualification', () => {
   const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: 0.2 } } }] };
-  const input = researchInput({ goal: 'Legacy factor', model: { provider: 'test', modelId: 'test' }, data: {}, policy: { max_trials: 1, strategy: {} } });
+  const input = researchInput({ goal: 'Legacy factor', model: { provider: 'test', modelId: 'test' }, data: {}, policy: { strategy: {} } });
   const study = { input, trials: [{ taskId: 17, status: 'COMPUTED', proposal: { model: wat }, result }], final: { status: 'COMPUTED', trialId: 17, result } };
   const factor = factorViews(3, study)[0]!;
   assert.equal(factor.metrics.find(metric => metric.key === 'HELDOUT.pearson_ic')!.value, 0.2);

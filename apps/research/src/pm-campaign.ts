@@ -44,12 +44,13 @@ export type CampaignResearchState = {
   closureTaskId: TaskId<JsonObject> | null;
   previousClosures?: { taskId: TaskId<JsonObject>; reason: string | null }[];
   closingReason: string | null;
+  ownerStopTaskId?: TaskId<null>;
   intake: StrategyIntake | null;
-  orchestration: { policyVersion: 'qz.research.resources/1'; maximumModelTurns?: number; generationTaskIds: number[] } | null;
+  orchestration: { policyVersion: 'qz.research.resources/1'; generationTaskIds: number[] } | null;
 };
 /** Research-owned facts; the service owns Mandate/Campaign lifecycle records. */
 export const CampaignResearchDoc = defineDoc<CampaignResearchState>({
-  kind: 'qz.research-campaign', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  kind: 'qz.research-campaign', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ binding: null, state: 'SEARCHING', hypotheses: [], trials: [], budgetMovements: [], resourceMeasurements: [], allocations: [], comparisons: [], observations: {}, exposureRecords: [], closureTaskId: null, closingReason: null, orchestration: null, intake: null }),
 });
 export function fact(id: string, nowNs: string): VersionedFact {

@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from './science-binding.ts';
 import { createHash } from 'node:crypto';
 import { readFile, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -56,7 +55,7 @@ export async function prepareReviewSourceEvidence(configured: DatasetConfig, pur
     || !selection.bar_types.every(value => typeof value === 'string')) throw new Problem('review_source_explicit_bar_selection_required');
   // Bind scientific selection fields, including BAR identity/order. Retired row quotas are not source scope; original metadata bytes and digest remain bound.
   const expected = { ...selection, event_start_ns: from, event_end_ns: to };
-  if (canonical(withoutExecutionQuotas(measured)) !== canonical(withoutExecutionQuotas(expected))) throw new Problem('review_source_validation_scope_mismatch');
+  if (canonical((measured)) !== canonical((expected))) throw new Problem('review_source_validation_scope_mismatch');
   const instrumentIds = [...new Set((selection.bar_types as string[]).map(type => {
     const parsed = /^(.+)-[1-9]\d*-[A-Z_]+-[A-Z_]+-(?:EXTERNAL|INTERNAL)$/.exec(type);
     if (!parsed) throw new Problem('review_source_bar_identity_unsupported');

@@ -2,7 +2,6 @@
 """Select public daily market-data files using a declarative source profile."""
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import datetime
 import fnmatch
 import json
@@ -125,41 +124,9 @@ def acquire_file(root, item):
     print(f"downloaded {item['path']} ({count} bytes)", file=sys.stderr)
 
 
-def selection_identity(value):
-    result = {k: v for k, v in value.items() if k != "retrieved_at"}
-    # Source-profile hints do not alter an already explicit file/stream selection.
-    # Keep every profile field used by planning/decoding; the actual files, revision,
-    # terms, dates and optional path selection remain exact top-level bindings.
-    result["profile"] = {k: v for k, v in result["profile"].items()
-                         if k in ("repository", "revision", "license", "attribution", "streams")}
-    return result
-
-
-def acquire(selection, output):
-    root = output.absolute()
-    root.mkdir(parents=True, exist_ok=True)
-    manifest = local_file(root, "market-data.json")
-    if manifest.exists():
-        with manifest.open() as stream:
-            previous = json.load(stream)
-        if selection_identity(previous) != selection_identity(selection):
-            raise ValueError("existing download belongs to a different selection")
-    else:
-        previous = None
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda item: acquire_file(root, item), selection["files"]))
-    if previous is not None:
-        return previous
-    result = selection | {"retrieved_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    with manifest.open("x") as stream:
-        json.dump(result, stream, indent=2)
-        stream.write("\n")
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "download"))
+    parser.add_argument("command", choices=("plan",))
     parser.add_argument("--profile", required=True, type=Path)
     parser.add_argument("--start-date", required=True, type=datetime.date.fromisoformat)
     parser.add_argument("--end-date", required=True, type=datetime.date.fromisoformat,
@@ -167,15 +134,12 @@ def main():
     parser.add_argument("--kind", action="append", help="profile record kind; omit for all streams")
     parser.add_argument("--path-prefix", action="append", help="explicit declared stream directory, ending in /; repeat to select multiple directories")
     parser.add_argument("--revision", help="override the profile's repository revision")
-    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.command == "download" and args.output is None:
-        parser.error("download requires --output")
     try:
         with args.profile.open() as stream:
             profile = json.load(stream)
         selection = plan(profile, args.start_date, args.end_date, args.kind, args.revision, args.path_prefix)
-        result = acquire(selection, args.output) if args.command == "download" else selection
+        result = selection
         print(json.dumps(result, indent=2))
     except urllib.error.HTTPError as error:
         print(f"market-data: source HTTP {error.code}", file=sys.stderr)

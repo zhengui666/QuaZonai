@@ -21,7 +21,7 @@ type AccountRecord = {
 }
 /** Persistent scientific facts: task-scoped documents retire at settlement and are never a cohort archive. */
 export const ReviewFactorAccounts = defineDoc<{ records: Record<string, AccountRecord>; cohorts: Record<string, JsonObject> }>({
-  kind: 'qz.review-factor-accounts', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ records: {}, cohorts: {} }),
+  kind: 'qz.review-factor-accounts', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ records: {}, cohorts: {} }),
 });
 const detached = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const sourceKey = (data: JsonObject, model: string, policy: StrategyPolicy, evidenceRef: string) => createHash('sha256').update(canonical(detached({ data, model, policy, evidenceRef }) as unknown as JsonObject)).digest('hex');

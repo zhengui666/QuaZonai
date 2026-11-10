@@ -1,4 +1,3 @@
-import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { Context } from '@earendil-works/chord';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult } from '../../../packages/contracts/src/economic-tick.ts';
@@ -13,6 +12,6 @@ export async function replayTickEconomic(target: NativeTarget, request: NativeTi
   if (!models.length || (admitted.signal_weights?.length ?? 1) !== models.length) throw new Error('tick_economic_signal_weights_model_mismatch');
   const result = validateNativeTickEconomicResult(await executeNativeValue(target, 'replay-tick-economic', admitted,
     ['--catalog', artifacts.catalog, '--funding-catalog', artifacts.fundingCatalog ?? artifacts.catalog, ...models.flatMap(model => ['--model', model]), ...(artifacts.bookCores && artifacts.bookCores > 1 ? ['--book-cores', String(artifacts.bookCores)] : [])], directory, context));
-  if (canonical(withoutExecutionQuotas(result.request)) !== canonical(withoutExecutionQuotas(admitted))) throw new Error('tick_economic_result_request_mismatch');
+  if (canonical((result.request)) !== canonical((admitted))) throw new Error('tick_economic_result_request_mismatch');
   return result;
 }

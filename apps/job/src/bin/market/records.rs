@@ -1,16 +1,17 @@
 use super::{Report, Stream};
 use anyhow::{ensure, Context, Result};
+pub(super) use job::catalog::aggregation::with_bar_precision;
+use job::catalog::aggregation::HistoricalTradeBars;
 use job::source_market::{decimal, field, price_with_precision, quantity};
 pub(super) use job::source_market::{scalar, timestamp, Encoding};
 use nautilus_core::UnixNanos;
-use nautilus_data::aggregation::BarBuilder;
 #[cfg(test)]
 use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
 use nautilus_model::{
     data::{Bar, BarType, Data, FundingRateUpdate, IndexPriceUpdate, MarkPriceUpdate, TradeTick},
-    enums::{AggregationSource, AggressorSide},
+    enums::AggressorSide,
     identifiers::{InstrumentId, TradeId},
-    types::{fixed::FIXED_PRECISION, Price, Quantity},
+    types::{Price, Quantity},
 };
 use parquet::record::{Field, Row};
 use rust_decimal::Decimal;
@@ -324,41 +325,10 @@ pub(super) fn convert(
     })
 }
 
-struct Bucket {
-    builder: BarBuilder,
-    kind: BarType,
-    end: u64,
-    available: u64,
-    volume: Quantity,
-    precision: (u8, u8),
-    last_event: u64,
-}
-
-pub(super) fn with_bar_precision(mut bar: Bar, precision: (u8, u8)) -> Bar {
-    for price in [&mut bar.open, &mut bar.high, &mut bar.low, &mut bar.close] {
-        *price = Price::from_raw(price.raw(), precision.0);
-    }
-    bar.volume = Quantity::from_raw(bar.volume.raw(), precision.1);
-    bar
-}
-
-impl Bucket {
-    fn build(&mut self) -> Bar {
-        let bar = with_bar_precision(
-            self.builder.build(self.end.into(), self.available.into()),
-            self.precision,
-        );
-        Bar {
-            bar_type: self.kind,
-            ..bar
-        }
-    }
-}
-
 pub(super) struct Aggregation {
     seconds: Option<u32>,
     milliseconds: Option<u32>,
-    buckets: BTreeMap<InstrumentId, Bucket>,
+    series: BTreeMap<InstrumentId, HistoricalTradeBars>,
 }
 
 impl Aggregation {
@@ -366,7 +336,7 @@ impl Aggregation {
         Self {
             seconds,
             milliseconds: None,
-            buckets: BTreeMap::new(),
+            series: BTreeMap::new(),
         }
     }
 
@@ -384,79 +354,39 @@ impl Aggregation {
                 "BAR_INTERVAL_UNSUPPORTED"
             );
         }
-        let mut result = Self::new(seconds);
-        result.milliseconds = milliseconds;
-        Ok(result)
+        Ok(Self {
+            seconds,
+            milliseconds,
+            series: BTreeMap::new(),
+        })
     }
 
     pub(super) fn update(&mut self, trade: &TradeTick) -> Result<Option<Bar>> {
-        let (kind, interval) = match (self.seconds, self.milliseconds) {
-            (Some(seconds), None) => (
-                bar_type(trade.instrument_id, seconds)?,
-                u64::from(seconds) * 1_000_000_000,
-            ),
-            (None, Some(milliseconds)) => (
-                BarType::from_str(&format!(
-                    "{}-{milliseconds}-MILLISECOND-LAST-EXTERNAL",
-                    trade.instrument_id
-                ))?,
-                u64::from(milliseconds) * 1_000_000,
-            ),
+        let kind = match (self.seconds, self.milliseconds) {
+            (Some(seconds), None) => bar_type(trade.instrument_id, seconds)?,
+            (None, Some(milliseconds)) => BarType::from_str(&format!(
+                "{}-{milliseconds}-MILLISECOND-LAST-INTERNAL",
+                trade.instrument_id
+            ))?,
             (None, None) => return Ok(None),
             _ => anyhow::bail!("BAR_INTERVAL_UNITS_CONFLICT"),
         };
-        let event = trade.ts_event.as_u64();
-        let end = (event / interval + 1)
-            .checked_mul(interval)
-            .context("BAR_TIMESTAMP_RANGE")?;
-        // Use one exact encoding while building; publish each interval at its maximum observed precision.
-        let price = Price::from_raw(trade.price.raw(), FIXED_PRECISION);
-        let size = Quantity::from_raw(trade.size.raw(), FIXED_PRECISION);
-        let bucket = self.buckets.entry(trade.instrument_id).or_insert(Bucket {
-            builder: BarBuilder::new(
-                BarType::new(
-                    kind.instrument_id(),
-                    kind.spec(),
-                    AggregationSource::Internal,
-                ),
-                FIXED_PRECISION,
-                FIXED_PRECISION,
-            ),
-            kind,
-            end,
-            available: end,
-            volume: Quantity::zero(FIXED_PRECISION),
-            precision: (trade.price.precision, trade.size.precision),
-            last_event: event,
-        });
-        ensure!(
-            event >= bucket.last_event,
-            "TRADE_AGGREGATION_ORDER_INVALID"
-        );
-        let completed = if bucket.end != end {
-            let bar = bucket.build();
-            bucket.end = end;
-            bucket.available = end;
-            bucket.volume = Quantity::zero(FIXED_PRECISION);
-            bucket.precision = (trade.price.precision, trade.size.precision);
-            Some(bar)
-        } else {
-            None
-        };
-        bucket.precision.0 = bucket.precision.0.max(trade.price.precision);
-        bucket.precision.1 = bucket.precision.1.max(trade.size.precision);
-        bucket.volume = bucket
-            .volume
-            .checked_add(size)
-            .context("BAR_VOLUME_RANGE")?;
-        bucket.available = bucket.available.max(trade.ts_init.as_u64());
-        bucket.last_event = event;
-        bucket.builder.update(price, size, trade.ts_event);
-        Ok(completed)
+        if !self.series.contains_key(&trade.instrument_id) {
+            self.series
+                .insert(trade.instrument_id, HistoricalTradeBars::new(kind)?);
+        }
+        self.series
+            .get_mut(&trade.instrument_id)
+            .unwrap()
+            .update(trade)
     }
 
     pub(super) fn finish(self) -> Result<Vec<Bar>> {
-        Ok(self.buckets.into_values().map(|mut b| b.build()).collect())
+        let mut bars = Vec::new();
+        for series in self.series.into_values() {
+            bars.extend(series.finish()?);
+        }
+        Ok(bars)
     }
 }
 
@@ -558,24 +488,12 @@ mod tests {
                 &mut report,
             )
             .unwrap();
-        assert_eq!(data.len(), 6);
+        assert_eq!(data.len(), 5);
         let Data::BookDelta(clear) = &data[0] else {
             panic!("missing clear")
         };
         assert_eq!(clear.action, BookAction::Clear);
-        let Data::Quote(quote) = &data[5] else {
-            panic!("missing quote")
-        };
-        assert_eq!(
-            quote.bid_price.as_decimal(),
-            Decimal::from_str_exact("1.2").unwrap()
-        );
-        assert_eq!(
-            quote.ask_price.as_decimal(),
-            Decimal::from_str_exact("1.3").unwrap()
-        );
-        assert_eq!(quote.ts_event.as_u64(), event);
-        assert_eq!(quote.ts_init.as_u64(), receipt);
+        assert!(data.iter().all(|data| matches!(data, Data::BookDelta(_))));
         let Data::BookDelta(last) = &data[4] else {
             panic!("missing final level")
         };
@@ -736,7 +654,7 @@ mod tests {
             };
             assert_eq!(
                 bar.bar_type.to_string(),
-                "AUD/USD.SIM-100-MILLISECOND-LAST-EXTERNAL"
+                "AUD/USD.SIM-100-MILLISECOND-LAST-INTERNAL"
             );
             assert_eq!(bar.ts_event.as_u64(), 1_100_000_000);
             assert_eq!(bar.ts_init.as_u64(), 1_150_000_000);
@@ -819,7 +737,7 @@ mod tests {
             bars.iter()
                 .map(|bar| bar.ts_event.as_u64())
                 .collect::<Vec<_>>(),
-            vec![100_000_000, 200_000_000, 400_000_000]
+            vec![0, 100_000_000, 300_000_000]
         );
         assert_eq!(
             bars.iter()
@@ -836,7 +754,7 @@ mod tests {
         for bar in bars {
             assert_eq!(
                 bar.bar_type.to_string(),
-                "AUD/USD.SIM-100-MILLISECOND-LAST-EXTERNAL"
+                "AUD/USD.SIM-100-MILLISECOND-LAST-INTERNAL"
             );
             sink.push(Data::Bar(bar)).unwrap();
         }
@@ -874,10 +792,10 @@ mod tests {
         .unwrap();
         let first = aggregation.update(&late).unwrap().unwrap();
         assert_eq!(first.volume.as_decimal().to_string(), "20");
-        assert_eq!(first.ts_event.as_u64(), 60_000_000_000);
+        assert_eq!(first.ts_event.as_u64(), 0);
         let last = aggregation.finish().unwrap();
         assert_eq!(last.len(), 1);
-        assert_eq!(last[0].ts_event.as_u64(), 240_000_000_000);
+        assert_eq!(last[0].ts_event.as_u64(), 180_000_000_000);
         assert_eq!(last[0].ts_init.as_u64(), 250_000_000_000);
     }
 

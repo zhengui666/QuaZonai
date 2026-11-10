@@ -8,6 +8,7 @@ import { built, context, setup } from './support.ts';
 import { AdjustAccount, unsettledAdjustment } from '../src/automatic.ts';
 import { ObserveAccount } from '../src/science.ts';
 import { workbench } from '../src/workbench.ts';
+import { openResearch } from '../../research/src/host.ts';
 import { PmDocument } from '../src/pm-facts.ts';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -306,6 +307,7 @@ for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejecte
   const directory = await mkdtemp(join(tmpdir(), 'qz-automatic-boundary-')); const remote = Fastify(); let posts = 0; let sequence = 1; let accountReads = 0; const queries: string[] = []; const offers: any[] = [];
   const interleaved = ['alias-commit-gap', 'alias-commit-gap-sqlite', 'alias-after-post'].includes(variant); let advanced = false;
   const state = variant === 'alias-commit-gap-sqlite' ? await setup() : null;
+  const scopeHost = variant === 'rejected-intent' ? await openResearch({ database: join(directory, 'scope.sqlite') }) : null;
   const tokenEnv = 'QZ_R3_TEST_ONLY_TEMPORARY_TOKEN';
   if (variant === 'credentials') { assert.equal(process.env[tokenEnv], undefined); process.env[tokenEnv] = 'TEST_ONLY-loopback'; }
   const identity = { clientId: 'TEST_ONLY-boundary', accountId: 'TEST_ONLY-account', mode: 'paper', currency: 'USD' };
@@ -426,7 +428,7 @@ for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejecte
     }
     else if (variant === 'rejected-intent') {
       assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'REJECTED');
-      const work = workbench({ harness: { snapshot: async () => facts, commit: runtime.commit } } as any, { jobBinary: process.env.QZ_JOB_BINARY!, dataDir: directory } as any);
+      const work = workbench({ withNativeHost: scopeHost!.withNativeHost, harness: { snapshot: async () => facts, commit: runtime.commit } } as any, { jobBinary: process.env.QZ_JOB_BINARY!, dataDir: directory } as any);
       const changes = [
         () => work.configureAutomatic('o', { ...facts.observations.o.view.automaticPolicy, cashBuffer: '100' }),
         () => work.configureAutomatic('o', { ...facts.observations.o.view.automaticPolicy, maximumSnapshotAgeSeconds: 90 }),
@@ -462,5 +464,5 @@ for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejecte
       assert.equal(facts.observations.o.view.allocation.reason, variant === 'expiry' ? 'target_expired' : 'target_delivery_requires_reconciliation');
       assert.equal(facts.observations.o.allocationTarget.valid_until_ns, expiry); assert.equal(unsettledAdjustment(facts.observations.o), false); assert.equal(posts, 0); assert.equal(queries.length, 0);
     }
-  } finally { if (variant === 'credentials') delete process.env[tokenEnv]; if (state) await state.cleanup(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { if (variant === 'credentials') delete process.env[tokenEnv]; await scopeHost?.close(); if (state) await state.cleanup(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });
