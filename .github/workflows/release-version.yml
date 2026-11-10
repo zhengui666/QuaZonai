@@ -47,7 +47,7 @@ jobs:
           ref: ${{ inputs.revision }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve successful exact-push core CI and its tested binaries
+      - name: Resolve successful exact-push CI and its native binaries
         id: core
         run: |
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
@@ -59,7 +59,7 @@ jobs:
           run-id: ${{ steps.core.outputs.ci_run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/native-download
-      - name: Reuse exact tested artifacts; no Cargo build/test here
+      - name: Reuse exact-revision artifacts; no Cargo build/test here
         run: |
           mkdir -p "$RUNNER_TEMP/native-artifacts"
           tar -xzf "$RUNNER_TEMP/native-download/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts"

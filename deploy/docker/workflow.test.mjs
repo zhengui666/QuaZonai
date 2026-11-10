@@ -22,6 +22,18 @@ test('native source integration workflows install and cache both exporter depend
 
 const results = ['success', 'failure', 'cancelled', 'skipped'];
 
+test('pushes build revision-bound native artifacts without running science CI', async () => {
+  const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const artifact = ci.split('\n  native-artifacts:\n')[1]?.split('\n  science-core:\n')[0];
+  const science = ci.split('\n  science-core:\n')[1];
+  assert.match(artifact, /if: github\.event_name == 'push'/);
+  assert.match(artifact, /native-build\.sh "\$PROFILE" "\$RUNNER_TEMP\/native-artifacts"/);
+  assert.match(artifact, /git rev-parse HEAD > "\$RUNNER_TEMP\/native-artifacts\/tested-revision"/);
+  assert.match(artifact, /name: native-\$\{\{ env\.TEST_REVISION \}\}/);
+  assert.match(science, /if: github\.event_name == 'workflow_dispatch'/);
+  assert.doesNotMatch(artifact, /check-science/);
+});
+
 test('CryptoHFTData conversion stays in the remote native image', async () => {
   const docker = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const context = await readFile(new URL('./Dockerfile.dockerignore', import.meta.url), 'utf8');

@@ -20,7 +20,7 @@ import time
 
 from release_support import BUNDLE, BUNDLE_FILES, REPOSITORY, run, validate_manifest, version, version_precedence
 
-# Exact-push core CI owns the tested native release artifacts. Publication does
+# Exact-push CI builds revision-bound native release artifacts. Publication does
 # not rerun Rust regression for dev or rebuild those binaries.
 CI_PATHS = {".github/workflows/ci.yml"}
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
