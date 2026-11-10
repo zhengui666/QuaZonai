@@ -62,9 +62,3 @@ test('independent scientific limits must match the frozen validation contract ex
     assert.throws(() => portfolioIndependentData(changed), /portfolio_independent_forecast_contract_changed/);
   }
 });
-
-test('catalog replay requires an independent original scope reference', () => {
-  const captured = input(); captured.policy = { kind: 'catalog-ensemble' } as PortfolioTaskInput['policy'];
-  captured.review!.independentData = { catalog: '/fresh' };
-  assert.throws(() => portfolioIndependentData(captured), /portfolio_independent_catalog_scope_required/);
-});

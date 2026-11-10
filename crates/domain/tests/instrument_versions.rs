@@ -174,19 +174,10 @@ fn metadata_fees_and_slippage_share_one_chain_without_promoting_evidence() {
         70_000_000_000_u64.into();
     domain::catalogs::metadata(&late_original, support::instant(600)).unwrap();
     domain::catalogs::execution_fees(&late_original, &settings).unwrap();
-    let ids = vec!["EUR/USD.SIM".into()];
-    assert!(domain::prediction::target_window(
-        &late_original.universe.instrument_definitions,
-        &ids,
-        69_000_000_000,
-        100_000_000_000
-    )
-    .is_err());
-    domain::prediction::target_window(
-        &late_original.universe.instrument_definitions,
-        &ids,
-        70_000_000_000,
-        100_000_000_000,
-    )
-    .unwrap();
+    let chains =
+        domain::catalogs::instrument_versions(&late_original.universe.instrument_definitions)
+            .unwrap();
+    let versions = chains.get("EUR/USD.SIM").unwrap();
+    assert!(domain::catalogs::instrument_version_at(versions, 69_000_000_000).is_err());
+    domain::catalogs::instrument_version_at(versions, 70_000_000_000).unwrap();
 }

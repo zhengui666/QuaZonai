@@ -10,7 +10,7 @@ import { relative, resolve, sep } from 'node:path';
 /** Native decision_cutoff is the upper bound on usable availability, not the
  * event interval end. An empty future event interval is not itself leakage. */
 export function assertPmDataAvailable(data: import('@earendil-works/pi-durable').JsonObject, availableCutoffNs: string) {
-  const raw = object(data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request, 'native_dataset_request');
+  const raw = object(data.catalog_scan_request ?? data.request, 'native_dataset_request');
   const selection = raw.forecast ? object(object(raw.forecast).selection, 'native_selection') : raw;
   const nativeCutoff = counter(selection.decision_cutoff_ns, 'native_availability_cutoff');
   if (BigInt(nativeCutoff) > BigInt(availableCutoffNs)) throw new Problem('dataset_native_availability_after_decision_cutoff', 409);
@@ -25,7 +25,7 @@ export function captureDataset(configured: DatasetConfig, state: PmState, atNs =
   // change a source revision's identity or pin later mandates to an old host.
   const data = scienceDataWithoutBinding(json(configured.data));
   const nativeCutoff = assertPmDataAvailable(data, atNs);
-  const raw = object(data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request, 'native_dataset_request');
+  const raw = object(data.catalog_scan_request ?? data.request, 'native_dataset_request');
   const selection = raw.forecast ? object(object(raw.forecast).selection, 'native_selection') : raw;
   const startNs = counter(selection.event_start_ns, 'event_start');
   const endExclusiveNs = counter(selection.event_end_ns, 'event_end');
@@ -51,7 +51,7 @@ export function captureDataset(configured: DatasetConfig, state: PmState, atNs =
     sourceRevision, parentRevisionId: prior?.revision.id ?? null, contentRef: source?.contentDigest ?? `configured-dataset:${sourceRevision}`,
     eventInterval: { startNs, endExclusiveNs }, availableThroughNs: nativeCutoff, admittedAtNs: atNs,
     sourceClockPrecision: 'UNKNOWN', universeSnapshotRef: identity('universe', selection.bar_types ?? raw.source ?? configured.source),
-    instrumentRulesRef: identity('instrument-rules', [configured.source, sourceRevision]), schemaId: data.catalog_ensemble_request ? 'qz.catalog-ensemble/1' : data.catalog_scan_request ? 'qz.catalog-factor-scan/1' : 'qz.factor-evaluation/1',
+    instrumentRulesRef: identity('instrument-rules', [configured.source, sourceRevision]), schemaId: data.catalog_scan_request ? 'qz.catalog-factor-scan/1' : 'qz.factor-evaluation/1',
     qualityEvidenceRefs: [], qualityStatus: 'INSUFFICIENT', missingCapabilities: ['receive_clock_point_in_time_not_verified', ...source ? [] : ['catalog_content_immutability_not_verified']],
     revisionKind: source?.revisionKind ?? (prior ? BigInt(startNs) >= BigInt(prior.revision.eventInterval.endExclusiveNs) ? 'APPEND' : 'CORRECTION' : 'APPEND') };
   state.datasets[id] = { revision, data, policy: json(configured.policy ?? {}), strategy: configured.strategy ? json(configured.strategy) : null,

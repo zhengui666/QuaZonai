@@ -1659,7 +1659,7 @@ mod tests {
     fn published_trade_identity_rejects_different_execution_and_bounds_seen_rows() {
         let mut seen = PublishedTrades::default();
         let trade = TradeTick::new_checked(
-            "BTCUSDT.BINANCE".parse().unwrap(),
+            "BTCUSDT.OTHER".parse().unwrap(),
             "10.12".parse().unwrap(),
             "0.1".parse().unwrap(),
             nautilus_model::enums::AggressorSide::Buy,
@@ -2314,7 +2314,7 @@ mod tests {
             temp.path(),
             "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\n",
         );
-        fs::write(&instruments, serde_json::to_vec(&serde_json::json!({"currencies":[],"instruments":[],"symbol_ids":{"BTCUSDT":"BTCUSDT.BINANCE"}})).unwrap()).unwrap();
+        fs::write(&instruments, serde_json::to_vec(&serde_json::json!({"currencies":[],"instruments":[],"symbol_ids":{"BTCUSDT":"BTCUSDT.OTHER"}})).unwrap()).unwrap();
         let prefixes = vec!["perps/".into(), "spot/".into()];
         let report = import(
             &manifest,

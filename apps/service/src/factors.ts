@@ -21,7 +21,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
   const admission = requestId ? admissions?.[`request:${requestId}`] : undefined;
   const dataset = admission?.dataset;
   const strategy = input.policy.strategy ? object(input.policy.strategy) : null;
-  const simulationSettings = strategy?.simulationSettings ?? (input.data.catalog_ensemble_request ? object(input.data.catalog_ensemble_request).settings : undefined);
+  const simulationSettings = strategy?.simulationSettings;
   return study.trials.flatMap(trial => {
     const proposal = object(trial.proposal); let members;
     try { members = strategyMembers(proposal); } catch { return []; }

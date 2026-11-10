@@ -43,8 +43,8 @@ test('native transport sends the complete 64-market vector beyond one V8 string 
   try {
     const binary = await transportProcess(directory);
     const frame = { schema_version: 1, asof_ns: '1782864000000000001', valid_until_ns: '1782950400000000001', cash_weight: '1.000000000000000000',
-      targets: Array.from({ length: 64 }, (_, index) => ({ instrument_id: `${String(index).padStart(77, '0')}.POLYMARKET`, currency: 'pUSD', weight: '0.000000000000000000' })),
-      rebalance_instrument_ids: ['0'.repeat(77) + '.POLYMARKET'] };
+      targets: Array.from({ length: 64 }, (_, index) => ({ instrument_id: `${String(index).padStart(77, '0')}.HYPERLIQUID`, currency: 'USDC', weight: '0.000000000000000000' })),
+      rebalance_instrument_ids: ['0'.repeat(77) + '.HYPERLIQUID'] };
     const encoded = JSON.stringify(frame);
     const count = Math.ceil(constants.MAX_STRING_LENGTH / (encoded.length + 1)) + 2;
     const input: JsonObject = { target_points: Array(count).fill(frame), original_tail: 'unchanged' };

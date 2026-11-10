@@ -49,7 +49,6 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
       ...(args.instrumentId ? { instrumentId: args.instrumentId } : {}), ...(args.allocations ? { allocations: args.allocations } : {}) };
     return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
       const policy = resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));
-      if (policy.kind === 'catalog-ensemble') throw new Error('ensemble_full_prediction_panel_required');
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
       return runFittedEnsemble(api, context, { mode: 'REPLAY', data: input.data, fitTaskId: fit.evidenceTaskId as number, policy, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
     }), true);

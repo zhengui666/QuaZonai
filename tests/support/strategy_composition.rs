@@ -146,7 +146,6 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
     NativeStrategyCompositionResultV1 {
         schema_version: SchemaV1,
         request: NativeStrategyCompositionRequestV1 {
-            binary_option: None,
             schema_version: SchemaV1,
             selection: NativeBarSelectionV1 {
                 schema_version: SchemaV1,
@@ -166,7 +165,6 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
                 }],
             },
             input_provenance: StrategyInputProvenanceV1 {
-                feature_source_bindings: None,
                 dataset_revision_id: dataset,
                 market_data_origin: DataOrigin::Synthetic,
                 pit_status: PitStatus::Unverified,

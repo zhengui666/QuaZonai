@@ -6,10 +6,8 @@ pub mod brief;
 pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit;
-pub mod catalog_ensemble;
 pub mod catalog_prefix;
 pub mod catalogs;
-pub mod data;
 pub mod delivery;
 pub mod economic_tick;
 pub mod ensemble_fit;
@@ -17,7 +15,6 @@ pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
-pub mod execution_preflight;
 pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
@@ -36,7 +33,6 @@ pub mod runtime_jobs;
 pub mod scalars;
 pub mod science;
 pub mod settings;
-pub mod settlement;
 pub mod spot_cash;
 pub mod spot_cash_report;
 pub mod spot_cash_source;
@@ -62,7 +58,6 @@ use utoipa::OpenApi;
     execution::NativeTaskParametersV1,
     execution::NativeJobOutputIndexV1,
     execution::NativeDataQualityReportV1,
-    execution_preflight::PolymarketExecutionPreflightReportV1,
     runtime_jobs::JobSpecV1,
     catalogs::RuntimeCatalogMetadataV1,
     portfolio::AllocationInputV1,
@@ -95,8 +90,6 @@ use utoipa::OpenApi;
     economic_tick::NativeTickEconomicResultV1,
     factors::NativeCatalogFactorScanRequestV1,
     factors::NativeCatalogFactorScanSummaryV1,
-    catalog_ensemble::NativeCatalogEnsembleRequestV1,
-    catalog_ensemble::NativeCatalogEnsembleResultV1,
     science::ExperimentEvaluationParametersV1,
     science::NativeExperimentEvaluationRequestV1,
     science::NativeExperimentEvaluationResultV1,

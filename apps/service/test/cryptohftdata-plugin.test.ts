@@ -32,6 +32,7 @@ test('CryptoHFTData refresh uses official durable tasks without importing retire
   await sources.connect(host);
   try {
     assert.equal(sources.has('qz.data.hyperliquid'), false);
+    assert.equal(sources.has('qz.data.acquisition-plan'), false);
     const source = sources.view().find(value => value.name === 'qz.data.cryptohftdata')!;
     assert.equal(source.enabled, false); assert.equal(config.datasets.length, 0);
     await sources.save(source.name, { enabled: true, config: { archiveDirectory: 'archive' } });

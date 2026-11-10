@@ -37,7 +37,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   const frozen = record.artifacts[cycle.id]!;
   const registered = object(frozen.configured, 'registered_dataset'); const data = object(registered.data, 'native_dataset');
   const datasetRevision = registered.revision as unknown as Pm.DatasetRevision;
-  const request = object(data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request, 'native_request');
+  const request = object(data.catalog_scan_request ?? data.request, 'native_request');
   const interval = { startNs: String(data.train_end_ns ?? request.train_end_ns), endExclusiveNs: String(data.validation_end_ns ?? request.validation_end_ns) };
   const isAccount = record.mandate.capitalSource.kind === 'ACCOUNT';
   let capital = record.mandate.capitalSource.kind === 'RESEARCH_SCENARIO' ? record.mandate.capitalSource.capital : cycle.accountBasis?.equity ?? null;

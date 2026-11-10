@@ -15,7 +15,7 @@ import { ExecutionFailure } from './execution-errors.ts';
 import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativeEvidenceParts } from '../plugins/native-evidence.ts';
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 
-export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
@@ -388,7 +388,7 @@ async function executeNativeUnwrapped(target: NativeTarget, command: string, inp
   const inputPath = join(directory, 'request.json'); await writeFile(inputPath, jsonChunks(input));
   const env = new NodeExecutionEnv({ cwd: directory });
   const observer = progressTracking.getStore();
-  const progressPath = observer && ['simulate', 'replay-catalog-ensemble'].includes(command) ? join(directory, `progress-${randomUUID()}.ndjson`) : undefined;
+  const progressPath = observer && command === 'simulate' ? join(directory, `progress-${randomUUID()}.ndjson`) : undefined;
   let progressRead = Promise.resolve(); let progressBusy = false;
   const timer = progressPath ? globalThis.setInterval(() => {
     if (progressBusy) return; progressBusy = true;

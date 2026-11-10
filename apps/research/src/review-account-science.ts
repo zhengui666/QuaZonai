@@ -29,7 +29,7 @@ export function adverseReviewRequest(request: JsonObject): JsonObject {
 
 /** Explicit strategy consumer for factor Review; never normalizes a raw factor into a position. */
 export async function replayReviewAccount(input: { data: JsonObject; members: StrategyMember[]; policy: StrategyPolicy; binary: NativeTarget; evidenceRef: string }, context: Context): Promise<{ metrics: ReviewMetric[]; evidence: JsonObject }> {
-  if (input.data.catalog_scan_request !== undefined || input.data.catalog_ensemble_request !== undefined) throw new Error('review_explicit_bar_strategy_required');
+  if (input.data.catalog_scan_request !== undefined) throw new Error('review_explicit_bar_strategy_required');
   const { sealed: _sealed, ...original } = input.data;
   const data = { ...original, request: iterationRequest(input.data, true) };
   const candidate = await evaluatePortfolio({ data, members: input.members, policy: input.policy, binary: input.binary, partition: 'VALIDATION' }, context);

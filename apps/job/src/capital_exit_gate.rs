@@ -61,37 +61,6 @@ impl CapitalExitGate {
         )
     }
 
-    /// A Paper engine is an isolated simulated account. The original claimed
-    /// handoff is its durable boot scope; account-label reuse by another claim
-    /// must not merge independent simulations. The host supplies the checked
-    /// original claim, never a user-selected control request or filesystem alias.
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
-    pub(crate) fn open_fresh_paper(
-        root: &Path,
-        managed_account_key: &str,
-        owner_binding_ref: &str,
-        native_account_id: &str,
-        claim: &contracts::strategy_portfolio::HandoffClaimViewV2,
-    ) -> Result<Self> {
-        ensure!(
-            claim.handoff.environment == contracts::forward::ForwardEnvironmentV1::Paper
-                && claim.handoff.state == contracts::delivery::HandoffStateV1::Claimed
-                && claim
-                    .handoff
-                    .external_claim_id
-                    .as_ref()
-                    .is_some_and(|id| !id.is_empty()),
-            "capital_exit_original_target_claim_required"
-        );
-        Self::open_fresh(
-            root,
-            managed_account_key,
-            owner_binding_ref,
-            native_account_id,
-            &format!("paper-claim:{}:{}", claim.handoff.id, native_account_id),
-        )
-    }
-
     fn open_fresh(
         root: &Path,
         managed_account_key: &str,
@@ -190,7 +159,7 @@ impl CapitalExitGate {
     /// Only the checked Paper adapter calls this after the authenticated native
     /// intake echoes its retained original observation. A source is bound once,
     /// before capital commands, and survives in the same original-claim journal.
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn bind_paper_source(&self, source: Id) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -242,16 +211,16 @@ impl CapitalExitGate {
         }
         Ok(DbCounter::ZERO)
     }
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn original_target_claim_refs(&self) -> Vec<String> {
         self.0.borrow().record.target_claim_refs.clone()
     }
 
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn opening_order_ids(&self) -> Option<Vec<String>> {
         self.0.borrow().record.opening_order_ids.clone()
     }
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn retain_original_openers(&self, ids: Vec<String>) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -266,7 +235,7 @@ impl CapitalExitGate {
         gate.persist()
     }
 
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn retained_control_report(&self) -> Result<serde_json::Value> {
         Ok(serde_json::to_value(&self.0.borrow().record)?)
     }
@@ -306,7 +275,7 @@ impl CapitalExitGate {
 
     /// Original owner evidence is durable before network transmission. These
     /// immutable reports are an outbox for exact replay, never an order ledger.
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn retain_original_message(
         &self,
         kind: &str,
@@ -355,7 +324,7 @@ impl CapitalExitGate {
         result
     }
 
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn apply_control(&self, control: &CapitalExitViewV1) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -392,7 +361,7 @@ impl CapitalExitGate {
         gate.persist()
     }
 
-    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+    #[cfg(any(test, feature = "native-sandbox-test"))]
     pub(crate) fn record_order_before_submit(&self, intent: Id, id: &str) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -413,7 +382,7 @@ impl CapitalExitGate {
 
 /// One authority predicate for both durable refencing and synchronous submit.
 /// View revision/state/reasons/evidence and financial *progress* are not authority.
-#[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
+#[cfg(any(test, feature = "native-sandbox-test"))]
 pub(crate) fn same_control_binding(a: &CapitalExitViewV1, b: &CapitalExitViewV1) -> bool {
     a.id == b.id
         && a.project_id == b.project_id

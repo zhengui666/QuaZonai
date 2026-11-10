@@ -57,7 +57,6 @@ pub async fn setup_with_native_image(
         (DataOrigin::Fixture, DataUse::Research),
         Liquidity::None,
         (|_| {}, |_| {}, None, Some(image), true, false),
-        None,
     )
     .await;
     fixture.directory = Some(directory);
@@ -131,7 +130,6 @@ pub async fn setup_with_policy_plan(
         (origin, allowed_uses),
         liquidity,
         (customize, plan, calendar, None, true, false),
-        None,
     )
     .await
 }
@@ -173,33 +171,6 @@ pub async fn setup_external_with_grant(
         (DataOrigin::Real, allowed_uses),
         Liquidity::None,
         (customize, |_| {}, None, None, false, permanent_grant),
-        None,
-    )
-    .await
-}
-
-/// Explicit controlled paired-attachment declaration for Store consumer tests.
-// Keep the grant and paired feature scenario inputs explicit at each call site.
-#[allow(clippy::too_many_arguments)]
-pub async fn setup_external_with_features(
-    pool: &PgPool,
-    store: &Store,
-    actor: &Actor,
-    objects: Arc<ArtifactStore>,
-    allowed_uses: DataUse,
-    permanent_grant: bool,
-    recorded: contracts::catalogs::RecordedFeatureInputsV1,
-    customize: impl FnOnce(&mut EvaluationPolicyCreate),
-) -> Fixture {
-    setup_plan(
-        pool,
-        store,
-        actor,
-        objects,
-        (DataOrigin::Real, allowed_uses),
-        Liquidity::None,
-        (customize, |_| {}, None, None, false, permanent_grant),
-        Some(recorded),
     )
     .await
 }
@@ -221,7 +192,6 @@ async fn setup_plan(
         bool,
         bool,
     ),
-    recorded: Option<contracts::catalogs::RecordedFeatureInputsV1>,
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
@@ -238,7 +208,7 @@ async fn setup_plan(
     let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=$2 WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).bind(allowed).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
-    cycle_data::register_with_features(
+    cycle_data::register_with_grant_lifetime(
         pool,
         store,
         actor,
@@ -247,7 +217,6 @@ async fn setup_plan(
         objects.clone(),
         (origin, allowed_uses, calendar),
         permanent_grant,
-        recorded,
     )
     .await;
     let ProbePreparation::Pending(ticket) = store

@@ -31,7 +31,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'sin
       parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
     const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
     const dataset = state.options.config.datasets[0]!;
-    assert.ok(dataset.strategy && dataset.strategy.kind !== 'catalog-ensemble');
+    assert.ok(dataset.strategy);
     dataset.data = { catalog: prefix, request, sealed: { catalog: sealed, request: finalRequest } };
     Object.assign(dataset.strategy!, { forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
       simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY' } });
@@ -129,7 +129,7 @@ test('a single source requires its original registered strategy and preserves th
   const state = await setup();
   try {
     const dataset = state.options.config.datasets[0]!;
-    assert.ok(dataset.strategy && dataset.strategy.kind !== 'catalog-ensemble');
+    assert.ok(dataset.strategy);
     const policy = { ...dataset.strategy, name: 'registered-consumer-policy', threshold: -1 };
     const evidence: JsonObject = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
     const captured = { id: 'registered-single-source', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
@@ -157,21 +157,21 @@ test('research metric projection keeps component IC and actual native account ke
   assert.equal(metrics({ ...result, portfolio: { partition: 'VALIDATION', statistics: [] } }).length, 2);
 });
 
-test('native account curve preserves the original mixed-case pUSD collateral and exact amounts', () => {
-  const native = { canonical_result: { portfolio_snapshots: [{ ts_event: '20', total_equity: ['3000.000000000000000001 pUSD'] }] } };
-  assert.equal(nativeCurve(native, 'pUSD')[0]!.value, '3000.000000000000000001');
+test('native account curve preserves the original mixed-case USDc collateral and exact amounts', () => {
+  const native = { canonical_result: { portfolio_snapshots: [{ ts_event: '20', total_equity: ['3000.000000000000000001 USDc'] }] } };
+  assert.equal(nativeCurve(native, 'USDc')[0]!.value, '3000.000000000000000001');
   assert.throws(() => nativeCurve(native, 'USD'), /native_equity_currency_mismatch/);
 });
 
 test('native curve sorts exact clocks while retaining same-clock observations and original amounts', () => {
   const snapshots = [
-    { ts_event: '1000000020', total_equity: ['3002.000000000000000001 pUSD'] },
-    { ts_event: '999999999', total_equity: ['3000 pUSD'] },
+    { ts_event: '1000000020', total_equity: ['3002.000000000000000001 USDc'] },
+    { ts_event: '999999999', total_equity: ['3000 USDc'] },
     { ts_event: '1000000010', total_equity: [null] },
-    { ts_event: '1000000020', total_equity: ['3003 pUSD'] },
+    { ts_event: '1000000020', total_equity: ['3003 USDc'] },
   ];
   const original = structuredClone(snapshots);
-  const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, 'pUSD');
+  const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, 'USDc');
   assert.deepEqual(curve.map(point => point.value), ['3000', null, '3002.000000000000000001', '3003']);
   assert.deepEqual(curve.map(point => point.at), ['1970-01-01T00:00:00.999999999Z', '1970-01-01T00:00:01.000000010Z', '1970-01-01T00:00:01.000000020Z', '1970-01-01T00:00:01.000000020Z']);
   assert.deepEqual(snapshots, original);

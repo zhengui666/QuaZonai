@@ -341,7 +341,6 @@ pub fn study_with_closed_rows(
         selection,
         settings: request.study.execution_settings.clone(),
         target_points: vec![],
-        settlements: request.study.settlements.clone(),
     };
     let hold = simulation_leg(replay(
         catalog,

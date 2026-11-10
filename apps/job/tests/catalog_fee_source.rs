@@ -102,7 +102,6 @@ impl Fixture {
             serde_json::to_vec(&NativeDatasetSelectionV1 {
                 dataset_revision_id: Id::new(),
                 selection: self.request.selection.clone(),
-                settlements: Vec::new(),
             })
             .unwrap(),
         )

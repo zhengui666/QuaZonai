@@ -9,14 +9,11 @@ repository.workspace = true
 publish = false
 
 [features]
-# Optional official node observer and controlled Sandbox Paper host.
+# Optional official node observer and controlled Sandbox integration.
 native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
 native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
-native-paper = ["native-node-observer", "dep:nautilus-sandbox", "dep:nautilus-binance", "tokio/sync", "tokio/signal"]
-native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
-polymarket-history = ["dep:tokio", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
-catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
+catalog-prepare = ["dep:sha2"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
 market-history = ["dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
@@ -33,20 +30,14 @@ path = "src/bin/catalog-prepare.rs"
 required-features = ["catalog-prepare"]
 
 [[bin]]
-name = "polymarket-history"
-path = "src/bin/polymarket-history.rs"
-required-features = ["polymarket-history"]
-
-[[bin]]
 name = "source-tools"
 path = "src/bin/source-tools.rs"
-required-features = ["catalog-prepare", "polymarket-history"]
+required-features = ["catalog-prepare"]
 
 [dependencies]
 nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
 nautilus-live = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["node"], optional = true }
 nautilus-sandbox = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
-nautilus-binance = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
 tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
@@ -60,24 +51,16 @@ nautilus-execution = { git = "https://github.com/nautechsystems/nautilus_trader.
 nautilus-portfolio = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
 nautilus-persistence = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
 nautilus-indicators = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-polymarket = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
 tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"], optional = true }
 # Native Parquet decoding uses the exact Arrow family of the official catalog.
 arrow-native = { package = "arrow-array", version = "=59.3.2" }
 parquet = { version = "=59.3.2", default-features = false, features = ["arrow", "zstd"] }
 nautilus-serialization = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["arrow"] }
 sha2 = { version = "=0.10.9", optional = true }
-# Public typed classic-ZIP parsing; winnow 0.5.40 supplies rc-zip's literal API.
-rc-zip = { version = "=5.4.1", default-features = false, optional = true }
-winnow = { version = "=0.5.40", optional = true }
-flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"], optional = true }
-crc32fast = { version = "=1.5.2", optional = true }
 csv = { version = "=1.4.0", optional = true }
 lz4_flex = { version = "=0.14.0", optional = true }
 zstd = { version = "=0.13.3", default-features = false }
 nautilus-data = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
-alloy-core = { version = "=1.7.3", default-features = false, features = ["std", "sol-types", "serde"], optional = true }
-url = { version = "=2.5.8", optional = true }
 rust_decimal = "=1.43.0"
 nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
 nautilus-trading = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
@@ -107,20 +90,12 @@ nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git"
 wat = "=1.258.0"
 
 [[example]]
-name = "browser_catalog_fixture"
-required-features = ["catalog-prepare"]
-
-[[example]]
 name = "native_client_account_snapshots"
 required-features = ["native-sandbox-test"]
 
 [[test]]
 name = "native_sandbox_observer"
 required-features = ["native-sandbox-test"]
-
-[[test]]
-name = "native_paper_target"
-required-features = ["native-paper-test"]
 
 [[test]]
 name = "native_capital_exit"

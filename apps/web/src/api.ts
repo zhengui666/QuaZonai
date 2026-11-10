@@ -11,7 +11,6 @@ const errors: Record<string, string> = {
   review_allocation_constraints_required: '请完整填写配权约束、当前权重和换手',
   review_allocation_portfolio_not_approved: '来源组合缺少当前版本的通过评审，请刷新并补齐证据',
   review_allocation_common_account_basis_required: '来源组合须使用相同币种、数据集与原始本金',
-  review_allocation_catalog_ensemble_unsupported: '当前多组合配置不支持此来源组合的原始目录执行方式',
   review_allocation_native_daily_returns_required: '缺少完整的原生账户逐日净收益，无法估计组合相关与风险',
   review_allocation_native_returns_incomplete: '来源账户净收益记录不完整或时间未对齐',
   review_allocation_scientific_budget_exhausted: '原执行曾因科学调用预算停止，请查看历史记录与报告',

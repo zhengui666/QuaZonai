@@ -51,7 +51,6 @@ fn simulation(request: &NativeSimulationRequestV1, row_count: u64) -> NativeSimu
     NativeSimulationResultV1 {
         settled_replay_ns: None,
         spot_cash_report: None,
-        recorded_fee_replay: None,
         schema_version: SchemaV1,
         native_version: "0.68.0".into(),
         iterations: count(row_count),
@@ -160,7 +159,6 @@ pub fn report(
         let last = decisions.last().unwrap();
         let replay = NativeSimulationRequestV1 {
             schema_version: SchemaV1,
-            settlements: Vec::new(),
             selection: NativeBarSelectionV1 {
                 schema_version: SchemaV1,
                 bar_types: request.selection.bar_types.clone(),

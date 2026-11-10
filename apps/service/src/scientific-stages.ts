@@ -21,7 +21,7 @@ export type ScientificStagePlan = Base & (
   | { kind: 'capacity'; catalog: string; simulation: JsonObject; assumptions?: Parameters<typeof assessCapacity>[3] }
   | { kind: 'account-metrics'; candidate: JsonObject; baseline: JsonObject; stress?: JsonObject; evidenceRef: string }
   | { kind: 'review-science'; source: JsonObject; analysis: JsonObject; evidenceRef: string }
-  | { kind: 'portfolio'; input: PortfolioTaskInput; partition: 'VALIDATION' | 'HELDOUT'; data?: JsonObject; scope?: JsonObject }
+  | { kind: 'portfolio'; input: PortfolioTaskInput; partition: 'VALIDATION' | 'HELDOUT'; data?: JsonObject }
 );
 export type ScientificStageOperation = ScientificStagePlan extends infer Plan ? Plan extends Base ? Omit<Plan, keyof Base> : never : never;
 /** Only original child identities and business accounting live here; outcomes belong to official Tasks. */
@@ -45,7 +45,7 @@ export const ScientificStage = defineTask<ScientificStagePlan, { phase: 'execute
           case 'capacity': return json(await assessCapacity(plan.binary, plan.catalog, plan.simulation, plan.assumptions, directory!, context));
           case 'account-metrics': return json(await accountReviewMetrics({ candidate: plan.candidate, baseline: plan.baseline, ...(plan.stress ? { stress: plan.stress } : {}), binary: plan.binary, evidenceRef: plan.evidenceRef, context }));
           case 'review-science': return json(await runReviewScience({ source: plan.source, analysis: plan.analysis, evidenceRef: plan.evidenceRef, target: plan.binary, context }));
-          case 'portfolio': return json(await computePortfolio(plan.input, context, plan.scope, undefined, { partition: plan.partition, ...(plan.data ? { data: plan.data } : {}) }));
+          case 'portfolio': return json(await computePortfolio(plan.input, context, undefined, { partition: plan.partition, ...(plan.data ? { data: plan.data } : {}) }));
         }
       });
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);

@@ -113,10 +113,6 @@ pub struct RuntimeCatalogMetadataV1 {
     /// implicit zero fee or a simulation-settings declaration of source evidence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_fees: Option<FrozenMakerTakerFeesV1>,
-    /// Original source attachment descriptors. The registered Dataset and native
-    /// metadata artifact preserve the source association without extending license scope.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recorded_feature_inputs: Option<RecordedFeatureInputsV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, ToSchema)]
@@ -124,47 +120,4 @@ pub struct RuntimeCatalogMetadataV1 {
 pub struct CatalogVersionQuery {
     #[schema(min_length = 1, max_length = 120)]
     pub storage_version: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecordedFeatureFragmentV1 {
-    /// Stable attachment key, never a filesystem path.
-    #[schema(
-        min_length = 1,
-        max_length = 120,
-        pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?![\s\S])"
-    )]
-    pub part_key: String,
-    #[schema(schema_with = recorded_feature_bytes_schema)]
-    pub byte_count: DbCounter,
-    #[schema(schema_with = recorded_feature_observations_schema)]
-    pub observations: DbCounter,
-    pub min_event_ns: DbCounter,
-    pub max_event_ns: DbCounter,
-    pub min_observed_available_ns: DbCounter,
-    pub max_observed_available_ns: DbCounter,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RecordedFeatureInputsV1 {
-    pub schema_version: SchemaV1,
-    /// Original source event selection [start, end), independent of BAR closes.
-    pub source_selection_start_ns: DbCounter,
-    pub source_selection_end_ns: DbCounter,
-    pub partition: DataPartition,
-    /// All original observations are retained across the declared parts.
-    #[schema(min_items = 1)]
-    pub fragments: Vec<RecordedFeatureFragmentV1>,
-}
-
-pub(crate) fn recorded_feature_bytes_schema(
-) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-    crate::scalars::positive_db_counter_schema()
-}
-
-fn recorded_feature_observations_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>
-{
-    crate::scalars::positive_db_counter_schema()
 }

@@ -49,7 +49,7 @@ pub fn metrics(
                 result.returns_status,
                 result.returns_reason.clone(),
                 result.returns.len(),
-                crate::prediction::portfolio_annualization_days(&request.settings.fee_model) as u64,
+                252,
             )
         };
     let volatility_key = format!("Returns Volatility ({period} days)");
@@ -396,11 +396,7 @@ fn binding_with_balances(
     }
     if value.settled_replay_ns.is_some()
         && (request.settings.multi_currency_spot_cash.is_none()
-            && crate::execution::strategy::scoped_replay_end(request).is_none()
-            && !matches!(
-                request.settings.fill_model,
-                contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedLiquidity { .. }
-            ))
+            && crate::execution::strategy::scoped_replay_end(request).is_none())
     {
         return Err(bad("native_output.simulation_completion"));
     }

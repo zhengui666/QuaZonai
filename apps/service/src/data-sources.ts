@@ -1,10 +1,8 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc, defineTask, defineExtension, type JsonObject as DurableJson, type TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
-import { createHash } from 'node:crypto';
-import { SourceAcquisitionTask, SourceAcquisitionUnitTask, prepareSourceAcquisition, type PreparedSourceAcquisition } from './source-acquisition.ts';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
@@ -33,16 +31,6 @@ const local: DataSourcePlugin = {
     const file = resolve(context.dataDir, String(config.path));
     return readDatasetConfig(file);
   },
-};
-const acquisition: DataSourcePlugin = {
-  name: 'qz.data.acquisition-plan', version: '1',
-  fields: [
-    { key: 'kind', label: '来源类型', type: 'text', required: true, choices: [{ value: 'http', label: 'HTTP 历史来源' }, { value: 'hf', label: 'Hugging Face 数据集' }, { value: 'hub', label: 'Hub 固定版本文件' }, { value: 'snapshot', label: 'Git/LFS 固定版本快照' }] },
-    { key: 'planPath', label: '已冻结的来源计划文件', type: 'text', required: true, description: '采集原始来源并保存证据；原始文件需完成目录准备与验证后才能用于研究。' },
-    { key: 'termsFile', label: '原始来源条款文件（HTTP 必填）', type: 'text' },
-    { key: 'cacheDir', label: '下载缓存目录', type: 'text' },
-  ],
-  async load() { throw new Error('data_source_requires_durable_acquisition'); },
 };
 export async function readDatasetConfig(file: string): Promise<DatasetConfig[]> {
   const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
@@ -99,14 +87,14 @@ export async function dataSources(config: ServiceConfig) {
   const base = structuredClone(config.datasets);
   let stored: Record<string, SavedSource> = {};
   const sources = new Map<string, Source>();
-  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, cryptohftdata, acquisition].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
+  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, cryptohftdata].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
   for (const entry of configured) {
     if (sources.has(entry.name)) throw new Problem('extension_name_conflict');
     const saved = stored[entry.name];
     const source: Source = { name: entry.name, version: entry.version ?? null, fields: [], enabled: saved?.enabled ?? entry.enabled,
       config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], retainedDatasets: saved ? datasets(saved.retainedDatasets ?? saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
     try {
-      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === cryptohftdata.name ? cryptohftdata : entry.name === acquisition.name ? acquisition : (await import(pathToFileURL(entry.module).href)).default, entry.name);
+      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === cryptohftdata.name ? cryptohftdata : (await import(pathToFileURL(entry.module).href)).default, entry.name);
       source.fields = source.plugin.fields; source.version = source.plugin.version ?? source.version;
     } catch { source.error = 'data_source_plugin_load_failed'; }
     sources.set(entry.name, source);
@@ -222,8 +210,8 @@ export async function dataSources(config: ServiceConfig) {
     if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
     return persist({ ...found(name), enabled }, false);
   };
-  const Refresh = defineTask<{ name: string; revision: number; pluginVersion: string | null; acquisition?: PreparedSourceAcquisition },
-    { phase: 'load' } | { phase: 'publish'; loaded: DurableJson[] } | { phase: 'acquired'; child: number }, DurableJson>({
+  const Refresh = defineTask<{ name: string; revision: number; pluginVersion: string | null },
+    { phase: 'load' } | { phase: 'publish'; loaded: DurableJson[] }, DurableJson>({
     name: 'qz.data-source.refresh', version: 1, initial: () => ({ phase: 'load' }),
     phases: {
       async load(task, runtime, ctx) {
@@ -233,17 +221,6 @@ export async function dataSources(config: ServiceConfig) {
           const source = found(task.input.name);
           if (!saved?.enabled || saved.revision !== task.input.revision) throw new Error('data_source_refresh_superseded');
           if (!source.plugin || source.version !== task.input.pluginVersion) throw new Error('data_source_plugin_changed');
-          if (source.name === acquisition.name) {
-            const prepared = task.input.acquisition;
-            if (!prepared) throw new Error('source_frozen_plan_missing');
-            await runtime.commit(async tx => {
-              const current = (await tx.doc(State)).sources[task.input.name] as unknown as SavedSource;
-              if (!current.enabled || current.revision !== task.input.revision) return { status: 'terminal', outcome: { status: 'failed', error: { message: 'data_source_refresh_superseded' } } };
-              const child = await tx.createTask(SourceAcquisitionTask, prepared, { ownership: { kind: 'task', taskId: task.id } });
-              return { status: 'waiting', on: [child], policy: 'allSettled', checkpoint: { phase: 'acquired', child: child as number } };
-            }, ctx);
-            return;
-          }
           const loaded = datasets(await source.plugin.load(validateConfig(source.plugin, saved.config), { dataDir: config.dataDir, signal: runtime.signal }));
           merged({ ...source, datasets: loaded });
           await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'publish', loaded: loaded as unknown as DurableJson[] } }), ctx);
@@ -256,22 +233,6 @@ export async function dataSources(config: ServiceConfig) {
             return { status: 'terminal', outcome: { status: 'failed', error: { message } } };
           }, ctx);
         }
-      },
-      async acquired(task, runtime, ctx) {
-        if (task.state.checkpoint.phase !== 'acquired') throw new Error('data_source_checkpoint_invalid');
-        const child = await runtime.getTask(task.state.checkpoint.child as TaskId<{ manifestPath: string; planId: string }>, ctx);
-        if (!child || child.state.status !== 'terminal') throw new Error('data_source_acquisition_unsettled');
-        const result = child.state.outcome;
-        await runtime.commit(async tx => {
-          const saved = (await tx.doc(State)).sources[task.input.name] as unknown as SavedSource;
-          if (result.status !== 'completed') {
-            if (saved.revision === task.input.revision) saved.error = 'data_source_acquisition_failed';
-            return { status: 'terminal', outcome: { status: 'failed', error: { message: 'data_source_acquisition_failed' } } };
-          }
-          if (!saved.enabled || saved.revision !== task.input.revision) return { status: 'terminal', outcome: { status: 'failed', error: { message: 'data_source_refresh_superseded' } } };
-          saved.acquisition = result.result; saved.lastLoadedAt = new Date(runtime.now()).toISOString(); saved.error = null;
-          return { status: 'terminal', outcome: { status: 'completed', result: { name: task.input.name, ...result.result } } };
-        }, ctx);
       },
       async publish(task, runtime, ctx) {
         if (task.state.checkpoint.phase !== 'publish') throw new Error('data_source_checkpoint_invalid');
@@ -294,26 +255,11 @@ export async function dataSources(config: ServiceConfig) {
     },
     abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
   });
-  const extension = defineExtension({ name: 'qz.data-source-runtime', tasks: [Refresh, CancelRefresh, SourceAcquisitionTask, SourceAcquisitionUnitTask] });
+  const extension = defineExtension({ name: 'qz.data-source-runtime', tasks: [Refresh, CancelRefresh] });
   const refresh = async (name: string) => {
     const source = found(name); if (!source.enabled) throw new Problem('data_source_disabled', 409);
     if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
     const runtime = connected();
-    let prepared: PreparedSourceAcquisition | undefined;
-    if (source.name === acquisition.name) {
-      const settings = validateConfig(source.plugin, source.config);
-      const kind = settings.kind as 'http' | 'hf' | 'hub' | 'snapshot';
-      const frozenPlan = object(JSON.parse(await readFile(resolve(config.dataDir, String(settings.planPath)), 'utf8')), 'source_plan');
-      const termsFile = settings.termsFile ? resolve(config.dataDir, String(settings.termsFile)) : undefined;
-      const termsDigest = termsFile ? createHash('sha256').update(await readFile(termsFile)).digest('hex') : null;
-      const identity = createHash('sha256').update(canonical({ kind, frozenPlan, termsDigest })).digest('hex');
-      const workdir = join(config.dataDir, 'source-acquisition', identity);
-      prepared = await prepareSourceAcquisition({ kind, frozenPlan, workdir, output: join(workdir, 'published'),
-        cacheDir: settings.cacheDir ? resolve(config.dataDir, String(settings.cacheDir)) : join(config.dataDir, 'source-cache'),
-        ...(termsFile ? { termsFile } : {}),
-      });
-      if (termsDigest && prepared.termsDigest !== termsDigest) throw new Problem('source_terms_changed', 409);
-    }
     const owner = await runtime.harness.root(context);
     const taskId = await owner.commit(async tx => {
       assertBusinessAdmission(await tx.doc(Application));
@@ -323,7 +269,7 @@ export async function dataSources(config: ServiceConfig) {
         const previous = await tx.task(saved.taskId as TaskId);
         if (previous && previous.state.status !== 'terminal' && (previous.input as DurableJson).revision === saved.revision) return previous.id;
       }
-      const id = await tx.createTask(Refresh, { name, revision: saved.revision ?? 0, pluginVersion: source.version, ...(prepared ? { acquisition: prepared } : {}) }, { ownership: { kind: 'conversation' } });
+      const id = await tx.createTask(Refresh, { name, revision: saved.revision ?? 0, pluginVersion: source.version }, { ownership: { kind: 'conversation' } });
       saved.taskId = id as number; return id;
     }, context);
     await synchronize(); return { taskId: taskId as number };

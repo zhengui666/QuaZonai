@@ -459,8 +459,8 @@ fn forward_refuses_future_stale_unknown_and_foreign_source_without_replay() {
             1 => request.mandate.rebalance_schedule.max_input_age_seconds = 1,
             2 => request.initial_state.open_orders_count = 1,
             3 => {
-                request.initial_state.snapshot.account_id = "BINANCE-001".into();
-                request.initial_state.open_orders_account_id = "BINANCE-001".into();
+                request.initial_state.snapshot.account_id = "OTHER-001".into();
+                request.initial_state.open_orders_account_id = "OTHER-001".into();
             }
             4 => request.assets[0].current_weight = money("0.5"),
             5 => {

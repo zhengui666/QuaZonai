@@ -177,11 +177,12 @@ export async function compareObservedSpotAccount(input: ObservedSpotComparisonIn
     datasetContentRef: text(input.datasetRevision.contentRef, 'pm_dataset_content_ref'), nativeDatasetRevisionId: input.nativeDatasetRevisionId };
   const study = input.operation.kind === 'STUDY';
   const operation = json(input.operation.kind === 'STUDY' ? input.operation.study : input.operation.simulation);
-  // Both native request structs declare settlements with serde(default,
-  // skip_serializing_if = "Vec::is_empty"). Emit that exact wire form before
-  // comparing the echoed basis; nonempty payouts and all other fields retain
-  // strict identity and the caller's original request is never rewritten.
-  if (Array.isArray(operation.settlements) && operation.settlements.length === 0) delete operation.settlements;
+  // Earlier saved requests may include this retired optional field as an empty
+  // array. Omit only that empty value on the wire, retaining the stored input.
+  if (Object.hasOwn(operation, 'settlements')) {
+    if (!Array.isArray(operation.settlements) || operation.settlements.length !== 0) refuse('legacy_settlements_unsupported');
+    delete operation.settlements;
+  }
   const selection = object(study ? operation.source_selection : operation.selection, 'native_selection');
   const settings = object(study ? operation.execution_settings : operation.settings, 'native_execution_settings');
   const policy = object(settings.multi_currency_spot_cash, 'explicit_multi_currency_spot_policy');

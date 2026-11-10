@@ -56,7 +56,6 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
   const reserve = (key: string, calls: number, operation: ScientificStageOperation) => reservePortfolioReviewScience(input, api, context, key, calls, operation);
   try {
     if (input.review.stressMethod !== 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1') throw new Problem('portfolio_review_stress_method_not_frozen');
-    if (input.policy.kind === 'catalog-ensemble') throw new Problem('portfolio_review_explicit_bar_strategy_required');
     for (const source of sources) {
       const original = object(source.input) as ResearchInput; const raw = object(object(source.selected).result).request;
       const { sealed: _sealed, ...validationData } = original.data;

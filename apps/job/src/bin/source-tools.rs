@@ -20,15 +20,12 @@ fn operation(command: &OsStr) -> Option<fn(Vec<OsString>)> {
         value if value == OsStr::new("catalog-prepare") => {
             Some(job::operator::catalog_prepare::run)
         }
-        value if value == OsStr::new("polymarket-history") => {
-            Some(job::operator::polymarket_history::run)
-        }
         _ => None,
     }
 }
 
 fn usage() {
-    eprintln!("source-tools: expected catalog-prepare or polymarket-history");
+    eprintln!("source-tools: expected catalog-prepare");
 }
 
 #[cfg(test)]
@@ -38,7 +35,6 @@ mod tests {
     #[test]
     fn dispatcher_keeps_existing_imports_and_rejects_hyper_collection() {
         assert!(operation(OsStr::new("catalog-prepare")).is_some());
-        assert!(operation(OsStr::new("polymarket-history")).is_some());
         assert!(operation(OsStr::new("hyperliquid-public")).is_none());
         assert!(operation(OsStr::new("capture-spot-candles")).is_none());
     }

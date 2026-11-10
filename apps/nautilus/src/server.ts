@@ -13,14 +13,14 @@ import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecu
 type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: string };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
-export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
+export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
 const flags = new Set(['--summary-only', '--plan-only']);
 const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
 const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
-const catalogOptions = new Set(['--catalog', '--funding-catalog', '--partitions']);
+const catalogOptions = new Set(['--catalog', '--funding-catalog']);
 
 export interface WorkerOptions {
   binary: string;
@@ -229,7 +229,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
           const tick = isTickNativeCommand(request.command);
           const selectedBinary = tick ? tickBinary : binary;
           const childArgs = [request.command, ...args];
-          if (['simulate', 'replay-catalog-ensemble'].includes(request.command)) execution.progressPath = join(directory, 'progress.ndjson');
+          if (request.command === 'simulate') execution.progressPath = join(directory, 'progress.ndjson');
           child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory,
               ...(calibrationThreads === undefined ? {} : { QZ_CALIBRATION_THREADS: String(calibrationThreads) }),

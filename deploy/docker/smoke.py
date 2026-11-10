@@ -59,36 +59,11 @@ def model_settings(opener, origin, model=None):
     assert api(opener, origin, 'settings') == expected
     return expected
 
-def expanded_catalog(native, directory, fixture):
-    # Extend the existing explicitly unqualified candle test, just as the Node
-    # core scenario does. The actual native importer creates all catalog bytes.
-    acquired = directory / 'acquired'
-    manifest = json.loads((acquired / 'acquisition.json').read_text())
-    row = json.loads((acquired / 'records.jsonl').read_text().splitlines()[0])
-    rows = [{**row, 'selection_time_seconds': index * 60, 'event_time_seconds': (index + 1) * 60, 'source_row_index': index} for index in range(8)]
-    records = ''.join(json.dumps(value) + '\n' for value in rows)
-    raw = json.dumps([[value['selection_time_seconds'], *[float(value[name]) for name in ('low', 'high', 'open', 'close', 'volume')]] for value in rows])
-    manifest['selection']['end_seconds'] = 480
-    for request in (manifest['requests'][0], manifest['responses'][0]['request']):
-        request['end_seconds'] = 480; request['url'] = request['url'].replace('00%3A03', '00%3A08')
-    manifest['responses'][0]['counts']['source_rows'] = 8; manifest['responses'][0]['counts']['selected_rows'] = 8
-    manifest['responses'][0]['file']['size'] = len(raw.encode()); manifest['raw_response_bytes'] = len(raw.encode())
-    manifest['records']['size'] = len(records.encode()); manifest['record_count'] = 8
-    (acquired / 'records.jsonl').write_text(records); (acquired / 'raw/0000.json').write_text(raw)
-    (acquired / 'acquisition.json').write_text(json.dumps(manifest))
-    output = directory / 'expanded'
-    run([native / 'catalog-prepare', 'ingest-candles', '--acquisition', acquired / 'acquisition.json', '--instruments', directory / 'instruments.json', '--output', output], capture=True)
-    fixture['catalog_root'] = str(output / 'catalog'); fixture['selection']['selection']['maximum_rows'] = 8
-
-def completed(opener, origin, id, *, native=True):
+def completed(opener, origin, id):
     for _ in range(90):
         detail = api(opener, origin, f'research/{id}')
         if detail['final'] is not None and detail['final']['status'] != 'STARTED':
-            if native:
-                assert detail['trialRecords'][0]['status'] == 'COMPUTED', detail['trialRecords'][0]['error']
-                assert (detail['final']['status'], detail['final']['reason']) == ('STOPPED', 'independent_review_not_passed'), (detail['final']['status'], detail['final']['reason'])
-            else:
-                assert detail['trialRecords'] == [] and detail['final']['status'] == 'STOPPED'
+            assert detail['trialRecords'] == [] and detail['final']['status'] == 'STOPPED'
             return detail
         if detail['trialRecords'] and detail['trialRecords'][0]['status'] == 'FAILED':
             raise AssertionError('Packaged native trial failed: ' + str(detail['trialRecords'][0]['error']))
@@ -139,67 +114,24 @@ def smoke(args):
                 print('Published Node image setup/login/static installation passed.')
                 return
             manage(bundle, root, 'stop')
-            fixture = None
-            if not args.service_only:
-                native = args.native_directory.resolve()
-                catalog = root / 'data/native-smoke'
-                run([native / 'browser_catalog_fixture', catalog, native / 'catalog-prepare'])
-                fixture = json.loads((catalog / 'prepared.json').read_text())
-                expanded_catalog(native, catalog, fixture)
-            data = {}
-            if fixture:
-                selection = {**fixture['selection']['selection'], 'event_end_ns': str(int(fixture['original_receipt_ns']) + 1),
-                             'decision_cutoff_ns': str(int(fixture['original_receipt_ns']) + 1)}
-                request = {'schema_version': 1, 'forecast': {'schema_version': 1, 'selection': selection,
-                    'parameters': {'schema_version': 1, 'fast_period': 1, 'slow_period': 2, 'label_horizon_observations': 1, 'total_fuel': '1000000'}},
-                    'train_end_ns': '180000000000', 'validation_end_ns': '300000000000'}
-                original = {'catalog': fixture['catalog_root'], 'request': request}
-                data = {**original, 'sealed': original}
             provider = root / 'data/research/smoke-provider.mjs'
             shutil.copy2(BUNDLE / 'smoke-provider.mjs', provider)
             path = root / 'data/service.json'; service = json.loads(path.read_text())
             service['research']['providerModules'] = [str(provider)]
             service['datasets'] = [{'id': 'image-control', 'name': 'Controlled image protocol, unqualified',
-                'assetClass': 'TEST', 'currency': 'USD', 'source': 'FIXTURE', 'start': None, 'end': None, 'ready': True, 'data': data}]
-            # The deployed app has no native executable. A separately configured
-            # HTTP worker reads the original and frozen catalogs at the same paths.
-            # Its receipt state has its own writable volume; app state is read-only.
-            if fixture:
-                worker_data = root / 'nautilus-state'; worker_data.mkdir()
-                captured_catalogs = root / 'data/catalogs'; captured_catalogs.mkdir(exist_ok=True)
-                worker_env = root / 'nautilus.env'
-                worker_token = secrets.token_urlsafe(32)
-                worker_env.write_text('QZ_NAUTILUS_TOKEN=' + worker_token + '\n')
-                worker_env.chmod(0o600)
-                with (root / 'data/research/provider.env').open('a') as env:
-                    env.write('QZ_SMOKE_NAUTILUS_TOKEN=' + worker_token + '\n')
-                service['nautilus'] = {'backtest': {'id': 'image-science', 'url': 'http://nautilus:8090', 'tokenEnv': 'QZ_SMOKE_NAUTILUS_TOKEN'}}
-                override = {'services': {
-                    'app': {'depends_on': {'nautilus': {'condition': 'service_healthy'}}},
-                    'nautilus': {'image': science, 'user': f'{os.getuid()}:{os.getgid()}',
-                        'read_only': True, 'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],
-                        'environment': {'QZ_NAUTILUS_CATALOG_ROOTS': json.dumps([str(catalog), str(captured_catalogs)])},
-                        'env_file': [str(worker_env)],
-                        'volumes': [
-                            {'type': 'bind', 'source': str(catalog), 'target': str(catalog), 'read_only': True},
-                            {'type': 'bind', 'source': str(captured_catalogs), 'target': str(captured_catalogs), 'read_only': True},
-                            {'type': 'bind', 'source': str(worker_data), 'target': '/data/nautilus'}],
-                        'tmpfs': ['/tmp:rw,nosuid,nodev,size=128m'], 'networks': ['application']}}}
-                # Compose accepts JSON as YAML; no credentials enter its content.
-                (root / 'compose.override.yaml').write_text(json.dumps(override, indent=2) + '\n')
-            else:
-                with (root / 'data/research/provider.env').open('a') as env:
-                    env.write('QZ_TEST_IMAGE_SERVICE_ONLY=1\n')
+                'assetClass': 'TEST', 'currency': 'USD', 'source': 'FIXTURE', 'start': None, 'end': None, 'ready': True, 'data': {}}]
+            with (root / 'data/research/provider.env').open('a') as env:
+                env.write('QZ_TEST_IMAGE_SERVICE_ONLY=1\n')
             path.write_text(json.dumps(service, indent=2) + '\n')
             manage(bundle, root, 'start')
             models = api(opener, origin, 'research/models')
             model = next({key: item[key] for key in ('provider', 'modelId')} for item in models if item['provider'] == 'faux')
             original_settings = model_settings(opener, origin, model)
             command = {'requestId': 'original-image-idea', 'goal': 'Controlled image protocol; no market qualification',
-                'model': model, 'datasetId': 'image-control', 'maxTrials': 0 if args.service_only else 1}
+                'model': model, 'datasetId': 'image-control', 'maxTrials': 0}
             receipt = api(opener, origin, 'research', command)
-            detail = completed(opener, origin, receipt['conversationId'], native=not args.service_only)
-            assert len(detail['trialRecords']) == (0 if args.service_only else 1)
+            detail = completed(opener, origin, receipt['conversationId'])
+            assert detail['trialRecords'] == []
             assert api(opener, origin, 'research', command) == receipt
             manage(bundle, root, 'restart')
             assert api(opener, origin, 'research', command) == receipt
@@ -229,16 +161,10 @@ def smoke(args):
                  "const fs = require('node:fs'); for (const path of ['/opt/quazonai/bin/job', '/opt/quazonai/operator/bin/source-tools']) if (fs.existsSync(path)) throw new Error('Application contains native execution: ' + path);"])
             inventory = json.loads(run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', science,
                  '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'plugins'], capture=True))
-            v2_source = next(item for item in inventory if item['id'] == 'polymarket-v2-hf')
-            assert v2_source['public_network_operations'] == ['download', 'plan']
-            assert v2_source['capabilities'] == ['convert', 'download', 'export-dataset', 'freeze', 'plan', 'prepare', 'verify']
+            assert [item['id'] for item in inventory] == ['cryptohftdata-hyperliquid']
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', science,
-                 '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'export-dataset', 'polymarket-v2-hf', '--help'], capture=True)
-            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', science,
-                 '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
-            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app,
-                 '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
-            scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real remote HTTP Nautilus factor and review refusal'
+                 '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'convert', 'cryptohftdata-hyperliquid', '--help'], capture=True)
+            scope = 'Service-only controlled receipt (NO native trial)'
             print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
         finally:
             if (root / 'installation.json').exists():
@@ -248,9 +174,9 @@ def smoke(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image'); parser.add_argument('--runtime-image'); parser.add_argument('--revision')
-    parser.add_argument('--native-directory', type=Path)
-    parser.add_argument('--manifest', type=Path); parser.add_argument('--published-only', action='store_true')
-    parser.add_argument('--service-only', action='store_true', help='Local packaging diagnosis only; never used by CI/release acceptance')
+    parser.add_argument('--manifest', type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--published-only', action='store_true')
+    mode.add_argument('--service-only', action='store_true', help='Local packaging diagnosis only; never used by CI/release acceptance')
     args = parser.parse_args()
-    if not args.published_only and not args.service_only and not args.native_directory: parser.error('--native-directory is required for real core image acceptance')
     smoke(args)

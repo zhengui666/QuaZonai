@@ -379,7 +379,7 @@ fn quote_notional_keeps_more_than_native_decimal_scale_until_final_rounding() {
 #[test]
 fn unsupported_native_instrument_shape_and_changed_base_currency_fail_closed() {
     for id in [
-        "BTC-USDC-SPOT.BINANCE",
+        "BTC-USDC-SPOT.OTHER",
         "BTC-USD-PERP.HYPERLIQUID",
         "xyz:BTC-USDC-SPOT.HYPERLIQUID",
     ] {

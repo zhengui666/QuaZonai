@@ -7,20 +7,19 @@ import { resolvePortfolioPolicy, strategyMembers } from '../src/strategy.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
 import { PortfolioEvaluationTask, runPortfolio } from './native-portfolio-task.ts';
-import { catalogScope } from './native-catalog-scope.ts';
 import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 
 export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
   tools: [defineTool({
     name: 'strategy_portfolio_evaluate', structuredOutputSchema: trialFeedbackSchema,
-    description: 'Register one complete causal Wasm ensemble with exact positive member weights summing to 1. For catalog-ensemble use the registered v2 feature ABI and at least two members: every source market is scanned and capital follows fresh opportunities dynamically; do not supply instrumentId or allocations. Proposed member count and weights are search variables. Scientific execution is unmetered; historical fuel settings do not limit proposed members. For cross-market-threshold use allocations:"ALL_EQUAL" or explicit admitted allocations; legacy factor-threshold optionally selects instrumentId. All markets share the original TOTAL account capital, never capital per market. ONE native shared account trades VALIDATION; conditional source/proxy assumptions remain explicit and computation is not qualification. Historical mode and all failures/controls retain the original trial ledger.',
+    description: 'Register one complete causal Wasm ensemble with exact positive member weights summing to 1. Proposed member count and weights are search variables. Scientific execution is unmetered; historical fuel settings do not limit proposed members. For cross-market-threshold use allocations:"ALL_EQUAL" or explicit admitted allocations; legacy factor-threshold optionally selects instrumentId. All markets share the original TOTAL account capital, never capital per market. ONE native shared account trades VALIDATION; conditional source/proxy assumptions remain explicit and computation is not qualification. Historical mode and all failures/controls retain the original trial ledger.',
     parameters: obj({ hypothesis: str(), hypothesisId: opt(str()), parentTrialIds: opt(arr(str())), members: arr(obj({ model: str(), weight: str() })), instrumentId: opt(str()),
       allocations: opt(union([lit('ALL_EQUAL'), arr(obj({ instrumentId: str(), weight: str() }))])) }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
-      const proposal = { hypothesis: args.hypothesis, members: args.members, request: input.data.catalog_ensemble_request ?? input.data.catalog_scan_request ?? input.data.request ?? null, strategy: input.policy.strategy ?? null,
+      const proposal = { hypothesis: args.hypothesis, members: args.members, request: input.data.catalog_scan_request ?? input.data.request ?? null, strategy: input.policy.strategy ?? null,
         ...(args.hypothesisId ? { hypothesisId: args.hypothesisId } : {}), ...(args.parentTrialIds ? { parentTrialIds: args.parentTrialIds } : {}),
         ...(args.instrumentId !== undefined ? { instrumentId: args.instrumentId } : {}),
         ...(args.allocations !== undefined ? { allocations: args.allocations } : {}) };
@@ -31,9 +30,9 @@ export default defineExtension({
         const members = strategyMembers(proposal);
         const policy = resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));
         const request = iterationRequest(input.data, true);
-        const data = policy.kind === 'catalog-ensemble' ? await catalogScope(api, context, input.data) : input.data;
+        const data = input.data;
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
-        return runPortfolio(api, context, { members, policy, data: policy.kind === 'catalog-ensemble' ? data : { ...data, request }, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
+        return runPortfolio(api, context, { members, policy, data: { ...data, request }, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
       }), true);
     },
   }), defineTool({

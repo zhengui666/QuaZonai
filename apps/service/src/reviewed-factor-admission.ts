@@ -58,7 +58,7 @@ export async function freezeReviewedFactors(tx: Tx, ids: unknown, data: JsonObje
   if (ids === undefined) return null;
   if (!Array.isArray(ids) || ids.length < 2 || ids.some(id => typeof id !== 'string')
     || new Set(ids).size !== ids.length) throw new Problem('reviewed_factor_ids_invalid');
-  if (data.catalog_ensemble_request !== undefined || data.catalog_scan_request !== undefined) throw new Problem('reviewed_factor_full_prediction_panel_required', 422);
+  if (data.catalog_scan_request !== undefined) throw new Problem('reviewed_factor_full_prediction_panel_required', 422);
   const request = iterationRequest(data, true);
   const fitEndNs = counter(request.train_end_ns, 'reviewed_factor_training_cutoff');
   const members: ReviewedFactorSource[] = [];

@@ -668,11 +668,8 @@ fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expi
             job::simulation::simulate(directory.path(), &request)
                 .unwrap_err()
                 .to_string(),
-            "POLYMARKET_NATIVE_FEE_MODEL_REQUIRED"
+            "SIMULATION_MARKET_UNSUPPORTED"
         );
-        // A BinaryOption alone is not sufficient: the native venue, original
-        // collateral, fee schedule and lifecycle remain mandatory. Valid native
-        // Polymarket contracts are exercised separately in tests/polymarket.rs.
         let output = native::command(
             &[
                 "simulate".as_ref(),
@@ -688,7 +685,7 @@ fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expi
         );
         assert_eq!(
             String::from_utf8(output.stderr).unwrap().lines().next(),
-            Some("QZ_NATIVE_JOB_FAILED")
+            Some("QZ_SIMULATION_MARKET_UNSUPPORTED")
         );
     }
 }

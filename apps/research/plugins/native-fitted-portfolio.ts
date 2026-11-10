@@ -83,7 +83,7 @@ export function expandingTrainingFolds(request: JsonObject): JsonObject[] {
     validation_start_ns: (start + span * index / 4n).toString(), validation_end_ns: (start + span * (index + 1n) / 4n).toString() }));
 }
 export async function fitNativeEnsemble(input: { data: JsonObject; members: FittedMember[]; binary: NativeTarget; evidenceIdentity: string; reviewPriorBinding?: FittedReviewPriorBinding }, context: Context) {
-  if (input.data.catalog_ensemble_request !== undefined || input.data.catalog_scan_request !== undefined) throw new Error('ensemble_full_prediction_panel_required');
+  if (input.data.catalog_scan_request !== undefined) throw new Error('ensemble_full_prediction_panel_required');
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   if (input.members.length < 2) throw new Error('ensemble_two_registered_factors_required');
   const request = iterationRequest(input.data, true);

@@ -17,43 +17,28 @@ pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
-pub mod catalog_ensemble;
-mod catalog_ensemble_policy;
 pub mod catalog_prefix;
 pub mod ensemble_fit;
 pub mod experiment;
 pub mod factors;
 pub mod feature_model;
+mod fee_models;
 pub mod forecast;
 pub mod forward;
 mod live_progress;
 pub mod managed;
-#[cfg(any(feature = "native-sandbox-test", feature = "native-paper"))]
+#[cfg(feature = "native-sandbox-test")]
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
 pub mod observed_spot;
-#[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
+#[cfg(feature = "catalog-prepare")]
 pub mod operator;
 mod optimization;
-#[cfg(feature = "native-paper")]
-pub mod paper_node;
-#[cfg(feature = "native-node-observer")]
-pub mod polymarket_data_probe;
-pub mod polymarket_execution_preflight;
-#[cfg(any(
-    feature = "native-paper",
-    all(feature = "catalog-prepare", feature = "polymarket-history")
-))]
-mod polymarket_source_record;
-#[cfg(feature = "native-paper")]
-pub mod polymarket_streaming_paper;
 pub mod portfolio;
-mod prediction;
 pub mod review_allocate;
 pub mod review_science;
 pub use optimization::allocate;
-mod recorded_fees;
 mod report;
 pub use report::write_probe_report;
 pub mod signals;

@@ -1,6 +1,6 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
-#[cfg(any(feature = "market-history", feature = "polymarket-history"))]
+#[cfg(feature = "market-history")]
 pub mod aggregation;
 pub mod currencies;
 mod file_batches;
@@ -148,7 +148,7 @@ mod clock_tests {
 }
 
 /// Select original baseline plus updates without copying earlier or future versions.
-/// This same selection is used for traded series and original settlement siblings.
+/// This same selection is used for traded series and their selected instrument updates.
 pub fn select_instrument_versions(
     instruments: Vec<InstrumentAny>,
     selection: &NativeBarSelectionV1,
@@ -189,7 +189,6 @@ pub fn measure_catalog(
     measure_notionals: bool,
 ) -> Result<(NativeMarketData, NativeDatasetQualityV1)> {
     let data = load_catalog(root, &selected.selection)?;
-    crate::prediction::catalog_closes(root, &data, &selected.selection, &selected.settlements)?;
     let mut first = u64::MAX;
     let mut last = 0;
     let mut available = 0;
@@ -207,7 +206,6 @@ pub fn measure_catalog(
     }
     let count = |value| DbCounter::new(value).map_err(anyhow::Error::msg);
     let quality = NativeDatasetQualityV1 {
-        settlements: selected.settlements.clone(),
         dataset_revision_id: selected.dataset_revision_id,
         selection: selected.selection.clone(),
         row_count: count(data.rows as u64)?,
@@ -389,7 +387,7 @@ fn load_catalog_mode(
     )?;
     let bars = read_bars(&catalog, selection)?;
     let mut market = validate_native_mode(instruments, bars, selection, allow_empty_series)?;
-    market.execution_fees = crate::prediction::catalog_fees::load(root, selection)?;
+    market.execution_fees = crate::fee_models::catalog_fees::load(root, selection)?;
     market.fee_selection = Some(selection.clone());
     Ok(market)
 }

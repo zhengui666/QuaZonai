@@ -46,15 +46,15 @@ export function researchInput(value: unknown): ResearchInput {
   }
   if (input.campaign !== undefined) {
     const campaign = researchCampaignBinding(input.campaign);
-    const raw = tagged ? nativeResearchRequest(data) : data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request;
+    const raw = tagged ? nativeResearchRequest(data) : data.catalog_scan_request ?? data.request;
     if (raw !== undefined) {
       const request = record(raw, 'native_request');
       const scope = campaign.scopes[0]!;
-      const trainEnd = data.catalog_ensemble_request !== undefined ? data.train_end_ns : request.train_end_ns;
-      const validationEnd = data.catalog_ensemble_request !== undefined ? data.validation_end_ns : request.validation_end_ns;
+      const trainEnd = request.train_end_ns;
+      const validationEnd = request.validation_end_ns;
       if (scope.interval.startNs !== trainEnd || scope.interval.endExclusiveNs !== validationEnd) throw new Error('campaign_native_interval_mismatch');
       const strategy = policy.strategy === undefined ? null : record(policy.strategy, 'strategy_policy');
-      const settings = data.catalog_ensemble_request !== undefined ? request.settings : strategy?.simulationSettings;
+      const settings = strategy?.simulationSettings;
       if (scope.capital !== null && settings !== undefined) {
         const original = record(settings, 'simulation_settings');
         if (scope.capital.currency !== original.base_currency || typeof original.starting_capital !== 'string'

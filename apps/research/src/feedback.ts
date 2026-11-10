@@ -48,7 +48,6 @@ export function modelFeedback(result: JsonObject): JsonObject {
   return {
     // Keep all original nullable account scalars before optional component diagnostics.
     portfolio: { ...scalars(portfolio), statistics: portfolio.statistics ?? [],
-      ...(portfolio.strategy_kind === 'catalog-ensemble' ? { assumptions: portfolio.assumptions ?? [], consumed_fuel: portfolio.consumed_fuel ?? null, recorded_fee_totals: portfolio.recorded_fee_totals ?? null } : {}),
       summary: scalars(record(portfolio.summary) ?? {}), provenance: crossMarket && provenance
         ? { ...provenance, selection: modelSelection(provenance.selection) } : portfolio.provenance ?? null },
     schema_version: result.schema_version ?? null, request: crossMarket ? modelRequest(result.request) : result.request ?? null,
@@ -102,22 +101,6 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
     evidence: `${tagged.request.input.availability}: exploratory computation, not PIT qualification, independent source validation or execution evidence.${received ? ' Collector receipt timestamps are preserved; collector clock accuracy and user network latency are unverified. For CryptoHFTData, maximum_receive_delay_ns selects the fresh published population; older reconnect deliveries are excluded and counted in source provenance, while negative venue/collector clock skew is retained.' : ''}`,
   } }, policy: input.policy };
   const strategy = record(input.policy.strategy);
-  if (strategy?.kind === 'catalog-ensemble') {
-    const { catalog_partitions: _partitions, ...visible } = data;
-    return { data: { ...visible, feature_model: {
-      abi: TICK_FEATURE_ABI, ...featureV2Semantics,
-      features: ['completed_bar_close', 'previous_observed_bar_return', 'source_taker_quantity_imbalance', 'source_taker_cash_imbalance',
-        'source_trade_count', 'source_fee_per_cash', 'source_within_minute_price_response'],
-      definitions: ['Native completed BAR close; close/previous observed market BAR close minus 1 (first BAR missing).',
-        'Signed source taker BUY-minus-SELL quantity/total quantity and cash/total cash; inconsistent direction pairs are missing.',
-        'Original linked trade count; sum source fee/sum source cash; last original trade price/first original trade price minus 1 within this minute.'],
-      target_index: 'Stable u32 assigned on each market first causal arrival in (available_ns,instrument_id) order; ordinal is the observed BAR index within that market.',
-      missing: 'Use v2 missing masks and original feature event/availability clocks; unavailable values are not observations of zero.',
-      scope: 'One stateful model instance per member over the complete causal cross-market stream; no fixed market choices.',
-    }, assumptions: ['Source receive clocks and PIT are unverified; modeled_lag_ns is a conditional assumption.',
-      'Recorded fill flow and completed BARs are available; historical order books are not reconstructed.',
-      'One long-only margin 1x pUSD proxy account; conditional simulation is not physical venue cash or scientific qualification.'] }, policy: input.policy };
-  }
   if (strategy?.kind !== 'cross-market-threshold') return { data, policy: input.policy };
   const { instrumentIds, simulationSettings, ...mapping } = strategy;
   const { fee_rates, ...settings } = record(simulationSettings) ?? {};

@@ -415,7 +415,7 @@ export function createPmPlatform(config: ServiceConfig) {
         if (campaign.runtime.conversationId !== record.conversationId) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'observe' } }), ctx); return; }
         const registered = state.datasets[record.datasets.at(-1)!]!;
         const configured = { ...registered, data: pmScienceData(record, registered.data) };
-        const raw = object(configured.data.catalog_ensemble_request ?? configured.data.catalog_scan_request ?? configured.data.request);
+        const raw = object(configured.data.catalog_scan_request ?? configured.data.request);
         const trainEnd = counter(configured.data.train_end_ns ?? raw.train_end_ns, 'train_end');
         const validationEnd = counter(configured.data.validation_end_ns ?? raw.validation_end_ns, 'validation_end');
         const researchSettings = configured.strategy?.simulationSettings ? object(configured.strategy.simulationSettings) : raw.settings ? object(raw.settings) : null;

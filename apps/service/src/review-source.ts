@@ -46,7 +46,7 @@ export async function prepareReviewSourceEvidence(configured: DatasetConfig, pur
   if (metadata.document.registered_ref !== configured.id || metadata.document.native_snapshot_ref !== source.sourceRevision
     || dataset?.dataset_revision_id !== license.datasetRevisionId || metadata.document.partition !== (purpose === 'HELDOUT' ? 'SEALED' : 'VALIDATION')) throw new Problem('review_source_metadata_identity_mismatch');
   const selectedData = purpose === 'HELDOUT' && configured.data.sealed ? object(configured.data.sealed) : configured.data;
-  const raw = object(selectedData.request ?? selectedData.catalog_scan_request ?? selectedData.catalog_ensemble_request, 'review_source_request');
+  const raw = object(selectedData.request ?? selectedData.catalog_scan_request ?? selectedData.request, 'review_source_request');
   const selection = raw.forecast ? object(object(raw.forecast).selection) : raw;
   const from = counter(purpose === 'HELDOUT' ? raw.validation_end_ns ?? selectedData.validation_end_ns : raw.train_end_ns ?? selectedData.train_end_ns, 'review_source_start');
   const to = counter(purpose === 'HELDOUT' ? selection.event_end_ns : raw.validation_end_ns ?? selectedData.validation_end_ns, 'review_source_end');

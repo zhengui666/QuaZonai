@@ -34,7 +34,7 @@ jobs:
           cache-workspace-crates: false
       - run: python3 -B -m unittest discover -s runtimes/data -v
       - run: |
-          cargo test --locked -p job --features native-paper-test,native-sandbox-test,catalog-prepare,polymarket-history \
-            --lib --test source_tools --test polymarket_v2_source --test catalog_prepare --test catalog --test managed \
-            --test instrument_versions --test native_instrument_updates --test candle_ingest \
-            --test archive_candle_ingest --test batched_observation
+          cargo test --locked -p job --features native-sandbox-test,catalog-prepare,hyperliquid-offline \
+            --lib --test source_tools --test catalog_prepare --test catalog --test managed \
+            --test instrument_versions --test native_instrument_updates \
+            --test batched_observation

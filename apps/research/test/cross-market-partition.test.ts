@@ -34,12 +34,12 @@ for (const partition of ['VALIDATION', 'HELDOUT'] as const) {
       const policy = resolveStrategyPolicy({ allocations: [{ instrumentId: 'BASE.SIM', weight: '0.4' }, { instrumentId: 'TEST.SIM', weight: '0.6' }] }, {
         name: 'event-partition-protocol', kind: 'cross-market-threshold', instrumentIds: ['BASE.SIM', 'TEST.SIM'],
         threshold: 0, investedWeight: '1', targetTtlNs: '50', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
-        simulationSettings: { starting_capital: '3000', base_currency: 'pUSD', fee_rates: [
+        simulationSettings: { starting_capital: '3000', base_currency: 'USDC', fee_rates: [
           { instrument_id: 'BASE.SIM', maker: '0', taker: '0' }, { instrument_id: 'TEST.SIM', maker: '0', taker: '0' },
         ] },
       });
       const before = structuredClone(request);
-      const result = await forecastMembers(binary, directory, [{ model, weight: '1' }], request, policy, 'pUSD', directory, BACKGROUND_CONTEXT, false, partition);
+      const result = await forecastMembers(binary, directory, [{ model, weight: '1' }], request, policy, 'USDC', directory, BACKGROUND_CONTEXT, false, partition);
       assert.deepEqual(result.points.map((point) => point.asof_ns), partition === 'VALIDATION' ? ['12', '20'] : ['22', '31', '40']);
       assert.deepEqual(result.points.map((point) => point.rebalance_instrument_ids), partition === 'VALIDATION'
         ? [['BASE.SIM'], ['TEST.SIM']] : [['TEST.SIM'], ['BASE.SIM'], ['BASE.SIM']]);

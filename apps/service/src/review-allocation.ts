@@ -340,7 +340,6 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
         if (checks.find(check => check.id === 'provenance')?.status !== 'PASS' || checks.find(check => check.id === 'no_leakage')?.status !== 'PASS') throw new Problem('review_allocation_source_authority_not_verified');
         if (!sourceGrants.some(grant => grant.captured.metadataDigest === captured.metadataDigest)) sourceGrants.push({ configured: json(configured) as unknown as DatasetConfig, captured });
       }
-      if (sources.some(s => s.policy.kind === 'catalog-ensemble')) throw new Problem('review_allocation_catalog_ensemble_unsupported', 422);
       if (sources.some(s => s.view.currency !== sources[0]!.view.currency || s.view.capital !== sources[0]!.view.capital || s.view.datasetId !== sources[0]!.view.datasetId)) throw new Problem('review_allocation_common_account_basis_required', 422);
       if (!config.defaultModel) throw new Problem('review_model_not_configured', 422);
       const policy: ReviewAllocationPolicy = { id: `allocation-policy:${id}`, frozenAtNs, kind: 'PORTFOLIO', observationTimesNs: [], observationEvidenceRefs: [], memberCaps: input.memberCaps, clusterCaps: input.clusterCaps, currentWeights: input.currentWeights, maximumTurnover: input.maximumTurnover };

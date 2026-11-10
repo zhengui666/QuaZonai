@@ -5,14 +5,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../../research/src/documents.ts';
 import { ExecutionFailure } from '../../research/src/execution-errors.ts';
-import { exactWeights, replayCatalog, resolvePortfolioPolicy, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
-import { blendTargets, evaluatePortfolio, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
+import { replayCatalog, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
+import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { StrategyPolicy } from './config.ts';
 import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
 import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
-import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
+import { assessCapacity, capacityPolicy } from './capacity.ts';
 
 export interface PortfolioTaskInput {
   review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
@@ -41,7 +41,7 @@ export function assertPortfolioIndependentContract(input: PortfolioTaskInput, da
 }
 
 /** Original ensembles → native exact member blending → optional study blending → ONE shared account. */
-export async function computePortfolio(input: PortfolioTaskInput, context: Context, scope?: JsonObject, report?: (progress: PortfolioProgress, curve?: EquityPoint[]) => Promise<void>, options?: { partition: 'VALIDATION' | 'HELDOUT'; data?: JsonObject }) {
+export async function computePortfolio(input: PortfolioTaskInput, context: Context, report?: (progress: PortfolioProgress, curve?: EquityPoint[]) => Promise<void>, options?: { partition: 'VALIDATION' | 'HELDOUT'; data?: JsonObject }) {
   const partition = options?.partition;
   if (options?.data && partition === 'HELDOUT') assertPortfolioIndependentContract(input, options.data);
   const update = async (phase: string, completed?: number, total?: number, curve?: EquityPoint[]) => report?.({ phase, updatedAt: new Date().toISOString(), ...(completed === undefined ? {} : { completed }), ...(total === undefined ? {} : { total }) }, curve);
@@ -51,35 +51,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
   await update('FORECASTING', 0, evidence.length, []);
   const directory = await mkdtemp(join(input.dataDir, 'native-'));
   try {
-    if (input.policy.kind === 'catalog-ensemble') {
-      if (evidence.length !== 1 || evidence[0]!.factorId !== undefined) throw new Problem('catalog_ensemble_single_selection_required');
-      exactWeights(weights);
-      const source = evidence[0]!;
-      const studyInput = object(source.input, 'study_input');
-      const data = options?.data ?? object(studyInput.data, 'study_data');
-      const proposal = object(object(source.selected, 'selected_trial').proposal, 'selected_proposal');
-      const originalPolicy = object(object(studyInput.policy, 'study_policy').strategy, 'strategy_policy');
-      if (canonical(originalPolicy) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
-      const final = partition === 'VALIDATION' ? object(object(source.selected, 'selected_trial').result, 'validation_result') : object(object(source.final, 'independent_final').result, 'independent_result');
-      const request = object(final.registered_request ?? final.request, 'independent_request');
-      const catalog = partition === 'VALIDATION' || options?.data ? String(data.catalog) : input.catalog;
-      if (!options?.data && partition !== 'VALIDATION' && replayCatalog(data, request) !== input.catalog) throw new Problem('strategy_request_binding_mismatch');
-      const binding = partition === 'VALIDATION' || options?.data ? data : data.sealed ? object(data.sealed, 'heldout_data') : data;
-      const admitted = normalizedRequest(binding);
-      const settings = object(admitted.settings, 'simulation_settings');
-      if (settings.base_currency !== input.currency) throw new Problem('strategy_currency_mismatch');
-      const policy = resolvePortfolioPolicy(proposal, originalPolicy);
-      await update('SIMULATING');
-      const result = await evaluatePortfolio({ data: { ...binding, catalog,
-        catalog_ensemble_request: { ...admitted, settings: { ...settings, starting_capital: input.capital } } },
-        members: strategyMembers(proposal), policy, partition: partition ?? 'HELDOUT', binary: input.binary }, context, scope);
-      const simulation = object(result.evidence.simulation, 'native_simulation');
-      const curve = nativeCurve(simulation, input.currency);
-      await update('CAPACITY', undefined, undefined, curve);
-      const native: JsonObject = { ...result.evidence, summary: result.summary };
-      return { native, target: null, curve, metrics: simulationMetrics(simulation),
-        capacity: unavailableCapacity(input.currency, 'catalog_ensemble_capacity_unavailable', 'portfolio', input.capacityPolicy ?? capacityPolicy(evidence)) };
-    }
+
     const sources: JsonObject[] = []; const memberRows: JsonObject[][] = [];
     let selection: JsonObject | undefined; let originalCatalog: string | undefined;
     for (const [sourceIndex, source] of evidence.entries()) {

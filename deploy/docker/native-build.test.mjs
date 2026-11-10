@@ -19,7 +19,7 @@ for value in "$@"; do
   [[ "$value" != market-history,catalog-prepare,hyperliquid-offline ]] || precision=high
 done
 mkdir -p "$CARGO_TARGET_DIR/$profile/examples"
-for binary in job source-tools catalog-prepare market-history examples/browser_catalog_fixture; do
+for binary in job source-tools catalog-prepare market-history; do
   cat > "$CARGO_TARGET_DIR/$profile/$binary" <<EOF
 #!/bin/sh
 # $precision:$binary
@@ -35,8 +35,8 @@ done
         env: { ...process.env, PATH: `${tools}:${process.env.PATH}`, CARGO_TARGET_DIR: target }, encoding: 'utf8',
       });
       assert.equal(result.status, 0, result.stderr);
-      for (const binary of ['job', 'source-tools', 'catalog-prepare', 'browser_catalog_fixture']) {
-        const expected = binary === 'browser_catalog_fixture' ? `standard:examples/${binary}` : `standard:${binary}`;
+      for (const binary of ['job', 'source-tools', 'catalog-prepare']) {
+        const expected = `standard:${binary}`;
         assert.ok((await readFile(join(destination, binary), 'utf8')).includes(expected));
       }
       for (const [name, binary] of [['job-high-precision', 'job'], ['catalog-prepare-high-precision', 'catalog-prepare'], ['market-history', 'market-history']]) {

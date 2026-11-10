@@ -62,7 +62,6 @@ test('new structured native studies reject missing bindings and unsupported runn
       dataset.strategy = strategy;
     }
     const strategy = dataset.strategy!;
-    assert.ok(strategy.kind !== 'catalog-ensemble');
     dataset.data = { catalog: original.catalog!, request };
     const invalidPolicies = [
       { policy: { kind: 'factor-threshold' }, error: 'strategy_instrument_invalid' },
@@ -232,7 +231,7 @@ test('structured native input accepts only the registered inherited policy and s
   const state = await setup();
   try {
     const registered = state.options.config.datasets[0]!;
-    assert.ok(registered.strategy && registered.strategy.kind !== 'catalog-ensemble');
+    assert.ok(registered.strategy);
     registered.strategy = { ...registered.strategy!, instrumentIds: ['TEST.SIM'], evaluationPartition: 'HELDOUT' };
     await state.restart();
     const policy = { ...registered.policy, strategy: registered.strategy };

@@ -141,19 +141,11 @@ pub struct StrategyInputProvenanceV1 {
     pub pit_status: PitStatus,
     pub revision_policy: crate::catalogs::DataRevisionPolicy,
     pub feature_artifact_origins: BTreeMap<Id, DataOrigin>,
-    /// Only registered features have bindings. None preserves old reports;
-    /// new fields require a matching Job binary as well as Server/Runtime.
-    /// A current decision may also retain bindings for its historical policy Dataset.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feature_source_bindings: Option<BTreeMap<Id, crate::data::RecordedFeatureSourceBindingV1>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeStrategyCompositionRequestV1 {
-    /// Store-owned native evidence. Omitted for legacy non-Binary requests.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binary_option: Option<crate::settlement::NativeBinaryOptionContextV1>,
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub mandate: StrategyMandateContentV1,

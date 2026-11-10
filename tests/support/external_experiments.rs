@@ -162,85 +162,20 @@ async fn setup_with_objects_and_grant(
     ExperimentView,
     ExperimentEvaluateIntent,
 ) {
-    setup_with_features(pool, objects, allowed_uses, permanent_grant, None).await
-}
-
-/// The descriptor and buffers are controlled fixtures supplied by the test.
-/// Production registration still computes and checks the original buffer digest.
-pub async fn setup_recorded(
-    pool: &PgPool,
-    allowed_uses: contracts::research::DataUse,
-    descriptor: contracts::catalogs::RecordedFeatureInputsV1,
-    parts: Vec<(String, String)>,
-) -> (
-    Store,
-    Actor,
-    cycle_support::Fixture,
-    ExperimentView,
-    ExperimentEvaluateIntent,
-) {
-    let directory = tempfile::tempdir().unwrap();
-    let objects = std::sync::Arc::new(
-        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
-    );
-    let (store, actor, mut fixture, experiment, request) = setup_with_features(
-        pool,
-        objects,
-        allowed_uses,
-        false,
-        Some((descriptor, parts)),
-    )
-    .await;
-    fixture.directory = Some(directory);
-    (store, actor, fixture, experiment, request)
-}
-
-async fn setup_with_features(
-    pool: &PgPool,
-    objects: std::sync::Arc<integrations::artifacts::ArtifactStore>,
-    allowed_uses: contracts::research::DataUse,
-    permanent_grant: bool,
-    recorded: Option<(
-        contracts::catalogs::RecordedFeatureInputsV1,
-        Vec<(String, String)>,
-    )>,
-) -> (
-    Store,
-    Actor,
-    cycle_support::Fixture,
-    ExperimentView,
-    ExperimentEvaluateIntent,
-) {
     let native_profiles = unused_native_profiles(pool).await;
     let (store, actor) = research_support::operator(pool).await;
-    let f = if let Some((descriptor, _)) = &recorded {
-        cycle_support::setup_external_with_features(
-            pool,
-            &store,
-            &actor,
-            objects,
-            allowed_uses,
-            permanent_grant,
-            descriptor.clone(),
-            |policy| {
-                policy.split_policy.step_size = Some(policy.split_policy.test_size);
-            },
-        )
-        .await
-    } else {
-        cycle_support::setup_external_with_grant(
-            pool,
-            &store,
-            &actor,
-            objects,
-            allowed_uses,
-            permanent_grant,
-            |policy| {
-                policy.split_policy.step_size = Some(policy.split_policy.test_size);
-            },
-        )
-        .await
-    };
+    let f = cycle_support::setup_external_with_grant(
+        pool,
+        &store,
+        &actor,
+        objects,
+        allowed_uses,
+        permanent_grant,
+        |policy| {
+            policy.split_policy.step_size = Some(policy.split_policy.test_size);
+        },
+    )
+    .await;
     assert_eq!(
         unused_native_profiles(pool).await,
         native_profiles,
@@ -257,62 +192,32 @@ async fn setup_with_features(
         max_age_ns: Some(DbCounter::new(60_000_000_000).unwrap()),
     }];
     let mut ids = Vec::new();
-    if let Some((_, parts)) = recorded {
-        for (part_key, content) in parts {
-            let registered = store
-                .register_recorded_feature(
-                    &actor,
-                    &Id::new().to_string(),
-                    &contracts::data::RecordedFeatureRegisterV1 {
-                        schema_version: SchemaV1,
-                        project_id: f.data.project,
-                        dataset_revision_id: f.data.validation,
-                        feature_part_key: part_key,
-                        content,
-                    },
-                    |id, size| f.read(id, size),
-                    |object| {
-                        let objects = f.objects.clone();
-                        async move {
-                            objects
-                                .put(object.id, &object.bytes)
-                                .map_err(|_| StoreError::Integrity)
-                        }
-                    },
-                )
-                .await
-                .unwrap()
-                .resource;
-            ids.push(registered.artifact_id);
-        }
-    } else {
-        for sequence in 0..2 {
-            ids.push(
-                upload(
-                    &store,
-                    &actor,
-                    &f,
-                    ResearchArtifactKind::Parameters,
-                    serde_json::to_string(&FeatureObservationsV1 {
-                        schema_version: SchemaV1,
-                        partition: contracts::research::DataPartition::Validation,
-                        feature_schema: schema.clone(),
-                        observations: vec![FeatureObservationV1 {
-                            feature_index: 0,
-                            event_ns: DbCounter::new(1_577_923_200_000_000_000 + sequence).unwrap(),
-                            observed_available_ns: Some(
-                                DbCounter::new(1_577_923_200_000_000_000 + sequence).unwrap(),
-                            ),
-                            sequence: DbCounter::new(sequence).unwrap(),
-                            value: Some(0.5),
-                            missing_reason: None,
-                        }],
-                    })
-                    .unwrap(),
-                )
-                .await,
-            );
-        }
+    for sequence in 0..2 {
+        ids.push(
+            upload(
+                &store,
+                &actor,
+                &f,
+                ResearchArtifactKind::Parameters,
+                serde_json::to_string(&FeatureObservationsV1 {
+                    schema_version: SchemaV1,
+                    partition: contracts::research::DataPartition::Validation,
+                    feature_schema: schema.clone(),
+                    observations: vec![FeatureObservationV1 {
+                        feature_index: 0,
+                        event_ns: DbCounter::new(1_577_923_200_000_000_000 + sequence).unwrap(),
+                        observed_available_ns: Some(
+                            DbCounter::new(1_577_923_200_000_000_000 + sequence).unwrap(),
+                        ),
+                        sequence: DbCounter::new(sequence).unwrap(),
+                        value: Some(0.5),
+                        missing_reason: None,
+                    }],
+                })
+                .unwrap(),
+            )
+            .await,
+        );
     }
     let settings: Value = sqlx::query_scalar(
         "SELECT settings FROM app.execution_assumption_sources WHERE assumptions_id=$1",

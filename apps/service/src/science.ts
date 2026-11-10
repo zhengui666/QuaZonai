@@ -1,7 +1,7 @@
 import { ScientificStage } from './scientific-stages.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { JsonObject } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
 import type { PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
@@ -12,7 +12,6 @@ import type { ObservationTaskInput } from './downstream.ts';
 import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
 import { accountKey, CapitalExitCommand } from './capital-exit.ts';
 import { classifyExecutionError, executionDiagnostic } from '../../research/src/execution-errors.ts';
-import { readCatalogScope } from '../../research/plugins/native-catalog-scope.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, pmState } from './pm-facts.ts';
 import { reviewPortfolio, reservePortfolioReviewScience } from './portfolio-review.ts';
@@ -23,7 +22,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ReviewCheck, ReviewMetric, ReviewReport } from '../../../packages/contracts/src/review.ts';
 import { reviewIndependentOutcomeCheck, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
-import { accountReviewMetrics } from './review-account-science.ts';
 import { allocationCapacityCheck } from './review-allocation.ts';
 
 /** A new reviewed configuration must use its own frozen unread dataset. */
@@ -32,7 +30,6 @@ export function portfolioIndependentData(input: PortfolioTaskInput): JsonObject 
   const data = input.review.independentData;
   if (!data) throw new Problem('portfolio_independent_dataset_required', 422);
   if (data.nautilusTarget !== undefined && canonical(data.nautilusTarget) !== canonical(json(input.binary))) throw new Problem('portfolio_independent_target_mismatch', 422);
-  if (input.policy.kind === 'catalog-ensemble' && !data.catalog_scope) throw new Problem('portfolio_independent_catalog_scope_required', 422);
   assertPortfolioIndependentContract(input, data);
   return data;
 }
@@ -65,24 +62,6 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         // exposure. Recovery retains this Task identity and never refunds a read.
         await checkExposure(researchRuntime(runtime), context, independentData, true);
       }
-      let scope: JsonObject | undefined;
-      if (task.input.policy.kind === 'catalog-ensemble') {
-        if (independentData) {
-          const reference = object(independentData.catalog_scope, 'independent_catalog_scope');
-          const originalScope = await runtime.getTask(reference.taskId as TaskId<JsonObject>, context);
-          if (!originalScope || object(originalScope.input, 'independent_scope_input').catalog !== independentData.catalog) throw new Problem('portfolio_independent_catalog_scope_mismatch', 422);
-          scope = await readCatalogScope(runtime, reference, context);
-        } else {
-        const source = Array.isArray(task.input.evidence) ? task.input.evidence[0] : task.input.evidence;
-        const final = object(object(source!.final, 'independent_final').result, 'independent_result');
-        let reference = final.catalog_scope;
-        if (!reference) {
-          const original = await runtime.getTask(final.evidenceTaskId as TaskId<JsonObject>, context);
-          reference = object(object(original?.input, 'portfolio_input').data, 'study_data').catalog_scope;
-        }
-        scope = await readCatalogScope(runtime, object(reference, 'catalog_scope'), context);
-        }
-      }
       let phase = 'FORECASTING'; let lastSnapshotCount = 0;
       const report = async (progress: PortfolioProgress, curve?: EquityPoint[]) => {
         phase = progress.phase;
@@ -98,7 +77,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, task.input.currency);
         await report({ phase, updatedAt: new Date().toISOString() }, curve); lastSnapshotCount = snapshots.length;
       }, async () => {
-        if (!independentData) return computePortfolio(task.input, context, scope, report);
+        if (!independentData) return computePortfolio(task.input, context, report);
         const sources = Array.isArray(task.input.evidence) ? task.input.evidence : [task.input.evidence];
         const maximumCalls = sources.reduce((sum, source) => {
           const proposal = object(object(source.selected, 'selected_trial').proposal, 'selected_proposal');
@@ -107,7 +86,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         }, 3);
         // Original task-keyed reservation/results survive restart. Incomplete
         // remote effects remain under the existing receipt reconciliation path.
-        const saved = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent', maximumCalls, { kind: 'portfolio', input: task.input, scope: scope, partition: 'HELDOUT', data: independentData });
+        const saved = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent', maximumCalls, { kind: 'portfolio', input: task.input, partition: 'HELDOUT', data: independentData });
         return saved as unknown as Awaited<ReturnType<typeof computePortfolio>>;
       });
       let qualifiedReview: ReviewReport | null = review;

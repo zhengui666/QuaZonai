@@ -11,7 +11,7 @@ function condition(job) {
   return Function('needs', 'cancelled', 'inputs', `return (${value});`);
 }
 test('native source integration workflows install and cache both exporter dependency trees', async () => {
-  for (const name of ['polymarket-history.yml', 'rust-regression.yml']) {
+  for (const name of ['native-source-tools.yml', 'rust-regression.yml']) {
     const source = await readFile(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
     for (const app of ['service', 'research']) {
       assert.match(source, new RegExp(`apps/${app}/package-lock\\.json`), `${name}: cache ${app} lock`);
@@ -40,9 +40,10 @@ test('CryptoHFTData conversion stays in the remote native image', async () => {
   const application = docker.split('FROM scratch AS application-source\n')[1].split('\nFROM application-source AS nautilus-source')[0];
   const native = docker.split('FROM application-source AS nautilus-source\n')[1].split('\nFROM node AS execution-base')[0];
   assert.doesNotMatch(application, /runtimes\/data\/cryptohftdata\.py/);
-  for (const name of ['source_units.py', 'hub.py', 'acquire.py', 'providers.py', 'snapshot.py', 'hf_dataset.py']) assert.ok(application.includes(`runtimes/data/${name}`));
-  assert.match(docker, /QZ_SOURCE_UNIT_TOOL=\/opt\/quazonai\/operator\/source_units\.py/);
+  for (const name of ['acquire.py', 'providers.py', 'snapshot.py']) assert.ok(application.includes(`runtimes/data/${name}`));
   assert.ok(native.includes('runtimes/data/cryptohftdata.py'));
+  assert.deepEqual([...docker.matchAll(/runtimes\/data\/([a-z_]+\.py)/g)].map(match => match[1]).sort(),
+    ['acquire.py', 'cryptohftdata.py', 'providers.py', 'snapshot.py', 'source_plugins.py']);
   assert.ok(context.includes('!runtimes/data/*.py'));
 });
 
@@ -66,7 +67,7 @@ test('science CI exports a new controlled high-precision fixture and runs connec
   assert.ok(ci.includes('test -s "$tick_fixture/prepared/catalog-metadata.json"'));
   assert.match(ci, /QZ_JOB_BINARY="\$RUNNER_TEMP\/native-artifacts\/job" QZ_TICK_JOB_BINARY="\$RUNNER_TEMP\/native-artifacts\/job-high-precision" QZ_TICK_NATIVE_FIXTURE_DIR="\$tick_fixture" node --experimental-strip-types --test apps\/service\/test\/tick-native\.test\.ts/);
   const archive = ci.split('\n').find(line => line.includes('tar -czf') && line.includes('native.tar.gz'));
-  for (const name of ['job source-tools catalog-prepare browser_catalog_fixture', 'job-high-precision catalog-prepare-high-precision market-history']) assert.ok(archive?.includes(name));
+  for (const name of ['job source-tools catalog-prepare', 'job-high-precision catalog-prepare-high-precision market-history']) assert.ok(archive?.includes(name));
 });
 
 test('formal releases still require full regression and cancelled builds never proceed', () => {

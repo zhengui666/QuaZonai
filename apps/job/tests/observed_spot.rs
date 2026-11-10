@@ -332,8 +332,8 @@ fn unknown_locked_wrong_account_and_future_state_cannot_be_replayed() {
             }
             4 => request.initial_state.snapshot.is_stale = true,
             _ => {
-                request.initial_state.snapshot.account_id = "BINANCE-001".into();
-                request.initial_state.open_orders_account_id = "BINANCE-001".into();
+                request.initial_state.snapshot.account_id = "OTHER-001".into();
+                request.initial_state.open_orders_account_id = "OTHER-001".into();
             }
         }
         assert!(
@@ -382,7 +382,7 @@ fn study_request(
     source_selection.decision_cutoff_ns = source_selection.event_end_ns;
     let study = NativePortfolioStudyRequestV1 {
         schema_version: SchemaV1,
-        settlements: vec![],
+
         source_selection,
         evaluation_start_ns: count(START + 7 * MINUTE + 500_000_000),
         manual_cutoffs_ns: Some(vec![

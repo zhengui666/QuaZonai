@@ -702,7 +702,7 @@ fn export_multi_day_native_pm_fixture_when_requested() {
     let ttl_seconds = 86_400_u32;
     let mut study = NativePortfolioStudyRequestV1 {
         schema_version: SchemaV1,
-        settlements: vec![],
+
         source_selection: template.selection,
         evaluation_start_ns: count(4320 * INTERVAL_NS + 1),
         manual_cutoffs_ns: None,

@@ -35,20 +35,19 @@ COPY --chmod=755 packages/contracts /opt/quazonai/packages/contracts
 COPY --chmod=755 contracts/generated /opt/quazonai/contracts/generated
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 COPY --chmod=755 deploy/docker/configure.mjs deploy/docker/maintenance.mjs /opt/quazonai/deploy/docker/
-COPY --chmod=755 runtimes/data/source_units.py runtimes/data/hub.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py /opt/quazonai/operator/
+COPY --chmod=755 runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py /opt/quazonai/operator/
 
 FROM application-source AS nautilus-source
 COPY --chmod=755 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
 COPY --chmod=755 apps/nautilus/src /opt/quazonai/apps/nautilus/src
-COPY --chmod=755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history /opt/quazonai/operator/bin/
-COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py runtimes/data/cryptohftdata.py /opt/quazonai/operator/
+COPY --chmod=755 deploy/docker/operator/catalog-prepare /opt/quazonai/operator/bin/
+COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/cryptohftdata.py /opt/quazonai/operator/
 
 FROM node AS execution-base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl bash tini libssl3 libstdc++6 libxml2 python3 zstd \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/quazonai
-ENV QZ_SOURCE_UNIT_TOOL=/opt/quazonai/operator/source_units.py
 
 # Deploy this image on the separately configured Nautilus host. It is never
 # started by the application Compose project and is not copied into that image.

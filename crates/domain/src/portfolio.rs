@@ -156,27 +156,9 @@ pub fn simulation_models(
         {
             parameters
         }
-        NativeModelRefV1::PolymarketV2RecordedLiquidity {
-            native_version,
-            parameters,
-            ..
-        } if native_version == NAUTILUS_EXECUTION_VERSION
-            && matches!(
-                &settings.fee_model,
-                NativeModelRefV1::PolymarketV2RecordedFees { .. }
-            ) =>
-        {
-            parameters
-        }
         _ => return Err(unavailable()),
     };
     match &settings.fee_model {
-        NativeModelRefV1::PolymarketV2RecordedFees { native_version, .. }
-            if native_version == NAUTILUS_EXECUTION_VERSION
-                && settings.multi_currency_spot_cash.is_none()
-                && settings.account_kind == contracts::science::NativeAccountKind::Margin
-                && settings.leverage.as_decimal() == &BigDecimal::from(1)
-                && settings.base_currency == "pUSD" => {}
         NativeModelRefV1::FrozenSpotFeeScenario { native_version, parameters, .. }
             if native_version == NAUTILUS_EXECUTION_VERSION
                 && settings.multi_currency_spot_cash.is_some()
@@ -187,12 +169,6 @@ pub fn simulation_models(
             upstream_version,
             ..
         } if upstream_class == NAUTILUS_FEE_CLASS
-            && upstream_version == NAUTILUS_EXECUTION_VERSION => {}
-        NativeModelRefV1::NautilusPolymarket {
-            upstream_class,
-            upstream_version,
-            ..
-        } if upstream_class == NAUTILUS_POLYMARKET_FEE_CLASS
             && upstream_version == NAUTILUS_EXECUTION_VERSION => {}
         _ => return Err(unavailable()),
     }
