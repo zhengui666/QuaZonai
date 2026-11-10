@@ -186,10 +186,8 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             .checked_add(policy.maximum_holding_ns.get())
             .context("ECONOMIC_CLOCK_OVERFLOW")?;
     }
-    let ids = &request.research.input.instrument_ids;
     ensure!(
         !request.fx_instrument_ids.is_empty()
-            && request.fx_instrument_ids.iter().all(|id| ids.contains(id))
             && request
                 .fx_instrument_ids
                 .iter()
@@ -2067,7 +2065,13 @@ pub fn replay_models_with_funding_and_cores(
 ) -> Result<NativeTickEconomicResultV1> {
     ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
     validate(request)?;
-    let cache = cohort_cache::load(root, &request.research)?;
+    let mut source_request = request.research.clone();
+    for id in &request.fx_instrument_ids {
+        if !source_request.input.instrument_ids.contains(id) {
+            source_request.input.instrument_ids.push(id.clone());
+        }
+    }
+    let cache = cohort_cache::load(root, &source_request)?;
     let mut defs = definitions(root)?
         .into_iter()
         .map(|i| (i.id().to_string(), i))
@@ -2127,7 +2131,13 @@ pub fn replay_models_with_funding_and_cores(
             .parameters
             .total_fuel
             .map(|v| v.get() - consumed);
-        let model = if a.cohort_count == 0 {
+        let model = if a.cohort_count == 0
+            || !request
+                .research
+                .input
+                .instrument_ids
+                .contains(&a.instrument_id)
+        {
             None
         } else {
             let (model, used) = EconomicModels::new(&modules, a.cohort_count, fuel)?;
@@ -2211,7 +2221,7 @@ pub fn replay_models_with_funding_and_cores(
         .any(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
     {
         ensure!(
-            !funding_sources(funding_root, &request.research)?.is_empty(),
+            !funding_sources(funding_root, &source_request)?.is_empty(),
             "ECONOMIC_FUNDING_SOURCE_REQUIRED"
         );
         let manifest: FundingManifest = serde_json::from_reader(File::open(
@@ -2253,7 +2263,7 @@ pub fn replay_models_with_funding_and_cores(
     .then(|| {
         ContextPrices::open(
             funding_root,
-            &request.research,
+            &source_request,
             request.context_source.is_some(),
             request.event_time_context_source.is_some(),
         )
@@ -2463,7 +2473,7 @@ pub fn replay_models_with_funding_and_cores(
             a.fast.update_raw(current.vwap);
             a.slow.update_raw(current.vwap);
             if let Some(previous) = &a.previous {
-                if a.fast.initialized() && a.slow.initialized() {
+                if a.fast.initialized() && a.slow.initialized() && a.model.is_some() {
                     let ordinal = u32::try_from(a.cohorts)?;
                     let received = request.research.input.uses_received_time();
                     let feature_at = |value, cohort: &Cohort| {

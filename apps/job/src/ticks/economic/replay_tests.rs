@@ -220,6 +220,59 @@ fn source(
 }
 
 #[test]
+fn explicit_fx_assets_load_beside_perp_alpha_without_expanding_its_signal_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request, wasm) = source(directory.path(), 1, Some(5 * HOUR), true);
+    let root = prepared.join("independent/catalog");
+    request.research.input.instrument_ids = vec![LATE.into()];
+    let original = serde_json::to_value(&request).unwrap();
+    let result = replay(&root, &request, &wasm).unwrap();
+    assert_eq!(serde_json::to_value(&result.request).unwrap(), original);
+    assert!(result.initial_usdc_after_cost.is_some());
+    assert_eq!(
+        result
+            .assets
+            .iter()
+            .map(|asset| asset.instrument_id.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([BRIDGE, LATE])
+    );
+
+    let mut legacy = request.clone();
+    legacy.research.input.instrument_ids.push(BRIDGE.into());
+    let included_fx = replay(&root, &legacy, &wasm).unwrap();
+    assert_eq!(result.native_fills, included_fx.native_fills);
+    assert_eq!(result.native_rejections, included_fx.native_rejections);
+    assert_eq!(
+        serde_json::to_value(&result.days).unwrap(),
+        serde_json::to_value(&included_fx.days).unwrap()
+    );
+
+    let alpha_only_model = wat::parse_str(
+        r#"(module
+          (global $price (mut f64) (f64.const 0))
+          (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 0 i32.eqz if local.get 1 global.set $price end)
+          (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            global.get $price f64.const 2 f64.lt if unreachable end
+            f64.const 7))"#,
+    )
+    .unwrap();
+    replay(&root, &request, &alpha_only_model).unwrap();
+    assert!(
+        replay(&root, &legacy, &alpha_only_model).is_err(),
+        "legacy FX inside the original research scope retains its original model evaluation"
+    );
+    let predictive =
+        crate::ticks::evaluate(&root, &request.research, &alpha_only_model, true).unwrap();
+    assert_eq!(predictive.coverage.instrument_ids, vec![LATE]);
+    assert!(predictive
+        .partitions
+        .iter()
+        .all(|partition| partition.assets.len() == 1 && partition.assets[0].instrument_id == LATE));
+}
+
+#[test]
 fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fake_events() {
     let directory = tempfile::tempdir().unwrap();
     let (prepared, mut request, wasm) = source(directory.path(), 0, None, true);
