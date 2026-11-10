@@ -135,6 +135,44 @@ test('bounded wait uses native settled submissions, not final/IDLE/empty tasks; 
   } finally { await config.close(); await api.close(); }
 });
 
+test('SSE abort cancels a pending body read after garbage collection', async () => {
+  const requests: string[] = [];
+  const api = await server((request, response) => {
+    requests.push(request.method!);
+    response.setHeader('content-type', 'text/event-stream');
+    response.write('data: {"running":true}\n\n');
+  });
+  const script = `
+    import assert from 'node:assert/strict';
+    import { setTimeout as delay } from 'node:timers/promises';
+    import { connect } from ${JSON.stringify(new URL('../src/client.ts', import.meta.url).href)};
+    const client = await connect(${JSON.stringify(profile(api.origin))});
+    try {
+      const controller = new AbortController();
+      const events = client.events('/research/42/events', controller.signal);
+      assert.deepEqual((await events.next()).value, { running: true });
+      const pending = events.next();
+      await delay(50);
+      global.gc(); global.gc();
+      await delay(50);
+      controller.abort();
+      const result = await pending.catch(error => {
+        assert.equal(error.name, 'AbortError');
+        return { done: true, value: undefined };
+      });
+      assert.deepEqual(result, { done: true, value: undefined });
+    } finally { await client.close(); }
+  `;
+  try {
+    const child = spawn(process.execPath, ['--expose-gc', '--experimental-strip-types', '--input-type=module', '-e', script],
+      { stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
+    let error = ''; child.stderr.on('data', part => { error += part; });
+    const [code, signal] = await once(child, 'exit');
+    assert.equal(signal, null, error); assert.equal(code, 0, error);
+    assert.deepEqual(requests, ['GET']);
+  } finally { await api.close(); }
+});
+
 test('diagnostics and resume use the original numeric identities without implicit retries', async () => {
   const sent: { method: string; url: string; bytes: string }[] = []; let drop = true;
   const api = await server((request, response, bytes) => {

@@ -17,6 +17,9 @@ export async function connect(profile: Profile) {
         await response.body?.cancel(); throw new CliError('invalid_event_stream');
       }
       const reader = response.body.getReader(); const decoder = new TextDecoder();
+      const cancel = () => { void reader.cancel().catch(() => {}); };
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
       let pending = ''; let data: string[] = [];
       try {
         while (true) {
@@ -30,7 +33,7 @@ export async function connect(profile: Profile) {
           }
           if (next.done) break;
         }
-      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      } finally { signal?.removeEventListener('abort', cancel); await reader.cancel().catch(() => {}); reader.releaseLock(); }
     },
     async request<T = unknown>(method: string, path: string, body?: string, signal?: AbortSignal): Promise<T> {
       let response;
