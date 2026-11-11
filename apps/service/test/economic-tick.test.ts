@@ -31,6 +31,7 @@ test('owner API binds a retained unselected computed factor through the actual r
 import json, os, sys, time
 request=json.load(sys.stdin)
 assert sys.argv[1]=='replay-tick-economic'
+assert request['scenario']['decision_clock']=='FIXED_INTERVAL_V1'
 models=[sys.argv[i+1] for i,arg in enumerate(sys.argv) if arg=='--model']
 assert all(os.path.isfile(model) for model in models)
 assert len(models)==len(request.get('signal_weights',['1']))
@@ -92,7 +93,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       sealed: { ...json(service.config.datasets[0]!.data.sealed), catalog: republishedIndependent } };
     const unlimitedInput = research.input;
     const request = validateNativeTickEconomicRequest({ schema_version: 1, research: { ...research, input: unlimitedInput }, scenario: { initial_usdt: '3000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '0.02', participation_fraction: '0.01',
-      perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
+      perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', decision_clock: 'FIXED_INTERVAL_V1', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
       fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl', context_source: 'context-prices.manifest.json' });
     const legacyPolicy = { maximum_entry_notional_usdc: '100', maximum_holding_ns: '60500000000' };
     assert.deepEqual(validateNativeTickEconomicRequest({ ...request, small_capital_policy: legacyPolicy }).small_capital_policy, legacyPolicy);

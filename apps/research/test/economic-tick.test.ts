@@ -123,3 +123,21 @@ test('economic signal weights remain explicit exact positive weights without nor
     assert.throws(() => validateNativeTickEconomicRequest({ ...request, signal_weights }), /tick_economic_signal_weights_invalid/);
   }
 });
+
+
+test('scenario decision clock preserves legacy requests and agrees with an optional small policy clock', () => {
+  const legacy = validateNativeTickEconomicRequest(economicRequest());
+  assert.equal(Object.hasOwn(legacy.scenario, 'decision_clock'), false);
+  const policy = { maximum_entry_notional_usdc: '30', maximum_holding_ns: '60000000000' };
+  for (const clock of ['COHORT_BUCKET_V1', 'FIXED_INTERVAL_V1'] as const) {
+    const request = { ...economicRequest(), scenario: { ...economicRequest().scenario, decision_clock: clock } };
+    assert.equal(validateNativeTickEconomicRequest(request).scenario.decision_clock, clock);
+    assert.equal(validateNativeTickEconomicRequest({ ...request, small_capital_policy: policy }).scenario.decision_clock, clock);
+    assert.equal(validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...policy, decision_clock: clock } }).small_capital_policy?.decision_clock, clock);
+    const conflict = clock === 'FIXED_INTERVAL_V1' ? 'COHORT_BUCKET_V1' : 'FIXED_INTERVAL_V1';
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...policy, decision_clock: conflict } }), /tick_economic_decision_clock_conflict/);
+  }
+  for (const clock of [null, '', 'unknown', ['FIXED_INTERVAL_V1']]) {
+    assert.throws(() => validateNativeTickEconomicRequest({ ...economicRequest(), scenario: { ...economicRequest().scenario, decision_clock: clock } }), /tick_economic_decision_clock_invalid/);
+  }
+});

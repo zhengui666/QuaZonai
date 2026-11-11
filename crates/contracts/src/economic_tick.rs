@@ -21,6 +21,13 @@ pub struct NativeTickEconomicScenarioV1 {
     pub initial_margin_fraction: DecimalValue,
     pub maintenance_margin_fraction: DecimalValue,
     pub decision_interval_ns: DbCounter,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_decision_clock"
+    )]
+    #[schema(nullable = false)]
+    pub decision_clock: Option<NativeTickDecisionClockV1>,
     pub base_latency_ns: DbCounter,
     pub jitter_min_ns: DbCounter,
     pub jitter_max_ns: DbCounter,
@@ -52,6 +59,12 @@ pub struct NativeTickSmallCapitalPolicyV1 {
 pub enum NativeTickDecisionClockV1 {
     CohortBucketV1,
     FixedIntervalV1,
+}
+
+fn deserialize_decision_clock<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<NativeTickDecisionClockV1>, D::Error> {
+    NativeTickDecisionClockV1::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

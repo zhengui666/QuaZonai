@@ -3144,3 +3144,109 @@ fn native_mark_funding_settles_after_same_timestamp_closing_commands() {
         "official native funding observes the flat position after same-timestamp order settlement"
     );
 }
+
+#[test]
+fn generic_fixed_interval_trades_signed_alpha_between_source_events_without_ema_hurdles() {
+    for (start, interval, entry) in [(0, SECOND, 2 * SECOND), (DAY, 7 * SECOND, 7 * SECOND)] {
+        let directory = tempfile::tempdir().unwrap();
+        let instruments = definitions();
+        let mut request = super::tests::request();
+        request.research.input.instrument_ids = vec![LATE.into()];
+        request.research.input.event_start_ns = counter(start).unwrap();
+        request.research.input.event_end_ns = counter(start + 2 * DAY).unwrap();
+        request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+        request.research.train_end_ns = counter(start + DAY).unwrap();
+        request.research.validation_end_ns = counter(start + 2 * DAY).unwrap();
+        request.fx_instrument_ids = vec![BRIDGE.into()];
+        request.scenario.execution_model =
+            Some(NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+        request.scenario.decision_interval_ns = counter(interval).unwrap();
+        request.scenario.base_latency_ns = counter(0).unwrap();
+        request.scenario.jitter_min_ns = counter(0).unwrap();
+        request.scenario.jitter_max_ns = counter(0).unwrap();
+        request.scenario.participation_fraction = "1".parse().unwrap();
+        request.scenario.spot_taker_fee_bps = "0".parse().unwrap();
+        request.scenario.perp_taker_fee_bps = "0".parse().unwrap();
+        request.scenario.extra_cost_bps = "0".parse().unwrap();
+        let output = directory.path().join("source");
+        let mut builder = cohort_cache::Builder::new_flow(&output, 100, 100, 1_000_000).unwrap();
+        for (ordinal, (id, at, price)) in [
+            (BRIDGE, SECOND / 10, "1.000"),
+            (BRIDGE, SECOND / 5, "1.000"),
+            (LATE, SECOND + SECOND / 10, "100.00"),
+            (LATE, SECOND + SECOND / 5, "100.00"),
+            (LATE, entry + SECOND / 10, "100.00"),
+            (LATE, entry + SECOND, "200.00"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            builder
+                .push(TradeTick::new(
+                    InstrumentId::from(id),
+                    Price::from(price),
+                    Quantity::from("10000.0000"),
+                    AggressorSide::Buy,
+                    TradeId::from(format!("GENERIC-CLOCK-{ordinal}").as_str()),
+                    (start + at).into(),
+                    (start + at).into(),
+                ))
+                .unwrap();
+        }
+        let manifest = builder
+            .seal("fixed-source", start, start + 2 * DAY)
+            .unwrap();
+        builder.publish(manifest, json!({"status":"IMPORTED","availability":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"fixed-source","event_start_ns":start.to_string(),"event_end_ns":(start + 2 * DAY).to_string(),
+        "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
+        "instrument_source":{"currencies":crate::catalog::currencies::definitions(&instruments),"instruments":instruments}})).unwrap();
+        let catalog = output.join("catalog");
+        let rates = (start / HOUR + 1..start / HOUR + 48)
+            .map(|hour| {
+                json!({"instrument_id": LATE, "event_ns": (hour * HOUR).to_string(), "rate": "0"})
+                    .to_string()
+                    + "\n"
+            })
+            .collect::<String>();
+        std::fs::write(catalog.join("funding-rates.jsonl"), rates).unwrap();
+        std::fs::write(
+        catalog.join("funding-rates.manifest.json"),
+        serde_json::to_vec(&json!({
+        "source_revision":"fixed-source","start_ns":start.to_string(),"end_ns":(start + 2 * DAY).to_string(),
+        "instruments":[LATE],"rows":47,"missing_instruments":[]}))
+        .unwrap(),
+    )
+    .unwrap();
+        for score in [-1, 1] {
+            let model = wat::parse_str(format!(r#"(module
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64))
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const {score}))"#)).unwrap();
+            request.scenario.decision_clock = None;
+            let legacy = replay(&catalog, &request, &model).unwrap();
+            request.scenario.decision_clock = Some(NativeTickDecisionClockV1::CohortBucketV1);
+            let bucket = replay(&catalog, &request, &model).unwrap();
+            assert_eq!(bucket.native_fills, legacy.native_fills);
+            assert_eq!(
+                serde_json::to_value(&bucket.days).unwrap(),
+                serde_json::to_value(&legacy.days).unwrap()
+            );
+            request.scenario.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+            let fixed = replay(&catalog, &request, &model).unwrap();
+            assert!(fixed.small_capital_diagnostics.is_none());
+            assert_eq!(
+                fixed.native_fills.get(),
+                2,
+                "initial conversion and delayed signed alpha entry"
+            );
+            assert_eq!(fixed.native_rejections.get(), 0);
+            assert_eq!(
+                fixed.request.scenario.decision_clock,
+                request.scenario.decision_clock
+            );
+            let fixed_equity = decimal(fixed.days[0].equity_usdt.as_ref().unwrap()).unwrap();
+            let legacy_equity = decimal(legacy.days[0].equity_usdt.as_ref().unwrap()).unwrap();
+            assert!((fixed_equity - legacy_equity) * Decimal::from(score) > Decimal::ZERO,
+            "start-relative timer decision must fill at the next real observation before the price move, preserving the model sign");
+        }
+    }
+}

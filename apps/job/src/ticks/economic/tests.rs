@@ -361,3 +361,47 @@ fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
         "ECONOMIC_EVENT_TIME_CONTEXT_CLOCK_INVALID"
     );
 }
+
+#[test]
+fn scenario_decision_clock_preserves_legacy_wire_and_rejects_conflicting_policy() {
+    let mut request = request();
+    let legacy = serde_json::to_value(&request).unwrap();
+    assert!(legacy["scenario"].get("decision_clock").is_none());
+    let mut null_clock = legacy.clone();
+    null_clock["scenario"]["decision_clock"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<NativeTickEconomicRequestV1>(null_clock).is_err());
+    for clock in [
+        NativeTickDecisionClockV1::CohortBucketV1,
+        NativeTickDecisionClockV1::FixedIntervalV1,
+    ] {
+        request.scenario.decision_clock = Some(clock);
+        let wire = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            wire["scenario"]["decision_clock"],
+            serde_json::to_value(clock).unwrap()
+        );
+        let decoded: NativeTickEconomicRequestV1 = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+        validate(&request).unwrap();
+        request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+            maximum_entry_notional_usdc: "30".parse().unwrap(),
+            maximum_holding_ns: counter(60_000_000_000).unwrap(),
+            decision_clock: Some(clock),
+        });
+        validate(&request).unwrap();
+        request
+            .small_capital_policy
+            .as_mut()
+            .unwrap()
+            .decision_clock = Some(if clock == NativeTickDecisionClockV1::FixedIntervalV1 {
+            NativeTickDecisionClockV1::CohortBucketV1
+        } else {
+            NativeTickDecisionClockV1::FixedIntervalV1
+        });
+        assert_eq!(
+            validate(&request).unwrap_err().to_string(),
+            "ECONOMIC_DECISION_CLOCK_CONFLICT"
+        );
+        request.small_capital_policy = None;
+    }
+}

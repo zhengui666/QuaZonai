@@ -3,6 +3,7 @@ import { addDecimal, compareDecimal } from './pm-validation.ts';
 import { validateNativeTickFactorRequest, type NativeTickFactorRequest } from './tick-input.ts';
 
 export type NativeTickEconomicScenario = {
+  decision_clock?: 'COHORT_BUCKET_V1' | 'FIXED_INTERVAL_V1';
   execution_model?: 'SYNTHETIC_QUOTE_IOC_V1' | 'OBSERVED_L2_IOC_V1' | 'OBSERVED_L2_IOC_V2';
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
@@ -38,8 +39,9 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
     .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
-  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model']);
+  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model', 'decision_clock']);
   if (scenario.execution_model !== undefined && !['SYNTHETIC_QUOTE_IOC_V1', 'OBSERVED_L2_IOC_V1', 'OBSERVED_L2_IOC_V2'].includes(scenario.execution_model as string)) throw new Error('tick_economic_execution_model_invalid');
+  if (scenario.decision_clock !== undefined && scenario.decision_clock !== 'COHORT_BUCKET_V1' && scenario.decision_clock !== 'FIXED_INTERVAL_V1') throw new Error('tick_economic_decision_clock_invalid');
   for (const key of decimalFields) {
     const value = scenario[key];
     if (typeof value !== 'string' || value.length > 64 || !/^[+-]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(value)) throw new Error(`tick_economic_${key}_invalid`);
@@ -84,6 +86,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
     policy = { maximum_entry_notional_usdc: addDecimal(notional, '0'), maximum_holding_ns: holding,
       ...(clock === undefined ? {} : { decision_clock: clock }) };
   }
+  if (s.decision_clock !== undefined && policy?.decision_clock !== undefined && s.decision_clock !== policy.decision_clock) throw new Error('tick_economic_decision_clock_conflict');
   const normalized = { ...s }; for (const key of decimalFields) normalized[key] = addDecimal(s[key], '0');
   return { schema_version: 1, research, scenario: normalized,
     fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,

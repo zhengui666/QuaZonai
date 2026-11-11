@@ -174,6 +174,12 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
     );
     if let Some(policy) = &request.small_capital_policy {
         ensure!(
+            s.decision_clock.is_none()
+                || policy.decision_clock.is_none()
+                || s.decision_clock == policy.decision_clock,
+            "ECONOMIC_DECISION_CLOCK_CONFLICT"
+        );
+        ensure!(
             decimal(&policy.maximum_entry_notional_usdc)? > Decimal::ZERO
                 && policy.maximum_holding_ns.get() > 0,
             "ECONOMIC_SMALL_POLICY_INVALID"
@@ -2348,12 +2354,15 @@ pub fn replay_models_with_funding_and_cores(
         .small_capital_policy
         .as_ref()
         .map(|_| SmallCapital::new(assets.len()));
-    let fixed_clock = request.small_capital_policy.as_ref().is_some_and(|policy| {
-        policy.decision_clock == Some(NativeTickDecisionClockV1::FixedIntervalV1)
-    });
+    let fixed_clock = s.decision_clock.or_else(|| {
+        request
+            .small_capital_policy
+            .as_ref()
+            .and_then(|policy| policy.decision_clock)
+    }) == Some(NativeTickDecisionClockV1::FixedIntervalV1);
     let mut decision_timer = fixed_clock.then(|| {
         VirtualTimer::new(
-            "small-capital-decisions".into(),
+            "economic-decisions".into(),
             create_valid_interval(DurationNanos::new(s.decision_interval_ns.get())),
             start.into(),
             Some((request.research.input.event_end_ns.get() - 1).into()),
@@ -2991,7 +3000,10 @@ pub fn replay_models_with_funding_and_cores(
                 )?;
             }
         }
-        if event >= next_grid && cash.is_some() && small.is_none() {
+        if (decision_tick || !fixed_clock && event >= next_grid)
+            && cash.is_some()
+            && small.is_none()
+        {
             schedule(
                 &mut assets,
                 &cash,
@@ -3003,9 +3015,11 @@ pub fn replay_models_with_funding_and_cores(
                 &mut contexts,
             )?;
             last_target_asof = Some(event);
-            next_grid = (event / s.decision_interval_ns.get() + 1)
-                .checked_mul(s.decision_interval_ns.get())
-                .context("ECONOMIC_CLOCK_OVERFLOW")?;
+            if !fixed_clock {
+                next_grid = (event / s.decision_interval_ns.get() + 1)
+                    .checked_mul(s.decision_interval_ns.get())
+                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+            }
         }
         if decision_tick {
             decision_fresh.clear();
@@ -3150,7 +3164,7 @@ pub fn replay_models_with_funding_and_cores(
             ("funding_source".into(), funding_manifest.as_ref().map_or_else(|| "Periodic funding is inapplicable to this CurrencyPair-only replay.".into(), |manifest| format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", manifest.source_revision, manifest.start_ns.get(), manifest.end_ns.get(), manifest.rows, request.funding_source))),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
-            ("decision_clock".into(), if fixed_clock { format!("FIXED_INTERVAL_V1. Official Nautilus VirtualTimer at start + k * {}ns through the half-open input window. Same-time received data and scores precede alpha decisions. Empty seconds hold, each new cohort score is consumed once. Predetermined holding-risk deadlines and queued execution remain independent.", s.decision_interval_ns.get()) } else { "Legacy cohort-event decisions, capped by global interval buckets rather than a fixed timer.".into() }),
+            ("decision_clock".into(), if fixed_clock { format!("FIXED_INTERVAL_V1. Official Nautilus VirtualTimer at start + k * {}ns through the half-open input window. Same-time source data and scores precede alpha decisions. Generic rebalances use the latest scores. Small-capital entries consume each new cohort score once, with independent holding-risk deadlines. Queued execution requires actual later source observations.", s.decision_interval_ns.get()) } else { "Legacy cohort-event decisions, capped by global interval buckets rather than a fixed timer.".into() }),
             ("policy".into(),if small.is_some() && fixed_clock {"Fixed capped USDC alpha entries and reference-price exits at native timer deadlines, using each asset latest new cohort once. Empty clock events hold without resubmitting old signals. Declared roundtrip-cost hurdle and frozen entry fastEMA remain. Timeout is measured from entry decision with the original precise risk deadline. Orders execute only at real later observations after latency, partial fills and residual inventory remain, and quote inventory is not alpha. No dynamic sleeve transfers.".into()} else if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(), if funding_manifest.is_none() { "Periodic funding is inapplicable to this CurrencyPair-only replay.".into() } else if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
