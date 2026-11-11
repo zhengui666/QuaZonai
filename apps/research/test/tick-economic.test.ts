@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -21,6 +22,8 @@ import heldout from '../plugins/heldout-wasm.ts';
 import { runTickEconomic, tickEconomicFeedback } from '../plugins/tick-economic.ts';
 import factor from '../plugins/factor-wasm.ts';
 import research from '../plugins/research.ts';
+import { NativeRemoteUncertainty } from '../src/native-execution.ts';
+import { reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import { startLegacyResearch } from './legacy-study.ts';
 
@@ -33,7 +36,7 @@ function feedback(transcript: { messages: readonly unknown[] }, name: string): J
   return JSON.parse(message.content.map(item => item.text ?? '').join('')) as JsonObject;
 }
 
-for (const mode of ['completed', 'failed', 'stopped', 'recovered', 'financial', 'financial-final-failed'] as const) test(`tick economic research preserves primary/model binding and original ${mode} child`, { timeout: 30_000, concurrency: false }, async () => {
+for (const mode of ['completed', 'failed', 'stopped', 'unknown', 'stopped-unknown', 'stopped-running', 'recovered', 'financial', 'financial-final-failed'] as const) test(`tick economic research preserves primary/model binding and original ${mode} child`, { timeout: 30_000, concurrency: false }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-research-tick-economic-'));
   const catalog = join(directory, 'primary'); const sealed = join(directory, 'sealed');
   await mkdir(catalog); await mkdir(sealed);
@@ -56,8 +59,8 @@ assert request['small_capital_policy']['decision_clock']=='FIXED_INTERVAL_V1'
 model=open(sys.argv[sys.argv.index('--model')+1],'rb').read()
 assert model==bytes([0,97,115,109,1,0,0,0])
 with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
-if (${JSON.stringify(mode)}=='failed' and len(open(${JSON.stringify(calls)}).readlines())==1) or (${JSON.stringify(mode)}=='financial-final-failed' and heldout): raise RuntimeError('CONTROLLED_ECONOMIC_FAILURE')
-while ${JSON.stringify(mode)} in ['recovered','stopped'] and not os.path.exists(${JSON.stringify(allow)}): time.sleep(0.01)
+if (${JSON.stringify(mode)}=='failed' and len(open(${JSON.stringify(calls)}).readlines())<=2) or (${JSON.stringify(mode)}=='financial-final-failed' and heldout): raise RuntimeError('CONTROLLED_ECONOMIC_FAILURE')
+while ${JSON.stringify(mode)} in ['recovered','stopped','unknown','stopped-unknown','stopped-running'] and not os.path.exists(${JSON.stringify(allow)}): time.sleep(0.01)
 print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'protocol only'},'coverage':{},'assets':[],
 'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'CONTROLLED_MISSING_MARK'}, {'day_start_ns':str(6*86400000000000),'equity_usdt':'999','net_return':99,'unknown_reason':None}],
 'partition_metrics':[{'partition':p,'days':'1','valid_return_days':'1','sharpe_365':6 if p!='HELDOUT' else 12345,'annualized_return_365':4} for p in ['TRAIN','VALIDATION','HELDOUT']],
@@ -68,7 +71,23 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
 `, { mode: 0o700 });
   const worker = await createNautilusWorker({ binary, tickBinary: binary, dataDir: join(directory, 'worker'), catalogRoots: [catalog, sealed] });
   worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening');
-  const target = { id: 'original-tick-worker', url: `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}` };
+  const workerUrl = `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`;
+  let unavailable = mode.includes('unknown') || mode === 'stopped-running'; let posts = 0; let deletes = 0;
+  const proxy = createServer(async (incoming, response) => {
+    if (incoming.method === 'DELETE' && mode.startsWith('stopped-')) {
+      deletes++; response.statusCode = 404; response.end('{"error":"not_found"}'); return;
+    }
+    let body = ''; for await (const chunk of incoming) body += chunk;
+    if (incoming.method === 'POST') posts++;
+    const result = await fetch(workerUrl + incoming.url!, { method: incoming.method, ...(body ? { body } : {}) });
+    const value = await result.json() as JsonObject;
+    if (incoming.method === 'GET' && incoming.url!.startsWith('/v1/executions/') && unavailable) {
+      response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, status: 'UNKNOWN', error: 'CONTROLLED_OBSERVATION_LOSS' })); return;
+    }
+    response.statusCode = result.status; response.end(JSON.stringify(value));
+  });
+  proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening');
+  const target = { id: 'original-tick-worker', url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}` };
   const full = { schema_version: 1, input: { modality: 'TRADE_TICK', instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: String(8n * day), decision_cutoff_ns: String(8n * day),
     representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', source_revision: 'controlled-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
     sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '1000000000' },
@@ -89,7 +108,43 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
   }), defineTool({
     name: 'economic_pair', description: 'Concurrent calls retain one economic attempt', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
-      const [left, right] = await Promise.all([runTickEconomic(api, ctx, trialId), runTickEconomic(api, ctx, trialId)]);
+      if (mode.startsWith('stopped-')) {
+        if (mode === 'stopped-running') unavailable = false;
+        await assert.rejects(runTickEconomic(api, ctx, trialId), /native_remote_execution_unsettled/);
+        assert.equal(posts, 1, 'unconfirmed cancellation cannot submit another economic invocation');
+        assert.ok(deletes > 0);
+        const old = (await api.snapshot(Study, api.conversationId, ctx))!.trials[0]!.economic as JsonObject;
+        unavailable = false; await writeFile(allow, 'finish original invocation');
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          await reconcileNativeRemoteTasks(api, [{ id: old.taskId as number, conversationId: api.conversationId }], ctx);
+          const facts = await api.snapshot(NativeRemoteUncertainty, api.conversationId, String(old.taskId), ctx);
+          if (facts!.requests.every(row => row.status === 'COMPLETED')) break;
+          assert.ok(Date.now() < deadline, 'original invocation did not produce a terminal receipt');
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      }
+      let left: JsonObject; let right: JsonObject;
+      if (mode === 'failed') {
+        let release!: () => void; let observed!: () => void;
+        const paused = new Promise<void>(resolve => { release = resolve; });
+        const ready = new Promise<void>(resolve => { observed = resolve; });
+        let initial = true;
+        const delayed = { ...api, snapshot: (async (...args: Parameters<typeof api.snapshot>) => {
+          const value = await api.snapshot(...args);
+          if (initial) { initial = false; observed(); await paused; }
+          return value;
+        }) as typeof api.snapshot };
+        const pending = runTickEconomic(delayed, ctx, trialId);
+        await ready;
+        try { left = await runTickEconomic(api, ctx, trialId); }
+        finally { release(); }
+        right = await pending;
+        assert.equal(left.status, 'FAILED');
+        assert.equal(posts, 2, 'a delayed concurrent caller reuses the new attempt even after it fails');
+      } else {
+        [left, right] = await Promise.all([runTickEconomic(api, ctx, trialId), runTickEconomic(api, ctx, trialId)]);
+      }
       assert.deepEqual(left, right);
       return { output: [{ type: 'text', text: JSON.stringify({ trialId, economic: left }) }] };
     },
@@ -126,8 +181,9 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     const originalInput = structuredClone((await host.state(receipt.conversationId)).research!.input);
     let submissionId = receipt.submissionId;
     let previousAttempt: Awaited<ReturnType<typeof host.harness.getTask>>;
+    let uncertainNative: Awaited<ReturnType<typeof host.harness.getTask>>;
     let previousExposures = await host.harness.snapshot(Exposures, context);
-    if (mode === 'recovered' || mode === 'stopped') {
+    if (mode === 'recovered' || mode === 'stopped' || mode.includes('unknown') || mode === 'stopped-running') {
       const deadline = Date.now() + 10_000;
       for (;;) {
         try { if ((await readFile(calls, 'utf8')).includes('run')) break; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -138,7 +194,21 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const running = await tickEconomicFeedback(host.harness, context, active.economic as JsonObject);
       assert.equal(running.status, 'STARTED'); assert.notEqual(running.taskStatus, 'terminal');
       const originalChildId = (active.economic as JsonObject).taskId;
-      if (mode === 'stopped') {
+      if (mode.includes('unknown') || mode === 'stopped-running') {
+        for (;;) {
+          const task = await host.harness.getTask(originalChildId as TaskId<unknown>, context);
+          if (task!.state.status === 'sleeping' && (task!.state.checkpoint as JsonObject).phase === 'reconcile') {
+            uncertainNative = await host.harness.getTask((task!.state.checkpoint as JsonObject).nativeTaskId as TaskId<unknown>, context);
+            assert.equal(uncertainNative!.state.status, 'terminal');
+            break;
+          }
+          assert.notEqual(task!.state.status, 'terminal');
+          assert.ok(Date.now() < deadline, 'economic task did not preserve its original UNKNOWN receipt');
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        assert.equal(posts, 1);
+      }
+      if (mode.startsWith('stopped')) {
         previousExposures = await host.harness.snapshot(Exposures, context);
         await host.stop(receipt.conversationId);
         const stopped = (await host.state(receipt.conversationId)).research!;
@@ -149,7 +219,9 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
         assert.equal(previousAttempt!.state.status, 'terminal');
         assert.deepEqual(await host.harness.snapshot(Exposures, context), previousExposures);
       }
-      await host.close(); await writeFile(allow, 'continue'); host = await openResearch(options);
+      await host.close();
+      if (!mode.startsWith('stopped-')) { unavailable = false; await writeFile(allow, 'continue'); }
+      host = await openResearch(options);
       const recovered = (await host.state(receipt.conversationId)).research!.trials[0]!;
       assert.equal((recovered.economic as JsonObject).taskId, originalChildId);
     }
@@ -159,23 +231,32 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       previousAttempt = await host.harness.getTask((first!.economic as JsonObject).taskId as TaskId<unknown>, context);
       await host.close(); host = await openResearch(options);
     }
-    if (mode === 'stopped' || mode === 'failed') {
+    if (mode.startsWith('stopped') || mode === 'failed') {
       faux.setResponses([tool('economic_pair'),
         transcript => { repeated = feedback(transcript, 'economic_pair'); return tool('factor_economic_evaluate', { trialId }); },
-        transcript => { assert.deepEqual(feedback(transcript, 'factor_economic_evaluate'), repeated!); return tool('research_trial', { trialId }); },
+        transcript => {
+          const latest = feedback(transcript, 'factor_economic_evaluate');
+          if (mode === 'failed') {
+            assert.equal((repeated!.economic as JsonObject).status, 'FAILED');
+            assert.notEqual((latest.economic as JsonObject).taskId, (repeated!.economic as JsonObject).taskId);
+            repeated = latest;
+          } else assert.deepEqual(latest, repeated!);
+          return tool('research_trial', { trialId });
+        },
         transcript => { readback = feedback(transcript, 'research_trial'); return tool('research_finish', { reason: 'Same computed factor retained after owner resume.' }); },
       ]);
       submissionId = (await host.resume(receipt.conversationId, receipt.submissionId, 'Retry economic evaluation of the original computed factor.')).submissionId;
     }
     await (await host.harness.submission(submissionId, context))!.wait(context);
     const source = (await host.harness.snapshot(Study, receipt.conversationId, context))!.trials[0]!;
+    if (uncertainNative) assert.deepEqual((await host.harness.getTask(uncertainNative.id, context))!.state, uncertainNative.state);
     assert.deepEqual((await host.state(receipt.conversationId)).research!.input, originalInput);
     assert.equal(source.status, 'COMPUTED'); assert.equal(source.taskId, trialId);
     assert.deepEqual(source.proposal, { model: '(module)', hypothesis: 'Controlled original trial', request: full });
     assert.deepEqual(source.result, { request: iterationRequest(data) });
     const economic = first!.economic as JsonObject;
-    const retry = mode === 'failed' || mode === 'stopped';
-    assert.equal(economic.status, mode === 'failed' ? 'FAILED' : mode === 'stopped' ? 'STOPPED' : 'COMPUTED');
+    const retry = mode === 'failed' || mode.startsWith('stopped');
+    assert.equal(economic.status, mode === 'failed' ? 'FAILED' : mode.startsWith('stopped') ? 'STOPPED' : 'COMPUTED');
     if (retry) {
       assert.notEqual((repeated!.economic as JsonObject).taskId, economic.taskId);
       assert.equal((repeated!.economic as JsonObject).status, 'COMPUTED');
@@ -194,12 +275,12 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const current = (await host.state(receipt.conversationId)).research!;
       assert.equal(current.final?.status, mode === 'financial-final-failed' ? 'FAILED' : 'COMPUTED', JSON.stringify(current.final));
     }
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, mode.startsWith('financial') || retry ? 2 : 1, 'only failed or stopped economic attempts create another native execution');
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, mode === 'failed' ? 3 : mode.startsWith('financial') || retry ? 2 : 1, 'only failed or stopped economic attempts create another native execution');
     const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.tick-economic' }, 100), context);
-    assert.equal(tasks.items.length, mode.startsWith('financial') || retry ? 2 : 1); assert.ok(tasks.items.some(task => task.id === economic.taskId));
+    assert.equal(tasks.items.length, mode === 'failed' ? 3 : mode.startsWith('financial') || retry ? 2 : 1); assert.ok(tasks.items.some(task => task.id === economic.taskId));
     assert.equal(tasks.items[0]!.conversationId, receipt.conversationId);
     const native = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
-    assert.equal(native.items.length, mode.startsWith('financial') ? 3 : retry ? 2 : 1);
+    assert.equal(native.items.length, mode.startsWith('financial') || mode === 'failed' ? 3 : retry ? 2 : 1);
     if (mode.startsWith('financial')) {
       const current = (await host.state(receipt.conversationId)).research!;
       if (mode === 'financial-final-failed') {
@@ -223,12 +304,12 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       assert.equal(((review.candidate as JsonObject).economic as JsonObject).taskId, economic.taskId);
     }
     if (mode === 'failed') assert.match(String(economic.error), /CONTROLLED_ECONOMIC_FAILURE/);
-    else if (mode !== 'stopped') {
+    else if (!mode.startsWith('stopped')) {
       const summary = economic.summary as JsonObject;
       assert.deepEqual((summary.metrics as JsonObject[]).map(row => row.partition), ['TRAIN', 'VALIDATION']);
       assert.equal((summary.days as JsonObject[]).length, 1);
       assert.equal((summary.days as JsonObject[])[0]!.net_return, null);
       assert.equal(summary.fees_usdc_equivalent, null);
     }
-  } finally { await host.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await host.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -420,7 +420,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       await writer.commit(async tx => { (await tx.doc(NativeExecutionRequestPart, conversationId, `${request.requestId}:${index}`, null)).data = data; return undefined; }, context);
     });
     const frozen: RemoteTaskInput = { target, requestId: request.requestId, basis: callsKey, command, request: retained,
-      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner?.scanContext ? { receiptRequired: true } : {}) };
+      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'replay-tick-economic') ? { receiptRequired: true } : {}) };
     if (owner) await owner.runtime.commit(async tx => {
       const call = await tx.doc(NativeCalls, owner.taskId, callsKey, null);
       let selectedRequestId = request.requestId;
@@ -449,7 +449,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   if (progress && observer) progress.start(async call => { if (call.kind === 'value' && call.value?.snapshots.length) await observer(call.value.snapshots); });
   try {
     const task = owner ? await owner.runtime.waitForTask(taskId!, context) : await nativeHost!.harness.waitForTask(taskId!, context);
-    if (owner?.scanContext) {
+    if (owner) {
       const adopted = (await owner.runtime.snapshot(NativeCalls, owner.taskId, callsKey, context))?.adoptedReceipt;
       if (adopted) {
         if (adopted.requestId !== (task.input as unknown as RemoteTaskInput).requestId) throw new Error('native_reconciliation_identity_conflict');
