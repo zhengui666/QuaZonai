@@ -21,7 +21,7 @@ use std::{
     io::BufReader,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 const HOUR: u64 = 3_600_000_000_000;
@@ -430,32 +430,36 @@ impl IndexedSource {
 struct CachedSource {
     path: PathBuf,
     identity: FileIdentity,
-    source: Weak<IndexedSource>,
+    source: Arc<IndexedSource>,
 }
 static SOURCE: OnceLock<Mutex<Option<CachedSource>>> = OnceLock::new();
 pub(super) fn source(root: &Path) -> Result<Arc<IndexedSource>> {
     let path = root.join("book-snapshots.source.json").canonicalize()?;
     let identity = FileIdentity::metadata(&path.metadata()?)?;
-    {
-        let mut cached = SOURCE
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_SOURCE_CACHE_POISONED"))?;
-        if let Some(previous) = &*cached {
-            if previous.path == path && previous.identity == identity {
-                if let Some(source) = previous.source.upgrade() {
-                    return Ok(source);
-                }
-            }
+    let mut cached = SOURCE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_SOURCE_CACHE_POISONED"))?;
+    cached_source(&mut cached, path, identity)
+}
+
+fn cached_source(
+    cached: &mut Option<CachedSource>,
+    path: PathBuf,
+    identity: FileIdentity,
+) -> Result<Arc<IndexedSource>> {
+    if let Some(previous) = cached {
+        if previous.path == path && previous.identity == identity {
+            return Ok(Arc::clone(&previous.source));
         }
-        let source = Arc::new(IndexedSource::open(&path)?);
-        *cached = Some(CachedSource {
-            path,
-            identity,
-            source: Arc::downgrade(&source),
-        });
-        Ok(source)
     }
+    let source = Arc::new(IndexedSource::open(&path)?);
+    *cached = Some(CachedSource {
+        path,
+        identity,
+        source: Arc::clone(&source),
+    });
+    Ok(source)
 }
 
 struct Hour {
@@ -858,6 +862,33 @@ mod tests {
             manifest["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
         }
         std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn published_index_survives_last_reader_and_reloads_changed_manifest() {
+        let (root, id) = source(false);
+        let path = root
+            .path()
+            .join("book-snapshots.source.json")
+            .canonicalize()
+            .unwrap();
+        let identity = FileIdentity::metadata(&path.metadata().unwrap()).unwrap();
+        let mut cached = None;
+        let first = cached_source(&mut cached, path.clone(), identity).unwrap();
+        let previous = Arc::downgrade(&first);
+        let reader = RawBooks::open_indexed(first, id, START, START + 2 * HOUR).unwrap();
+        drop(reader);
+        let reloaded = cached_source(&mut cached, path.clone(), identity).unwrap();
+        let previous = previous.upgrade().unwrap();
+        assert!(Arc::ptr_eq(&previous, &reloaded));
+        drop(reloaded);
+
+        let mut manifest = std::fs::read_to_string(&path).unwrap();
+        manifest.push('\n');
+        std::fs::write(&path, manifest).unwrap();
+        let changed = FileIdentity::metadata(&path.metadata().unwrap()).unwrap();
+        let reloaded = cached_source(&mut cached, path, changed).unwrap();
+        assert!(!Arc::ptr_eq(&previous, &reloaded));
     }
 
     #[test]
