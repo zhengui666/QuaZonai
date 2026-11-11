@@ -1,8 +1,12 @@
 //! Bounded-memory evaluation of the explicit derived cohort representation.
 use super::*;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
+};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Pearson {
     count: u64,
     first: Option<(f64, f64)>,
@@ -39,6 +43,36 @@ impl Pearson {
         Ok(())
     }
 
+    fn merge(&mut self, other: Self) -> Result<()> {
+        if other.count == 0 {
+            return Ok(());
+        }
+        if self.count == 0 {
+            *self = other;
+            return Ok(());
+        }
+        let count = self
+            .count
+            .checked_add(other.count)
+            .ok_or_else(|| anyhow::anyhow!("TICK_COUNT_RANGE"))?;
+        let score_delta = other.mean_score - self.mean_score;
+        let label_delta = other.mean_label - self.mean_label;
+        let weight = other.count as f64 / count as f64;
+        let cross = self.count as f64 * weight;
+        self.score_m2 += other.score_m2 + score_delta * score_delta * cross;
+        self.label_m2 += other.label_m2 + label_delta * label_delta * cross;
+        self.covariance += other.covariance + score_delta * label_delta * cross;
+        self.mean_score += score_delta * weight;
+        self.mean_label += label_delta * weight;
+        self.varying_score |=
+            other.varying_score || self.first.unwrap().0 != other.first.unwrap().0;
+        self.varying_label |=
+            other.varying_label || self.first.unwrap().1 != other.first.unwrap().1;
+        self.nonfinite |= other.nonfinite;
+        self.count = count;
+        Ok(())
+    }
+
     fn finish(&self) -> NativeFactorIcV1 {
         use NativeFactorIcStatusV1::*;
         let absent = |status| NativeFactorIcV1 {
@@ -72,7 +106,7 @@ impl Pearson {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Metric {
     observations: u64,
     warmup: u64,
@@ -105,6 +139,17 @@ impl Metric {
             )?,
         }
         Ok(())
+    }
+
+    fn merge(&mut self, other: Self) -> Result<()> {
+        self.observations = self
+            .observations
+            .checked_add(other.observations)
+            .ok_or_else(|| anyhow::anyhow!("TICK_COUNT_RANGE"))?;
+        self.warmup += other.warmup;
+        self.incomplete += other.incomplete;
+        self.crossing += other.crossing;
+        self.pairs.merge(other.pairs)
     }
 
     fn finish(&self) -> Result<NativeFactorMetricV1> {
@@ -175,6 +220,18 @@ impl Spans {
         self.maximum = Some(self.maximum.map_or(span, |value| value.max(span)));
         self.buckets[SPAN_CUTS.partition_point(|lower| *lower <= span) - 1] += 1;
     }
+    fn merge(&mut self, other: Self) {
+        self.count += other.count;
+        if let Some(minimum) = other.minimum {
+            self.minimum = Some(self.minimum.map_or(minimum, |value| value.min(minimum)));
+        }
+        if let Some(maximum) = other.maximum {
+            self.maximum = Some(self.maximum.map_or(maximum, |value| value.max(maximum)));
+        }
+        for (bucket, incoming) in self.buckets.iter_mut().zip(other.buckets) {
+            *bucket += incoming;
+        }
+    }
     fn finish(&self) -> Result<NativeTickLabelSpansV1> {
         Ok(NativeTickLabelSpansV1 {
             count: counter(self.count)?,
@@ -238,6 +295,25 @@ impl Groups {
             self.spans[partition][index]
                 .push(span.ok_or_else(|| anyhow::anyhow!("TICK_LABEL_SPAN_MISSING"))?);
         }
+        Ok(())
+    }
+    fn merge(&mut self, other: Self) -> Result<()> {
+        for ((metrics, spans), (incoming_metrics, incoming_spans)) in self
+            .pooled
+            .iter_mut()
+            .zip(&mut self.spans)
+            .zip(other.pooled.into_iter().zip(other.spans))
+        {
+            for ((metric, span), (incoming_metric, incoming_span)) in metrics
+                .iter_mut()
+                .zip(spans)
+                .zip(incoming_metrics.into_iter().zip(incoming_spans))
+            {
+                metric.merge(incoming_metric)?;
+                span.merge(incoming_span);
+            }
+        }
+        self.assets.extend(other.assets);
         Ok(())
     }
     fn finish_asset(&mut self, id: &str) {
@@ -600,6 +676,119 @@ fn evaluate_asset(
     Ok(summary)
 }
 
+fn evaluate_cached_asset(
+    root: &Path,
+    request: &NativeTradeTickFactorEvaluationRequestV1,
+    cache: &super::cohort_cache::CacheInput,
+    asset: &super::cohort_cache::CacheAsset,
+    module: &SignalModule,
+    budget: &mut Budget,
+    pooled: &mut [Metric; 3],
+    groups: Option<&mut Groups>,
+) -> Result<AssetSummary> {
+    let mut label_rows = match request.target {
+        NativeTickTargetV1::FixedEventTime { .. }
+        | NativeTickTargetV1::FixedReceivedTime { .. } => Some(cache.cohorts(asset)?),
+        NativeTickTargetV1::FixedTradeCohorts { .. } => None,
+    };
+    let mut books = (request.parameters.uses_book_features() && asset.cohort_count > 0)
+        .then(|| {
+            economic::books::FeatureBooks::open(
+                root,
+                asset.instrument_id.parse()?,
+                request.input.event_start_ns.get(),
+                request.input.event_end_ns.get(),
+            )
+        })
+        .transpose()?;
+    let summary = evaluate_asset(
+        request,
+        (
+            cache.cohorts(asset)?,
+            label_rows
+                .as_mut()
+                .map(|reader| reader as &mut dyn Iterator<Item = Result<Cohort>>),
+        ),
+        asset.cohort_count,
+        module,
+        budget,
+        pooled,
+        groups,
+        books.as_mut(),
+    )?;
+    Ok(summary)
+}
+
+fn evaluate_parallel(
+    root: &Path,
+    request: &NativeTradeTickFactorEvaluationRequestV1,
+    cache: &super::cohort_cache::CacheInput,
+    module: &SignalModule,
+    workers: usize,
+) -> Vec<(usize, Result<(AssetSummary, Option<Groups>)>)> {
+    let next = AtomicUsize::new(0);
+    let first_error = AtomicUsize::new(cache.assets.len());
+    let consume = || {
+        let mut output = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            if index >= first_error.load(Ordering::Relaxed) {
+                break;
+            }
+            let asset = &cache.assets[index];
+            let result = (|| {
+                let mut pooled = std::array::from_fn(|_| Metric::default());
+                let mut groups = request
+                    .evaluation_regimes
+                    .as_ref()
+                    .map(|_| Groups::new(request))
+                    .transpose()?;
+                let summary = evaluate_cached_asset(
+                    root,
+                    request,
+                    cache,
+                    asset,
+                    module,
+                    &mut Budget { fuel: None },
+                    &mut pooled,
+                    groups.as_mut(),
+                )?;
+                if let Some(groups) = &mut groups {
+                    groups.finish_asset(&asset.instrument_id);
+                }
+                Ok((summary, groups))
+            })();
+            if result.is_err() {
+                first_error.fetch_min(index, Ordering::Relaxed);
+            }
+            output.push((index, result));
+        }
+        output
+    };
+    let mut ordered = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 1..workers {
+            match thread::Builder::new()
+                .name("qz-tick-factor".into())
+                .spawn_scoped(scope, &consume)
+            {
+                Ok(handle) => handles.push(handle),
+                Err(_) => break,
+            }
+        }
+        let mut output = consume();
+        for handle in handles {
+            match handle.join() {
+                Ok(values) => output.extend(values),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        output
+    });
+    ordered.sort_unstable_by_key(|(index, _)| *index);
+    ordered
+}
+
 pub(super) fn evaluate(
     root: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
@@ -623,40 +812,46 @@ pub(super) fn evaluate(
         .as_ref()
         .map(|_| Groups::new(request))
         .transpose()?;
+    let workers = if budget.fuel.is_some() {
+        1
+    } else {
+        thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(cache.assets.len())
+            .max(1)
+    };
+    let mut parallel = (workers > 1)
+        .then(|| evaluate_parallel(root, request, &cache, &module, workers).into_iter());
     for asset in &cache.assets {
-        let mut label_rows = match request.target {
-            NativeTickTargetV1::FixedEventTime { .. }
-            | NativeTickTargetV1::FixedReceivedTime { .. } => Some(cache.cohorts(asset)?),
-            NativeTickTargetV1::FixedTradeCohorts { .. } => None,
+        let summary = if let Some(results) = &mut parallel {
+            let (_, result) = results
+                .next()
+                .expect("earlier asset error returns before unassigned jobs");
+            let (summary, asset_groups) = result?;
+            for (metric, incoming) in pooled.iter_mut().zip(&summary.metrics) {
+                // Merge the per-asset sufficient statistics in instrument order.
+                metric.merge(incoming.clone())?;
+            }
+            if let (Some(groups), Some(asset_groups)) = (&mut groups, asset_groups) {
+                groups.merge(asset_groups)?;
+            }
+            summary
+        } else {
+            let summary = evaluate_cached_asset(
+                root,
+                request,
+                &cache,
+                asset,
+                &module,
+                &mut budget,
+                &mut pooled,
+                groups.as_mut(),
+            )?;
+            if let Some(groups) = &mut groups {
+                groups.finish_asset(&asset.instrument_id);
+            }
+            summary
         };
-        let mut books = (request.parameters.uses_book_features() && asset.cohort_count > 0)
-            .then(|| {
-                economic::books::FeatureBooks::open(
-                    root,
-                    asset.instrument_id.parse()?,
-                    request.input.event_start_ns.get(),
-                    request.input.event_end_ns.get(),
-                )
-            })
-            .transpose()?;
-        let summary = evaluate_asset(
-            request,
-            (
-                cache.cohorts(asset)?,
-                label_rows
-                    .as_mut()
-                    .map(|reader| reader as &mut dyn Iterator<Item = Result<Cohort>>),
-            ),
-            asset.cohort_count,
-            &module,
-            &mut budget,
-            &mut pooled,
-            groups.as_mut(),
-            books.as_mut(),
-        )?;
-        if let Some(groups) = &mut groups {
-            groups.finish_asset(&asset.instrument_id);
-        }
         let expected = cache
             .coverage
             .instrument_coverage
@@ -770,6 +965,32 @@ mod tests {
                 assert!((actual - expected).abs() <= 1e-12);
             }
         }
+        // Each partition can be empty, nonfinite, or constant independently.
+        for pairs in [
+            vec![],
+            vec![(1.0, 2.0)],
+            vec![(1.0, 2.0), (1.0, 3.0)],
+            vec![(1.0, 2.0), (3.0, 2.0)],
+            vec![(1.0, 2.0), (3.0, 4.0), (3.0, 4.0)],
+            vec![(1.0, 2.0), (f64::NAN, 3.0)],
+        ] {
+            for split in 0..=pairs.len() {
+                let mut serial = Metric::default();
+                let mut merged = Metric::default();
+                let mut tail = Metric::default();
+                for (index, (score, label)) in pairs.iter().copied().enumerate() {
+                    serial.push(Some(score), Some(label), None).unwrap();
+                    let metric = if index < split {
+                        &mut merged
+                    } else {
+                        &mut tail
+                    };
+                    metric.push(Some(score), Some(label), None).unwrap();
+                }
+                merged.merge(tail).unwrap();
+                same_metric(&merged.finish().unwrap(), &serial.finish().unwrap());
+            }
+        }
         let scores = (0..1000)
             .map(|index| (index as f64 * 0.17).sin() * 1e3 + 1e5)
             .collect::<Vec<_>>();
@@ -778,10 +999,91 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = crate::factors::pearson_ic(&scores, &labels).unwrap();
         let mut online = Pearson::default();
-        for (score, label) in scores.into_iter().zip(labels) {
+        let mut merged = Pearson::default();
+        let mut tail = Pearson::default();
+        for (index, (score, label)) in scores.into_iter().zip(labels).enumerate() {
             online.push(score, label).unwrap();
+            let block = if index < 500 { &mut merged } else { &mut tail };
+            block.push(score, label).unwrap();
         }
+        merged.merge(tail).unwrap();
         assert!((online.finish().value.unwrap() - expected.value.unwrap()).abs() <= 1e-12);
+        assert!((merged.finish().value.unwrap() - expected.value.unwrap()).abs() <= 1e-12);
+    }
+
+    #[test]
+    fn parallel_cache_assets_keep_order_state_counts_and_explicit_global_fuel() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut data = series();
+        let mut other = data["AUD/USD.SIM"].clone();
+        for row in &mut other {
+            row.instrument_id = "ZZZ/USD.SIM".parse().unwrap();
+        }
+        data.insert("ZZZ/USD.SIM".into(), other);
+        let mut builder = super::super::cohort_cache::Builder::new(
+            &temp.path().join("source"),
+            100,
+            100,
+            1_000_000,
+        )
+        .unwrap();
+        for rows in data.values() {
+            for row in rows {
+                builder.push(*row).unwrap();
+            }
+        }
+        let manifest = builder.seal("fixed-source", 0, 80).unwrap();
+        builder.publish(manifest, serde_json::json!({
+            "status":"IMPORTED", "availability":"EVENT_TIME_PROXY_UNVERIFIED",
+            "source_revision":"fixed-source", "event_start_ns":"0", "event_end_ns":"80",
+            "missing_symbols":{}, "rejected_rows":{}, "missing_partitions":[], "duplicate_trades":0
+        })).unwrap();
+        let root = temp.path().join("source/catalog");
+        let mut request = request();
+        request.input.instrument_ids = vec!["ZZZ/USD.SIM".into(), "AUD/USD.SIM".into()];
+        request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
+        let wasm = wat::parse_str(
+            r#"(module
+            (global $calls (mut i32) (i32.const 0))
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64))
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+                global.get $calls i32.const 1 i32.add global.set $calls
+                global.get $calls f64.convert_i32_s))"#,
+        )
+        .unwrap();
+        for fuel in [None, Some(counter(1_000_000).unwrap())] {
+            request.parameters.total_fuel = fuel;
+            let actual = evaluate(&root, &request, &wasm, true).unwrap();
+            let expected =
+                super::super::evaluate_series(&request, data.clone(), &wasm, true).unwrap();
+            assert_eq!(actual.consumed_fuel, expected.consumed_fuel);
+            for (actual, expected) in actual.partitions.iter().zip(&expected.partitions) {
+                same_metric(&actual.metric, &expected.metric);
+                for (actual, expected) in actual.assets.iter().zip(&expected.assets) {
+                    assert_eq!(actual.instrument_id, expected.instrument_id);
+                    same_metric(&actual.metric, &expected.metric);
+                }
+            }
+        }
+        request.parameters.total_fuel = None;
+        let mut cache = super::super::cohort_cache::load(&root, &request).unwrap();
+        cache
+            .assets
+            .sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
+        let module = SignalModule::new(&wasm, false).unwrap();
+        let serial = evaluate_parallel(&root, &request, &cache, &module, 1);
+        let parallel = evaluate_parallel(&root, &request, &cache, &module, 3);
+        for ((index, serial), (parallel_index, parallel)) in serial.into_iter().zip(parallel) {
+            assert_eq!(index, parallel_index);
+            let serial = serial.unwrap().0;
+            let parallel = parallel.unwrap().0;
+            for (actual, expected) in parallel.metrics.iter().zip(serial.metrics) {
+                assert_eq!(
+                    serde_json::to_value(actual.finish().unwrap()).unwrap(),
+                    serde_json::to_value(expected.finish().unwrap()).unwrap()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1057,6 +1359,7 @@ mod tests {
             };
             let mut pooled = std::array::from_fn(|_| Metric::default());
             let mut groups = Groups::new(&request).unwrap();
+            let mut merged_groups = Groups::new(&request).unwrap();
             for (id, trades) in &data {
                 let rows = super::super::cohorts(trades, 100).unwrap();
                 let mut labels = rows.clone().into_iter().map(Ok);
@@ -1072,12 +1375,41 @@ mod tests {
                 )
                 .unwrap();
                 groups.finish_asset(id);
+                let mut asset_groups = Groups::new(&request).unwrap();
+                let mut labels = rows.clone().into_iter().map(Ok);
+                evaluate_asset(
+                    &request,
+                    (rows.clone().into_iter().map(Ok), Some(&mut labels)),
+                    rows.len() as u64,
+                    &module,
+                    &mut Budget {
+                        fuel: Some(1_000_000),
+                    },
+                    &mut std::array::from_fn(|_| Metric::default()),
+                    Some(&mut asset_groups),
+                    None,
+                )
+                .unwrap();
+                asset_groups.finish_asset(id);
+                merged_groups.merge(asset_groups).unwrap();
             }
             assert_eq!(
                 expected.consumed_fuel.unwrap().get(),
                 1_000_000 - budget.fuel.unwrap()
             );
             let reports = groups.finish(&request).unwrap();
+            let merged_reports = merged_groups.finish(&request).unwrap();
+            for (actual, expected) in merged_reports.iter().zip(&reports) {
+                for (actual, expected) in actual.regimes.iter().zip(&expected.regimes) {
+                    same_metric(&actual.metric, &expected.metric);
+                    assert_eq!(
+                        serde_json::to_value(&actual.label_spans).unwrap(),
+                        serde_json::to_value(&expected.label_spans).unwrap()
+                    );
+                    assert_eq!(actual.observed_assets, expected.observed_assets);
+                    assert_eq!(actual.included_assets, expected.included_assets);
+                }
+            }
             let states = domain::ticks::evaluation_regimes(&request).unwrap();
             for (index, report) in reports.iter().enumerate() {
                 same_metric(
