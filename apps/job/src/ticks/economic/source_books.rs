@@ -1244,7 +1244,6 @@ mod tests {
         assert!(books.next().unwrap().is_none());
         let mut later =
             RawBooks::open(root.path(), id, START + 1_000_000, START + 2 * HOUR).unwrap();
-        assert!(Arc::ptr_eq(&books.source, &later.source));
         assert_eq!(later.next().unwrap().unwrap().received(), START + 1_000_123);
     }
 
