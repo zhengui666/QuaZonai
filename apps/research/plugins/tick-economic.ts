@@ -123,12 +123,13 @@ export async function runTickEconomic(api: ResearchRuntime, context: Context, tr
     const current = await tx.doc(Study, api.conversationId);
     if (current.final !== null || current.reviewSelection) throw new Error('research_search_closed');
     const source = current.trials.find(row => row.taskId === trialId)!;
-    if (source.economic) return object(source.economic, 'tick_economic').taskId as TaskId<JsonObject>;
+    const economic = source.economic ? object(source.economic, 'tick_economic') : null;
+    if (economic && economic.status !== 'FAILED' && economic.status !== 'STOPPED') return economic.taskId as TaskId<JsonObject>;
     const taskId = await tx.createTask(TickEconomicTask, { trialId, model: proposal.model as string, catalog: input.data.catalog as string,
       target: nativeTargetForData(input.data), request, bookCores: bookCores as number }, { ownership: { kind: 'task', taskId: api.taskId } });
     source.economic = { taskId, status: 'STARTED', summary: null, error: null };
     return taskId;
   }, context);
   await api.waitForTask(id, context);
-  return tickEconomicFeedback(api, context, object((await api.snapshot(Study, api.conversationId, context))!.trials.find(row => row.taskId === trialId)!.economic, 'tick_economic'));
+  return tickEconomicFeedback(api, context, { taskId: id });
 }
