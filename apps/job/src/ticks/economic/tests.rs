@@ -156,6 +156,46 @@ fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_el
 }
 
 #[test]
+fn partition_metrics_use_all_observed_daily_returns_and_keep_missing_partitions_unknown() {
+    use contracts::factors::NativeFactorPartitionV1;
+    let request = request();
+    let days = [Some(0.01), None, Some(-0.01), Some(0.02), None]
+        .into_iter()
+        .enumerate()
+        .map(|(index, net_return)| NativeTickEconomicDayV1 {
+            day_start_ns: counter(index as u64 * DAY).unwrap(),
+            equity_usdt: None,
+            net_return,
+            unknown_reason: net_return.is_none().then(|| "MISSING_MARK".into()),
+            missing_balances: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let reports = partition_metrics(&request, &days).unwrap();
+    assert_eq!(reports.len(), 3);
+    let train = &reports[0];
+    assert_eq!(train.partition, NativeFactorPartitionV1::Train);
+    assert_eq!(train.days.get(), 3);
+    assert_eq!(train.valid_return_days.get(), 2);
+    assert_eq!(train.sharpe_365, Some(0.0));
+    let expected = (1.01_f64 * 0.99).powf(365.0 / 2.0) - 1.0;
+    assert!((train.annualized_return_365.unwrap() - expected).abs() < 1e-12);
+    let validation = &reports[1];
+    assert_eq!(validation.partition, NativeFactorPartitionV1::Validation);
+    assert_eq!(validation.days.get(), 1);
+    assert_eq!(validation.valid_return_days.get(), 1);
+    assert_eq!(validation.sharpe_365, None);
+    assert!(
+        (validation.annualized_return_365.unwrap() - (1.02_f64.powf(365.0) - 1.0)).abs() < 1e-8
+    );
+    let heldout = &reports[2];
+    assert_eq!(heldout.partition, NativeFactorPartitionV1::Heldout);
+    assert_eq!(heldout.days.get(), 1);
+    assert_eq!(heldout.valid_return_days.get(), 0);
+    assert_eq!(heldout.sharpe_365, None);
+    assert_eq!(heldout.annualized_return_365, None);
+}
+
+#[test]
 fn bridge_conversion_respects_native_lot_and_minimum_without_spending_dust() {
     use nautilus_model::{
         identifiers::{InstrumentId, Symbol},

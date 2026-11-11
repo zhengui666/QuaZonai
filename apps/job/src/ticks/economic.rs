@@ -3169,7 +3169,7 @@ pub fn replay_models_with_funding_and_cores(
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(), if funding_manifest.is_none() { "Periodic funding is inapplicable to this CurrencyPair-only replay.".into() } else if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
-            ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
+            ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Partition metrics use all observed daily returns in each partition. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
             ("precision".into(),"Native USD-quoted perp PnL uses USD 2-decimal Money, explicitly swept in nominal quote units to USDC; no instrument rewrite. Full USD minor unit 0.01 times all perp fills conservatively bounds native PnL rounding, not VWAP/price precision or execution-model error.".into()),
         ]),
@@ -3178,7 +3178,7 @@ pub fn replay_models_with_funding_and_cores(
             instrument_id:a.instrument.id().to_string(), native_kind:if matches!(a.instrument,InstrumentAny::CurrencyPair(_)){"CurrencyPair"}else{"CryptoPerpetual"}.into(),
             cohorts:counter(a.cohorts)?, decisions:counter(a.decisions)?, execution_attempts:counter(a.attempts)?,
         })).collect::<Result<_>>()?,
-        metrics: metrics(request,&days)?, days, conversion_ns, initial_usdc_after_cost:initial_usdc,
+        metrics: metrics(request,&days)?, partition_metrics: Some(partition_metrics(request, &days)?), days, conversion_ns, initial_usdc_after_cost:initial_usdc,
         funding_usdc:exact(margin_summary.adjustment_totals.get("USDC").copied().unwrap_or(Decimal::ZERO))?,
         fees_usdc_equivalent:fee_equivalent.map(exact).transpose()?,
         fees_by_currency:fees.into_iter().map(|(currency,amount)|Ok((currency,exact(amount)?))).collect::<Result<_>>()?,
@@ -3683,17 +3683,67 @@ fn schedule(
     Ok(())
 }
 
-fn metrics(
-    request: &NativeTickEconomicRequestV1,
-    days: &[NativeTickEconomicDayV1],
-) -> Result<Vec<NativeTickEconomicMetricV1>> {
-    use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
+fn daily_statistics(days: &[&NativeTickEconomicDayV1]) -> (usize, Option<f64>, Option<f64>) {
     use nautilus_analysis::{
         statistic::PortfolioStatistic,
         statistics::{cagr::CAGR, sharpe_ratio::SharpeRatio},
         Returns,
     };
     use nautilus_core::UnixNanos;
+    let returns: Returns = days
+        .iter()
+        .filter_map(|day| {
+            day.net_return
+                .map(|value| (UnixNanos::from(day.day_start_ns.get()), value))
+        })
+        .collect();
+    let n = returns.len();
+    let sharpe = SharpeRatio::new(Some(365))
+        .calculate_from_returns(&returns)
+        .filter(|value| value.is_finite());
+    let annualized = (n > 0 && returns.values().all(|value| *value > -1.0))
+        .then(|| CAGR::new(Some(365)).calculate_from_returns(&returns))
+        .flatten()
+        .filter(|value| value.is_finite());
+    (n, sharpe, annualized)
+}
+
+fn partition_metrics(
+    request: &NativeTickEconomicRequestV1,
+    days: &[NativeTickEconomicDayV1],
+) -> Result<Vec<NativeTickEconomicPartitionMetricV1>> {
+    use contracts::factors::NativeFactorPartitionV1;
+    [
+        NativeFactorPartitionV1::Train,
+        NativeFactorPartitionV1::Validation,
+        NativeFactorPartitionV1::Heldout,
+    ]
+    .into_iter()
+    .map(|partition| {
+        let selected = days
+            .iter()
+            .filter(|day| {
+                domain::ticks::partition_for_event(&request.research, day.day_start_ns)
+                    == Some(partition)
+            })
+            .collect::<Vec<_>>();
+        let (n, sharpe, annualized) = daily_statistics(&selected);
+        Ok(NativeTickEconomicPartitionMetricV1 {
+            partition,
+            days: counter(selected.len() as u64)?,
+            valid_return_days: counter(n as u64)?,
+            sharpe_365: sharpe,
+            annualized_return_365: annualized,
+        })
+    })
+    .collect()
+}
+
+fn metrics(
+    request: &NativeTickEconomicRequestV1,
+    days: &[NativeTickEconomicDayV1],
+) -> Result<Vec<NativeTickEconomicMetricV1>> {
+    use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
     let regimes = domain::ticks::evaluation_regimes(&request.research)?;
     let first = request.research.input.event_start_ns.get() / DAY * DAY;
     let mut reports = Vec::new();
@@ -3723,21 +3773,7 @@ fn metrics(
             // Preserve real UTC-day identities, including gaps between regime
             // samples. Native CAGR annualizes the selected daily-bin count; it
             // is a conditional regime statistic, not contiguous-calendar CAGR.
-            let returns: Returns = selected
-                .iter()
-                .filter_map(|day| {
-                    day.net_return
-                        .map(|value| (UnixNanos::from(day.day_start_ns.get()), value))
-                })
-                .collect();
-            let n = returns.len();
-            let sharpe = SharpeRatio::new(Some(365))
-                .calculate_from_returns(&returns)
-                .filter(|value| value.is_finite());
-            let annualized = (n > 0 && returns.values().all(|value| *value > -1.0))
-                .then(|| CAGR::new(Some(365)).calculate_from_returns(&returns))
-                .flatten()
-                .filter(|value| value.is_finite());
+            let (n, sharpe, annualized) = daily_statistics(&selected);
             reports.push(NativeTickEconomicMetricV1 {
                 partition,
                 regime,

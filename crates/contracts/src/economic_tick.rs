@@ -157,6 +157,16 @@ pub struct NativeTickEconomicMetricV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTickEconomicPartitionMetricV1 {
+    pub partition: crate::factors::NativeFactorPartitionV1,
+    pub days: DbCounter,
+    pub valid_return_days: DbCounter,
+    pub sharpe_365: Option<f64>,
+    pub annualized_return_365: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTickSmallCapitalPositionV1 {
     pub instrument_id: String,
     pub quantity: DecimalValue,
@@ -192,6 +202,8 @@ pub struct NativeTickEconomicResultV1 {
     pub assets: Vec<NativeTickEconomicAssetV1>,
     pub days: Vec<NativeTickEconomicDayV1>,
     pub metrics: Vec<NativeTickEconomicMetricV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_metrics: Option<Vec<NativeTickEconomicPartitionMetricV1>>,
     pub conversion_ns: Option<DbCounter>,
     pub initial_usdc_after_cost: Option<DecimalValue>,
     pub funding_usdc: DecimalValue,

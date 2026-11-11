@@ -111,6 +111,7 @@ export type NativeTickEconomicResult = {
   // Balance FX failures only; absence or emptiness does not establish complete NAV, marks, reporting FX, or funding.
   days: { day_start_ns: string; equity_usdt: string | null; net_return: number | null; unknown_reason: string | null; missing_balances?: { ledger: 'CASH' | 'MARGIN'; currency: string; amount: string }[] }[];
   metrics: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; regime: 'BULL' | 'BEAR' | 'RANGE' | 'UNKNOWN'; days: string; valid_return_days: string; sharpe_365: number | null; conditional_annualized_return_365: number | null }[];
+  partition_metrics?: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; days: string; valid_return_days: string; sharpe_365: number | null; annualized_return_365: number | null }[];
   conversion_ns: string | null; initial_usdc_after_cost: string | null; funding_usdc: string;
   fees_usdc_equivalent: string | null; fees_by_currency: Record<string, string>; initial_conversion_cost_usdc: string; nominal_usd_settled_usdc: string;
   native_fills: string; native_rejections: string;
@@ -140,11 +141,11 @@ export type TickEconomicReplayDetail = TickEconomicReplayView & TickEconomicRepl
 
 export function validateNativeTickEconomicResult(value: unknown): NativeTickEconomicResult {
   const result = object(value);
-  const names = ['schema_version', 'request', 'model', 'small_capital_diagnostics', 'methods', 'coverage', 'assets', 'days', 'metrics', 'conversion_ns', 'initial_usdc_after_cost',
+  const names = ['schema_version', 'request', 'model', 'small_capital_diagnostics', 'methods', 'coverage', 'assets', 'days', 'metrics', 'partition_metrics', 'conversion_ns', 'initial_usdc_after_cost',
     'funding_usdc', 'fees_usdc_equivalent', 'fees_by_currency', 'initial_conversion_cost_usdc', 'nominal_usd_settled_usdc', 'native_fills', 'native_rejections', 'native_perp_pnl_rounding_events', 'perp_pnl_rounding_bound_usdc',
     'funding_missing_instruments', 'targets', 'target_asof_ns', 'target_cash_weight', 'skipped_cash', 'skipped_minimum', 'consumed_fuel', 'limitations'];
   fields(result, names);
-  if (result.schema_version !== 1 || names.some(key => key !== 'small_capital_diagnostics' && !Object.hasOwn(result, key)) || typeof result.model !== 'string' || !result.model) throw new Error('tick_economic_result_invalid');
+  if (result.schema_version !== 1 || names.some(key => key !== 'small_capital_diagnostics' && key !== 'partition_metrics' && !Object.hasOwn(result, key)) || typeof result.model !== 'string' || !result.model) throw new Error('tick_economic_result_invalid');
   validateNativeTickEconomicRequest(result.request); object(result.coverage);
   if (Object.values(object(result.methods)).some(value => typeof value !== 'string')) throw new Error('tick_economic_result_methods_invalid');
   const counter = (value: unknown) => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value) && BigInt(value) <= 9223372036854775807n;
@@ -182,6 +183,11 @@ export function validateNativeTickEconomicResult(value: unknown): NativeTickEcon
       || [row.sharpe_365, row.conditional_annualized_return_365].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
   }) || Object.entries(object(result.fees_by_currency)).some(([currency, amount]) => !currency || !decimal(amount))
     || !decimal(result.initial_conversion_cost_usdc) || !decimal(result.nominal_usd_settled_usdc)) throw new Error('tick_economic_result_metrics_or_costs_invalid');
+  if (result.partition_metrics !== undefined && (!Array.isArray(result.partition_metrics) || result.partition_metrics.some(value => {
+    const row = object(value); fields(row, ['partition', 'days', 'valid_return_days', 'sharpe_365', 'annualized_return_365']);
+    return !['TRAIN', 'VALIDATION', 'HELDOUT'].includes(String(row.partition)) || !counter(row.days) || !counter(row.valid_return_days)
+      || [row.sharpe_365, row.annualized_return_365].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
+  }))) throw new Error('tick_economic_result_partition_metrics_invalid');
   if (!Array.isArray(result.targets) || result.targets.some(value => {
     const row = object(value); fields(row, ['instrument_id', 'currency', 'weight']);
     return typeof row.instrument_id !== 'string' || !row.instrument_id || typeof row.currency !== 'string' || !row.currency || !decimal(row.weight);
