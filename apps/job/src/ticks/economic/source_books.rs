@@ -1176,6 +1176,37 @@ mod tests {
     }
 
     #[test]
+    fn skipped_feature_snapshot_still_validates_source_event_counter() {
+        use super::super::books::FeatureBooks;
+        let (root, id) = source(false);
+        replace_first_hour(
+            root.path(),
+            &[
+                (
+                    i64::MAX as u64 / 1_000_000 + 1,
+                    START + 123,
+                    "bid",
+                    "10.12",
+                    "1",
+                ),
+                (
+                    i64::MAX as u64 / 1_000_000 + 1,
+                    START + 123,
+                    "ask",
+                    "10.13",
+                    "1",
+                ),
+                (START / 1_000_000 + 1, START + 1_000_123, "noop", "0", "0"),
+            ],
+            "BTC_USDT",
+            None,
+            true,
+        );
+        let mut reader = FeatureBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        assert!(reader.advance(START + 1_000_123).is_err());
+    }
+
+    #[test]
     fn received_book_features_match_research_and_economic_prediction() {
         use super::super::{
             books::{BookFeatures, Books, FeatureBooks},
@@ -1251,6 +1282,26 @@ mod tests {
                         .0
                 );
             }
+        }
+        // A single cohort can pass complete and empty intermediate snapshots.
+        for at in [START + 1_000_123, START + HOUR + 123] {
+            let mut jumped = FeatureBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+            let mut expected = Books::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+            let mut selected = None;
+            while let Some(frame) = expected.next().unwrap() {
+                if frame.received() > at {
+                    break;
+                }
+                selected = Some(BookFeatures::from_snapshot(&frame).unwrap());
+            }
+            let mut actual_features = prefix.clone();
+            BookFeatures::append(&mut actual_features, jumped.advance(at).unwrap(), at);
+            let mut expected_features = prefix.clone();
+            BookFeatures::append(&mut expected_features, selected.as_ref(), at);
+            assert_eq!(actual_features, expected_features);
+            let mut unchanged = prefix.clone();
+            BookFeatures::append(&mut unchanged, jumped.advance(at).unwrap(), at);
+            assert_eq!(unchanged, actual_features);
         }
         let missing = tempfile::tempdir().unwrap();
         assert!(FeatureBooks::open(missing.path(), id, START, START + HOUR).is_err());

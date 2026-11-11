@@ -226,13 +226,26 @@ impl FeatureBooks {
     }
 
     pub fn advance(&mut self, received: u64) -> Result<Option<&BookFeatures>> {
+        let mut selected = None;
         while self
             .next
             .as_ref()
             .is_some_and(|frame| frame.received() <= received)
         {
-            self.latest = Some(BookFeatures::from_snapshot(&self.next.take().unwrap())?);
+            let frame = self.next.take().unwrap();
+            // Preserve feature clock validation for every consumed snapshot.
+            for clock in [
+                frame.deltas.ts_event.as_u64(),
+                frame.received(),
+                frame.deltas.sequence,
+            ] {
+                super::super::counter(clock)?;
+            }
+            selected = Some(frame);
             self.next = self.reader.next()?;
+        }
+        if let Some(frame) = selected {
+            self.latest = Some(BookFeatures::from_snapshot(&frame)?);
         }
         Ok(self.latest.as_ref())
     }
