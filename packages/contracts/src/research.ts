@@ -25,7 +25,7 @@ export function researchSpecification(value: unknown): ResearchSpecification {
   const search = object(spec.search); fields(search, ['scope', 'maxMembers', 'stop']);
   if (!['single-factor', 'ensemble'].includes(String(search.scope)) || !Number.isSafeInteger(search.maxMembers) || Number(search.maxMembers) < 1 || search.scope === 'single-factor' && search.maxMembers !== 1 || !['selection', 'budget-or-selection'].includes(String(search.stop))) throw new Error('research_search_unsupported');
   if (search.scope === 'ensemble' && evaluation.metric === 'pearson_ic') throw new Error('ensemble_account_metric_required');
-  if (search.scope === 'single-factor' && evaluation.metric !== 'pearson_ic') throw new Error('factor_metric_required');
+  if (search.scope === 'single-factor' && evaluation.metric !== 'pearson_ic' && evaluation.metric !== 'Sharpe Ratio (365 days)') throw new Error('factor_metric_required');
   if (spec.capital !== undefined) researchCapital(spec.capital);
   return structuredClone(spec) as unknown as ResearchSpecification;
 }

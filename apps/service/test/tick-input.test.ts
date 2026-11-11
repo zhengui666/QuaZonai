@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { NativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { exportDataset } from '../src/dataset-export.ts';
 import { factorViews } from '../src/factors.ts';
-import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
+import { datasetResearchSettings, researchCriterion, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { context, fauxAssistantMessage, setup, wat } from './support.ts';
 import factorWasm from '../../research/plugins/factor-wasm.ts';
 import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
@@ -112,6 +112,27 @@ test('factor library keeps process-independent tick metrics visibly exploratory 
   assert.equal(factor.evidence, 'independent'); assert.equal(factor.nativeModality, 'TRADE_TICK');
   assert.equal(factor.availability, 'EVENT_TIME_PROXY_UNVERIFIED'); assert.equal(factor.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
   assert.equal(factor.combinable, false); assert.equal(factor.reason, 'tick_portfolio_unsupported');
+});
+
+test('tick factor financial metrics keep validation and independent economic results separate', () => {
+  const specification = researchSpecification({ version: 1, name: 'Net Sharpe', question: 'Evaluate net Sharpe', rationale: 'Account-level tick returns',
+    evaluation: { metric: 'Sharpe Ratio (365 days)', direction: 'maximize', target: 5, scheme: 'registered-partitions' },
+    search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } });
+  const input = { goal: specification.question, model: { provider: 'test', modelId: 'test' },
+    data: { nativeInput: { modality: 'TRADE_TICK', request: research } }, policy: {} };
+  const economic = (partition: string, sharpe: number) => ({ status: 'COMPUTED', summary: {
+    partition_metrics: [{ partition, days: '30', valid_return_days: '30', sharpe_365: sharpe, annualized_return_365: 3.1 }],
+  } });
+  const trial = { taskId: 2, status: 'COMPUTED', proposal: { model: wat }, result: {}, economic: economic('VALIDATION', 20) };
+  const pending = factorViews(1, { input, trials: [trial], final: null })[0]!;
+  assert.equal(pending.metrics.find(row => row.key === 'VALIDATION.portfolio.Sharpe Ratio (365 days)')!.value, 20);
+  assert.equal(researchCriterion(specification, 'COMPUTED', pending.metrics)!.status, 'insufficient');
+  const factor = factorViews(1, { input, trials: [trial], final: { status: 'COMPUTED', trialId: 2, result: { economic: economic('HELDOUT', 6) } } })[0]!;
+  assert.equal(researchCriterion(specification, 'COMPUTED', factor.metrics)!.value, 6);
+  assert.equal(researchCriterion(specification, 'COMPUTED', factor.metrics)!.status, 'met');
+  assert.equal(factor.metrics.some(row => row.partition === 'VALIDATION'), false);
+  assert.equal(factor.combinable, false);
+  assert.equal(factor.reason, 'tick_portfolio_unsupported');
 });
 
 test('receive-time settings and factor metadata retain the admitted clock and horizon', () => {

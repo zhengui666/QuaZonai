@@ -98,6 +98,13 @@ test('small capital diagnostics are optional on legacy results and strictly vali
     native_perp_pnl_rounding_events: '0', perp_pnl_rounding_bound_usdc: '0', funding_missing_instruments: [], targets: [],
     target_asof_ns: null, target_cash_weight: null, skipped_cash: '0', skipped_minimum: '0', consumed_fuel: null, limitations: [] };
   assert.doesNotThrow(() => validateNativeTickEconomicResult(result));
+  const partition = { partition: 'VALIDATION', days: '3', valid_return_days: '2', sharpe_365: 1.25, annualized_return_365: 0.1 };
+  assert.equal(Object.hasOwn(validateNativeTickEconomicResult(result), 'partition_metrics'), false);
+  assert.deepEqual(validateNativeTickEconomicResult({ ...result, partition_metrics: [partition] }).partition_metrics, [partition]);
+  assert.doesNotThrow(() => validateNativeTickEconomicResult({ ...result, partition_metrics: [{ ...partition, sharpe_365: null, annualized_return_365: null }] }));
+  for (const update of [{ partition: 'UNKNOWN' }, { days: '-1' }, { valid_return_days: 2 }, { sharpe_365: Infinity }, { annualized_return_365: '0.1' }]) {
+    assert.throws(() => validateNativeTickEconomicResult({ ...result, partition_metrics: [{ ...partition, ...update }] }));
+  }
   const diagnostics = { entry_attempts: '1', unfilled_entries: '0', positions_opened: '1', positions_closed: '0', exit_attempts: '1',
     maximum_exit_delay_ns: null, remaining_positions: [{ instrument_id: 'A.SIM', quantity: '0.1', entry_decision_ns: '1', first_fill_ns: '2', exit_decision_ns: '3' }] };
   assert.doesNotThrow(() => validateNativeTickEconomicResult({ ...result, small_capital_diagnostics: diagnostics }));

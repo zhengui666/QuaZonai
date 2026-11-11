@@ -35,6 +35,10 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
+  if (!Array.isArray(value) && value.economic) {
+    const { economic, ...result } = value;
+    return [...metrics(result, prefix), ...tickEconomicMetrics(economic)];
+  }
   if (!Array.isArray(value) && Array.isArray(value.partitions)) {
     const component = value.partitions_component ? object(value.partitions_component, 'partitions_component').index : undefined;
     const factor = value.partitions.flatMap((item) => {
@@ -61,6 +65,24 @@ export function metrics(value: Json | undefined, prefix = ''): Metric[] {
     if (typeof item === 'number' || typeof item === 'string' && /^-?\d+(?:\.\d+)?$/.test(item)) return [{ key: path, label: path, value: item }];
     if (item && typeof item === 'object') return metrics(item, path);
     return [];
+  });
+}
+
+export function tickEconomicMetrics(value: Json | undefined): Metric[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.status !== 'COMPUTED') return [];
+  const summary = value.summary;
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !Array.isArray(summary.partition_metrics)) return [];
+  return summary.partition_metrics.flatMap(item => {
+    const row = object(item, 'tick_partition_metric');
+    const partition = String(row.partition);
+    return [
+      ['Sharpe Ratio (365 days)', row.sharpe_365],
+      ['annualized_return_365', row.annualized_return_365],
+    ].map(([name, measured]): Metric => {
+      const key = `${partition}.portfolio.${name}`;
+      const available = typeof measured === 'number' && Number.isFinite(measured);
+      return { key, label: key, partition, value: available ? measured : null, status: available ? 'AVAILABLE' : 'UNAVAILABLE' };
+    });
   });
 }
 function taskView(record: TaskRecord<Json, Json, Json>): TaskView {
@@ -136,7 +158,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
-      status: String(trial.status), metrics: metrics(trial.result), ...tickInputDetails(trial.result),
+      status: String(trial.status), metrics: [...metrics(trial.result), ...tickEconomicMetrics(trial.economic)], ...tickInputDetails(trial.result),
       ...(trial.economic ? { economic: object(trial.economic, 'tick_economic') } : {}),
       ...publicExecutionError(trial.error, 'scientific_execution_failed', Array.isArray((trial.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', trial.errorDetail),
     })), tasks,

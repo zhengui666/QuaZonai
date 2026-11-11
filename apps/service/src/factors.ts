@@ -4,7 +4,7 @@ import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { strategyMembers } from '../../research/src/strategy.ts';
-import { metrics } from './projections.ts';
+import { metrics, tickEconomicMetrics } from './projections.ts';
 import { object, Problem } from './facts.ts';
 import { latestTrialReview } from '../../research/src/review-documents.ts';
 import type { ResearchAdmissions } from './facts.ts';
@@ -33,7 +33,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
       const components = Array.isArray(raw?.components) ? raw.components : [];
       const summary = components[memberIndex] ? object(components[memberIndex]).summary : null;
       const diagnostic = summary ? object(summary) : members.length === 1 ? raw : null;
-      const measured = metrics(diagnostic ?? undefined);
+      const measured = [...metrics(diagnostic ?? undefined), ...(!independentlyComputed && members.length === 1 ? tickEconomicMetrics(trial.economic) : [])];
       const criterion = members.length > 1 && !diagnostic ? null : researchCriterion(input.specification, independentlyComputed ? 'COMPUTED' : String(trial.status), measured);
       const heldout = diagnostic && Array.isArray(diagnostic.partitions) ? diagnostic.partitions.map(item => object(item)).find(item => item.partition === 'HELDOUT') : null;
       const included = heldout ? object(object(heldout.metric).counts).included : null;
