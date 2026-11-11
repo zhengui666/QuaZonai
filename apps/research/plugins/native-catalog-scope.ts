@@ -1,4 +1,5 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { cancelUnsettledNativeExecutions, nativeUncertainTaskId, reconcileNativeExecution, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import type { NativeScanCheckpoint, NativeScanContext } from '../src/native-execution.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { nativeTargetForData, executeNativeValue } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
@@ -27,7 +28,7 @@ async function readScope(catalog: string, context: Context, binary: NativeTarget
   }
 }
 
-export const CatalogScopeTask = defineTask<{ catalog: string; binary?: NativeTarget }, { phase: 'read' }, JsonObject>({
+export const CatalogScopeTask = defineTask<{ catalog: string; binary?: NativeTarget; scanContext?: NativeScanContext }, { phase: 'read' } | Extract<NativeScanCheckpoint, { phase: 'reconcile' }>, JsonObject>({
   name: 'qz.catalog.scope', version: 1, initial: () => ({ phase: 'read' }),
   phases: { async read(task, runtime, context) {
     return withNativeRemoteTracking(task.id, runtime, context, async () => {
@@ -45,13 +46,24 @@ export const CatalogScopeTask = defineTask<{ catalog: string; binary?: NativeTar
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
+      const nativeTaskId = task.input.scanContext ? nativeUncertainTaskId(error) : null;
+      if (nativeTaskId !== null) {
+        await runtime.commit(() => ({ status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'reconcile', nativeTaskId } }), context);
+        return;
+      }
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
         message: executionDiagnostic(error, 'catalog_scope_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'catalog-factor-scope' }) },
       } } }), context);
     }
-    });
+    }, task.input.scanContext);
+  }, async reconcile(task, runtime, context) {
+    if (task.state.checkpoint.phase !== 'reconcile') throw new Error('native_reconciliation_checkpoint_invalid');
+    const settled = await reconcileNativeExecution(task.id, runtime, task.state.checkpoint.nativeTaskId, context);
+    await runtime.commit(() => settled ? { status: 'running', checkpoint: { phase: 'read' } }
+      : { status: 'sleeping', until: runtime.now() + 1000, checkpoint: task.state.checkpoint }, context);
   } },
-  async abort(_task, runtime, context) {
+  async abort(task, runtime, context) {
+    if (task.input.scanContext) await cancelUnsettledNativeExecutions(task.id, runtime, context);
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
   },
 });

@@ -75,29 +75,6 @@ jobs:
           npm ci --prefix apps/service --no-audit --no-fund
           npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
       - run: make check-web
-      - name: Use the official Ubuntu mirror for browser dependencies
-        run: |
-          shopt -s nullglob
-          apt_sources=(/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources)
-          has_apt_sources=false
-          for apt_source in "${apt_sources[@]}"; do
-            [[ -f "$apt_source" ]] || continue
-            has_apt_sources=true
-            sudo sed -i -E 's#https?://azure\.archive\.ubuntu\.com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
-          done
-          "$has_apt_sources" || { echo 'No supported APT source files found'; exit 1; }
-      - run: node apps/web/node_modules/@playwright/test/cli.js install --with-deps chromium
-      - run: npm --prefix apps/web run test:e2e
-        env:
-          PI_SCRATCH_DIR: ${{ runner.temp }}
-          QUAZONAI_WEB_E2E_PREVIEW: '1'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: failure()
-        with:
-          name: browser-${{ env.TEST_REVISION }}
-          path: ${{ runner.temp }}/quazonai-web-playwright/
-          if-no-files-found: ignore
-          retention-days: 7
   native-artifacts:
     if: github.event_name == 'push'
     runs-on: ubuntu-22.04

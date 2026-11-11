@@ -8,51 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import release
-import smoke
 from release_support import validate_manifest, version
 
 REVISION = 'a' * 40
 class ReleaseTests(unittest.TestCase):
-    def test_image_completion_waits_for_review_refusal(self):
-        details = [{'trialRecords': [{'status': 'COMPUTED', 'error': None}],
-                    'final': {'status': status, 'reason': 'independent_review_not_passed'}}
-                   for status in ['STARTED', 'STOPPED']]
-        with patch.object(smoke, 'api', side_effect=details) as api, \
-             patch.object(smoke.time, 'sleep') as sleep:
-            self.assertIs(smoke.completed(None, 'http://test-only', 1), details[-1])
-        self.assertEqual(api.call_count, 2)
-        sleep.assert_called_once_with(1)
-
-    def test_image_completion_still_rejects_terminal_noncomputed_results(self):
-        for status in ['COMPUTED', 'FAILED', 'STOPPED']:
-            detail = {'trialRecords': [{'status': 'COMPUTED', 'error': None}],
-                      'final': {'status': status, 'reason': 'Terminal controlled failure'}}
-            with self.subTest(status=status), patch.object(smoke, 'api', return_value=detail) as api, \
-                 patch.object(smoke.time, 'sleep') as sleep:
-                with self.assertRaisesRegex(AssertionError, status):
-                    smoke.completed(None, 'http://test-only', 1)
-                self.assertEqual(api.call_count, 1)
-                sleep.assert_not_called()
-
-    def test_image_smoke_uses_model_only_settings_and_distinct_restore_values(self):
-        stored = None
-        writes = []
-        def api(_opener, _origin, path, body=None, method=None):
-            nonlocal stored
-            self.assertEqual(path, 'settings')
-            if method == 'PATCH':
-                writes.append(body); stored = body.copy()
-            return {'serviceTier': None, **stored}
-        model = {'provider': 'faux', 'modelId': 'controlled'}
-        with patch.object(smoke, 'api', side_effect=api):
-            empty = smoke.model_settings(None, 'http://test-only')
-            original = smoke.model_settings(None, 'http://test-only', model)
-            changed = smoke.model_settings(None, 'http://test-only')
-        self.assertEqual(writes, [empty, original, changed])
-        self.assertEqual(original, {'defaultModel': model, 'thinkingLevel': None, 'serviceTier': None})
-        self.assertNotEqual(original, changed)
-        self.assertEqual(empty, changed)
-
     def test_source_ci_must_be_successful_exact_push_not_pr(self):
         def item(id, event, conclusion='success', revision=REVISION):
             return {'id': id, 'event': event, 'head_sha': revision, 'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': conclusion}

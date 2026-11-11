@@ -7,6 +7,28 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  parameter_scan_axes_required: '请至少勾选一个扫描参数',
+  parameter_scan_values_required: '请至少输入一个参数值',
+  parameter_scan_integer_required: '周期和目标有效期须为精确正整数',
+  parameter_scan_decimal_required: '请输入有效的精确十进制参数',
+  parameter_scan_value_invalid: '参数值超出支持范围，请核对周期、比例和有效期',
+  parameter_scan_range_invalid: '参数范围须从小到大，步长须为正数；整数参数使用整数步长',
+  parameter_scan_step_invalid: '请输入有效的正步长',
+  parameter_scan_float_step_indistinguishable: '阈值步长在原生数值精度下无法区分，请增大步长',
+  parameter_scan_duplicate_axis: '同一参数只能有一个扫描范围',
+  parameter_scan_axis_unsupported: '当前评估类型不支持所选参数',
+  parameter_scan_objective_unsupported: '当前类型不支持所选验证指标',
+  parameter_scan_concurrency_invalid: '同时执行数量须为正整数',
+  parameter_scan_source_invalid: '请选择有效的来源因子或研究试验',
+  parameter_scan_source_not_found: '来源因子或研究试验不存在',
+  parameter_scan_computed_source_required: '请选择已完成计算的来源试验',
+  parameter_scan_single_factor_required: '当前扫描仅支持单个原始模型，请选择单因子来源',
+  parameter_scan_tick_unsupported: '当前参数扫描仅支持 BAR 输入',
+  parameter_scan_native_parameters_required: '来源缺少可扫描的原生参数',
+  parameter_scan_not_found: '参数扫描不存在',
+  parameter_scan_surface_axes_invalid: '请选择两个不同的扫描参数轴',
+  parameter_scan_surface_fixed_required: '请为其他参数指定固定值',
+  parameter_scan_surface_fixed_invalid: '固定参数须为本次范围内的精确取值',
   review_allocation_members_required: '请选择至少两个不同的已通过评审组合',
   review_allocation_constraints_required: '请完整填写配权约束、当前权重和换手',
   review_allocation_portfolio_not_approved: '来源组合缺少当前版本的通过评审，请刷新并补齐证据',
@@ -62,6 +84,8 @@ const errors: Record<string, string> = {
 export function shortError(error: unknown): string {
   const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
   if (errors[text]) return errors[text];
+  const scanCode = text.startsWith('parameter_scan_') ? text.split(':', 1)[0] : undefined;
+  if (scanCode && errors[scanCode]) return errors[scanCode];
   if (!text || /[{}\[\]<>]/.test(text)) return '请求失败';
   return text.split('\n')[0]!.slice(0, 72);
 }

@@ -1,4 +1,5 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { cancelUnsettledNativeExecutions, nativeUncertainTaskId, reconcileNativeExecution, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import type { NativeScanCheckpoint, NativeScanContext } from '../src/native-execution.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
@@ -15,7 +16,7 @@ function factorOperation(data: JsonObject): string {
   return isTickResearchInput(data) ? 'evaluate-tick-factor' : data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor';
 }
 
-export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?: NativeTarget }, { phase: 'compute' }, JsonObject>({
+export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?: NativeTarget; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.factor.wasm', version: 1, initial: () => ({ phase: 'compute' }),
   phases: {
     async compute(task, runtime, context) {
@@ -33,16 +34,28 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?:
       } catch (error) {
         await retainNativeRemoteUncertainty(error, task.id, runtime, context);
         if (runtime.signal.aborted) throw error;
+        const nativeTaskId = task.input.scanContext ? nativeUncertainTaskId(error) : null;
+        if (nativeTaskId !== null) {
+          await runtime.commit(() => ({ status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'reconcile', nativeTaskId } }), context);
+          return;
+        }
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
           message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: factorOperation(task.input.data) }) },
         } } }), context);
       }
-    });
+    }, task.input.scanContext);
+    },
+    async reconcile(task, runtime, context) {
+      if (task.state.checkpoint.phase !== 'reconcile') throw new Error('native_reconciliation_checkpoint_invalid');
+      const settled = await reconcileNativeExecution(task.id, runtime, task.state.checkpoint.nativeTaskId, context);
+      await runtime.commit(() => settled ? { status: 'running', checkpoint: { phase: 'compute' } }
+        : { status: 'sleeping', until: runtime.now() + 1000, checkpoint: task.state.checkpoint }, context);
     },
   },
-  async abort(_task, runtime, context) {
+  async abort(task, runtime, context) {
     // This is the local task state. Remote cancellation has its own receipt;
     // a lost connection must never be presented as a confirmed remote stop.
+    if (task.input.scanContext) await cancelUnsettledNativeExecutions(task.id, runtime, context);
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
   },
 });

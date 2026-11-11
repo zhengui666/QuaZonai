@@ -13,6 +13,7 @@ import { Application, json, object, observation, portfolio, Problem } from './fa
 import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { tickEconomicExtension, tickEconomicWorkbench, registerTickEconomicRoutes } from './economic-tick.ts';
+import { createParameterScanExtension, parameterScanWorkbench, registerParameterScanRoutes } from './parameter-scans.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
@@ -77,6 +78,23 @@ export async function createService(options: ServiceOptions) {
   }
   if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
   requiredExtensions.add(fittedEnsemble.name);
+  const scans = createParameterScanExtension(() => research.harness);
+  const scientificTasks = new Map(scans.scientificTasks.map(task => [task.definition.name, task]));
+  // Pi Durable permits one provider for a task name. Keep these exact shared
+  // scientific definitions available while research tools are enabled/disabled.
+  for (const [index, extension] of installed.entries()) {
+    const tasks = extension.tasks?.filter(task => {
+      const scientific = scientificTasks.get(task.definition.name);
+      if (scientific && scientific !== task) throw new Problem('native_task_definition_conflict');
+      return scientific === undefined;
+    });
+    if (tasks && tasks.length !== extension.tasks!.length) {
+      const shared = { ...extension, tasks }; installed[index] = shared;
+      if (definitions.has(extension.name)) definitions.set(extension.name, shared);
+    }
+  }
+  install(scans.extension, true, '1', 'science');
+  requiredExtensions.add(scans.extension.name);
   const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage, deferResume: true,
     authorizeAdmission: async (tx, input, metadata) => {
       assertBusinessAdmission(await tx.doc(Application));
@@ -148,6 +166,7 @@ export async function createService(options: ServiceOptions) {
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
   registerTickEconomicRoutes(app, tickEconomicWorkbench(research, config));
+  registerParameterScanRoutes(app, research, parameterScanWorkbench(research, config, scans.stopTask), eventStreams);
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
     facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });

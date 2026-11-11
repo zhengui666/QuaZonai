@@ -1,4 +1,5 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { cancelUnsettledNativeExecutions, nativeUncertainTaskId, reconcileNativeExecution, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import type { NativeScanCheckpoint, NativeScanContext } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -9,7 +10,7 @@ import { object } from '../src/trials.ts';
 import { NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
-export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { phase: 'compute' }, JsonObject>({
+export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput & { scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.strategy-portfolio.evaluate', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     return withNativeRemoteTracking(task.id, runtime, context, async () => {
@@ -27,14 +28,25 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
+      const nativeTaskId = task.input.scanContext ? nativeUncertainTaskId(error) : null;
+      if (nativeTaskId !== null) {
+        await runtime.commit(() => ({ status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'reconcile', nativeTaskId } }), context);
+        return;
+      }
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
         message: executionDiagnostic(error, 'portfolio_evaluation_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'portfolio-evaluation' }) },
       } } }), context);
     }
-    });
+    }, task.input.scanContext);
+  }, async reconcile(task, runtime, context) {
+    if (task.state.checkpoint.phase !== 'reconcile') throw new Error('native_reconciliation_checkpoint_invalid');
+    const settled = await reconcileNativeExecution(task.id, runtime, task.state.checkpoint.nativeTaskId, context);
+    await runtime.commit(() => settled ? { status: 'running', checkpoint: { phase: 'compute' } }
+      : { status: 'sleeping', until: runtime.now() + 1000, checkpoint: task.state.checkpoint }, context);
   } },
-  async abort(_task, runtime, context) {
+  async abort(task, runtime, context) {
     // Local task abort does not establish remote termination without its receipt.
+    if (task.input.scanContext) await cancelUnsettledNativeExecutions(task.id, runtime, context);
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
   },
 });

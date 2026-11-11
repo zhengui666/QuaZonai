@@ -10,6 +10,7 @@ export type * from './review.ts';
 export type * from './review-source.ts';
 export type * from './reviewed-factors.ts';
 export type * from './portfolio-performance.ts';
+export * from './parameter-scans.ts';
 export * from './review-scoring.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';

@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { PortfolioView, ResearchDetail } from '../../../packages/contracts/src/index.ts';
+import type { ParameterScanView } from '../../../packages/contracts/src/parameter-scans.ts';
 import type { Client } from './client.ts';
 
 // Only the original native submission proves settlement. An explicit observation
@@ -38,4 +39,22 @@ export async function observePortfolio(client: Client, id: string, seconds?: num
     }
   } catch (error) { if (!observation?.aborted) throw error; }
   return { portfolioId: id, settled: false, watchEnded: signal?.aborted ? 'detached' : 'timeout', cancellationRequested: false, portfolio: last };
+}
+
+export async function observeParameterScan(client: Client, id: string, seconds?: number, emit?: (value: unknown) => void, signal?: AbortSignal) {
+  const window = seconds === undefined ? undefined : AbortSignal.timeout(seconds * 1000);
+  const observation = signal && window ? AbortSignal.any([signal, window]) : signal ?? window;
+  let last: ParameterScanView | null = null;
+  try {
+    while (!observation?.aborted) {
+      for await (const state of client.events<ParameterScanView>(`/parameter-scans/${encodeURIComponent(id)}/events`, observation)) {
+        last = state; emit?.(last);
+        if (['COMPLETED', 'FAILED', 'STOPPED'].includes(last.status) && last.counts.unknown === '0') {
+          return { scanId: id, settled: true, scan: last };
+        }
+      }
+      await delay(1000, undefined, { signal: observation });
+    }
+  } catch (error) { if (!observation?.aborted) throw error; }
+  return { scanId: id, settled: false, watchEnded: signal?.aborted ? 'detached' : 'timeout', cancellationRequested: false, scan: last };
 }
