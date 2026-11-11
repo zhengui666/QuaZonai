@@ -24,6 +24,7 @@ export type NativeTickFactorRequest = {
     | { kind: 'FIXED_RECEIVED_TIME'; horizon_ns: string };
   parameters: {
     fast_period_cohorts: number; slow_period_cohorts: number;
+    feature_profile?: 'RECEIVED_FLOW_V1' | 'RECEIVED_FLOW_BOOK_V1';
     /** Optional real Wasm fuel allowance; the native sandbox meters and reports consumption. */
     total_fuel?: string;
   };
@@ -41,6 +42,8 @@ export const TICK_FEATURE_KEYS = ['cohort_vwap', 'previous_cohort_vwap', 'fast_e
 export const TICK_FLOW_FEATURE_KEYS = [...TICK_FEATURE_KEYS, 'signed_quantity'] as const;
 export const TICK_RECEIVED_FEATURE_KEYS = [...TICK_FEATURE_KEYS.slice(0, 6), 'elapsed_received_ns'] as const;
 export const TICK_RECEIVED_FLOW_FEATURE_KEYS = [...TICK_RECEIVED_FEATURE_KEYS, 'signed_quantity'] as const;
+export const TICK_RECEIVED_FLOW_BOOK_FEATURE_KEYS = [...TICK_RECEIVED_FLOW_FEATURE_KEYS,
+  'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_usd', 'book_ask_depth_5_usd'] as const;
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
@@ -97,7 +100,9 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
     if (end - 1n + horizon > 9223372036854775807n) throw new Error('native_tick_horizon_ns_overflow');
   } else throw new Error('native_tick_target_unsupported');
   const parameters = object(request.parameters, 'native_tick_parameters');
-  fields(parameters, ['fast_period_cohorts', 'slow_period_cohorts', 'total_fuel']);
+  fields(parameters, ['fast_period_cohorts', 'slow_period_cohorts', 'total_fuel', 'feature_profile']);
+  if (parameters.feature_profile !== undefined && !['RECEIVED_FLOW_V1', 'RECEIVED_FLOW_BOOK_V1'].includes(String(parameters.feature_profile))) throw new Error('native_tick_feature_profile_unsupported');
+  if (parameters.feature_profile === 'RECEIVED_FLOW_BOOK_V1' && (!received || input.representation !== 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1')) throw new Error('native_tick_book_features_require_received_flow');
   const fast = integer(parameters.fast_period_cohorts, 'fast_period_cohorts', 1_000_000);
   const slow = integer(parameters.slow_period_cohorts, 'slow_period_cohorts', 1_000_000);
   if (fast >= slow) throw new Error('native_tick_ema_periods_invalid');
