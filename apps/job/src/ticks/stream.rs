@@ -629,9 +629,7 @@ pub(super) fn evaluate(
             | NativeTickTargetV1::FixedReceivedTime { .. } => Some(cache.cohorts(asset)?),
             NativeTickTargetV1::FixedTradeCohorts { .. } => None,
         };
-        let mut books = request
-            .parameters
-            .uses_book_features()
+        let mut books = (request.parameters.uses_book_features() && asset.cohort_count > 0)
             .then(|| {
                 economic::books::FeatureBooks::open(
                     root,

@@ -1039,6 +1039,18 @@ mod tests {
             }
         }
         let end = START + 3 * super::super::DAY;
+        let empty_id = InstrumentId::from("EMPTY.SIM");
+        builder
+            .push(TradeTick::new(
+                empty_id,
+                Price::from("10.12"),
+                Quantity::from("1.0000"),
+                AggressorSide::Buy,
+                TradeId::from("after-primary"),
+                (end - 1).into(),
+                (end - 1).into(),
+            ))
+            .unwrap();
         let manifest = builder.seal("fixed-source", START, end).unwrap();
         builder.publish(manifest, serde_json::json!({
             "status":"IMPORTED","availability":"RECEIVED_TIME_OBSERVED","source_revision":"fixed-source",
@@ -1102,6 +1114,34 @@ mod tests {
                 3
             );
         }
+        let mut clipped = request.research.clone();
+        clipped.input.instrument_ids.push(empty_id.to_string());
+        let prepared = research_books.path().join("clipped");
+        let metadata = cohort_cache::prepare_views(&root, &clipped, &prepared, 1_000_000).unwrap();
+        clipped = serde_json::from_value(metadata["research_request"].clone()).unwrap();
+        let result =
+            crate::ticks::evaluate(&prepared.join("research/catalog"), &clipped, &wasm, true)
+                .unwrap();
+        let empty = result
+            .coverage
+            .instrument_coverage
+            .iter()
+            .find(|asset| asset.instrument_id == empty_id.to_string())
+            .unwrap();
+        assert_eq!(empty.trade_count.get(), 0);
+        assert_eq!(empty.cohort_count.get(), 0);
+        assert_eq!(empty.first_event_ns, None);
+        assert_eq!(empty.last_event_ns, None);
+        assert!(result.partitions.iter().all(|partition| partition
+            .assets
+            .iter()
+            .find(|asset| asset.instrument_id == empty_id.to_string())
+            .unwrap()
+            .metric
+            .counts
+            .observations
+            .get()
+            == 0));
     }
 
     #[test]
