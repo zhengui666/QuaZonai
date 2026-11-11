@@ -2127,6 +2127,10 @@ pub fn replay_models_with_funding_and_cores(
         })
         .collect::<Result<Vec<_>>>()?;
     let mut consumed = 0u64;
+    let shared_books = request.research.parameters.uses_book_features()
+        && observed(&request.scenario)
+        && root.join("book-snapshots.source.json").is_file()
+        && root.canonicalize()? == funding_root.canonicalize()?;
     let mut assets = Vec::new();
     let mut heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
     for a in &cache.assets {
@@ -2176,12 +2180,16 @@ pub fn replay_models_with_funding_and_cores(
         };
         let feature_books = (request.research.parameters.uses_book_features() && model.is_some())
             .then(|| {
-                books::FeatureBooks::open(
-                    root,
-                    instrument.id(),
-                    request.research.input.event_start_ns.get(),
-                    request.research.input.event_end_ns.get(),
-                )
+                if shared_books {
+                    Ok(books::FeatureBooks::shared())
+                } else {
+                    books::FeatureBooks::open(
+                        root,
+                        instrument.id(),
+                        request.research.input.event_start_ns.get(),
+                        request.research.input.event_end_ns.get(),
+                    )
+                }
             })
             .transpose()?;
         assets.push(Asset {
@@ -2246,7 +2254,7 @@ pub fn replay_models_with_funding_and_cores(
     if observed {
         for (i, asset) in assets.iter().enumerate() {
             let head = book_readers.as_mut().unwrap().next(i)?;
-            let head = if normalize_sizes {
+            let head = if normalize_sizes && !shared_books {
                 head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
                     .transpose()?
             } else {
@@ -2410,10 +2418,18 @@ pub fn replay_models_with_funding_and_cores(
             .is_some_and(|Reverse((at, _))| *at == event)
         {
             let i = book_heap.pop().unwrap().0 .1;
-            let frame = book_heads[i].take().unwrap();
+            let mut frame = book_heads[i].take().unwrap();
+            if shared_books {
+                if let Some(features) = &mut assets[i].feature_books {
+                    features.observe(&frame);
+                }
+                if normalize_sizes {
+                    frame = frame.floor_sizes(assets[i].instrument.size_increment())?;
+                }
+            }
             snapshots.insert(i, frame);
             let next = book_readers.as_mut().unwrap().next(i)?;
-            book_heads[i] = if normalize_sizes {
+            book_heads[i] = if normalize_sizes && !shared_books {
                 next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
                     .transpose()?
             } else {
