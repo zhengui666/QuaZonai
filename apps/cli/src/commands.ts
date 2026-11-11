@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { connect } from './client.ts';
 import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
-import { observe, observePortfolio } from './watch.ts';
+import { observe, observeParameterScan, observePortfolio } from './watch.ts';
 import { schemas } from './schema.ts';
 import { researchCapital, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import type { ObservationStart, PortfolioStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
@@ -27,6 +27,10 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]
+  parameter-scan options [--file QUERY.json] | preview --file REQUEST.json
+  parameter-scan create --file REQUEST.json [--request-id ORIGINAL_ID] | list [--file QUERY.json] | get ID | stop ID
+  parameter-scan trials ID [--file QUERY.json] | surface ID --file QUERY.json
+  parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
   factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
@@ -69,6 +73,19 @@ async function fileBody(path?: string) {
   try { body = object(JSON.parse(bytes)); } catch { throw new CliError('input_json_invalid'); }
   exactNumbers(body);
   return { bytes, body };
+}
+async function fileQuery(path?: string, jsonFields: readonly string[] = []): Promise<string> {
+  if (!path) return '';
+  const { body } = await fileBody(path);
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (jsonFields.includes(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      query.set(key, JSON.stringify(value)); continue;
+    }
+    if (value === null || !['string', 'number', 'boolean'].includes(typeof value)) throw new CliError('query_scalar_required');
+    query.set(key, String(value));
+  }
+  return query.size ? `?${query}` : '';
 }
 function requestId(body: Record<string, unknown>, expected?: string) {
   if (typeof body.requestId !== 'string' || !body.requestId) throw new CliError('original_request_id_required');
@@ -124,6 +141,20 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     }
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);
     method = 'POST'; path = '/research';
+  } else if (group === 'parameter-scan') {
+    if (action === 'options') path = `/parameter-scans/options${await fileQuery(values.file)}`;
+    else if (action === 'preview' || action === 'create') {
+      const file = await fileBody(values.file);
+      if (action === 'create') requestId(file.body, values['request-id']);
+      method = 'POST'; path = `/parameter-scans${action === 'preview' ? '/preview' : ''}`; body = file.bytes;
+    } else if (action === 'list') path = `/parameter-scans${await fileQuery(values.file)}`;
+    else if (action === 'trials' || action === 'surface') {
+      if (action === 'surface' && !values.file) throw new CliError('file_required');
+      path = `/parameter-scans/${resourceId(id)}/${action}${await fileQuery(values.file, action === 'surface' ? ['fixed'] : [])}`;
+    } else if (['get', 'stop', 'watch', 'wait'].includes(action)) {
+      path = `/parameter-scans/${resourceId(id)}`;
+      if (action === 'stop') { method = 'POST'; path += '/stop'; }
+    } else throw new CliError('unknown_parameter_scan_command');
   } else if (group === 'pm') {
     if (action === 'list') path = '/mandates';
     else if (action === 'capabilities') path = '/capabilities';
@@ -246,6 +277,14 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (values.origin && origin(values.origin) !== profile.origin) throw new CliError('login_replace_required');
   const client = await connect({ ...profile, ca_certificate: values['ca-certificate'] ?? profile.ca_certificate });
   try {
+    if (group === 'parameter-scan' && (action === 'watch' || action === 'wait')) {
+      const seconds = values.timeout === undefined ? undefined : Number(values.timeout);
+      if (seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || !Number.isSafeInteger(seconds * 1000))) throw new CliError('positive_timeout_seconds_required');
+      const result = await observeParameterScan(client, id!, seconds, action === 'watch' ? emit : undefined, signal);
+      emit(result);
+      if (signal?.aborted) return 130;
+      return result.settled ? (result.scan?.status === 'COMPLETED' ? 0 : 2) : action === 'wait' ? 124 : 0;
+    }
     if (group === 'research' && (action === 'watch' || action === 'wait')) {
       const seconds = values.timeout === undefined ? undefined : Number(values.timeout);
       if (seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || !Number.isSafeInteger(seconds * 1000))) throw new CliError('positive_timeout_seconds_required');

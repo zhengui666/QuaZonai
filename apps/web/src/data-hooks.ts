@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Page, PortfolioView, ResearchDetail, ResearchSummary } from '../../../packages/contracts/src/index.ts';
+import type { ParameterScanView } from '../../../packages/contracts/src/parameter-scans.ts';
 import { api } from './api';
 export function useResource<T>(path: string, options: { enabled?: boolean; poll?: number } = {}) {
   return useQuery({ queryKey: [path], queryFn: ({ signal }) => api<T>(path, { signal }), enabled: options.enabled ?? true, refetchInterval: options.poll, refetchIntervalInBackground: false });
@@ -25,6 +26,7 @@ function useLiveResource<T>(path: string, event: string) {
 }
 export function useResearchDetail(id: string) { return useLiveResource<ResearchDetail>(`/research/${encodeURIComponent(id)}`, 'research'); }
 export function usePortfolioDetail(id: string) { return useLiveResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, 'portfolio'); }
+export function useParameterScanDetail(id: string) { return useLiveResource<ParameterScanView>(`/parameter-scans/${encodeURIComponent(id)}`, 'parameter-scan'); }
 export function useStudies() {
   const query = useInfiniteQuery({ queryKey: ['/research'], initialPageParam: undefined as Record<string, unknown> | undefined,
     queryFn: ({ pageParam, signal }) => api<Page<ResearchSummary>>(`/research${pageParam ? `?cursor=${encodeURIComponent(JSON.stringify(pageParam))}` : ''}`, { signal }),
