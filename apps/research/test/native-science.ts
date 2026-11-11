@@ -100,13 +100,16 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     const restored = await openResearch(setup_.options);
     try {
       assert.deepEqual((await restored.view(receipt.conversationId)).research, study);
-      setup_.faux.setResponses([tool('factor_evaluate', { hypothesis: 'Attempt to reset exposed holdout with a new root.', model: ema }), tool('research_finish', { reason: 'Known exposure makes independent retuning invalid.' })]);
+      setup_.faux.setResponses([tool('factor_evaluate', { hypothesis: 'Attempt to reset exposed holdout with a new root.', model: ema }), (transcript) => tool('factor_finalize', { trialId: textResult(transcript, 'factor_evaluate').trialId, reason: 'Known exposure cannot become independent evidence.' })]);
       const retry = await startLegacyResearch(restored, 'new-root-same-exposed-data', original);
       await (await restored.harness.submission(retry.submissionId, context))!.wait(context);
       const facts = (await restored.view(retry.conversationId)).research!;
-      assert.equal(facts.trials[0]!.status, 'FAILED');
-      assert.equal(facts.trials[0]!.error, 'heldout_already_exposed');
-      assert.equal((await restored.harness.snapshot(Exposures, context))!.windows.length, 3);
+      assert.equal(facts.trials[0]!.status, 'COMPUTED');
+      assert.equal(facts.final!.status, 'FAILED');
+      assert.equal(facts.final!.error, 'heldout_already_exposed');
+      const updated = (await restored.harness.snapshot(Exposures, context))!.windows;
+      assert.deepEqual(updated.slice(0, 3), exposures!.windows);
+      assert.equal(updated.length, 4);
     } finally { await restored.close(); }
   } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
 });

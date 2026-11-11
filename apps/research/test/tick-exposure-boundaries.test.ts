@@ -51,11 +51,13 @@ test('unscoped final catalog boundaries cannot erase an existing final exposure'
         [kind]: { event_start_ns: '0', train_end_ns: ns(1), validation_end_ns: ns(10), event_end_ns: '0' } };
       await assert.rejects(checkExposure(api, context, data, false, finalData), /native_partition_boundaries/);
       (finalData[kind] as JsonObject).event_end_ns = ns(12);
-      await assert.rejects(checkExposure(api, context, data, false, finalData), /heldout_already_exposed/);
+      await checkExposure(api, context, data, false, finalData, undefined, false);
+      await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /heldout_already_exposed/);
       // A valid but shorter final binding cannot narrow the current source read.
       finalData.validation_end_ns = ns(2);
       Object.assign(finalData[kind] as JsonObject, { validation_end_ns: ns(2), event_end_ns: ns(5) });
-      await assert.rejects(checkExposure(api, context, data, false, finalData), /heldout_already_exposed/);
+      await checkExposure(api, context, data, false, finalData, undefined, false);
+      await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /heldout_already_exposed/);
       finalData.request = data.request!;
       await assert.rejects(checkExposure(api, context, data, false, finalData), /ambiguous_factor_request/);
       assert.deepEqual(ledger, original);
@@ -94,6 +96,28 @@ test('later source events bypass an unavailable BAR scope while receive delay pr
     await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
     assert.equal(scopeReads, 2);
     assert.deepEqual(ledger, original);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('ordinary iteration records its prefix without resolving an old unavailable BAR scope', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-iteration-old-scope-'));
+  const prior: JsonObject = { kind: 'FINAL', taskId: 1, conversationId: 1,
+    barTypesRef: { conversationId: 1, taskId: 99, count: '1' }, start: ns(1), end: ns(12) };
+  const ledger: { windows: JsonObject[] } = { windows: [structuredClone(prior)] };
+  const api = { taskId: 2, conversationId: 2,
+    async commit(action: (tx: unknown) => Promise<void>) {
+      return action({ async doc() { return ledger; }, async task() { throw new Error('old_scope_unavailable'); } });
+    },
+  } as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    const data = barData(directory, 'KNOWN.SIM');
+    await checkExposure(api, context, data, false);
+    await checkExposure(api, context, data, false);
+    assert.deepEqual(ledger.windows[0], prior);
+    assert.equal(ledger.windows.length, 2);
+    assert.deepEqual([ledger.windows[1]!.kind, ledger.windows[1]!.start, ledger.windows[1]!.end], ['ITERATION', '0', ns(10)]);
+    await assert.rejects(checkExposure(api, context, data, true), /old_scope_unavailable/);
+    assert.equal(ledger.windows.length, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -145,7 +169,10 @@ test('only an admitted received-time study can finalize beside its own iteration
   try {
     ledger.windows.push({ kind: 'FINAL', taskId: 99, conversationId: 8,
       modality: 'TRADE_TICK', instrumentIds: ['RECEIVED.SIM'], start: '85', end: '90' });
-    await assert.rejects(checkExposure(api(1), context, admitted, false, full), /heldout_already_exposed/);
+    const oldFinal = structuredClone(ledger.windows);
+    await checkExposure(api(1), context, admitted, false, full, undefined, false);
+    assert.deepEqual(ledger.windows, oldFinal);
+    await rejected();
     ledger.windows.pop();
     await checkExposure(api(1), context, admitted, false, full);
     assert.deepEqual([ledger.windows[0]!.start, ledger.windows[0]!.end, ledger.windows[0]!.receivedStart, ledger.windows[0]!.receivedEnd], ['0', '55', '0', '50']);
@@ -175,7 +202,7 @@ test('only an admitted received-time study can finalize beside its own iteration
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('an original received pair permits known primary history while preserving every new final exposure check', async () => {
+test('received iteration reuses exposed history while final reservation preserves independence', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-rolling-received-exposure-'));
   const primaryCatalog = join(directory, 'primary'); const sealedCatalog = join(directory, 'sealed'); const renamedCatalog = join(directory, 'renamed');
   await Promise.all([primaryCatalog, sealedCatalog, renamedCatalog].map(path => mkdir(path)));
@@ -204,11 +231,11 @@ test('an original received pair permits known primary history while preserving e
       'the stored prefix includes all previously known history and the original receive-delay envelope');
 
     for (const changed of [{ ...admitted, sealed: undefined }, { ...admitted, catalog: renamedCatalog }]) {
-      await assert.rejects(checkExposure(api(2), context, changed as JsonObject, false, full), /heldout_already_exposed/);
+      await checkExposure(api(2), context, changed as JsonObject, false, full, undefined, false);
     }
     const mismatched = structuredClone(full);
     (((mismatched.nativeInput as JsonObject).request as JsonObject).input as JsonObject).source_revision = 'different-source';
-    await assert.rejects(checkExposure(api(2), context, admitted, false, mismatched), /heldout_already_exposed/);
+    await checkExposure(api(2), context, admitted, false, mismatched, undefined, false);
 
     const renamed = structuredClone(full);
     renamed.catalog = renamedCatalog;
@@ -219,8 +246,9 @@ test('an original received pair permits known primary history while preserving e
     const repeated: JsonObject = { catalog: renamedCatalog, source_event_start_ns: '0', source_event_end_ns: '15',
       nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(repeatedRequest), '15') }, sealed: renamed };
     study.input.data = repeated;
-    await assert.rejects(checkExposure(api(2), context, repeated, false, renamed), /heldout_already_exposed/,
-      'changing paths and revisions cannot make the same old private interval new');
+    await checkExposure(api(2), context, repeated, false, renamed, undefined, false);
+    await assert.rejects(checkExposure(api(2), context, renamed, true), /heldout_already_exposed/,
+      'changing paths and revisions cannot make the same old interval independent');
     study.input.data = admitted;
 
     ledger.windows.push({ kind: 'ITERATION', taskId: 100, conversationId: 9,
@@ -230,8 +258,11 @@ test('an original received pair permits known primary history while preserving e
     await checkExposure(api(2), context, full, true);
     assert.deepEqual(ledger.windows[0], prior); assert.deepEqual(ledger.windows[1], iteration);
     assert.deepEqual([ledger.windows[2]!.start, ledger.windows[2]!.end], ['48', '90']);
-    await assert.rejects(checkExposure(api(3), context, admitted, false, full), /heldout_already_exposed/);
-    assert.equal(ledger.windows.length, 3);
+    await checkExposure(api(3), context, admitted, false, full);
+    assert.deepEqual(ledger.windows.slice(0, 2), [prior, iteration]);
+    assert.equal(ledger.windows.at(-1)!.kind, 'ITERATION');
+    await assert.rejects(checkExposure(api(4), context, full, true), /heldout_already_exposed/);
+    assert.equal(ledger.windows.length, 4);
 
     const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
     const reservation = defineExtension({ name: 'test.rolling-received-recovery', tools: [defineTool({

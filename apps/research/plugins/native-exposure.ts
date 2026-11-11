@@ -96,20 +96,10 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const end = BigInt(finalEnd as string) > BigInt(currentEnd) ? finalEnd : currentEnd;
   const receivedEnd = finalWindow?.receivedEnd !== undefined && BigInt(finalWindow.receivedEnd as string) > BigInt(selection.event_end_ns as string)
     ? finalWindow.receivedEnd : selection.event_end_ns!;
-  let checked = reserve ? window : { ...window, end,
+  const checked = reserve ? window : { ...window, end,
     ...(window.availability === 'RECEIVED_TIME_OBSERVED' ? { receivedEnd } : {}) };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
-    if (!reserve && !historical && finalWindow?.availability === 'RECEIVED_TIME_OBSERVED' && finalData) {
-      const original = (await tx.doc(Study, api.conversationId)).input?.data;
-      const sealed = original?.sealed;
-      if (original && sealed && typeof sealed === 'object' && !Array.isArray(sealed)
-        && canonical(data) === canonical(original) && canonical(finalData) === canonical(sealed)
-        && receivedPair(original, sealed)) {
-        // Known history can train a rolling study; compare its new held-out envelope and record the full prefix below.
-        checked = { ...finalWindow, end };
-      }
-    }
     const scopes = new Map<string, Set<string>>();
     async function assets(item: JsonObject): Promise<Set<string>> {
       if (Array.isArray(item.instrumentIds) && item.instrumentIds.every(id => typeof id === 'string')) return new Set(item.instrumentIds as string[]);
@@ -210,12 +200,13 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
     }
     let previous: JsonObject | undefined;
     for (const item of ledger.windows) {
-      if (!(historical || reserve || item.kind !== 'ITERATION')
+      if (!(historical || reserve)
         || historical && item.conversationId === api.conversationId
         || item.taskId === api.taskId && item.kind === kind) continue;
       if (await exposureOverlaps(item)) { previous = item; break; }
     }
-    if (previous && !historical) throw new Error('heldout_already_exposed');
+    // Historical feedback can be reused for development, never as a fresh final sample.
+    if (previous && reserve && !historical) throw new Error('heldout_already_exposed');
     if (historical && !previous) throw new Error('historical_exposure_required');
     if (record && !ledger.windows.some((item) => item.taskId === api.taskId && item.kind === kind)) {
       // Owner-bound reassessment adds permanent, explicitly non-independent facts; it never rewrites prior exposure.
