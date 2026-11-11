@@ -199,6 +199,43 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }));
 });
 
+test('book profile appends four received-flow features and preserves legacy profiles', () => {
+  const request: NativeTickFactorRequest = { ...tick(), input: { ...tick().input,
+    availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2000000000', representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1' },
+    sampling: { kind: 'RECEIVED_TIME_COHORT_V1', maximum_cohort_rows: 100_000 } };
+  const before = structuredClone(request);
+  const legacy = modelBriefInput({ data: tagged(request), policy: {} }).data.feature_model as JsonObject;
+  const book: NativeTickFactorRequest = { ...request, parameters: { ...request.parameters, feature_profile: 'RECEIVED_FLOW_BOOK_V1' } };
+  assert.deepEqual(validateNativeTickFactorRequest(book), book);
+  assert.deepEqual(iterationRequest(tagged(book)).parameters, book.parameters);
+  const brief = modelBriefInput({ data: tagged(book), policy: {} }).data.feature_model as JsonObject;
+  assert.equal(brief.abi, legacy.abi);
+  assert.equal(brief.schema, 'qz.tick-received-cohort-flow-book-features.v1');
+  assert.deepEqual(brief.features, [...legacy.features as string[], 'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_quote', 'book_ask_depth_5_quote']);
+  assert.match(JSON.stringify(brief.definitions), /min\(size\)\/max\(size\)/);
+  assert.match(JSON.stringify(brief.definitions), /original availability timestamp/);
+  assert.match(JSON.stringify(brief.definitions), /BookLevel::exposure.*quote units/);
+  assert.match(JSON.stringify(brief.definitions), /trade-cohort-triggered/);
+  assert.match(String(brief.missing), /one-sided book snapshots use the existing feature masks/);
+  for (const original of [tick(), { ...tick(), input: { ...tick().input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' as const } },
+    { ...request, input: { ...request.input, representation: 'RECEIVED_TIME_COHORT_CACHE_V1' as const } }, request]) {
+    const explicit: NativeTickFactorRequest = { ...original, parameters: { ...original.parameters, feature_profile: 'RECEIVED_FLOW_V1' } };
+    assert.deepEqual(validateNativeTickFactorRequest(explicit), explicit);
+    assert.deepEqual(modelBriefInput({ data: tagged(explicit), policy: {} }).data.feature_model,
+      modelBriefInput({ data: tagged(original), policy: {} }).data.feature_model);
+  }
+  for (const invalid of [
+    { ...book, parameters: { ...book.parameters, feature_profile: 'UNKNOWN' } },
+    { ...book, parameters: { ...book.parameters, feature_profile: null } },
+    { ...book, input: { ...book.input, representation: undefined } },
+    { ...book, input: { ...book.input, representation: 'RECEIVED_TIME_COHORT_CACHE_V1' } },
+    { ...tick(), parameters: book.parameters },
+  ]) assert.throws(() => validateNativeTickFactorRequest(invalid), /native_tick_(feature_profile_unsupported|book_features_require_received_flow)/);
+  assert.deepEqual(request, before);
+  assert.equal((legacy.features as string[]).length, 8);
+  assert.equal(Object.hasOwn(validateNativeTickFactorRequest(request).parameters, 'feature_profile'), false);
+});
+
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {
   const request = bar();
   const legacy = { request };

@@ -43,6 +43,32 @@ class CryptoHFTDataTests(unittest.TestCase):
         self.assertEqual(result["end_date"], "2026-10-14")
         self.assertFalse(result["research_qualified"])
 
+    def test_declared_spot_archive_requires_only_its_actual_market(self):
+        (self.archive / "hyperliquid_futures").rmdir()
+        self.file("hyperliquid_spot/2026-10-13/23/HFUN_USDC_orderbook.parquet.zst")
+        self.manifest["datasets"] = ["spot orderbook"]
+        self.manifest["end_date_utc"] = "2026-10-14"
+        descriptor = self.archive / "dataset.json"
+        descriptor.write_text(json.dumps(self.manifest))
+        self.assertEqual(cryptohftdata.inspect(self.archive)["streams"], ["spot orderbook"])
+        selected = cryptohftdata.selection(self.archive, "spot", ["HFUN_USDC"],
+                                          "2026-10-13", "2026-10-14", hours=[23])
+        self.assertEqual(len(selected["files"]), 1)
+        for streams in ([], ["spot orderbook", "spot orderbook"], ["unknown"], [None]):
+            with self.subTest(streams=streams):
+                self.manifest["datasets"] = streams
+                descriptor.write_text(json.dumps(self.manifest))
+                with self.assertRaisesRegex(ValueError, "archive datasets"):
+                    cryptohftdata.archive(self.archive)
+        for streams in (["perpetual trades"], None):
+            if streams is None:
+                del self.manifest["datasets"]
+            else:
+                self.manifest["datasets"] = streams
+            descriptor.write_text(json.dumps(self.manifest))
+            with self.assertRaisesRegex(ValueError, "market directories"):
+                cryptohftdata.archive(self.archive)
+
     def test_selected_files_keep_original_plain_and_compressed_formats_and_clocks(self):
         plain = self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
         compressed = self.file("hyperliquid_futures/2026-10-13/23/BTC_mark_price.parquet.zst")

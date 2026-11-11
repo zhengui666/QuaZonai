@@ -3,6 +3,8 @@ use super::{clocked_feature, cohort_cache, Cohort};
 use crate::signals::SignalModule;
 use anyhow::{ensure, Context, Result};
 use contracts::{economic_tick::*, DbCounter, DecimalValue, SchemaV1};
+use nautilus_common::timer::{create_valid_interval, VirtualTimer};
+use nautilus_core::DurationNanos;
 use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
     indicator::{Indicator, MovingAverage},
@@ -25,7 +27,7 @@ use std::{
     str::FromStr,
 };
 
-mod books;
+pub(super) mod books;
 mod models;
 mod native;
 mod source_books;
@@ -81,12 +83,6 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
         "ECONOMIC_FLOW_CACHE_REQUIRED"
     );
     let s = &request.scenario;
-    if observed(s) {
-        ensure!(
-            request.context_source.is_some(),
-            "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
-        );
-    }
     if let Some(weights) = &request.signal_weights {
         ensure!(!weights.is_empty(), "ECONOMIC_SIGNAL_WEIGHTS_INVALID");
         let sum = weights.iter().try_fold(Decimal::ZERO, |sum, weight| {
@@ -178,6 +174,12 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
     );
     if let Some(policy) = &request.small_capital_policy {
         ensure!(
+            s.decision_clock.is_none()
+                || policy.decision_clock.is_none()
+                || s.decision_clock == policy.decision_clock,
+            "ECONOMIC_DECISION_CLOCK_CONFLICT"
+        );
+        ensure!(
             decimal(&policy.maximum_entry_notional_usdc)? > Decimal::ZERO
                 && policy.maximum_holding_ns.get() > 0,
             "ECONOMIC_SMALL_POLICY_INVALID"
@@ -190,10 +192,8 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             .checked_add(policy.maximum_holding_ns.get())
             .context("ECONOMIC_CLOCK_OVERFLOW")?;
     }
-    let ids = &request.research.input.instrument_ids;
     ensure!(
         !request.fx_instrument_ids.is_empty()
-            && request.fx_instrument_ids.iter().all(|id| ids.contains(id))
             && request
                 .fx_instrument_ids
                 .iter()
@@ -221,8 +221,9 @@ struct FundingManifest {
     rows: u64,
     missing_instruments: Vec<String>,
 }
+#[derive(Default)]
 struct Funding {
-    reader: BufReader<File>,
+    reader: Option<BufReader<File>>,
     next: Option<Rate>,
     last: Option<(u64, String)>,
     rows: u64,
@@ -231,7 +232,7 @@ struct Funding {
 impl Funding {
     fn open(path: &Path, instruments: BTreeSet<String>) -> Result<Self> {
         let mut s = Self {
-            reader: BufReader::new(File::open(path)?),
+            reader: Some(BufReader::new(File::open(path)?)),
             next: None,
             last: None,
             rows: 0,
@@ -241,8 +242,11 @@ impl Funding {
         Ok(s)
     }
     fn advance(&mut self) -> Result<()> {
+        let Some(reader) = self.reader.as_mut() else {
+            return Ok(());
+        };
         let mut line = String::new();
-        let n = self.reader.by_ref().take(4097).read_line(&mut line)?;
+        let n = reader.by_ref().take(4097).read_line(&mut line)?;
         if n == 0 {
             self.next = None;
             return Ok(());
@@ -344,9 +348,6 @@ fn context_manifest_at(
             && m.start_ns < m.end_ns
             && !m.instrument_ids.is_empty()
             && m.instrument_ids.windows(2).all(|p| p[0] < p[1])
-            && m.instrument_ids
-                .iter()
-                .any(|id| request.input.instrument_ids.contains(id))
             && m.files.len() == m.instrument_ids.len(),
         "ECONOMIC_CONTEXT_MANIFEST_INVALID"
     );
@@ -820,6 +821,7 @@ struct Asset {
     fast: ExponentialMovingAverage,
     slow: ExponentialMovingAverage,
     model: Option<EconomicModels>,
+    feature_books: Option<books::FeatureBooks>,
     score: Option<f64>,
     mark: Option<(u64, Decimal)>,
     cohorts: u64,
@@ -850,6 +852,7 @@ struct SmallCapital {
     positions_closed: u64,
     exit_attempts: u64,
     maximum_exit_delay: Option<u64>,
+    decision_clock_ticks: Option<u64>,
 }
 impl SmallCapital {
     fn new(count: usize) -> Self {
@@ -863,6 +866,7 @@ impl SmallCapital {
             positions_closed: 0,
             exit_attempts: 0,
             maximum_exit_delay: None,
+            decision_clock_ticks: None,
         }
     }
     fn exit(
@@ -975,6 +979,7 @@ impl SmallCapital {
     }
     fn report(&self, assets: &[Asset]) -> Result<NativeTickSmallCapitalDiagnosticsV1> {
         Ok(NativeTickSmallCapitalDiagnosticsV1 {
+            decision_clock_ticks: self.decision_clock_ticks.map(counter).transpose()?,
             entry_attempts: counter(self.entry_attempts)?,
             unfilled_entries: counter(self.unfilled_entries)?,
             positions_opened: counter(self.positions_opened)?,
@@ -1023,20 +1028,23 @@ fn small_queue(
     a.decisions += 1;
     Ok(())
 }
-fn small_quantity(a: &Asset, cash: &NativeLedger, margin: &NativeLedger) -> Decimal {
+fn small_quantity(a: &Asset, cash: &NativeLedger, margin: Option<&NativeLedger>) -> Decimal {
     if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
         a.instrument
             .base_currency()
             .and_then(|currency| cash.balance(currency))
             .map_or(Decimal::ZERO, |b| b.as_decimal())
     } else {
-        margin.current_quantity(a.instrument.id())
+        margin.map_or(Decimal::ZERO, |ledger| {
+            ledger.current_quantity(a.instrument.id())
+        })
     }
 }
 fn small_legal_quantity(
     instrument: &InstrumentAny,
     quantity: Decimal,
     price: Decimal,
+    reduce_only: bool,
 ) -> Result<Decimal> {
     let direction = if quantity < Decimal::ZERO {
         -Decimal::ONE
@@ -1049,9 +1057,10 @@ fn small_legal_quantity(
         || instrument
             .min_quantity()
             .is_some_and(|m| amount < m.as_decimal())
-        || instrument
-            .min_notional()
-            .is_some_and(|m| amount * price * instrument.multiplier().as_decimal() < m.as_decimal())
+        || !(reduce_only && matches!(instrument, InstrumentAny::CryptoPerpetual(_)))
+            && instrument.min_notional().is_some_and(|m| {
+                amount * price * instrument.multiplier().as_decimal() < m.as_decimal()
+            })
     {
         return Ok(Decimal::ZERO);
     }
@@ -1098,7 +1107,7 @@ fn small_exposure(
     small: &SmallCapital,
     assets: &[Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     now: u64,
     age: u64,
@@ -1130,7 +1139,7 @@ fn small_exposure(
             };
             exposure[i] += balance.as_decimal().abs() * rate;
         }
-    } else {
+    } else if let Some(margin) = margin {
         for position in margin.positions() {
             let Some(i) = assets
                 .iter()
@@ -1201,7 +1210,7 @@ fn small_new_entries(
     fresh: &[usize],
     assets: &mut [Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     event: u64,
     policy: &NativeTickSmallCapitalPolicyV1,
@@ -1274,7 +1283,11 @@ fn small_new_entries(
         }
         // An unknown sleeve prevents adding risk, but exits never enter this branch.
         let Some(capital) = value(
-            if is_margin { margin } else { cash },
+            if is_margin {
+                margin.context("TICK_ECONOMIC_LEDGER_INPUT")?
+            } else {
+                cash
+            },
             assets,
             fx_ids,
             event,
@@ -1317,8 +1330,12 @@ fn small_new_entries(
             .instrument
             .try_make_price(price.to_f64().context("ECONOMIC_NONFINITE")?)?
             .as_decimal();
-        let mut quantity =
-            small_legal_quantity(&a.instrument, notional / unit * direction, native_price)?;
+        let mut quantity = small_legal_quantity(
+            &a.instrument,
+            notional / unit * direction,
+            native_price,
+            false,
+        )?;
         if quantity.is_zero() {
             continue;
         }
@@ -1350,6 +1367,7 @@ fn small_new_entries(
                             * a.instrument.multiplier().as_decimal()
                             * (Decimal::ONE + fee)),
                     native_price,
+                    false,
                 )?;
                 if affordable > Decimal::ZERO {
                     quantity = quantity.min(affordable);
@@ -1398,6 +1416,7 @@ fn small_new_entries(
                                 &assets[j].instrument,
                                 additional / bridge_unit,
                                 bridge_price,
+                                false,
                             )?;
                             if buy > Decimal::ZERO {
                                 let held = cash
@@ -1436,7 +1455,7 @@ fn small_cap_entries(
     rows: &mut [NativeMark],
     assets: &[Asset],
     cash: &NativeLedger,
-    margin: &NativeLedger,
+    margin: Option<&NativeLedger>,
     fx_ids: &BTreeSet<String>,
     event: u64,
     s: &NativeTickEconomicScenarioV1,
@@ -1454,7 +1473,12 @@ fn small_cap_entries(
             .context("ECONOMIC_NATIVE_DEFINITION_REQUIRED")?;
         let a = &assets[i];
         let is_margin = matches!(a.instrument, InstrumentAny::CryptoPerpetual(_));
-        let current = if is_margin { margin } else { cash }.current_quantity(a.instrument.id());
+        let ledger = if is_margin {
+            margin.context("TICK_ECONOMIC_LEDGER_INPUT")?
+        } else {
+            cash
+        };
+        let current = ledger.current_quantity(a.instrument.id());
         if !current.is_zero()
             && target.is_sign_negative() == current.is_sign_negative()
             && target.abs() <= current.abs()
@@ -1462,14 +1486,7 @@ fn small_cap_entries(
             continue;
         }
         let capital = value(
-            if is_margin { margin } else { cash },
-            assets,
-            fx_ids,
-            event,
-            age,
-            is_margin,
-            contexts,
-            None,
+            ledger, assets, fx_ids, event, age, is_margin, contexts, None,
         )?;
         let exposure = small_exposure(
             small, assets, cash, margin, fx_ids, event, age, is_margin, contexts,
@@ -1547,6 +1564,7 @@ fn small_cap_entries(
                     Decimal::ONE
                 },
             native_price,
+            false,
         )?;
         if let Some(snapshots) = observed_books {
             let difference = quantity - current;
@@ -1593,6 +1611,7 @@ fn small_cap_entries(
                     snapshot
                         .price(buy)
                         .context("ECONOMIC_BOOK_EXECUTION_PRICE_REQUIRED")?,
+                    false,
                 )?;
                 if change.is_zero() {
                     row.target_quantity = None;
@@ -1957,31 +1976,25 @@ pub(crate) fn funding_sources(
     request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<Vec<(String, u64)>> {
     let names = ["funding-rates.jsonl", "funding-rates.manifest.json"];
-    if names.iter().all(|name| !root.join(name).exists()) {
-        ensure!(
-            std::fs::symlink_metadata(root.join("spot-valuation.jsonl"))
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-            "ECONOMIC_FUNDING_SOURCE_REQUIRED"
-        );
-        return Ok(Vec::new());
-    }
     let mut files = Vec::new();
-    for name in names {
-        let state = std::fs::symlink_metadata(root.join(name))?;
+    if names.iter().any(|name| root.join(name).exists()) {
+        for name in names {
+            let state = std::fs::symlink_metadata(root.join(name))?;
+            ensure!(
+                state.is_file() && !state.file_type().is_symlink(),
+                "ECONOMIC_FUNDING_REGULAR_SOURCE_REQUIRED"
+            );
+            files.push((name.into(), state.len()));
+        }
+        let manifest: FundingManifest =
+            serde_json::from_reader(BufReader::new(File::open(root.join(names[1]))?))?;
         ensure!(
-            state.is_file() && !state.file_type().is_symlink(),
-            "ECONOMIC_FUNDING_REGULAR_SOURCE_REQUIRED"
+            manifest.source_revision == request.input.source_revision
+                && manifest.start_ns <= request.input.event_start_ns
+                && manifest.end_ns >= request.input.event_end_ns,
+            "ECONOMIC_FUNDING_COVERAGE_INVALID"
         );
-        files.push((name.into(), state.len()));
     }
-    let manifest: FundingManifest =
-        serde_json::from_reader(BufReader::new(File::open(root.join(names[1]))?))?;
-    ensure!(
-        manifest.source_revision == request.input.source_revision
-            && manifest.start_ns <= request.input.event_start_ns
-            && manifest.end_ns >= request.input.event_end_ns,
-        "ECONOMIC_FUNDING_COVERAGE_INVALID"
-    );
     if root.join(CONTEXT_MANIFEST).exists() {
         let context = context_manifest(root, request)?;
         files.push((
@@ -2069,11 +2082,13 @@ pub fn replay_models_with_funding_and_cores(
 ) -> Result<NativeTickEconomicResultV1> {
     ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
     validate(request)?;
-    ensure!(
-        !funding_sources(funding_root, &request.research)?.is_empty(),
-        "ECONOMIC_FUNDING_SOURCE_REQUIRED"
-    );
-    let cache = cohort_cache::load(root, &request.research)?;
+    let mut source_request = request.research.clone();
+    for id in &request.fx_instrument_ids {
+        if !source_request.input.instrument_ids.contains(id) {
+            source_request.input.instrument_ids.push(id.clone());
+        }
+    }
+    let cache = cohort_cache::load(root, &source_request)?;
     let mut defs = definitions(root)?
         .into_iter()
         .map(|i| (i.id().to_string(), i))
@@ -2117,6 +2132,10 @@ pub fn replay_models_with_funding_and_cores(
                 instrument.settlement_currency() == Currency::USDC(),
                 "ECONOMIC_PERP_SETTLEMENT_UNSUPPORTED"
             );
+            ensure!(
+                !observed(&request.scenario) || request.context_source.is_some(),
+                "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
+            );
         }
         let mut reader = cache.cohorts(a)?;
         let head = reader.next().transpose()?;
@@ -2129,13 +2148,29 @@ pub fn replay_models_with_funding_and_cores(
             .parameters
             .total_fuel
             .map(|v| v.get() - consumed);
-        let model = if a.cohort_count == 0 {
+        let model = if a.cohort_count == 0
+            || !request
+                .research
+                .input
+                .instrument_ids
+                .contains(&a.instrument_id)
+        {
             None
         } else {
             let (model, used) = EconomicModels::new(&modules, a.cohort_count, fuel)?;
             consumed += used;
             Some(model)
         };
+        let feature_books = (request.research.parameters.uses_book_features() && model.is_some())
+            .then(|| {
+                books::FeatureBooks::open(
+                    root,
+                    instrument.id(),
+                    request.research.input.event_start_ns.get(),
+                    request.research.input.event_end_ns.get(),
+                )
+            })
+            .transpose()?;
         assets.push(Asset {
             instrument,
             reader,
@@ -2150,6 +2185,7 @@ pub fn replay_models_with_funding_and_cores(
                 None,
             ),
             model,
+            feature_books,
             score: None,
             mark: None,
             cohorts: 0,
@@ -2177,6 +2213,7 @@ pub fn replay_models_with_funding_and_cores(
         .context("ECONOMIC_USDT0_USDC_BRIDGE_REQUIRED")?;
     let observed = observed(s);
     let normalize_sizes = normalize_observed_book_sizes(s);
+    let book_profile = request.research.parameters.uses_book_features();
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
     let mut book_readers = if observed {
         Some(books::BookReaders::open(
@@ -2208,37 +2245,54 @@ pub fn replay_models_with_funding_and_cores(
             book_heads.push(head);
         }
     }
-    let funding_manifest: FundingManifest = serde_json::from_reader(File::open(
-        funding_root.join("funding-rates.manifest.json"),
-    )?)?;
-    let funding_ids = funding_manifest
-        .instruments
+    let (funding_manifest, mut funding) = if assets
         .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        funding_manifest.source_revision == request.research.input.source_revision
-            && funding_manifest.start_ns <= request.research.input.event_start_ns
-            && funding_manifest.end_ns >= request.research.input.event_end_ns
-            && funding_ids.len() == funding_manifest.instruments.len()
-            && assets
-                .iter()
-                .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
-                .all(|a| funding_ids.contains(&a.instrument.id().to_string())),
-        "ECONOMIC_FUNDING_COVERAGE_INVALID"
-    );
+        .any(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+    {
+        ensure!(
+            !funding_sources(funding_root, &source_request)?.is_empty(),
+            "ECONOMIC_FUNDING_SOURCE_REQUIRED"
+        );
+        let manifest: FundingManifest = serde_json::from_reader(File::open(
+            funding_root.join("funding-rates.manifest.json"),
+        )?)?;
+        let funding_ids = manifest
+            .instruments
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            manifest.source_revision == request.research.input.source_revision
+                && manifest.start_ns <= request.research.input.event_start_ns
+                && manifest.end_ns >= request.research.input.event_end_ns
+                && funding_ids.len() == manifest.instruments.len()
+                && assets
+                    .iter()
+                    .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+                    .all(|a| funding_ids.contains(&a.instrument.id().to_string())),
+            "ECONOMIC_FUNDING_COVERAGE_INVALID"
+        );
+        let funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
+        (Some(manifest), funding)
+    } else {
+        (None, Funding::default())
+    };
     let missing_funding = funding_manifest
-        .missing_instruments
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let mut funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
+        .as_ref()
+        .map(|manifest| {
+            manifest
+                .missing_instruments
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
     let mut contexts = (request.context_source.is_some()
         || request.event_time_context_source.is_some())
     .then(|| {
         ContextPrices::open(
             funding_root,
-            &request.research,
+            &source_request,
             request.context_source.is_some(),
             request.event_time_context_source.is_some(),
         )
@@ -2300,14 +2354,40 @@ pub fn replay_models_with_funding_and_cores(
         .small_capital_policy
         .as_ref()
         .map(|_| SmallCapital::new(assets.len()));
+    let fixed_clock = s.decision_clock.or_else(|| {
+        request
+            .small_capital_policy
+            .as_ref()
+            .and_then(|policy| policy.decision_clock)
+    }) == Some(NativeTickDecisionClockV1::FixedIntervalV1);
+    let mut decision_timer = fixed_clock.then(|| {
+        VirtualTimer::new(
+            "economic-decisions".into(),
+            create_valid_interval(DurationNanos::new(s.decision_interval_ns.get())),
+            start.into(),
+            Some((request.research.input.event_end_ns.get() - 1).into()),
+            true,
+        )
+    });
+    let mut decision_fresh = BTreeSet::new();
     let mut latest_source_events = vec![0; assets.len()];
     while let Some(event) = heap
         .peek()
         .map(|Reverse((at, _))| *at)
         .into_iter()
         .chain(book_heap.peek().map(|Reverse((at, _))| *at))
+        .chain(
+            decision_timer
+                .as_ref()
+                .filter(|timer| !timer.is_expired())
+                .map(|timer| timer.next_time_ns().as_u64())
+                .filter(|at| *at < request.research.input.event_end_ns.get()),
+        )
         .min()
     {
+        let decision_tick = decision_timer
+            .as_mut()
+            .is_some_and(|timer| timer.next_time_ns().as_u64() == event && timer.next().is_some());
         // Complete each global timestamp before scheduling new decisions.
         let mut group = Vec::new();
         while heap.peek().is_some_and(|Reverse((at, _))| *at == event) {
@@ -2333,6 +2413,9 @@ pub fn replay_models_with_funding_and_cores(
             }
         }
         if let Some(small) = &mut small {
+            if decision_tick {
+                *small.decision_clock_ticks.get_or_insert(0) += 1;
+            }
             small.expire(event, &mut assets, s, &mut seed)?;
         }
         while day_end <= event {
@@ -2410,9 +2493,11 @@ pub fn replay_models_with_funding_and_cores(
         let mut fresh = Vec::new();
         let mut attempted = Vec::new();
         for &i in &group {
-            if let Some(small) = &mut small {
-                let price = finite(assets[i].head.as_ref().unwrap().vwap)?;
-                small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+            if !fixed_clock {
+                if let Some(small) = &mut small {
+                    let price = finite(assets[i].head.as_ref().unwrap().vwap)?;
+                    small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+                }
             }
             let a = &mut assets[i];
             let current = a.head.take().unwrap();
@@ -2420,7 +2505,7 @@ pub fn replay_models_with_funding_and_cores(
             a.fast.update_raw(current.vwap);
             a.slow.update_raw(current.vwap);
             if let Some(previous) = &a.previous {
-                if a.fast.initialized() && a.slow.initialized() {
+                if a.fast.initialized() && a.slow.initialized() && a.model.is_some() {
                     let ordinal = u32::try_from(a.cohorts)?;
                     let received = request.research.input.uses_received_time();
                     let feature_at = |value, cohort: &Cohort| {
@@ -2457,6 +2542,21 @@ pub fn replay_models_with_funding_and_cores(
                             &current,
                         )?,
                     ];
+                    let mut extended_features;
+                    let features = if book_profile {
+                        extended_features = features.to_vec();
+                        books::BookFeatures::append(
+                            &mut extended_features,
+                            a.feature_books
+                                .as_mut()
+                                .context("TICK_BOOK_FEATURE_SOURCE_REQUIRED")?
+                                .advance(current.event)?,
+                            current.event,
+                        );
+                        extended_features.as_slice()
+                    } else {
+                        &features
+                    };
                     let model = a.model.as_mut().context("ECONOMIC_MODEL_MISSING")?;
                     let remaining_fuel = request
                         .research
@@ -2467,12 +2567,15 @@ pub fn replay_models_with_funding_and_cores(
                         event,
                         current.feature_event(received),
                         ordinal,
-                        &features,
+                        features,
                         remaining_fuel,
                     )?;
                     a.score = Some(score);
                     if small.is_some() {
                         fresh.push(i);
+                        if fixed_clock {
+                            decision_fresh.insert(i);
+                        }
                     }
                     if request.research.parameters.total_fuel.is_some() {
                         consumed = consumed.checked_add(used).context("ECONOMIC_FUEL_RANGE")?;
@@ -2564,6 +2667,7 @@ pub fn replay_models_with_funding_and_cores(
                                 &a.instrument,
                                 (quantity - held).abs().min(capacity),
                                 price,
+                                reducing,
                             )
                         })
                         .transpose()?
@@ -2693,7 +2797,14 @@ pub fn replay_models_with_funding_and_cores(
                         .collect::<Vec<_>>();
                     ledger.inventory_target_instruments(&bridges)?;
                     cash = Some(ledger);
-                    margin = Some(build(&assets, true, margin_capital, s)?);
+                    if assets
+                        .iter()
+                        .any(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)))
+                    {
+                        margin = Some(build(&assets, true, margin_capital, s)?);
+                    } else {
+                        reserve_usdc += margin_capital;
+                    }
                     conversion_ns = Some(counter(event)?);
                     initial_usdc = Some(exact(converted)?);
                 }
@@ -2712,7 +2823,8 @@ pub fn replay_models_with_funding_and_cores(
                 )?;
             }
         }
-        if let (Some(small), Some(c), Some(m)) = (&small, &cash, &margin) {
+        if let (Some(small), Some(c)) = (&small, &cash) {
+            let m = margin.as_ref();
             small_cap_entries(
                 small,
                 &mut marks_cash,
@@ -2792,7 +2904,8 @@ pub fn replay_models_with_funding_and_cores(
                 }
             }
         }
-        if let (Some(small), Some(c), Some(m)) = (&mut small, &cash, &margin) {
+        if let (Some(small), Some(c)) = (&mut small, &cash) {
+            let m = margin.as_ref();
             let reconciled = if observed {
                 snapshots.keys().copied().collect::<Vec<_>>()
             } else {
@@ -2816,40 +2929,57 @@ pub fn replay_models_with_funding_and_cores(
                     assets[i].pending = None;
                 }
             }
-            if event >= next_grid {
-                let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
-                let mut maintenance = Some(Decimal::ZERO);
-                for p in m.positions() {
-                    let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
-                    else {
-                        maintenance = None;
-                        break;
-                    };
-                    let Some(price) = small_position_price(a, event, age, &mut contexts)? else {
-                        maintenance = None;
-                        break;
-                    };
-                    let native_margin = m.maintenance_at(p.instrument_id, price)?;
-                    maintenance = maintenance.map(|sum| sum + native_margin.as_decimal());
+            if decision_tick {
+                for &i in &decision_fresh {
+                    let price = finite(assets[i].previous.as_ref().unwrap().vwap)?;
+                    small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
                 }
-                if net
-                    .zip(maintenance)
-                    .is_some_and(|(net, needed)| needed > Decimal::ZERO && net <= needed)
-                {
-                    for i in 0..assets.len() {
-                        if matches!(assets[i].instrument, InstrumentAny::CryptoPerpetual(_)) {
-                            small.exit(i, event, &mut assets, s, &mut seed)?;
+            }
+            if decision_tick || (!fixed_clock && event >= next_grid) {
+                if let Some(m) = m {
+                    let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
+                    let mut maintenance = Some(Decimal::ZERO);
+                    for p in m.positions() {
+                        let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
+                        else {
+                            maintenance = None;
+                            break;
+                        };
+                        let Some(price) = small_position_price(a, event, age, &mut contexts)?
+                        else {
+                            maintenance = None;
+                            break;
+                        };
+                        let native_margin = m.maintenance_at(p.instrument_id, price)?;
+                        maintenance = maintenance.map(|sum| sum + native_margin.as_decimal());
+                    }
+                    if net
+                        .zip(maintenance)
+                        .is_some_and(|(net, needed)| needed > Decimal::ZERO && net <= needed)
+                    {
+                        for i in 0..assets.len() {
+                            if matches!(assets[i].instrument, InstrumentAny::CryptoPerpetual(_)) {
+                                small.exit(i, event, &mut assets, s, &mut seed)?;
+                            }
                         }
                     }
                 }
-                next_grid = (event / s.decision_interval_ns.get() + 1)
-                    .checked_mul(s.decision_interval_ns.get())
-                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+                if !fixed_clock {
+                    next_grid = (event / s.decision_interval_ns.get() + 1)
+                        .checked_mul(s.decision_interval_ns.get())
+                        .context("ECONOMIC_CLOCK_OVERFLOW")?;
+                }
             }
-            if event < request.research.input.decision_cutoff_ns.get() {
-                let eligible: Vec<_> = fresh
-                    .iter()
-                    .copied()
+            if event < request.research.input.decision_cutoff_ns.get()
+                && (!fixed_clock || decision_tick)
+            {
+                let candidates = if fixed_clock {
+                    decision_fresh.iter().copied().collect()
+                } else {
+                    fresh
+                };
+                let eligible: Vec<_> = candidates
+                    .into_iter()
                     .filter(|i| {
                         funding_unknown.is_none()
                             || !matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_))
@@ -2870,7 +3000,10 @@ pub fn replay_models_with_funding_and_cores(
                 )?;
             }
         }
-        if event >= next_grid && cash.is_some() && small.is_none() {
+        if (decision_tick || !fixed_clock && event >= next_grid)
+            && cash.is_some()
+            && small.is_none()
+        {
             schedule(
                 &mut assets,
                 &cash,
@@ -2882,9 +3015,14 @@ pub fn replay_models_with_funding_and_cores(
                 &mut contexts,
             )?;
             last_target_asof = Some(event);
-            next_grid = (event / s.decision_interval_ns.get() + 1)
-                .checked_mul(s.decision_interval_ns.get())
-                .context("ECONOMIC_CLOCK_OVERFLOW")?;
+            if !fixed_clock {
+                next_grid = (event / s.decision_interval_ns.get() + 1)
+                    .checked_mul(s.decision_interval_ns.get())
+                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+            }
+        }
+        if decision_tick {
+            decision_fresh.clear();
         }
     }
     let end = request.research.input.event_end_ns.get();
@@ -2942,10 +3080,12 @@ pub fn replay_models_with_funding_and_cores(
     while funding.next.is_some() {
         funding.advance()?;
     }
-    ensure!(
-        funding.rows == funding_manifest.rows,
-        "ECONOMIC_FUNDING_ROW_COUNT_MISMATCH"
-    );
+    if let Some(manifest) = &funding_manifest {
+        ensure!(
+            funding.rows == manifest.rows,
+            "ECONOMIC_FUNDING_ROW_COUNT_MISMATCH"
+        );
+    }
     if let Some(context) = contexts.as_mut() {
         context.finish()?;
     }
@@ -3021,14 +3161,15 @@ pub fn replay_models_with_funding_and_cores(
         schema_version: SchemaV1, request: request.clone(),
         small_capital_diagnostics: small.as_ref().map(|p| p.report(&assets)).transpose()?, model: if request.scenario.execution_model.is_some() { "SEGREGATED_SYNTHETIC_QUOTE_IOC_V1" } else { "SEGREGATED_COHORT_MARK_ESTIMATE_V1" }.into(),
         methods: BTreeMap::from([
-            ("funding_source".into(), format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", funding_manifest.source_revision, funding_manifest.start_ns.get(), funding_manifest.end_ns.get(), funding_manifest.rows, request.funding_source)),
+            ("funding_source".into(), funding_manifest.as_ref().map_or_else(|| "Periodic funding is inapplicable to this CurrencyPair-only replay.".into(), |manifest| format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", manifest.source_revision, manifest.start_ns.get(), manifest.end_ns.get(), manifest.rows, request.funding_source))),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
-            ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
+            ("decision_clock".into(), if fixed_clock { format!("FIXED_INTERVAL_V1. Official Nautilus VirtualTimer at start + k * {}ns through the half-open input window. Same-time source data and scores precede alpha decisions. Generic rebalances use the latest scores. Small-capital entries consume each new cohort score once, with independent holding-risk deadlines. Queued execution requires actual later source observations.", s.decision_interval_ns.get()) } else { "Legacy cohort-event decisions, capped by global interval buckets rather than a fixed timer.".into() }),
+            ("policy".into(),if small.is_some() && fixed_clock {"Fixed capped USDC alpha entries and reference-price exits at native timer deadlines, using each asset latest new cohort once. Empty clock events hold without resubmitting old signals. Declared roundtrip-cost hurdle and frozen entry fastEMA remain. Timeout is measured from entry decision with the original precise risk deadline. Orders execute only at real later observations after latency, partial fills and residual inventory remain, and quote inventory is not alpha. No dynamic sleeve transfers.".into()} else if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
-            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
+            ("funding".into(), if funding_manifest.is_none() { "Periodic funding is inapplicable to this CurrencyPair-only replay.".into() } else if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; the venue oracle extension books only acknowledged account-cash adjustments. Native per-position realized PnL does not include this oracle extension; scientific performance uses account equity, never position-return fallback.", age, context.description()) } else { "Original rate boundaries and source-qualified cohort marks feed official FundingRateUpdate/FundingSettlement. PositionAdjusted and native account balances own the payment; the explicit nominal USD-to-USDC module preserves the declared venue unit. This is mark funding, not HL oracle settlement.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
-            ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
+            ("statistics".into(),"UTC daily total-wealth net returns analyzed by official nautilus-analysis SharpeRatio/CAGR(365), retaining real UTC day keys. Partition metrics use all observed daily returns in each partition. Selected regime bins are conditional annualization, not a continuous-calendar portfolio CAGR; missing observations are counted and never zero-filled.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
             ("precision".into(),"Native USD-quoted perp PnL uses USD 2-decimal Money, explicitly swept in nominal quote units to USDC; no instrument rewrite. Full USD minor unit 0.01 times all perp fills conservatively bounds native PnL rounding, not VWAP/price precision or execution-model error.".into()),
         ]),
@@ -3037,19 +3178,25 @@ pub fn replay_models_with_funding_and_cores(
             instrument_id:a.instrument.id().to_string(), native_kind:if matches!(a.instrument,InstrumentAny::CurrencyPair(_)){"CurrencyPair"}else{"CryptoPerpetual"}.into(),
             cohorts:counter(a.cohorts)?, decisions:counter(a.decisions)?, execution_attempts:counter(a.attempts)?,
         })).collect::<Result<_>>()?,
-        metrics: metrics(request,&days)?, days, conversion_ns, initial_usdc_after_cost:initial_usdc,
+        metrics: metrics(request,&days)?, partition_metrics: Some(partition_metrics(request, &days)?), days, conversion_ns, initial_usdc_after_cost:initial_usdc,
         funding_usdc:exact(margin_summary.adjustment_totals.get("USDC").copied().unwrap_or(Decimal::ZERO))?,
         fees_usdc_equivalent:fee_equivalent.map(exact).transpose()?,
         fees_by_currency:fees.into_iter().map(|(currency,amount)|Ok((currency,exact(amount)?))).collect::<Result<_>>()?,
         initial_conversion_cost_usdc:exact(conversion_cost)?, nominal_usd_settled_usdc:exact(margin_summary.nominal_settlement_usdc)?,
         native_fills:counter(fills)?, native_rejections:counter(rejections)?,
         native_perp_pnl_rounding_events:counter(margin_summary.fills)?, perp_pnl_rounding_bound_usdc:exact(Decimal::new(1,2)*Decimal::from(margin_summary.fills))?,
-        funding_missing_instruments:funding_manifest.missing_instruments,
+        funding_missing_instruments:funding_manifest.as_ref().map(|manifest| manifest.missing_instruments.clone()).unwrap_or_default(),
         targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if funding_manifest.is_none(){"PERIODIC_FUNDING_INAPPLICABLE_TO_CURRENCY_PAIR_ASSETS"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if book_profile {
+        result.methods.insert(
+            "features".into(),
+            super::feature_schema(&request.research).into(),
+        );
+    }
     if let Some(evidence) = initial_conversion_evidence {
         result
             .methods
@@ -3249,7 +3396,7 @@ fn append_day(
     let equity = if funding_unknown {
         reason = "FUNDING_UNAVAILABLE".into();
         None
-    } else if let (Some(c), Some(m)) = (cash, margin) {
+    } else if let Some(c) = cash {
         match (
             valuation_value(
                 c,
@@ -3262,17 +3409,23 @@ fn append_day(
                 Some(&mut reason),
                 quotes,
             )?,
-            valuation_value(
-                m,
-                assets,
-                fx_ids,
-                at,
-                age,
-                true,
-                contexts,
-                Some(&mut reason),
-                quotes,
-            )?,
+            margin
+                .as_ref()
+                .map(|m| {
+                    valuation_value(
+                        m,
+                        assets,
+                        fx_ids,
+                        at,
+                        age,
+                        true,
+                        contexts,
+                        Some(&mut reason),
+                        quotes,
+                    )
+                })
+                .transpose()?
+                .unwrap_or(Some(Decimal::ZERO)),
             valuation_fx(usdt0, assets, fx_ids, at, age, quotes),
         ) {
             (Some(c), Some(m), Some(fx)) => {
@@ -3346,16 +3499,11 @@ fn schedule(
         contexts,
         None,
     )?;
-    let m = value(
-        margin.as_ref().unwrap(),
-        assets,
-        fx_ids,
-        event,
-        age,
-        true,
-        contexts,
-        None,
-    )?;
+    let m = margin
+        .as_ref()
+        .map(|m| value(m, assets, fx_ids, event, age, true, contexts, None))
+        .transpose()?
+        .unwrap_or(Some(Decimal::ZERO));
     let sums = assets
         .iter()
         .filter(|a| mark(a, event, age).is_some())
@@ -3481,7 +3629,7 @@ fn schedule(
     }
     // This scenario closes under-margined positions at later observed events, not at hindsight prices.
     let mut maintenance = Decimal::ZERO;
-    for p in margin.as_ref().unwrap().positions() {
+    for p in margin.iter().flat_map(|m| m.positions()) {
         let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id) else {
             continue;
         };
@@ -3492,7 +3640,7 @@ fn schedule(
     }
     if m.is_some_and(|net| net <= maintenance) && maintenance > Decimal::ZERO {
         plans.retain(|(i, _)| !matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_)));
-        for p in margin.as_ref().unwrap().positions() {
+        for p in margin.iter().flat_map(|m| m.positions()) {
             if let Some(i) = assets
                 .iter()
                 .position(|a| a.instrument.id() == p.instrument_id)
@@ -3535,17 +3683,67 @@ fn schedule(
     Ok(())
 }
 
-fn metrics(
-    request: &NativeTickEconomicRequestV1,
-    days: &[NativeTickEconomicDayV1],
-) -> Result<Vec<NativeTickEconomicMetricV1>> {
-    use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
+fn daily_statistics(days: &[&NativeTickEconomicDayV1]) -> (usize, Option<f64>, Option<f64>) {
     use nautilus_analysis::{
         statistic::PortfolioStatistic,
         statistics::{cagr::CAGR, sharpe_ratio::SharpeRatio},
         Returns,
     };
     use nautilus_core::UnixNanos;
+    let returns: Returns = days
+        .iter()
+        .filter_map(|day| {
+            day.net_return
+                .map(|value| (UnixNanos::from(day.day_start_ns.get()), value))
+        })
+        .collect();
+    let n = returns.len();
+    let sharpe = SharpeRatio::new(Some(365))
+        .calculate_from_returns(&returns)
+        .filter(|value| value.is_finite());
+    let annualized = (n > 0 && returns.values().all(|value| *value > -1.0))
+        .then(|| CAGR::new(Some(365)).calculate_from_returns(&returns))
+        .flatten()
+        .filter(|value| value.is_finite());
+    (n, sharpe, annualized)
+}
+
+fn partition_metrics(
+    request: &NativeTickEconomicRequestV1,
+    days: &[NativeTickEconomicDayV1],
+) -> Result<Vec<NativeTickEconomicPartitionMetricV1>> {
+    use contracts::factors::NativeFactorPartitionV1;
+    [
+        NativeFactorPartitionV1::Train,
+        NativeFactorPartitionV1::Validation,
+        NativeFactorPartitionV1::Heldout,
+    ]
+    .into_iter()
+    .map(|partition| {
+        let selected = days
+            .iter()
+            .filter(|day| {
+                domain::ticks::partition_for_event(&request.research, day.day_start_ns)
+                    == Some(partition)
+            })
+            .collect::<Vec<_>>();
+        let (n, sharpe, annualized) = daily_statistics(&selected);
+        Ok(NativeTickEconomicPartitionMetricV1 {
+            partition,
+            days: counter(selected.len() as u64)?,
+            valid_return_days: counter(n as u64)?,
+            sharpe_365: sharpe,
+            annualized_return_365: annualized,
+        })
+    })
+    .collect()
+}
+
+fn metrics(
+    request: &NativeTickEconomicRequestV1,
+    days: &[NativeTickEconomicDayV1],
+) -> Result<Vec<NativeTickEconomicMetricV1>> {
+    use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
     let regimes = domain::ticks::evaluation_regimes(&request.research)?;
     let first = request.research.input.event_start_ns.get() / DAY * DAY;
     let mut reports = Vec::new();
@@ -3575,21 +3773,7 @@ fn metrics(
             // Preserve real UTC-day identities, including gaps between regime
             // samples. Native CAGR annualizes the selected daily-bin count; it
             // is a conditional regime statistic, not contiguous-calendar CAGR.
-            let returns: Returns = selected
-                .iter()
-                .filter_map(|day| {
-                    day.net_return
-                        .map(|value| (UnixNanos::from(day.day_start_ns.get()), value))
-                })
-                .collect();
-            let n = returns.len();
-            let sharpe = SharpeRatio::new(Some(365))
-                .calculate_from_returns(&returns)
-                .filter(|value| value.is_finite());
-            let annualized = (n > 0 && returns.values().all(|value| *value > -1.0))
-                .then(|| CAGR::new(Some(365)).calculate_from_returns(&returns))
-                .flatten()
-                .filter(|value| value.is_finite());
+            let (n, sharpe, annualized) = daily_statistics(&selected);
             reports.push(NativeTickEconomicMetricV1 {
                 partition,
                 regime,

@@ -79,10 +79,11 @@ pub fn exact_json(value: &mut Value) {
 }
 
 fn publish(path: &Path, value: &impl Serialize) -> Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut file = BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
     serde_json::to_writer(&mut file, value)?;
     file.write_all(b"\n")?;
-    file.sync_all()?;
+    file.flush()?;
+    file.get_ref().sync_all()?;
     Ok(())
 }
 
@@ -1345,8 +1346,7 @@ pub fn prepare_views(
         "OUTPUT_MUST_NOT_OVERLAP_SOURCE"
     );
     fs::create_dir(&output).context("OUTPUT_MUST_BE_NEW")?;
-    let original = manifest(&source)?;
-    let mut full = original.clone();
+    let mut full = manifest(&source)?;
     full.files = input
         .assets
         .iter()

@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
@@ -26,10 +27,10 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       if (request.method === 'POST') {
         posts++; let data = ''; for await (const chunk of request) data += chunk;
         original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
-        response.statusCode = 429;
+        response.statusCode = mode === 'explicit' ? 501 : 429;
         response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
           schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
-          admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted',
+          admission: 'REJECTED', error: mode === 'explicit' ? 'nautilus_tick_resource_limits_unavailable' : 'nautilus_tick_capacity_exhausted',
         })); return;
       }
       reads++; response.statusCode = 404; response.end(JSON.stringify({ error: 'nautilus_execution_not_found' }));
@@ -73,7 +74,7 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       assert.equal(reference.requestId, original!.requestId);
       if (mode === 'explicit') {
         assert.equal(reference.status, 'REJECTED'); assert.equal(reference.admission, 'REJECTED');
-        assert.equal(reference.error, 'nautilus_tick_capacity_exhausted');
+        assert.equal(reference.error, 'nautilus_tick_resource_limits_unavailable');
         await host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, task.conversationId, task.id), BACKGROUND_CONTEXT);
         await reconcileNativeRemoteTasks(host.harness, [task], BACKGROUND_CONTEXT);
         assert.equal(reads, 0, 'explicit non-execution does not invent or query a terminal execution receipt');
@@ -116,4 +117,63 @@ test('receipt observation is a single read; durable tasks own waiting and a canc
     try { await assert.rejects(waiting, error => controller.signal.aborted && error instanceof Error && error.name === 'AbortError'); } finally { clearTimeout(timer); }
     assert.equal(writes, 0);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('explicit tick capacity refusal sleeps and resumes the original invocation until one execution is admitted', { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-remote-capacity-'));
+  const requests: NativeExecutionRequest[] = []; let executed = 0; let reads = 0;
+  const server = createServer(async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/v1/capabilities') {
+      response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return;
+    }
+    if (request.method === 'POST') {
+      let data = ''; for await (const chunk of request) data += chunk;
+      const value = JSON.parse(data) as NativeExecutionRequest; requests.push(value);
+      if (requests.length === 1) {
+        response.statusCode = 429;
+        response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' })); return;
+      }
+      executed++;
+      response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, status: 'COMPLETED', result: { protocolOnly: true } })); return;
+    }
+    reads++; response.statusCode = 404; response.end('{"error":"not_found"}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const target = { id: 'controlled-capacity', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  const models = createModels(); models.setProvider(fauxProvider().provider);
+  const options = { database: join(directory, 'research.sqlite'), models };
+  let host = await openResearch(options);
+  try {
+    const observation = host.withNativeHost(() => executeNativeValue(target, 'evaluate-tick-factor', { marker: 'original-input' }, [], directory, BACKGROUND_CONTEXT)).catch(() => undefined);
+    let pending;
+    for (let i = 0; i < 200; i++) {
+      pending = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0];
+      if (pending?.state.status === 'sleeping') break;
+      await delay(5);
+    }
+    assert.ok(pending); assert.equal(pending.state.status, 'sleeping');
+    if (pending.state.status !== 'sleeping') return;
+    assert.deepEqual(pending.state.checkpoint, { phase: 'submit' });
+    assert.ok(pending.state.until - Date.now() > 4000);
+    const rejected = await host.harness.snapshot(NativeRemoteUncertainty, pending.conversationId, String(pending.id), BACKGROUND_CONTEXT);
+    assert.equal(rejected!.requests[0]!.status, 'REJECTED');
+    assert.equal(rejected!.requests[0]!.error, 'nautilus_tick_capacity_exhausted');
+    assert.equal(requests.length, 1); assert.equal(executed, 0); assert.equal(reads, 0);
+    await host.close(); await observation;
+    host = await openResearch(options);
+    const settled = await host.harness.waitForTask(pending.id, BACKGROUND_CONTEXT);
+    assert.equal(settled.state.outcome.status, 'completed');
+    assert.equal(requests.length, 2); assert.equal(executed, 1); assert.equal(reads, 0);
+    assert.deepEqual(requests[1], requests[0]);
+    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT);
+    assert.deepEqual(tasks.items.map(task => task.id), [pending.id]);
+    const completed = await host.harness.snapshot(NativeRemoteUncertainty, pending.conversationId, String(pending.id), BACKGROUND_CONTEXT);
+    assert.equal(completed!.requests[0]!.status, 'COMPLETED');
+    assert.equal(completed!.requests[0]!.admissionRejection, 'nautilus_tick_capacity_exhausted');
+    assert.equal(completed!.requests[0]!.admission, undefined);
+  } finally {
+    await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
 });

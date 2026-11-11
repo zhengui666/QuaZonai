@@ -395,6 +395,10 @@ impl CohortStrategy {
         if difference.is_zero() {
             return Ok(());
         }
+        let reduce_only = !self.cash
+            && !current.is_zero()
+            && difference.is_sign_negative() != current.is_sign_negative()
+            && difference.abs() <= current.abs();
         let side = if difference > Decimal::ZERO {
             OrderSide::Buy
         } else {
@@ -497,9 +501,10 @@ impl CohortStrategy {
         if instrument
             .min_quantity()
             .is_some_and(|minimum| quantity < minimum)
-            || instrument
-                .min_notional()
-                .is_some_and(|minimum| notional < minimum.as_decimal())
+            || !reduce_only
+                && instrument
+                    .min_notional()
+                    .is_some_and(|minimum| notional < minimum.as_decimal())
         {
             self.state.borrow_mut().summary.skipped_minimum += 1;
             return Ok(());
@@ -514,7 +519,7 @@ impl CohortStrategy {
                 Some(TimeInForce::Ioc),
                 None,
                 Some(false),
-                Some(!self.cash),
+                Some(reduce_only),
                 Some(false),
                 None,
                 None,
@@ -530,7 +535,7 @@ impl CohortStrategy {
                 side,
                 quantity,
                 Some(TimeInForce::Ioc),
-                Some(false),
+                Some(reduce_only),
                 None,
                 None,
                 None,
@@ -1791,6 +1796,71 @@ mod tests {
         native.finish().unwrap();
     }
     #[test]
+    fn synthetic_ioc_perp_dust_closes_without_relaxing_entry_or_flip_minimums() {
+        for direction in [Decimal::ONE, -Decimal::ONE] {
+            let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
+                unreachable!()
+            };
+            definition.min_notional = Some(Money::from("10 USD"));
+            let instrument = InstrumentAny::CryptoPerpetual(definition);
+            let mut native = NativeLedger::new(
+                vec![instrument.clone()],
+                Decimal::from(1000),
+                true,
+                Decimal::ZERO,
+                Decimal::ZERO,
+                Decimal::new(5, 1),
+                Decimal::new(25, 2),
+                true,
+            )
+            .unwrap();
+            native
+                .step(500_000_000, &instrument, 100.0, 10.0, None)
+                .unwrap();
+            native
+                .step(1_000_000_000, &instrument, 100.0, 0.05, Some(direction))
+                .unwrap();
+            assert_eq!(
+                native.current_quantity(instrument.id()),
+                direction / Decimal::from(20)
+            );
+            assert!(!native.orders()[0].is_reduce_only());
+            native
+                .step(2_000_000_000, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
+                .unwrap();
+            assert!(native.positions().is_empty());
+            assert!(native.orders().iter().any(|order| order.is_reduce_only()));
+            native
+                .step(
+                    3_000_000_000,
+                    &instrument,
+                    100.0,
+                    10.0,
+                    Some(direction / Decimal::from(20)),
+                )
+                .unwrap();
+            assert!(native.positions().is_empty());
+            assert_eq!(native.summary().skipped_minimum, 1);
+            native
+                .step(4_000_000_000, &instrument, 100.0, 10.0, Some(direction))
+                .unwrap();
+            native
+                .step(5_000_000_000, &instrument, 100.0, 10.0, Some(-direction))
+                .unwrap();
+            assert_eq!(native.current_quantity(instrument.id()), -direction);
+            assert_eq!(
+                native
+                    .orders()
+                    .iter()
+                    .filter(|order| order.is_reduce_only())
+                    .count(),
+                1
+            );
+            native.finish().unwrap();
+        }
+    }
+
+    #[test]
     fn synthetic_quote_ioc_applies_fee_and_funding_once() {
         let instrument = perp();
         let mut native = NativeLedger::new(
@@ -2843,7 +2913,14 @@ mod tests {
 
     #[test]
     fn observed_one_sided_book_closes_cash_long_and_covers_perp_short() {
-        for (instrument, margin) in [(spot(), false), (perp(), true)] {
+        let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
+            unreachable!()
+        };
+        definition.min_notional = Some(Money::from("10 USD"));
+        for (instrument, margin) in [
+            (spot(), false),
+            (InstrumentAny::CryptoPerpetual(definition), true),
+        ] {
             let mut ledger = NativeLedger::new_observed(
                 vec![instrument.clone()],
                 Decimal::from(1000),
@@ -2862,7 +2939,7 @@ mod tests {
                             &instrument,
                             1_000_000_000,
                             "99.00",
-                            "10.0000",
+                            if margin { "0.0500" } else { "10.0000" },
                             &[("101.00", "10.0000")],
                         ),
                         capacity: Decimal::from(10),
@@ -2871,6 +2948,12 @@ mod tests {
                     &[],
                 )
                 .unwrap();
+            if margin {
+                assert_eq!(
+                    ledger.current_quantity(instrument.id()),
+                    Decimal::new(-5, 2)
+                );
+            }
             let side = if margin {
                 OrderSide::Sell
             } else {
@@ -2899,6 +2982,15 @@ mod tests {
             assert!(ledger.positions().is_empty());
             assert_eq!(ledger.current_quantity(instrument.id()), Decimal::ZERO);
             assert_eq!(ledger.summary().rejected, 0);
+            assert_eq!(ledger.summary().skipped_minimum, 0);
+            assert_eq!(
+                ledger
+                    .orders()
+                    .iter()
+                    .filter(|order| order.is_reduce_only())
+                    .count(),
+                usize::from(margin)
+            );
             assert!(ledger
                 .orders()
                 .iter()

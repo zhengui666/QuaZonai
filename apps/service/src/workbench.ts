@@ -355,6 +355,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       policy: registeredReviewProfile ? await resolveRegisteredReviewPolicy(host.harness, registeredReviewProfile) : createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
       model: object(sourceInput.model) as { provider: string; modelId: string },
       ...(typeof sourceInput.thinkingLevel === 'string' ? { thinkingLevel: sourceInput.thinkingLevel as import('../../../packages/contracts/src/index.ts').ThinkingLevel } : {}),
+      ...(typeof sourceInput.serviceTier === 'string' ? { serviceTier: sourceInput.serviceTier as import('../../../packages/contracts/src/index.ts').ServiceTier } : {}),
       createdAt: new Date().toISOString(),
       stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' as const,
       ...(independent ? { independentData: json(independent.data.sealed ? object(independent.data.sealed) : independent.data) } : {}),

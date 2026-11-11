@@ -3,6 +3,7 @@ import { addDecimal, compareDecimal } from './pm-validation.ts';
 import { validateNativeTickFactorRequest, type NativeTickFactorRequest } from './tick-input.ts';
 
 export type NativeTickEconomicScenario = {
+  decision_clock?: 'COHORT_BUCKET_V1' | 'FIXED_INTERVAL_V1';
   execution_model?: 'SYNTHETIC_QUOTE_IOC_V1' | 'OBSERVED_L2_IOC_V1' | 'OBSERVED_L2_IOC_V2';
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
@@ -15,7 +16,8 @@ export type NativeTickEconomicRequest = {
   schema_version: 1; research: NativeTickFactorRequest; scenario: NativeTickEconomicScenario;
   fx_instrument_ids: string[]; funding_source: string; context_source?: string; event_time_context_source?: string; spot_valuation_source?: string;
   signal_weights?: string[];
-  small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string };
+  small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string;
+    decision_clock?: 'COHORT_BUCKET_V1' | 'FIXED_INTERVAL_V1' };
 };
 
 const decimalFields = ['initial_usdt', 'usdt0_per_usdt', 'spot_fraction', 'gross_fraction', 'maximum_asset_weight',
@@ -37,8 +39,9 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
     .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
-  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model']);
+  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model', 'decision_clock']);
   if (scenario.execution_model !== undefined && !['SYNTHETIC_QUOTE_IOC_V1', 'OBSERVED_L2_IOC_V1', 'OBSERVED_L2_IOC_V2'].includes(scenario.execution_model as string)) throw new Error('tick_economic_execution_model_invalid');
+  if (scenario.decision_clock !== undefined && scenario.decision_clock !== 'COHORT_BUCKET_V1' && scenario.decision_clock !== 'FIXED_INTERVAL_V1') throw new Error('tick_economic_decision_clock_invalid');
   for (const key of decimalFields) {
     const value = scenario[key];
     if (typeof value !== 'string' || value.length > 64 || !/^[+-]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(value)) throw new Error(`tick_economic_${key}_invalid`);
@@ -74,12 +77,16 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   let policy: NativeTickEconomicRequest['small_capital_policy'];
   if (request.small_capital_policy !== undefined) {
     const value = object(request.small_capital_policy);
-    fields(value, ['maximum_entry_notional_usdc', 'maximum_holding_ns']);
+    fields(value, ['maximum_entry_notional_usdc', 'maximum_holding_ns', 'decision_clock']);
     const notional = value.maximum_entry_notional_usdc, holding = value.maximum_holding_ns;
     if (typeof notional !== 'string' || notional.length > 64 || !/^[+]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(notional) || compareDecimal(notional, '0') <= 0) throw new Error('tick_economic_maximum_entry_notional_usdc_invalid');
     if (typeof holding !== 'string' || !/^[1-9]\d*$/.test(holding) || BigInt(holding) > 9223372036854775807n) throw new Error('tick_economic_maximum_holding_ns_invalid');
-    policy = { maximum_entry_notional_usdc: addDecimal(notional, '0'), maximum_holding_ns: holding };
+    const clock = value.decision_clock;
+    if (clock !== undefined && clock !== 'COHORT_BUCKET_V1' && clock !== 'FIXED_INTERVAL_V1') throw new Error('tick_economic_decision_clock_invalid');
+    policy = { maximum_entry_notional_usdc: addDecimal(notional, '0'), maximum_holding_ns: holding,
+      ...(clock === undefined ? {} : { decision_clock: clock }) };
   }
+  if (s.decision_clock !== undefined && policy?.decision_clock !== undefined && s.decision_clock !== policy.decision_clock) throw new Error('tick_economic_decision_clock_conflict');
   const normalized = { ...s }; for (const key of decimalFields) normalized[key] = addDecimal(s[key], '0');
   return { schema_version: 1, research, scenario: normalized,
     fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,
@@ -94,6 +101,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
 export type NativeTickEconomicResult = {
   schema_version: 1; request: NativeTickEconomicRequest; model: string;
   small_capital_diagnostics?: {
+    decision_clock_ticks?: string;
     entry_attempts: string; unfilled_entries: string; positions_opened: string; positions_closed: string; exit_attempts: string;
     maximum_exit_delay_ns: string | null;
     remaining_positions: { instrument_id: string; quantity: string; entry_decision_ns: string; first_fill_ns: string; exit_decision_ns: string | null }[];
@@ -103,6 +111,7 @@ export type NativeTickEconomicResult = {
   // Balance FX failures only; absence or emptiness does not establish complete NAV, marks, reporting FX, or funding.
   days: { day_start_ns: string; equity_usdt: string | null; net_return: number | null; unknown_reason: string | null; missing_balances?: { ledger: 'CASH' | 'MARGIN'; currency: string; amount: string }[] }[];
   metrics: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; regime: 'BULL' | 'BEAR' | 'RANGE' | 'UNKNOWN'; days: string; valid_return_days: string; sharpe_365: number | null; conditional_annualized_return_365: number | null }[];
+  partition_metrics?: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; days: string; valid_return_days: string; sharpe_365: number | null; annualized_return_365: number | null }[];
   conversion_ns: string | null; initial_usdc_after_cost: string | null; funding_usdc: string;
   fees_usdc_equivalent: string | null; fees_by_currency: Record<string, string>; initial_conversion_cost_usdc: string; nominal_usd_settled_usdc: string;
   native_fills: string; native_rejections: string;
@@ -132,19 +141,20 @@ export type TickEconomicReplayDetail = TickEconomicReplayView & TickEconomicRepl
 
 export function validateNativeTickEconomicResult(value: unknown): NativeTickEconomicResult {
   const result = object(value);
-  const names = ['schema_version', 'request', 'model', 'small_capital_diagnostics', 'methods', 'coverage', 'assets', 'days', 'metrics', 'conversion_ns', 'initial_usdc_after_cost',
+  const names = ['schema_version', 'request', 'model', 'small_capital_diagnostics', 'methods', 'coverage', 'assets', 'days', 'metrics', 'partition_metrics', 'conversion_ns', 'initial_usdc_after_cost',
     'funding_usdc', 'fees_usdc_equivalent', 'fees_by_currency', 'initial_conversion_cost_usdc', 'nominal_usd_settled_usdc', 'native_fills', 'native_rejections', 'native_perp_pnl_rounding_events', 'perp_pnl_rounding_bound_usdc',
     'funding_missing_instruments', 'targets', 'target_asof_ns', 'target_cash_weight', 'skipped_cash', 'skipped_minimum', 'consumed_fuel', 'limitations'];
   fields(result, names);
-  if (result.schema_version !== 1 || names.some(key => key !== 'small_capital_diagnostics' && !Object.hasOwn(result, key)) || typeof result.model !== 'string' || !result.model) throw new Error('tick_economic_result_invalid');
+  if (result.schema_version !== 1 || names.some(key => key !== 'small_capital_diagnostics' && key !== 'partition_metrics' && !Object.hasOwn(result, key)) || typeof result.model !== 'string' || !result.model) throw new Error('tick_economic_result_invalid');
   validateNativeTickEconomicRequest(result.request); object(result.coverage);
   if (Object.values(object(result.methods)).some(value => typeof value !== 'string')) throw new Error('tick_economic_result_methods_invalid');
   const counter = (value: unknown) => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value) && BigInt(value) <= 9223372036854775807n;
   const decimal = (value: unknown) => typeof value === 'string' && value.length <= 80 && /^[+-]?(?:0*\d{1,29}(?:\.\d{0,28})?|\.\d{1,28})(?![\s\S])/.test(value);
   if (result.small_capital_diagnostics !== undefined) {
     const d = object(result.small_capital_diagnostics);
-    fields(d, ['entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts', 'maximum_exit_delay_ns', 'remaining_positions']);
+    fields(d, ['decision_clock_ticks', 'entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts', 'maximum_exit_delay_ns', 'remaining_positions']);
     if (['entry_attempts', 'unfilled_entries', 'positions_opened', 'positions_closed', 'exit_attempts'].some(key => !counter(d[key]))
+      || d.decision_clock_ticks !== undefined && !counter(d.decision_clock_ticks)
       || d.maximum_exit_delay_ns !== null && !counter(d.maximum_exit_delay_ns)
       || !Array.isArray(d.remaining_positions) || d.remaining_positions.some(value => {
         const p = object(value); fields(p, ['instrument_id', 'quantity', 'entry_decision_ns', 'first_fill_ns', 'exit_decision_ns']);
@@ -173,6 +183,11 @@ export function validateNativeTickEconomicResult(value: unknown): NativeTickEcon
       || [row.sharpe_365, row.conditional_annualized_return_365].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
   }) || Object.entries(object(result.fees_by_currency)).some(([currency, amount]) => !currency || !decimal(amount))
     || !decimal(result.initial_conversion_cost_usdc) || !decimal(result.nominal_usd_settled_usdc)) throw new Error('tick_economic_result_metrics_or_costs_invalid');
+  if (result.partition_metrics !== undefined && (!Array.isArray(result.partition_metrics) || result.partition_metrics.some(value => {
+    const row = object(value); fields(row, ['partition', 'days', 'valid_return_days', 'sharpe_365', 'annualized_return_365']);
+    return !['TRAIN', 'VALIDATION', 'HELDOUT'].includes(String(row.partition)) || !counter(row.days) || !counter(row.valid_return_days)
+      || [row.sharpe_365, row.annualized_return_365].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
+  }))) throw new Error('tick_economic_result_partition_metrics_invalid');
   if (!Array.isArray(result.targets) || result.targets.some(value => {
     const row = object(value); fields(row, ['instrument_id', 'currency', 'weight']);
     return typeof row.instrument_id !== 'string' || !row.instrument_id || typeof row.currency !== 'string' || !row.currency || !decimal(row.weight);

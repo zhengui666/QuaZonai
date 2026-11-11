@@ -21,6 +21,13 @@ pub struct NativeTickEconomicScenarioV1 {
     pub initial_margin_fraction: DecimalValue,
     pub maintenance_margin_fraction: DecimalValue,
     pub decision_interval_ns: DbCounter,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_decision_clock"
+    )]
+    #[schema(nullable = false)]
+    pub decision_clock: Option<NativeTickDecisionClockV1>,
     pub base_latency_ns: DbCounter,
     pub jitter_min_ns: DbCounter,
     pub jitter_max_ns: DbCounter,
@@ -43,6 +50,21 @@ pub enum NativeTickEconomicExecutionModelV1 {
 pub struct NativeTickSmallCapitalPolicyV1 {
     pub maximum_entry_notional_usdc: DecimalValue,
     pub maximum_holding_ns: DbCounter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_clock: Option<NativeTickDecisionClockV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickDecisionClockV1 {
+    CohortBucketV1,
+    FixedIntervalV1,
+}
+
+fn deserialize_decision_clock<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<NativeTickDecisionClockV1>, D::Error> {
+    NativeTickDecisionClockV1::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -135,6 +157,16 @@ pub struct NativeTickEconomicMetricV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTickEconomicPartitionMetricV1 {
+    pub partition: crate::factors::NativeFactorPartitionV1,
+    pub days: DbCounter,
+    pub valid_return_days: DbCounter,
+    pub sharpe_365: Option<f64>,
+    pub annualized_return_365: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTickSmallCapitalPositionV1 {
     pub instrument_id: String,
     pub quantity: DecimalValue,
@@ -146,6 +178,8 @@ pub struct NativeTickSmallCapitalPositionV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTickSmallCapitalDiagnosticsV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_clock_ticks: Option<DbCounter>,
     pub entry_attempts: DbCounter,
     pub unfilled_entries: DbCounter,
     pub positions_opened: DbCounter,
@@ -168,6 +202,8 @@ pub struct NativeTickEconomicResultV1 {
     pub assets: Vec<NativeTickEconomicAssetV1>,
     pub days: Vec<NativeTickEconomicDayV1>,
     pub metrics: Vec<NativeTickEconomicMetricV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_metrics: Option<Vec<NativeTickEconomicPartitionMetricV1>>,
     pub conversion_ns: Option<DbCounter>,
     pub initial_usdc_after_cost: Option<DecimalValue>,
     pub funding_usdc: DecimalValue,

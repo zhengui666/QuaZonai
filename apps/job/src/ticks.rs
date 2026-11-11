@@ -22,7 +22,13 @@ pub const FLOW_FEATURE_SCHEMA: &str = "qz.tick-cohort-flow-features.v1: cohort_v
 pub const RECEIVED_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns";
 pub const RECEIVED_FLOW_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-flow-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns,signed_quantity";
 
-pub fn feature_schema(input: &NativeTradeTickInputV1) -> &'static str {
+pub const RECEIVED_FLOW_BOOK_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-flow-book-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns,signed_quantity,native_book_imbalance_ratio,book_spread_bps,book_bid_depth_5_quote,book_ask_depth_5_quote";
+
+pub fn feature_schema(request: &NativeTradeTickFactorEvaluationRequestV1) -> &'static str {
+    if request.parameters.uses_book_features() {
+        return RECEIVED_FLOW_BOOK_FEATURE_SCHEMA;
+    }
+    let input = &request.input;
     match (input.uses_received_time(), input.is_flow_cache()) {
         (true, true) => RECEIVED_FLOW_FEATURE_SCHEMA,
         (true, false) => RECEIVED_FEATURE_SCHEMA,
@@ -476,7 +482,7 @@ fn evaluate_series(
         })
     })
     .collect::<Result<Vec<_>>>()?;
-    Ok(NativeTradeTickFactorEvaluationResultV1{schema_version:SchemaV1,request:request.clone(),native_versions:BTreeMap::from([("nautilus-model".into(),"0.68.0".into()),("nautilus-persistence".into(),"0.68.0".into()),("nautilus-indicators".into(),"0.68.0".into()),("wasmi".into(),"2.0.0".into())]),methods:BTreeMap::from([("input".into(),"original native TradeTick; no BAR catalog or simulation".into()),("prediction".into(),crate::feature_model::ABI.into()),("features".into(),feature_schema(&request.input).into()),("sampling".into(),sampling_method(&request.input).into()),("label".into(),request.target.label_method().into()),("partitioning".into(),"shared half-open sampling-clock cuts; cross-boundary labels excluded; warmup stays within selected interval".into()),("qualification".into(),qualification_method(&request.input).into()),("ic".into(),"existing ndarray-stats raw pooled Pearson correlation".into())]),consumed_fuel:request.parameters.total_fuel.zip(remaining).map(|(total,left)|counter(total.get()-left)).transpose()?,coverage,partitions,regime_partitions:None,points:(!summary_only).then_some(points)})
+    Ok(NativeTradeTickFactorEvaluationResultV1{schema_version:SchemaV1,request:request.clone(),native_versions:BTreeMap::from([("nautilus-model".into(),"0.68.0".into()),("nautilus-persistence".into(),"0.68.0".into()),("nautilus-indicators".into(),"0.68.0".into()),("wasmi".into(),"2.0.0".into())]),methods:BTreeMap::from([("input".into(),"original native TradeTick; no BAR catalog or simulation".into()),("prediction".into(),crate::feature_model::ABI.into()),("features".into(),feature_schema(request).into()),("sampling".into(),sampling_method(&request.input).into()),("label".into(),request.target.label_method().into()),("partitioning".into(),"shared half-open sampling-clock cuts; cross-boundary labels excluded; warmup stays within selected interval".into()),("qualification".into(),qualification_method(&request.input).into()),("ic".into(),"existing ndarray-stats raw pooled Pearson correlation".into())]),consumed_fuel:request.parameters.total_fuel.zip(remaining).map(|(total,left)|counter(total.get()-left)).transpose()?,coverage,partitions,regime_partitions:None,points:(!summary_only).then_some(points)})
 }
 
 #[cfg(test)]

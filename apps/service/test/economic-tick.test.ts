@@ -13,7 +13,7 @@ import { Requests, Study } from '../../research/src/documents.ts';
 import { NativeRemoteUncertainty } from '../../research/src/native-execution.ts';
 import { TickEconomicReplay, TickEconomicReplays } from '../src/economic-tick.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
-import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult } from '../../../packages/contracts/src/economic-tick.ts';
+import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest } from '../../../packages/contracts/src/economic-tick.ts';
 import { Application, json } from '../src/facts.ts';
 import { configDefaults } from '../src/config.ts';
 import { createService } from '../src/service.ts';
@@ -31,6 +31,7 @@ test('owner API binds a retained unselected computed factor through the actual r
 import json, os, sys, time
 request=json.load(sys.stdin)
 assert sys.argv[1]=='replay-tick-economic'
+assert request['scenario']['decision_clock']=='FIXED_INTERVAL_V1'
 models=[sys.argv[i+1] for i,arg in enumerate(sys.argv) if arg=='--model']
 assert all(os.path.isfile(model) for model in models)
 assert len(models)==len(request.get('signal_weights',['1']))
@@ -92,8 +93,14 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       sealed: { ...json(service.config.datasets[0]!.data.sealed), catalog: republishedIndependent } };
     const unlimitedInput = research.input;
     const request = validateNativeTickEconomicRequest({ schema_version: 1, research: { ...research, input: unlimitedInput }, scenario: { initial_usdt: '3000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '0.02', participation_fraction: '0.01',
-      perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
+      perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', decision_clock: 'FIXED_INTERVAL_V1', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
       fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl', context_source: 'context-prices.manifest.json' });
+    const legacyPolicy = { maximum_entry_notional_usdc: '100', maximum_holding_ns: '60500000000' };
+    assert.deepEqual(validateNativeTickEconomicRequest({ ...request, small_capital_policy: legacyPolicy }).small_capital_policy, legacyPolicy);
+    const clockPolicy = { ...legacyPolicy, decision_clock: 'FIXED_INTERVAL_V1' as const };
+    assert.deepEqual(validateNativeTickEconomicRequest({ ...request, small_capital_policy: clockPolicy }).small_capital_policy, clockPolicy);
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...legacyPolicy, decision_clock: 'unknown' } }), /decision_clock_invalid/);
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: { ...legacyPolicy, decision_clock: ['FIXED_INTERVAL_V1'] } }), /decision_clock_invalid/);
     assert.equal(validateNativeTickEconomicRequest({ ...request, spot_valuation_source: 'spot-valuation.jsonl' }).spot_valuation_source, 'spot-valuation.jsonl');
     assert.throws(() => validateNativeTickEconomicRequest({ ...request, spot_valuation_source: '../spot-valuation.jsonl' }), /spot_valuation_source_invalid/);
     const payload = { requestId: 'economic-original', datasetId: 'ticks', factorId: `r${researchId}.t77.m0`, request };
@@ -168,7 +175,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal((ownedNative[0]!.input as { requestId: string }).requestId, references[0]!.requestId);
     // Stop the service while the actual worker process is still running. The
     // original native child must recover its checkpoint and GET its receipt.
-    const restartRequest = { ...request, scenario: { ...request.scenario, random_seed: '44' } };
+    const restartRequest = { ...request, small_capital_policy: clockPolicy, scenario: { ...request.scenario, random_seed: '44' } };
     const restarting = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
       payload: { ...payload, requestId: 'economic-real-restart', request: restartRequest } });
     assert.equal(restarting.statusCode, 202, restarting.body);
@@ -231,5 +238,75 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     await service.close(); service = await createService(options);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${combinedView.id}`, headers })).json(), combinedView);
     assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun\nrun\nrun', 'fixed combinations retain one original invocation');
+
+    const receivedFull: NativeTickEconomicRequest['research'] = { ...full,
+      input: { ...full.input, instrument_ids: ['BTC.SIM', 'ETH.SIM', 'USDT0-USDC.HYPERLIQUID'], availability: 'RECEIVED_TIME_OBSERVED',
+        representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1', maximum_receive_delay_ns: '86400000000000' },
+      sampling: { ...full.sampling, kind: 'RECEIVED_TIME_COHORT_V1' }, target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '10000000000' } };
+    const receivedResearch = { ...receivedFull, input: { ...receivedFull.input, event_end_ns: receivedFull.validation_end_ns } };
+    const receivedData = { ...data, nativeInput: { modality: 'TRADE_TICK', request: receivedResearch },
+      sealed: { ...data.sealed, nativeInput: { modality: 'TRADE_TICK', request: receivedFull } } };
+    const receivedDataset = { ...dataset, id: 'received-ticks', data: receivedData };
+    const subsetTarget = { ...target, id: 'registered-subset-worker' };
+    const subsetIds = ['BTC.SIM', 'USDT0-USDC.HYPERLIQUID'];
+    const subsetResearch = { ...receivedResearch, input: { ...receivedResearch.input, instrument_ids: subsetIds } };
+    const subsetFull = { ...receivedFull, input: { ...receivedFull.input, instrument_ids: subsetIds } };
+    const subsetDataset = { ...dataset, id: 'received-subset', data: { ...receivedData, catalog: republishedPrimary,
+      nativeInput: { modality: 'TRADE_TICK', request: subsetResearch }, nautilusTarget: subsetTarget,
+      sealed: { catalog: republishedIndependent, nativeInput: { modality: 'TRADE_TICK', request: subsetFull }, nautilusTarget: subsetTarget } } };
+    service.config.datasets.push(receivedDataset, subsetDataset);
+    const receivedId = await service.research.harness.commit(async tx => {
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      const input = { ...(await tx.doc(Study, researchId)).input!, data: json(receivedData) };
+      const study = await tx.doc(Study, conversation.id); study.input = input;
+      const trial = json((await tx.doc(Study, researchId)).trials[0]!);
+      study.trials.push({ ...trial, taskId: 79, result: { ...json(trial.result), request: iterationRequest(json(receivedData)) } });
+      (await tx.doc(Requests)).requests['request:received-original'] = { input, conversationId: conversation.id,
+        metadata: { original: { datasetId: receivedDataset.id }, dataset: json(receivedDataset) } };
+      return conversation.id;
+    }, context);
+    const originalStudy = await service.research.harness.snapshot(Study, receivedId, context);
+    const subsetRequest = validateNativeTickEconomicRequest({ ...request, research: subsetResearch });
+    const subsetPayload = { requestId: 'registered-subset', datasetId: subsetDataset.id, factorId: `r${receivedId}.t79.m0`, request: subsetRequest };
+    const subset = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: subsetPayload });
+    assert.equal(subset.statusCode, 202, subset.body);
+    await service.research.harness.waitForTask(subset.json().taskId as TaskId, context);
+    const subsetView = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${subset.json().id}`, headers })).json();
+    assert.equal(subsetView.status, 'COMPUTED', JSON.stringify(subsetView));
+    assert.equal(subsetView.datasetId, subsetDataset.id); assert.equal(subsetView.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
+    assert.deepEqual(subsetView.result.request, subsetRequest);
+    assert.equal(subsetView.result.methods.catalog, republishedPrimary); assert.equal(subsetView.fundingCatalog, republishedPrimary);
+    assert.equal(subsetView.result.methods.funding_catalog, republishedPrimary);
+    assert.deepEqual(((await service.research.harness.getTask(subset.json().taskId as TaskId, context))!.input as { target: unknown }).target, subsetTarget);
+    assert.deepEqual(subsetView.sources, [{ factorId: subsetPayload.factorId, researchId: receivedId, trialId: 79, memberIndex: 0, sourceRevision: receivedFull.input.source_revision }]);
+    assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: subsetPayload })).json().id, subsetView.id);
+    const subsetHeldout = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
+      payload: { ...subsetPayload, requestId: 'registered-subset-full', request: { ...subsetRequest, research: subsetFull } } });
+    assert.equal(subsetHeldout.statusCode, 202, subsetHeldout.body);
+    await service.research.harness.waitForTask(subsetHeldout.json().taskId as TaskId, context);
+    const subsetHeldoutView = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${subsetHeldout.json().id}`, headers })).json();
+    assert.equal(subsetHeldoutView.status, 'COMPUTED'); assert.equal(subsetHeldoutView.result.methods.catalog, republishedIndependent);
+    assert.equal(subsetHeldoutView.result.methods.funding_catalog, republishedIndependent);
+    assert.deepEqual(await service.research.harness.snapshot(Study, receivedId, context), originalStudy);
+    const eventInput = { ...subsetResearch.input }; delete eventInput.maximum_receive_delay_ns;
+    const incompatible: [string, NativeTickEconomicRequest['research']][] = [
+      ['asset', { ...subsetResearch, input: { ...subsetResearch.input, instrument_ids: ['BTC.SIM', 'UNSEEN.SIM'] } }],
+      ['source', { ...subsetResearch, input: { ...subsetResearch.input, source_revision: 'different-source' } }],
+      ['range', { ...subsetResearch, input: { ...subsetResearch.input, event_end_ns: '518400000000000' } }],
+      ['partition', { ...subsetResearch, train_end_ns: '172800000000000' }],
+      ['horizon', { ...subsetResearch, target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '20000000000' } }],
+      ['parameters', { ...subsetResearch, parameters: { ...subsetResearch.parameters, slow_period_cohorts: 3 } }],
+      ['family', { ...subsetResearch, input: { ...subsetResearch.input, representation: 'RECEIVED_TIME_COHORT_CACHE_V1' } }],
+      ['clock', { ...subsetResearch, input: { ...eventInput, availability: 'EVENT_TIME_PROXY_UNVERIFIED', representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' },
+        sampling: { ...subsetResearch.sampling, kind: 'EVENT_TIME_COHORT_V1' }, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '10000000000' } }],
+    ];
+    for (const [name, changed] of incompatible) {
+      const configured = { ...subsetDataset, id: `subset-${name}`, data: { ...subsetDataset.data, nativeInput: { modality: 'TRADE_TICK', request: changed } } };
+      service.config.datasets.push(configured);
+      const refused = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
+        payload: { ...subsetPayload, requestId: `incompatible-subset-${name}`, datasetId: configured.id, request: { ...subsetRequest, research: changed } } });
+      assert.equal(refused.statusCode, 409, `${name}: ${refused.body}`); assert.equal(refused.json().error, 'tick_economic_original_request_mismatch');
+    }
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 6, 'subset retries reuse their original tasks and incompatible registered datasets never execute');
   } finally { await service.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

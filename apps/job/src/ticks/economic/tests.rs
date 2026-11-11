@@ -156,6 +156,46 @@ fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_el
 }
 
 #[test]
+fn partition_metrics_use_all_observed_daily_returns_and_keep_missing_partitions_unknown() {
+    use contracts::factors::NativeFactorPartitionV1;
+    let request = request();
+    let days = [Some(0.01), None, Some(-0.01), Some(0.02), None]
+        .into_iter()
+        .enumerate()
+        .map(|(index, net_return)| NativeTickEconomicDayV1 {
+            day_start_ns: counter(index as u64 * DAY).unwrap(),
+            equity_usdt: None,
+            net_return,
+            unknown_reason: net_return.is_none().then(|| "MISSING_MARK".into()),
+            missing_balances: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let reports = partition_metrics(&request, &days).unwrap();
+    assert_eq!(reports.len(), 3);
+    let train = &reports[0];
+    assert_eq!(train.partition, NativeFactorPartitionV1::Train);
+    assert_eq!(train.days.get(), 3);
+    assert_eq!(train.valid_return_days.get(), 2);
+    assert_eq!(train.sharpe_365, Some(0.0));
+    let expected = (1.01_f64 * 0.99).powf(365.0 / 2.0) - 1.0;
+    assert!((train.annualized_return_365.unwrap() - expected).abs() < 1e-12);
+    let validation = &reports[1];
+    assert_eq!(validation.partition, NativeFactorPartitionV1::Validation);
+    assert_eq!(validation.days.get(), 1);
+    assert_eq!(validation.valid_return_days.get(), 1);
+    assert_eq!(validation.sharpe_365, None);
+    assert!(
+        (validation.annualized_return_365.unwrap() - (1.02_f64.powf(365.0) - 1.0)).abs() < 1e-8
+    );
+    let heldout = &reports[2];
+    assert_eq!(heldout.partition, NativeFactorPartitionV1::Heldout);
+    assert_eq!(heldout.days.get(), 1);
+    assert_eq!(heldout.valid_return_days.get(), 0);
+    assert_eq!(heldout.sharpe_365, None);
+    assert_eq!(heldout.annualized_return_365, None);
+}
+
+#[test]
 fn bridge_conversion_respects_native_lot_and_minimum_without_spending_dust() {
     use nautilus_model::{
         identifiers::{InstrumentId, Symbol},
@@ -213,11 +253,18 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
         .is_empty());
     let quotes = dir.path().join("spot-valuation.jsonl");
     std::fs::write(&quotes, "{}\n").unwrap();
-    assert!(
-        funding_sources(dir.path(), &request.research).is_err(),
-        "quotes need the funding pair for economic export"
+    assert_eq!(
+        funding_sources(dir.path(), &request.research).unwrap(),
+        vec![("spot-valuation.jsonl".into(), 3)]
     );
     std::fs::remove_file(&quotes).unwrap();
+    let books = dir.path().join("book-snapshots.source.json");
+    std::fs::write(&books, "{}\n").unwrap();
+    assert_eq!(
+        funding_sources(dir.path(), &request.research).unwrap(),
+        vec![("book-snapshots.source.json".into(), 3)]
+    );
+    std::fs::remove_file(&books).unwrap();
     std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());
     let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
@@ -233,7 +280,6 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
         .contains(&("spot-valuation.jsonl".into(), 3)));
-    let books = dir.path().join("book-snapshots.source.json");
     std::fs::write(&books, "{}\n").unwrap();
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
@@ -354,4 +400,48 @@ fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
         validate(&enabled).unwrap_err().to_string(),
         "ECONOMIC_EVENT_TIME_CONTEXT_CLOCK_INVALID"
     );
+}
+
+#[test]
+fn scenario_decision_clock_preserves_legacy_wire_and_rejects_conflicting_policy() {
+    let mut request = request();
+    let legacy = serde_json::to_value(&request).unwrap();
+    assert!(legacy["scenario"].get("decision_clock").is_none());
+    let mut null_clock = legacy.clone();
+    null_clock["scenario"]["decision_clock"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<NativeTickEconomicRequestV1>(null_clock).is_err());
+    for clock in [
+        NativeTickDecisionClockV1::CohortBucketV1,
+        NativeTickDecisionClockV1::FixedIntervalV1,
+    ] {
+        request.scenario.decision_clock = Some(clock);
+        let wire = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            wire["scenario"]["decision_clock"],
+            serde_json::to_value(clock).unwrap()
+        );
+        let decoded: NativeTickEconomicRequestV1 = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+        validate(&request).unwrap();
+        request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+            maximum_entry_notional_usdc: "30".parse().unwrap(),
+            maximum_holding_ns: counter(60_000_000_000).unwrap(),
+            decision_clock: Some(clock),
+        });
+        validate(&request).unwrap();
+        request
+            .small_capital_policy
+            .as_mut()
+            .unwrap()
+            .decision_clock = Some(if clock == NativeTickDecisionClockV1::FixedIntervalV1 {
+            NativeTickDecisionClockV1::CohortBucketV1
+        } else {
+            NativeTickDecisionClockV1::FixedIntervalV1
+        });
+        assert_eq!(
+            validate(&request).unwrap_err().to_string(),
+            "ECONOMIC_DECISION_CLOCK_CONFLICT"
+        );
+        request.small_capital_policy = None;
+    }
 }

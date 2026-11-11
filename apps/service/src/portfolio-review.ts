@@ -113,7 +113,7 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
     scientific = { ...scientific, status: 'INCOMPLETE', reason: error instanceof Error ? error.message : 'portfolio_review_science_failed' };
   }
   return runIndependentReview(api, context, {
-    target: { kind: 'PORTFOLIO', id: input.id, version, sourceEvidenceRefs: refs, evaluationStartNs: start }, policy: input.review.policy, model: input.review.model, thinkingLevel: input.review.thinkingLevel,
+    target: { kind: 'PORTFOLIO', id: input.id, version, sourceEvidenceRefs: refs, evaluationStartNs: start }, policy: input.review.policy, model: input.review.model, thinkingLevel: input.review.thinkingLevel, serviceTier: input.review.serviceTier,
     checks, metrics, createdAt: input.review.createdAt,
     evidence: { context: { targetId: input.id, version, capital: input.capital, currency: input.currency, weights: input.weights ?? null, sources: contexts, evidenceRefs: refs }, provenance: { status: checks.find(check => check.id === 'provenance')?.status ?? 'UNKNOWN', checks: json({ checks }).checks! }, factor: { status: 'COMPLETE', sources: contexts }, selection: scientific, stress: scientific, portfolio: scientific },
   });

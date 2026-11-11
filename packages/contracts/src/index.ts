@@ -69,7 +69,7 @@ export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
   createdAt: string | null; updatedAt: string | null;
 }
-export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; error: string | null; errorDetail?: ExecutionErrorDetail | null }
+export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; economic?: JsonObject; error: string | null; errorDetail?: ExecutionErrorDetail | null }
 export interface DailyReturn { timestamp_ns: string; value: number | null; reason_code: string | null }
 export interface TaskView { id: number; name: string; status: string; error: string | null; outcome?: string }
 export interface DatasetPreparation {

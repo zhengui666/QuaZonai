@@ -1,5 +1,6 @@
-import { requireTrialReview } from '../src/review-workflow.ts';
+import { ensureTrialReview } from '../src/review-workflow.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
+import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
@@ -10,10 +11,12 @@ import { runPortfolio } from './native-portfolio-task.ts';
 import { runFactor } from './native-factor-task.ts';
 import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 import { catalogScope } from './native-catalog-scope.ts';
-import { freezeSelection } from '../src/pm-comparison.ts';
+import { freezeSelection, tickEconomicSelectionValue } from '../src/pm-comparison.ts';
 import { CampaignResearchDoc } from '../src/pm-campaign.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { runFittedEnsemble } from './fitted-ensemble-task.ts';
+import { TickEconomicTask } from './tick-economic.ts';
+import { isTickEconomicResearch, tickEconomicPolicy } from '../src/input.ts';
 import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 export async function finalizePortfolio(args: {trialId: number; reason: string}, api: ResearchRuntime, context: Context): Promise<void> {
@@ -23,7 +26,7 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
       if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
       const data = object(input.data.sealed, 'heldout_data');
       await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, true);
-      if (!await requireTrialReview(api, context, args.trialId)) return;
+      const review = await ensureTrialReview(api, context, args.trialId, { deferRefusalConclusion: true });
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -39,7 +42,7 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
           || canonical((iterationRequest(data, true))) !== canonical((registeredRequest!))
           || canonical((iterationRequest(input.data, true))) !== canonical((registeredRequest!))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
-        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
+        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null, ...(review ? { reviewReportId: review.id, conclusion: review.decision } : {}) };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (campaign.binding && study.final.status === 'STARTED') campaign.state = 'EVALUATING_INDEPENDENT';
         return { members, fitTaskId: fitted ? proposal.fitTaskId as number : null, policy: resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy')), settled: study.final.status !== 'STARTED' };
@@ -66,8 +69,15 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
       const input = await studyInput(api, context);
       if (input.campaign?.independentConsumer === 'PM_PORTFOLIO') throw new Error('independent_evaluation_reserved_for_pm');
       const data = object(input.data.sealed, 'heldout_data');
+      const financial = isTickEconomicResearch(input);
+      if (financial) {
+        const study = await api.snapshot(Study, api.conversationId, context);
+        const trial = study?.trials.find(row => row.taskId === args.trialId);
+        if (!trial || tickEconomicSelectionValue(trial) === null) throw new Error('tick_economic_validation_required');
+        tickEconomicPolicy(data, input.policy, true);
+      }
       await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, false);
-      if (!await requireTrialReview(api, context, args.trialId)) return;
+      const review = await ensureTrialReview(api, context, args.trialId, { deferRefusalConclusion: true });
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -80,7 +90,7 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
           || canonical((iterative)) !== canonical((iterationRequest(input.data)))
           || input.data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(input.data))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
-        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
+        study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null, ...(review ? { reviewReportId: review.id, conclusion: review.decision } : {}) };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (campaign.binding && study.final.status === 'STARTED') campaign.state = 'EVALUATING_INDEPENDENT';
         return { model: proposal.model, settled: study.final.status !== 'STARTED' };
@@ -89,7 +99,21 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
         try {
           const scoped = data.catalog_scan_request !== undefined ? await catalogScope(api, context, data) : data;
           await checkExposure(api, context, scoped, true);
-          const result = await runFactor(api, context, selected.model, scoped);
+          const result: JsonObject = financial ? {} : await runFactor(api, context, selected.model, scoped);
+          if (financial) {
+            const { request, bookCores } = tickEconomicPolicy(scoped, input.policy, true);
+            const economicId = await api.commit(async tx => {
+              const final = (await tx.doc(Study, api.conversationId)).final!;
+              if (typeof final.economicTaskId === 'number') return final.economicTaskId as import('@earendil-works/pi-durable').TaskId<JsonObject>;
+              const id = await tx.createTask(TickEconomicTask, { trialId: args.trialId, model: selected.model, catalog: scoped.catalog as string,
+                target: nativeTargetForData(scoped), request, bookCores, partition: 'HELDOUT' }, { ownership: { kind: 'task', taskId: api.taskId } });
+              final.economicTaskId = id;
+              return id;
+            }, context);
+            const economic = await api.waitForTask(economicId, context);
+            if (economic.state.outcome.status !== 'completed') throw new Error('error' in economic.state.outcome ? economic.state.outcome.error?.message ?? 'tick_economic_heldout_failed' : 'tick_economic_heldout_failed');
+            result.economic = { taskId: economicId, status: 'COMPUTED', summary: economic.state.outcome.result, error: null };
+          }
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
           if (context.abortSignal?.aborted) throw error;

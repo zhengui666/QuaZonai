@@ -10,6 +10,9 @@ PLUGIN = "cryptohftdata-hyperliquid"
 SOURCE = "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
 MARKETS = {"spot": "hyperliquid_spot", "perpetual": "hyperliquid_futures"}
 STREAMS = {"books": "orderbook", "context": "mark_price", "trades": "trades"}
+STREAM_DIRECTORIES = {"spot orderbook": "hyperliquid_spot", "spot trades": "hyperliquid_spot",
+                      "perpetual orderbook": "hyperliquid_futures", "perpetual trades": "hyperliquid_futures",
+                      "perpetual mark_price": "hyperliquid_futures"}
 COVERAGE = "OBSERVED_PUBLISHED_FILES"
 
 
@@ -31,7 +34,15 @@ def archive(directory):
                    for key in ("objects", "bytes"))):
         raise ValueError("expected a completed CryptoHFTData dataset.json")
     start, end = date(manifest.get("start_date_utc")), date(manifest.get("end_date_utc"))
-    if start > end or any(not (root / directory).is_dir() for directory in MARKETS.values()):
+    required = [root / directory for directory in MARKETS.values()]
+    if "datasets" in manifest:
+        streams = manifest["datasets"]
+        if (not isinstance(streams, list) or not streams
+                or any(not isinstance(stream, str) or stream not in STREAM_DIRECTORIES for stream in streams)
+                or len(set(streams)) != len(streams)):
+            raise ValueError("invalid CryptoHFTData archive datasets")
+        required = [root / directory for directory in {STREAM_DIRECTORIES[stream] for stream in streams}]
+    if start > end or any(not path.is_dir() for path in required):
         raise ValueError("invalid CryptoHFTData archive dates or market directories")
     return root, manifest, start, end
 

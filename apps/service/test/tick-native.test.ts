@@ -120,21 +120,21 @@ for (const { representation, legacy } of cases) test(legacy
         // The new-admission path uses the production policies and actual review
         // tools. Missing tick/PIT evidence must remain missing after the report.
         assert.ok(result.input.policy.reviewPolicies);
-        assert.equal(result.final.status, 'STOPPED'); assert.equal(result.final.reason, 'independent_review_not_passed');
-        assert.deepEqual(result.final.metrics, []);
-        const stopped = (await service.research.harness.snapshot(Study, receipt.conversationId, BACKGROUND_CONTEXT))!.final!;
-        assert.equal(stopped.result, null);
+        assert.equal(result.final.status, 'COMPUTED');
+        assert.ok(result.final.metrics.some((metric: { key: string }) => metric.key === 'HELDOUT.pearson_ic'));
+        const measured = (await service.research.harness.snapshot(Study, receipt.conversationId, BACKGROUND_CONTEXT))!.final!;
+        assert.ok(measured.result);
         assert.equal(result.trialRecords[0].inputCoverage.availability, 'EVENT_TIME_PROXY_UNVERIFIED');
         const reports = result.reviews as ReviewReport[];
         assert.equal(reports.length, 1); const report = reports[0]!;
-        assert.equal(stopped.reviewReportId, report.id);
+        assert.equal(measured.reviewReportId, report.id);
         assert.equal(report.decision, 'INCONCLUSIVE'); assert.equal(report.qualityCoefficient, 0);
         assert.equal(report.checks.find(check => check.id === 'provenance')!.status, 'UNKNOWN');
         assert.ok(report.missingEvidence.length > 0);
         assert.equal(report.dimensions.find(dimension => dimension.id === 'STATISTICS')!.status, 'INCOMPLETE');
-        assert.equal((await service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows.filter(window => window.kind === 'FINAL').length, 0);
+        assert.equal((await service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows.filter(window => window.kind === 'FINAL').length, 1);
         const nativeTasks = await service.research.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 20), BACKGROUND_CONTEXT);
-        assert.equal(nativeTasks.items.length, 1, 'Review refusal cannot schedule a second native factor task for held-out data.');
+        assert.equal(nativeTasks.items.length, 2, 'Validation and independent measurement use separate original native factor tasks.');
         const reviewTasks = await service.research.harness.commit(tx => tx.scanTasks({ kind: 'qz.review.independent' }, 20), BACKGROUND_CONTEXT);
         assert.equal(reviewTasks.items.length, 1); const review = reviewTasks.items[0]!;
         if (review.state.status !== 'terminal' || review.state.outcome.status !== 'completed') assert.fail('The original isolated review must complete.');

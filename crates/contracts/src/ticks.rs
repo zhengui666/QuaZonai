@@ -173,13 +173,39 @@ impl NativeTickTargetV1 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickFeatureProfileV1 {
+    ReceivedFlowV1,
+    ReceivedFlowBookV1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTickParametersV1 {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_feature_profile"
+    )]
+    #[schema(nullable = false)]
+    pub feature_profile: Option<NativeTickFeatureProfileV1>,
     pub fast_period_cohorts: u32,
     pub slow_period_cohorts: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_fuel: Option<DbCounter>,
+}
+
+fn deserialize_feature_profile<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<NativeTickFeatureProfileV1>, D::Error> {
+    NativeTickFeatureProfileV1::deserialize(deserializer).map(Some)
+}
+
+impl NativeTickParametersV1 {
+    pub fn uses_book_features(&self) -> bool {
+        self.feature_profile == Some(NativeTickFeatureProfileV1::ReceivedFlowBookV1)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

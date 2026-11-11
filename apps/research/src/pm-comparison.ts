@@ -43,16 +43,28 @@ export async function freezeSelection(tx: Tx, api: Pick<ResearchRuntime, 'conver
       || doc.trials.find(trial => trial.id === comparison.recommendedTrialId)?.runtime.taskId !== trialId)) throw new Error('selected_trial_not_supported_by_comparison');
     if (study.trials.some(trial => trial.status === 'STARTED')) throw new Error('research_trials_unsettled');
     return JSON.parse(JSON.stringify({ comparisonId: comparison?.id ?? null, basis: study.trials.map(trial => ({ taskId: trial.taskId!, status: trial.status!,
-      proposal: trial.proposal!, validation: trial.result ?? null, error: trial.error ?? null })), frozenAtNs: nowNs() })) as JsonObject;
+      proposal: trial.proposal!, validation: trial.result ?? null, ...(trial.economic ? { economic: trial.economic } : {}), error: trial.error ?? null })), frozenAtNs: nowNs() })) as JsonObject;
+}
+
+export function tickEconomicSelectionValue(trial: JsonObject): number | null {
+  const economic = trial.economic as JsonObject | undefined;
+  const summary = economic?.summary as JsonObject | undefined;
+  const measured = Array.isArray(summary?.partition_metrics) ? summary.partition_metrics.filter(value => value && typeof value === 'object' && !Array.isArray(value) && value.partition === 'VALIDATION') : [];
+  const value = measured.length === 1 ? (measured[0] as JsonObject).sharpe_365 : null;
+  return economic?.status === 'COMPUTED' && typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** Legacy inputs retain their original metric declaration; never infer preference. */
-export function legacySelection(input: { specification?: { evaluation: { metric: string } }; policy: JsonObject }, trials: JsonObject[]): number | null {
+export function legacySelection(input: { specification?: { evaluation: { metric: string }; search?: { scope: string } }; policy: JsonObject }, trials: JsonObject[]): number | null {
   const key = input.specification?.evaluation.metric ?? (input.policy.selection_metric === 'validation.pearson_ic' ? 'pearson_ic' : null);
   if (!key) return null;
   const scored = trials.flatMap(trial => {
     if (trial.status !== 'COMPUTED' || !trial.result || typeof trial.result !== 'object' || Array.isArray(trial.result)) return [];
     const result = trial.result; let sources: JsonObject[] = [];
+    if (input.specification?.search?.scope === 'single-factor' && key === 'Sharpe Ratio (365 days)') {
+      const value = tickEconomicSelectionValue(trial);
+      return value === null ? [] : [{ taskId: trial.taskId as number, value }];
+    }
     if (key === 'pearson_ic' && result.portfolio === undefined && Array.isArray(result.partitions)) {
       sources = result.partitions.flatMap(value => {
         if (!value || typeof value !== 'object' || Array.isArray(value) || value.partition !== 'VALIDATION') return [];

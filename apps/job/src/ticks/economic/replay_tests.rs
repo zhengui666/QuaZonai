@@ -220,6 +220,59 @@ fn source(
 }
 
 #[test]
+fn explicit_fx_assets_load_beside_perp_alpha_without_expanding_its_signal_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request, wasm) = source(directory.path(), 1, Some(5 * HOUR), true);
+    let root = prepared.join("independent/catalog");
+    request.research.input.instrument_ids = vec![LATE.into()];
+    let original = serde_json::to_value(&request).unwrap();
+    let result = replay(&root, &request, &wasm).unwrap();
+    assert_eq!(serde_json::to_value(&result.request).unwrap(), original);
+    assert!(result.initial_usdc_after_cost.is_some());
+    assert_eq!(
+        result
+            .assets
+            .iter()
+            .map(|asset| asset.instrument_id.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([BRIDGE, LATE])
+    );
+
+    let mut legacy = request.clone();
+    legacy.research.input.instrument_ids.push(BRIDGE.into());
+    let included_fx = replay(&root, &legacy, &wasm).unwrap();
+    assert_eq!(result.native_fills, included_fx.native_fills);
+    assert_eq!(result.native_rejections, included_fx.native_rejections);
+    assert_eq!(
+        serde_json::to_value(&result.days).unwrap(),
+        serde_json::to_value(&included_fx.days).unwrap()
+    );
+
+    let alpha_only_model = wat::parse_str(
+        r#"(module
+          (global $price (mut f64) (f64.const 0))
+          (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 0 i32.eqz if local.get 1 global.set $price end)
+          (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            global.get $price f64.const 2 f64.lt if unreachable end
+            f64.const 7))"#,
+    )
+    .unwrap();
+    replay(&root, &request, &alpha_only_model).unwrap();
+    assert!(
+        replay(&root, &legacy, &alpha_only_model).is_err(),
+        "legacy FX inside the original research scope retains its original model evaluation"
+    );
+    let predictive =
+        crate::ticks::evaluate(&root, &request.research, &alpha_only_model, true).unwrap();
+    assert_eq!(predictive.coverage.instrument_ids, vec![LATE]);
+    assert!(predictive
+        .partitions
+        .iter()
+        .all(|partition| partition.assets.len() == 1 && partition.assets[0].instrument_id == LATE));
+}
+
+#[test]
 fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fake_events() {
     let directory = tempfile::tempdir().unwrap();
     let (prepared, mut request, wasm) = source(directory.path(), 0, None, true);
@@ -263,6 +316,8 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
 
     let directory = tempfile::tempdir().unwrap();
     let (prepared, mut request, wasm) = source(directory.path(), 1, None, true);
+    let mut spot_research = request.research.clone();
+    spot_research.input.instrument_ids.retain(|id| id != LATE);
     request.research.clip_end(counter(2 * DAY).unwrap());
     request.scenario.execution_model = Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
     request.context_source = Some(CONTEXT_MANIFEST.into());
@@ -307,6 +362,26 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
             rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
         }
         catalog.write_to_parquet(&rows, None, None, None).unwrap();
+    }
+    let mut missing_context = request.clone();
+    missing_context.context_source = None;
+    for model in [
+        NativeTickEconomicExecutionModelV1::ObservedL2IocV1,
+        NativeTickEconomicExecutionModelV1::ObservedL2IocV2,
+    ] {
+        missing_context.scenario.execution_model = Some(model);
+        validate(&missing_context).unwrap();
+        assert_eq!(
+            replay_with_funding(
+                &prepared.join("research/catalog"),
+                &economic,
+                &missing_context,
+                &wasm,
+            )
+            .unwrap_err()
+            .to_string(),
+            "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
+        );
     }
     let result = replay_with_funding(
         &prepared.join("research/catalog"),
@@ -379,6 +454,234 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
         .limitations
         .iter()
         .any(|limit| limit == "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK"));
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::remove_file(economic.join(name)).unwrap();
+    }
+    assert!(replay_with_funding(
+        &prepared.join("research/catalog"),
+        &economic,
+        &request,
+        &wasm
+    )
+    .is_err());
+    let spot_prepared = directory.path().join("spot-observed");
+    cohort_cache::prepare_views(&economic, &spot_research, &spot_prepared, 1_000_000).unwrap();
+    missing_context.research = spot_research;
+    missing_context.research.clip_end(counter(2 * DAY).unwrap());
+    missing_context.scenario.spot_taker_fee_bps = "7".parse().unwrap();
+    missing_context.scenario.extra_cost_bps = "1".parse().unwrap();
+    let spot = replay_with_funding(
+        &spot_prepared.join("research/catalog"),
+        &economic,
+        &missing_context,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(spot.model, "SEGREGATED_OBSERVED_L2_IOC_V2");
+    assert!(spot.request.context_source.is_none());
+    assert_eq!(spot.assets.len(), 2);
+    assert_eq!(spot.days.len(), 2);
+    assert!(spot.days.iter().all(|day| day.equity_usdt.is_some()));
+    assert!(spot.native_fills.get() >= 2);
+    assert_eq!(decimal(&spot.funding_usdc).unwrap(), Decimal::ZERO);
+    assert!(decimal(spot.fees_usdc_equivalent.as_ref().unwrap()).unwrap() > Decimal::ZERO);
+    assert!(spot.funding_missing_instruments.is_empty());
+    assert!(spot.methods["funding_source"].contains("CurrencyPair-only"));
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::write(economic.join(name), "unrelated invalid funding").unwrap();
+    }
+    let ignored = replay_with_funding(
+        &spot_prepared.join("research/catalog"),
+        &economic,
+        &missing_context,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(spot.fees_usdc_equivalent, ignored.fees_usdc_equivalent);
+}
+
+#[test]
+fn minimum_notional_exemption_keeps_entry_spot_and_lot_rules() {
+    let mut instruments = definitions();
+    let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+        unreachable!()
+    };
+    perp.min_notional = Some(Money::from("10 USD"));
+    let price = Decimal::from(100);
+    let residual = Decimal::new(5, 2);
+    for signed in [residual, -residual] {
+        assert_eq!(
+            small_legal_quantity(&instruments[2], signed, price, true).unwrap(),
+            signed
+        );
+        assert_eq!(
+            small_legal_quantity(&instruments[2], signed, price, false).unwrap(),
+            Decimal::ZERO
+        );
+    }
+    assert_eq!(
+        small_legal_quantity(&instruments[1], residual, price, true).unwrap(),
+        Decimal::ZERO
+    );
+    assert_eq!(
+        small_legal_quantity(&instruments[2], Decimal::new(9, 5), price, true).unwrap(),
+        Decimal::ZERO
+    );
+    let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+        unreachable!()
+    };
+    perp.min_quantity = Some(Quantity::from("0.0600"));
+    assert_eq!(
+        small_legal_quantity(&instruments[2], residual, price, true).unwrap(),
+        Decimal::ZERO
+    );
+}
+
+#[test]
+fn observed_perp_reduction_closes_subminimum_residual_through_replay_preflight() {
+    use nautilus_model::{
+        data::{BookOrder, OrderBookDelta},
+        enums::{BookAction, RecordFlag},
+    };
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+
+    for sign in [1, -1] {
+        let directory = tempfile::tempdir().unwrap();
+        let (prepared, mut request, _) = source(directory.path(), 0, Some(5 * HOUR), true);
+        let research = prepared.join("research/catalog");
+        let economic = directory.path().join("source/catalog");
+        request.research.input.instrument_ids = vec![LATE.into()];
+        request.research.clip_end(counter(2 * DAY).unwrap());
+        request.scenario.maximum_asset_weight = "0.02".parse().unwrap();
+        request.scenario.execution_model =
+            Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
+        request.context_source = Some(CONTEXT_MANIFEST.into());
+        let mut instruments = definitions();
+        let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+            unreachable!()
+        };
+        perp.min_notional = Some(Money::from("10 USD"));
+        let manifest_path = research.join(cohort_cache::MANIFEST_FILE);
+        let mut manifest = cohort_cache::manifest(&research).unwrap();
+        manifest.source_report["instrument_source"]["instruments"] =
+            serde_json::to_value(&instruments).unwrap();
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let csv = "event_ns,oracle_px,mark_px\n0,100,100\n";
+        std::fs::write(economic.join("context-prices-000.csv"), csv).unwrap();
+        std::fs::write(economic.join(CONTEXT_MANIFEST), serde_json::to_vec(&json!({
+            "schema_version":1,"format":"EVENT_TIME_CONTEXT_PRICE_CSV_V1","clock":"EVENT_TIME_PROXY_UNVERIFIED",
+            "source_revision":"controlled-books","research_source_revision":"fixed-source","start_ns":"0","end_ns":(3*DAY).to_string(),
+            "rows":"1","instrument_ids":[LATE],"files":[{"instrument_id":LATE,"path":"context-prices-000.csv", "bytes":csv.len().to_string(),
+                "rows":"1","first_event_ns":"0","last_event_ns":"0"}]
+        })).unwrap()).unwrap();
+        let catalog = ParquetDataCatalog::new(&economic, None, None, None, None);
+        let opened = 3 * HOUR + 15 * 60 * SECOND;
+        let close = 5 * HOUR;
+        for instrument in &instruments {
+            if instrument.id().to_string() == SPOT {
+                continue;
+            }
+            let bridge = instrument.id().to_string() == BRIDGE;
+            let mut times = vec![8 * SECOND, 18 * SECOND];
+            times.extend((0..=32).map(|n| opened + n * 2 * SECOND));
+            times.extend((0..=16).map(|n| close + n * 2 * SECOND));
+            let mut rows = Vec::new();
+            for at in times {
+                let mut clear =
+                    OrderBookDelta::clear(instrument.id(), 0, (at - 100).into(), at.into());
+                clear.order.price = Price::zero(instrument.price_precision());
+                clear.order.size = Quantity::zero(instrument.size_precision());
+                rows.push(clear);
+                // The first exit leaves 0.05 contracts, worth $5 at the next book.
+                let size = if !bridge && at == close + 2 * SECOND {
+                    "0.2500"
+                } else {
+                    "10000.0000"
+                };
+                for side in [OrderSide::Buy, OrderSide::Sell] {
+                    rows.push(OrderBookDelta::new(
+                        instrument.id(),
+                        BookAction::Add,
+                        BookOrder::new(
+                            side,
+                            Price::from(if bridge { "1.000" } else { "100.00" }),
+                            Quantity::from(size),
+                            0,
+                        ),
+                        RecordFlag::F_SNAPSHOT as u8,
+                        0,
+                        (at - 100).into(),
+                        at.into(),
+                    ));
+                }
+                rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+            }
+            catalog.write_to_parquet(&rows, None, None, None).unwrap();
+        }
+        let wasm = wat::parse_str(format!(
+            r#"(module
+            (global $flow (mut f64) (f64.const 0))
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+                local.get 0 i32.const 7 i32.eq if local.get 1 global.set $flow end)
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+                global.get $flow f64.const {sign} f64.mul))"#
+        ))
+        .unwrap();
+        let result = replay_with_funding(&research, &economic, &request, &wasm).unwrap();
+        assert_eq!(result.native_rejections.get(), 0);
+        assert_eq!(result.skipped_minimum.get(), 0);
+        assert_eq!(
+            result.native_fills.get(),
+            4,
+            "sign={sign}: conversion, entry, partial exit and residual exit"
+        );
+        assert_eq!(
+            result
+                .assets
+                .iter()
+                .find(|a| a.instrument_id == LATE)
+                .unwrap()
+                .execution_attempts
+                .get(),
+            3
+        );
+    }
+}
+
+#[test]
+fn book_only_spot_source_survives_preparation_in_both_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, mut request, _) = source(directory.path(), 1, None, true);
+    request
+        .research
+        .input
+        .instrument_ids
+        .retain(|id| id != LATE);
+    let catalog = directory.path().join("source/catalog");
+    for name in ["funding-rates.jsonl", "funding-rates.manifest.json"] {
+        std::fs::remove_file(catalog.join(name)).unwrap();
+    }
+    let descriptor =
+        serde_json::to_vec(&json!({"source_root":directory.path(),"files":[]})).unwrap();
+    std::fs::write(catalog.join("book-snapshots.source.json"), &descriptor).unwrap();
+    let prepared = directory.path().join("book-only");
+    let metadata =
+        cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
+    assert_eq!(
+        metadata["economic_sources"],
+        json!([{"path":"book-snapshots.source.json","bytes":descriptor.len().to_string()}])
+    );
+    for view in ["research/catalog", "independent/catalog"] {
+        assert_eq!(
+            std::fs::read(prepared.join(view).join("book-snapshots.source.json")).unwrap(),
+            descriptor
+        );
+        assert!(!prepared
+            .join(view)
+            .join("funding-rates.manifest.json")
+            .exists());
+    }
 }
 
 #[test]
@@ -453,7 +756,11 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
     let context_root = context_prepared.join("research/catalog");
     let mut unrelated = request.research.clone();
     unrelated.input.instrument_ids.retain(|id| id != LATE);
-    assert!(context_manifest(&context_root, &unrelated).is_err());
+    let spot_prepared = directory.path().join("spot-context-prepared");
+    cohort_cache::prepare_views(&original, &unrelated, &spot_prepared, 1_000_000).unwrap();
+    let mut prices = ContextPrices::open(&context_root, &unrelated, true, false).unwrap();
+    assert!(prices.primary.as_ref().unwrap().readers.is_empty());
+    assert_eq!(prices.price(SPOT, HOUR, HOUR, false).unwrap(), None);
     assert_eq!(
         std::fs::read(context_root.join("context-prices-000.csv")).unwrap(),
         csv.as_bytes()
@@ -484,6 +791,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         fast: ExponentialMovingAverage::new(1, None),
         slow: ExponentialMovingAverage::new(2, None),
         model: None,
+        feature_books: None,
         score: None,
         mark: Some((0, Decimal::from(100))),
         cohorts: 0,
@@ -635,6 +943,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
                 fast: ExponentialMovingAverage::new(1, None),
                 slow: ExponentialMovingAverage::new(2, None),
                 model: None,
+                feature_books: None,
                 score: None,
                 mark: Some(if id == SPOT {
                     (2 * SECOND, Decimal::from(100))
@@ -990,6 +1299,7 @@ fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
 fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
     let (prepared, mut request, _) = source(directory, 0, None, true);
     request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        decision_clock: None,
         maximum_entry_notional_usdc: "30".parse().unwrap(),
         maximum_holding_ns: counter(60 * SECOND).unwrap(),
     });
@@ -1011,6 +1321,7 @@ fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
                 fast,
                 slow: ExponentialMovingAverage::new(2, None),
                 model: None,
+                feature_books: None,
                 score: Some(1.0),
                 mark: Some((
                     2 * SECOND,
@@ -1051,7 +1362,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &BTreeSet::from([BRIDGE.into()]),
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1072,7 +1383,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
     assert_eq!(orders[0].quantity().as_decimal(), Decimal::new(2, 1));
     assert_eq!(orders[0].filled_qty().as_decimal(), filled);
     assert_eq!(orders[0].status(), OrderStatus::Canceled);
-    assert_eq!(small_quantity(&assets[i], &cash, &margin), filled);
+    assert_eq!(small_quantity(&assets[i], &cash, Some(&margin)), filled);
     small
         .reconcile(
             i,
@@ -1094,7 +1405,7 @@ fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
     // or balance repair is used to close it.
     cash.step(100 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
         .unwrap();
-    let remaining = small_quantity(&assets[i], &cash, &margin);
+    let remaining = small_quantity(&assets[i], &cash, Some(&margin));
     small
         .reconcile(
             i,
@@ -1141,7 +1452,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1156,7 +1467,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
     // fills 0.2 of the 0.3 order. Preserve the residual 0.1 dust/exit scenario.
     cash.step(4 * SECOND, &instrument, 100.0, 0.8, Some(target))
         .unwrap();
-    let quantity = small_quantity(&assets[i], &cash, &margin);
+    let quantity = small_quantity(&assets[i], &cash, Some(&margin));
     assert_eq!(quantity, Decimal::new(2, 1));
     let entry = cash.orders();
     assert_eq!(entry.len(), 1);
@@ -1185,7 +1496,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         &[i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         20 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1228,7 +1539,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             100 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1248,7 +1559,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             102 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1268,7 +1579,7 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
         .reconcile(
             i,
             104 * SECOND,
-            small_quantity(&assets[i], &cash, &margin),
+            small_quantity(&assets[i], &cash, Some(&margin)),
             true,
             &mut assets,
             &request.scenario,
@@ -1369,7 +1680,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
         &[bridge, i],
         &mut assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         request.small_capital_policy.as_ref().unwrap(),
@@ -1384,7 +1695,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             2 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
@@ -1420,7 +1731,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         3 * SECOND,
         &request.scenario,
@@ -1468,7 +1779,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         &request.scenario,
@@ -1498,7 +1809,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         2 * SECOND,
         &request.scenario,
@@ -1614,7 +1925,7 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             &mut rows,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             3 * SECOND,
             &request.scenario,
@@ -1669,7 +1980,7 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             &mut rows,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             4 * SECOND,
             &request.scenario,
@@ -1758,7 +2069,7 @@ fn small_same_base_different_quotes_simultaneous_fresh_signals_get_one_pending_c
             &fresh,
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -1851,7 +2162,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
         &small,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         10 * SECOND,
         SECOND,
@@ -1870,7 +2181,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             10 * SECOND,
             SECOND,
@@ -1887,7 +2198,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
         &small,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         12 * SECOND,
         SECOND,
@@ -1906,7 +2217,7 @@ fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             12 * SECOND,
             SECOND,
@@ -1980,7 +2291,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             &fresh,
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -2005,7 +2316,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             .reconcile(
                 spot,
                 4 * SECOND,
-                small_quantity(&assets[spot], &cash, &margin),
+                small_quantity(&assets[spot], &cash, Some(&margin)),
                 true,
                 &mut assets,
                 &request.scenario,
@@ -2016,7 +2327,7 @@ fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_s
             &small,
             &assets,
             &cash,
-            &margin,
+            Some(&margin),
             &fx_ids,
             4 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
@@ -2125,7 +2436,7 @@ fn small_quote_shrink_keeps_signed_deficit_and_protects_other_pending_reservatio
         &mut rows,
         &assets,
         &cash,
-        &margin,
+        Some(&margin),
         &fx_ids,
         3 * SECOND,
         &request.scenario,
@@ -2161,7 +2472,7 @@ fn small_nonzero_roundtrip_cost_hurdle_excludes_equality_and_below() {
             &[i],
             &mut assets,
             &cash,
-            &margin,
+            Some(&margin),
             &BTreeSet::from([BRIDGE.into()]),
             2 * SECOND,
             request.small_capital_policy.as_ref().unwrap(),
@@ -2180,9 +2491,10 @@ fn small_nonzero_roundtrip_cost_hurdle_excludes_equality_and_below() {
     }
 }
 
-#[test]
-fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real_later_cohort() {
-    let directory = tempfile::tempdir().unwrap();
+fn small_replay_source(
+    directory: &Path,
+    extra_cohort: Option<TradeTick>,
+) -> (PathBuf, NativeTickEconomicRequestV1) {
     let mut instruments = definitions();
     let usdt0 = Currency::from_str("USDT0").unwrap();
     let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
@@ -2224,6 +2536,7 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     request.scenario.maximum_mark_age_ns = counter(HOUR).unwrap();
     request.fx_instrument_ids = vec![BRIDGE.into()];
     request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        decision_clock: None,
         maximum_entry_notional_usdc: "30".parse().unwrap(),
         maximum_holding_ns: counter(60 * SECOND).unwrap(),
     });
@@ -2259,8 +2572,9 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     }
     // A real source cohort creates the perp cache identity; clipping then legitimately leaves it empty in primary.
     add(LATE, 3 * DAY / SECOND + 20, "100.00", AggressorSide::Buy);
+    rows.extend(extra_cohort);
     rows.sort_by_key(|row| (row.ts_event, row.instrument_id));
-    let source = directory.path().join("source");
+    let source = directory.join("source");
     let mut builder = cohort_cache::Builder::new_flow(&source, 100, 100, 1_000_000).unwrap();
     for row in rows {
         builder.push(row).unwrap();
@@ -2298,7 +2612,7 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     );
     let spot_quotes = format!("{primary_quote}{heldout_quote}{after_end}");
     std::fs::write(catalog.join("spot-valuation.jsonl"), &spot_quotes).unwrap();
-    let prepared = directory.path().join("prepared");
+    let prepared = directory.join("prepared");
     let metadata =
         cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
     assert!(metadata["economic_sources"]
@@ -2319,6 +2633,15 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
     // Consume the official clipped request paired with the primary cache, not a mismatched full-window request.
     request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
     assert_eq!(request.research.input.event_end_ns.get(), 3 * DAY);
+    (prepared, request)
+}
+
+#[test]
+fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real_later_cohort() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request) = small_replay_source(directory.path(), None);
+    let catalog = directory.path().join("source/catalog");
+    let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
     let result = replay(
         &prepared.join("research/catalog"),
         &request,
@@ -2375,6 +2698,38 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         "profitable-looking source event after the prepared primary-view end is outside the replay"
     );
     assert_eq!(result.model, "SEGREGATED_COHORT_MARK_ESTIMATE_V1");
+    assert_eq!(diagnostics.decision_clock_ticks, None);
+    let mut fixed_request = request.clone();
+    fixed_request.scenario.decision_interval_ns = counter(SECOND).unwrap();
+    let policy = fixed_request.small_capital_policy.as_mut().unwrap();
+    policy.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+    policy.maximum_holding_ns = counter(60 * SECOND + SECOND / 2).unwrap();
+    let fixed = replay(
+        &prepared.join("research/catalog"),
+        &fixed_request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    let clocked = fixed.small_capital_diagnostics.as_ref().unwrap();
+    assert_eq!(
+        clocked.decision_clock_ticks.unwrap().get(),
+        3 * DAY / SECOND
+    );
+    assert_eq!(clocked.positions_opened, diagnostics.positions_opened);
+    assert_eq!(clocked.positions_closed, diagnostics.positions_closed);
+    assert_eq!(
+        clocked.unfilled_entries, diagnostics.unfilled_entries,
+        "empty seconds hold without retrying an old alpha signal"
+    );
+    assert_eq!(
+        clocked.maximum_exit_delay_ns.unwrap().get(),
+        19 * SECOND + SECOND / 2,
+        "the exact 80.5s risk deadline remains between timer ticks, with the real exit at 100s"
+    );
+    assert_eq!(
+        fixed.native_fills, result.native_fills,
+        "timer events never create executable quotes"
+    );
     request.scenario.execution_model =
         Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
     let quote_result = replay(
@@ -2407,6 +2762,82 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         serde_json::to_value(&quote_result.small_capital_diagnostics).unwrap()
     );
     assert!(valued.methods["spot_valuation"].contains("do not change trading"));
+    request
+        .research
+        .input
+        .instrument_ids
+        .retain(|id| id != LATE);
+    request.research.input.event_end_ns = counter(4 * DAY).unwrap();
+    request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+    let spot_prepared = directory.path().join("spot-only");
+    let metadata =
+        cohort_cache::prepare_views(&catalog, &request.research, &spot_prepared, 1_000_000)
+            .unwrap();
+    request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
+    let spot = replay(
+        &spot_prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    assert_eq!(spot.assets.len(), 2);
+    assert_eq!(spot.native_fills.get(), 4);
+    let diagnostics = spot.small_capital_diagnostics.as_ref().unwrap();
+    assert_eq!(diagnostics.positions_opened.get(), 1);
+    assert_eq!(diagnostics.positions_closed.get(), 1);
+    assert!(diagnostics.remaining_positions.is_empty());
+}
+
+#[test]
+fn fixed_interval_decisions_consume_same_time_scores_and_defer_reference_exit_to_the_grid() {
+    let directory = tempfile::tempdir().unwrap();
+    let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
+    let at = 100 * SECOND + SECOND / 2;
+    let extra = TradeTick::new(
+        InstrumentId::from(alpha),
+        Price::from("200.00"),
+        Quantity::from("10000.0000"),
+        AggressorSide::Buy,
+        TradeId::from("FIXED-CLOCK-REFERENCE"),
+        at.into(),
+        at.into(),
+    );
+    let (prepared, mut request) = small_replay_source(directory.path(), Some(extra));
+    request.scenario.decision_interval_ns = counter(SECOND).unwrap();
+    let policy = request.small_capital_policy.as_mut().unwrap();
+    policy.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+    policy.maximum_holding_ns = counter(DAY).unwrap();
+    let result = replay(
+        &prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    let diagnostics = result.small_capital_diagnostics.unwrap();
+    assert_eq!(
+        diagnostics.decision_clock_ticks.unwrap().get(),
+        3 * DAY / SECOND
+    );
+    let held = diagnostics
+        .remaining_positions
+        .iter()
+        .find(|p| p.instrument_id == alpha)
+        .unwrap();
+    assert_eq!(
+        held.entry_decision_ns.get(),
+        20 * SECOND,
+        "same-time new cohort precedes its clock decision"
+    );
+    assert_eq!(
+        held.exit_decision_ns.unwrap().get(),
+        101 * SECOND,
+        "the 100.5s reference move is decided at the next one-second tick"
+    );
+    assert_eq!(
+        diagnostics.positions_closed.get(),
+        0,
+        "a clock tick cannot substitute for the missing later execution observation"
+    );
 }
 
 #[test]
@@ -2712,4 +3143,110 @@ fn native_mark_funding_settles_after_same_timestamp_closing_commands() {
         0,
         "official native funding observes the flat position after same-timestamp order settlement"
     );
+}
+
+#[test]
+fn generic_fixed_interval_trades_signed_alpha_between_source_events_without_ema_hurdles() {
+    for (start, interval, entry) in [(0, SECOND, 2 * SECOND), (DAY, 7 * SECOND, 7 * SECOND)] {
+        let directory = tempfile::tempdir().unwrap();
+        let instruments = definitions();
+        let mut request = super::tests::request();
+        request.research.input.instrument_ids = vec![LATE.into()];
+        request.research.input.event_start_ns = counter(start).unwrap();
+        request.research.input.event_end_ns = counter(start + 2 * DAY).unwrap();
+        request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+        request.research.train_end_ns = counter(start + DAY).unwrap();
+        request.research.validation_end_ns = counter(start + 2 * DAY).unwrap();
+        request.fx_instrument_ids = vec![BRIDGE.into()];
+        request.scenario.execution_model =
+            Some(NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+        request.scenario.decision_interval_ns = counter(interval).unwrap();
+        request.scenario.base_latency_ns = counter(0).unwrap();
+        request.scenario.jitter_min_ns = counter(0).unwrap();
+        request.scenario.jitter_max_ns = counter(0).unwrap();
+        request.scenario.participation_fraction = "1".parse().unwrap();
+        request.scenario.spot_taker_fee_bps = "0".parse().unwrap();
+        request.scenario.perp_taker_fee_bps = "0".parse().unwrap();
+        request.scenario.extra_cost_bps = "0".parse().unwrap();
+        let output = directory.path().join("source");
+        let mut builder = cohort_cache::Builder::new_flow(&output, 100, 100, 1_000_000).unwrap();
+        for (ordinal, (id, at, price)) in [
+            (BRIDGE, SECOND / 10, "1.000"),
+            (BRIDGE, SECOND / 5, "1.000"),
+            (LATE, SECOND + SECOND / 10, "100.00"),
+            (LATE, SECOND + SECOND / 5, "100.00"),
+            (LATE, entry + SECOND / 10, "100.00"),
+            (LATE, entry + SECOND, "200.00"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            builder
+                .push(TradeTick::new(
+                    InstrumentId::from(id),
+                    Price::from(price),
+                    Quantity::from("10000.0000"),
+                    AggressorSide::Buy,
+                    TradeId::from(format!("GENERIC-CLOCK-{ordinal}").as_str()),
+                    (start + at).into(),
+                    (start + at).into(),
+                ))
+                .unwrap();
+        }
+        let manifest = builder
+            .seal("fixed-source", start, start + 2 * DAY)
+            .unwrap();
+        builder.publish(manifest, json!({"status":"IMPORTED","availability":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"fixed-source","event_start_ns":start.to_string(),"event_end_ns":(start + 2 * DAY).to_string(),
+        "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
+        "instrument_source":{"currencies":crate::catalog::currencies::definitions(&instruments),"instruments":instruments}})).unwrap();
+        let catalog = output.join("catalog");
+        let rates = (start / HOUR + 1..start / HOUR + 48)
+            .map(|hour| {
+                json!({"instrument_id": LATE, "event_ns": (hour * HOUR).to_string(), "rate": "0"})
+                    .to_string()
+                    + "\n"
+            })
+            .collect::<String>();
+        std::fs::write(catalog.join("funding-rates.jsonl"), rates).unwrap();
+        std::fs::write(
+        catalog.join("funding-rates.manifest.json"),
+        serde_json::to_vec(&json!({
+        "source_revision":"fixed-source","start_ns":start.to_string(),"end_ns":(start + 2 * DAY).to_string(),
+        "instruments":[LATE],"rows":47,"missing_instruments":[]}))
+        .unwrap(),
+    )
+    .unwrap();
+        for score in [-1, 1] {
+            let model = wat::parse_str(format!(r#"(module
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64))
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const {score}))"#)).unwrap();
+            request.scenario.decision_clock = None;
+            let legacy = replay(&catalog, &request, &model).unwrap();
+            request.scenario.decision_clock = Some(NativeTickDecisionClockV1::CohortBucketV1);
+            let bucket = replay(&catalog, &request, &model).unwrap();
+            assert_eq!(bucket.native_fills, legacy.native_fills);
+            assert_eq!(
+                serde_json::to_value(&bucket.days).unwrap(),
+                serde_json::to_value(&legacy.days).unwrap()
+            );
+            request.scenario.decision_clock = Some(NativeTickDecisionClockV1::FixedIntervalV1);
+            let fixed = replay(&catalog, &request, &model).unwrap();
+            assert!(fixed.small_capital_diagnostics.is_none());
+            assert_eq!(
+                fixed.native_fills.get(),
+                2,
+                "initial conversion and delayed signed alpha entry"
+            );
+            assert_eq!(fixed.native_rejections.get(), 0);
+            assert_eq!(
+                fixed.request.scenario.decision_clock,
+                request.scenario.decision_clock
+            );
+            let fixed_equity = decimal(fixed.days[0].equity_usdt.as_ref().unwrap()).unwrap();
+            let legacy_equity = decimal(legacy.days[0].equity_usdt.as_ref().unwrap()).unwrap();
+            assert!((fixed_equity - legacy_equity) * Decimal::from(score) > Decimal::ZERO,
+            "start-relative timer decision must fill at the next real observation before the price move, preserving the model sign");
+        }
+    }
 }

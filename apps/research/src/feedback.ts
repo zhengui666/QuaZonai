@@ -1,6 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { clipTickRegimeEvaluation, nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS, TICK_RECEIVED_FEATURE_KEYS, TICK_RECEIVED_FLOW_FEATURE_KEYS, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS, TICK_RECEIVED_FEATURE_KEYS, TICK_RECEIVED_FLOW_FEATURE_KEYS, TICK_RECEIVED_FLOW_BOOK_FEATURE_KEYS, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 function record(value: JsonValue | undefined): JsonObject | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
@@ -84,19 +84,24 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
   const tagged = nativeResearchInput(data);
   const flow = tagged?.modality === 'TRADE_TICK' && String(tagged.request.input.representation).endsWith('_FLOW_CACHE_V1');
   const received = tagged?.modality === 'TRADE_TICK' && tagged.request.input.availability === 'RECEIVED_TIME_OBSERVED';
+  const book = tagged?.modality === 'TRADE_TICK' && tagged.request.parameters.feature_profile === 'RECEIVED_FLOW_BOOK_V1';
   const { evaluation_regimes: _regimes, ...tickRequest } = tagged?.modality === 'TRADE_TICK' ? tagged.request : {};
   if (tagged?.modality === 'TRADE_TICK') return { data: { ...data,
     ...(tagged.request.evaluation_regimes ? { nativeInput: { modality: 'TRADE_TICK', request: tickRequest } } : {}),
     feature_model: {
     abi: TICK_FEATURE_ABI, ...featureV2Semantics,
-    features: [...(received ? flow ? TICK_RECEIVED_FLOW_FEATURE_KEYS : TICK_RECEIVED_FEATURE_KEYS : flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
-    ...(received || flow ? { schema: `qz.tick-${received ? 'received-' : ''}cohort${flow ? '-flow' : ''}-features.v1` } : {}),
+    features: [...(book ? TICK_RECEIVED_FLOW_BOOK_FEATURE_KEYS : received ? flow ? TICK_RECEIVED_FLOW_FEATURE_KEYS : TICK_RECEIVED_FEATURE_KEYS : flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
+    ...(received || flow ? { schema: `qz.tick-${received ? 'received-' : ''}cohort${flow ? '-flow' : ''}${book ? '-book' : ''}-features.v1` } : {}),
     definitions: [`Quantity-weighted price over exactly the current complete instrument/${received ? 'receive' : 'event'}-time cohort; previous complete cohort price.`,
       'Fast/slow native EMA advance once per complete cohort; periods count cohorts.',
       `Sum of original cohort quantities, original trade count and elapsed ${received ? 'receive' : 'event'} nanoseconds since the preceding cohort.`,
       ...(received ? ['Received-time derived features and the prediction event_ns use the original collector ts_init analysis clock; original exchange ts_event bounds remain separate source provenance and may be ahead of or behind receipt time.'] : []),
-      ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : [])],
-    missing: 'The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.',
+      ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : []),
+      ...(book ? ['Book features use the latest real snapshot received at or before the current trade cohort and retain its original availability timestamp.',
+        'native_book_imbalance_ratio is the official Nautilus BookImbalanceRatio at the best bid/ask, min(size)/max(size), symmetric in [0,1] with no direction.',
+        'book_spread_bps is current native book spread divided by midpoint times 10000. book_bid_depth_5_quote and book_ask_depth_5_quote sum native BookLevel::exposure (original price times quantity) over the first five levels on each side, in quote units.',
+        'Predictions remain trade-cohort-triggered. FIXED_INTERVAL execution consumes the latest new score at its configured interval.'] : [])],
+    missing: `The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.${book ? ' Missing or one-sided book snapshots use the existing feature masks.' : ''}`,
     scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',
     evidence: `${tagged.request.input.availability}: exploratory computation, not PIT qualification, independent source validation or execution evidence.${received ? ' Collector receipt timestamps are preserved; collector clock accuracy and user network latency are unverified. For CryptoHFTData, maximum_receive_delay_ns selects the fresh published population; older reconnect deliveries are excluded and counted in source provenance, while negative venue/collector clock skew is retained.' : ''}`,
   } }, policy: input.policy };

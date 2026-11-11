@@ -9,7 +9,8 @@ import { Study } from '../../research/src/documents.ts';
 import { built, context, setup, studied } from './support.ts';
 import { Application } from '../src/facts.ts';
 import { BuildPortfolio } from '../src/science.ts';
-import { metrics, researchTaskViews } from '../src/projections.ts';
+import { metrics, researchTaskViews, tickEconomicMetrics } from '../src/projections.ts';
+import { researchCriterion, researchSpecification } from '../../../packages/contracts/src/research.ts';
 
 test('dataset projection retains compact catalog horizons and partitions without advertising account strategy', async () => {
   const state = await setup();
@@ -98,6 +99,51 @@ test('read projections retain partition/component availability and native scalar
     status: 'CONSTANT_SCORE', partition: 'HELDOUT', component: 2,
   });
   assert.equal(result.find(item => item.key === 'HELDOUT.counts.included')!.value, '9007199254740995');
+});
+
+test('tick financial criterion reads overall partition statistics from an economic-only final', () => {
+  const spec = researchSpecification({ version: 1, name: 'Net returns', question: 'Evaluate net returns', rationale: 'Use the original account returns',
+    evaluation: { metric: 'Sharpe Ratio (365 days)', direction: 'maximize', target: 5, scheme: 'registered-partitions' },
+    search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } });
+  const economic = { status: 'COMPUTED', taskId: 7, summary: {
+    partition_metrics: [{ partition: 'HELDOUT', days: '30', valid_return_days: '29', sharpe_365: 6, annualized_return_365: 3.1 }],
+    metrics: [{ partition: 'HELDOUT', regime: 'BEAR', sharpe_365: 100 }],
+  } };
+  const actual = metrics({ economic });
+  assert.equal(researchCriterion(spec, 'COMPUTED', actual)!.value, 6);
+  assert.equal(researchCriterion(spec, 'COMPUTED', actual)!.status, 'met');
+  assert.equal(actual.find(row => row.key === 'HELDOUT.portfolio.annualized_return_365')!.value, 3.1);
+  assert.deepEqual(tickEconomicMetrics({ ...economic, status: 'FAILED' }), []);
+  assert.deepEqual(tickEconomicMetrics({ ...economic, summary: { metrics: economic.summary.metrics } }), []);
+  const missing = metrics({ economic: { ...economic, summary: { partition_metrics: [{ ...economic.summary.partition_metrics[0]!, sharpe_365: null }] } } });
+  assert.equal(researchCriterion(spec, 'COMPUTED', missing)!.status, 'insufficient');
+  assert.equal(researchCriterion(spec, 'COMPUTED', missing)!.value, null);
+});
+
+test('owner research detail exposes the recorded economic outcome independently of predictive feedback', async () => {
+  const state = await setup();
+  try {
+    const { receipt } = await studied(state, 'economic-projection');
+    const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+    const original = (await get()).json().trialRecords[0];
+    assert.equal('economic' in original, false);
+    const calls = state.faux.state.callCount;
+    const stored = (await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context))!.trials[0]!.result;
+    for (const economic of [
+      { taskId: 700, status: 'COMPUTED', summary: { fees_usdc_equivalent: '0.123456789012345678', metrics: [{ partition: 'VALIDATION', sharpe_365: null }], days: [{ net_return: null, unknown_reason: 'MISSING_MARK' }] }, error: null },
+      { taskId: 701, status: 'STARTED', summary: null, error: null },
+      { taskId: 702, status: 'FAILED', summary: null, error: 'tick_economic_replay_failed' },
+    ]) {
+      await state.service.research.harness.commit(async tx => {
+        (await tx.doc(Study, receipt.conversationId as ConversationId)).trials[0]!.economic = economic;
+      }, context);
+      const response = await get(); assert.equal(response.statusCode, 200, response.body);
+      assert.deepEqual(response.json().trialRecords[0], { ...original, economic });
+      assert.deepEqual((await get()).json().trialRecords[0].economic, economic);
+    }
+    assert.deepEqual((await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context))!.trials[0]!.result, stored);
+    assert.equal(state.faux.state.callCount, calls);
+  } finally { await state.cleanup(); }
 });
 
 test('public research failures retain codes but do not expose native stderr', { timeout: 20_000 }, async () => {

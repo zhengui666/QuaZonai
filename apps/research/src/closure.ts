@@ -1,4 +1,4 @@
-import { requireTrialReview } from './review-workflow.ts';
+import { ensureTrialReview } from './review-workflow.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -32,9 +32,9 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'wait
           return null;
         }
         const comparison = await compareCampaign(tx, api);
-        const selected = comparison ? comparison.recommendationStatus === 'SELECTED'
+        const selected = study.reviewSelection?.trialId ?? (comparison ? comparison.recommendationStatus === 'SELECTED'
           ? campaign.trials.find(item => item.id === comparison.recommendedTrialId)?.runtime.taskId ?? null : null
-          : study.input ? legacySelection(study.input, study.trials) : null;
+          : study.input ? legacySelection(study.input, study.trials) : null);
         // Technical lack of progress never authorizes consuming independent data.
         const allowIndependent = !['research_no_new_evidence', 'orchestration_budget_exhausted', 'continuation_requires_trial_budget', 'strategy_intake_needs_clarification', 'strategy_intake_unsupported'].includes(task.input.reason);
         if (selected !== null && study.input?.data.sealed && allowIndependent && campaign.binding?.independentConsumer !== 'PM_PORTFOLIO') {
@@ -48,12 +48,12 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'wait
         campaign.state = selected === null ? 'CONCLUDED' : 'CLOSING';
         return selected === null ? null : { trialId: selected, proposal: null, independent: false };
       }, context);
-      if (selection && await requireTrialReview(api, context, selection.trialId) && selection.independent) {
+      if (selection && selection.independent) {
         const args = { trialId: selection.trialId, reason: task.input.reason };
         const proposal = selection.proposal;
         if (proposal && typeof proposal === 'object' && !Array.isArray(proposal) && Array.isArray(proposal.members)) await finalizePortfolio(args, api, context);
         else await finalizeFactor(args, api, context);
-      }
+      } else if (selection) await ensureTrialReview(api, context, selection.trialId);
       await runtime.commit(async tx => {
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId); const final = (await tx.doc(Study, api.conversationId)).final;
         if (campaign.closureTaskId === task.id && campaign.closingReason !== 'owner_stop' && final?.taskId === task.id) campaign.state = 'CONCLUDED';
