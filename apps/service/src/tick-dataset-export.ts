@@ -140,12 +140,16 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'book-snapshots.source.json')) names.add('book-snapshots.source.json');
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) names.add('spot-valuation.jsonl');
       const contextSizes = new Map<string, bigint>();
-      async function addContextSource(manifestName: string, filePrefix: string, format: string, clock: string) {
+      async function addContextSource(manifestName: string, filePrefix: string, eventTimeOnly = false) {
         if (!sources.some(extra => object(extra, 'tick_economic_source').path === manifestName)) return;
         const path = join(directory, manifestName); await observe(path);
         const context = object(parseOriginalJson(await readFile(path, 'utf8')), 'tick_context_manifest'); validateNumbers(context);
         const ids = context.instrument_ids;
-        if (context.schema_version !== 1 || context.format !== format || context.clock !== clock
+        const eventTimeContext = context.format === 'EVENT_TIME_CONTEXT_PRICE_CSV_V1' && context.clock === 'EVENT_TIME_PROXY_UNVERIFIED';
+        const receivedTimeContext = context.format === 'RECEIVED_TIME_CONTEXT_PRICE_CSV_V1' && context.clock === 'RECEIVED_TIME_OBSERVED';
+        const clockMatches = eventTimeOnly ? eventTimeContext : (eventTimeContext || receivedTimeContext)
+          && (request.input.availability !== 'RECEIVED_TIME_OBSERVED' || receivedTimeContext);
+        if (context.schema_version !== 1 || !clockMatches
           || typeof context.source_revision !== 'string' || !context.source_revision.trim()
           || context.research_source_revision !== request.input.source_revision
           || cacheCounter(context.start_ns) > BigInt(request.input.event_start_ns) || cacheCounter(context.end_ns) < BigInt(request.input.event_end_ns)
@@ -164,11 +168,8 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         }
         if (rows !== cacheCounter(context.rows)) throw new Error('tick_context_row_count_mismatch');
       }
-      const contextReceived = request.input.availability === 'RECEIVED_TIME_OBSERVED';
-      await addContextSource('context-prices.manifest.json', 'context-prices-',
-        contextReceived ? 'RECEIVED_TIME_CONTEXT_PRICE_CSV_V1' : 'EVENT_TIME_CONTEXT_PRICE_CSV_V1', request.input.availability);
-      await addContextSource('event-time-context-prices.manifest.json', 'event-time-context-prices-',
-        'EVENT_TIME_CONTEXT_PRICE_CSV_V1', 'EVENT_TIME_PROXY_UNVERIFIED');
+      await addContextSource('context-prices.manifest.json', 'context-prices-');
+      await addContextSource('event-time-context-prices.manifest.json', 'event-time-context-prices-', true);
       for (const extra of extras) {
         const row = object(extra, 'tick_economic_source');
         if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');

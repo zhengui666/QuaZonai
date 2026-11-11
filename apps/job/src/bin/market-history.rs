@@ -416,26 +416,7 @@ impl Manifest {
     }
 
     fn trade_revision(&self) -> bool {
-        if self.revision.len() == 40 && self.revision.bytes().all(|c| c.is_ascii_hexdigit()) {
-            return true;
-        }
-        self.cryptohftdata()
-            && self
-                .revision
-                .strip_prefix("published-files-")
-                .is_some_and(|dates| {
-                    dates
-                        .get(..10)
-                        .zip(dates.get(11..))
-                        .is_some_and(|(start, end)| {
-                            dates.as_bytes().get(10) == Some(&b'-')
-                                && start
-                                    .parse::<NaiveDate>()
-                                    .ok()
-                                    .zip(end.parse::<NaiveDate>().ok())
-                                    .is_some_and(|(start, end)| start <= end)
-                        })
-                })
+        !self.revision.trim().is_empty()
     }
 
     fn root(&self, manifest_path: &Path) -> Result<PathBuf> {
@@ -1422,19 +1403,30 @@ mod tests {
     }
 
     #[test]
-    fn published_revision_does_not_relax_hub_revision_rules() {
+    fn public_source_revisions_are_nonempty_opaque_versions() {
         let temp = tempfile::tempdir().unwrap();
         let (path, _, _) = tick_source(temp.path(), "");
         let mut manifest: Manifest = json(&path).unwrap();
         assert!(manifest.trade_revision());
-        manifest.revision = "published-files-2026-01-01-2026-01-02".into();
-        assert!(!manifest.trade_revision());
+        for revision in [
+            "global-hl-20250728-20261109-v1",
+            "public-release-2",
+            "published-files-2026-01-01-2026-01-02",
+        ] {
+            manifest.revision = revision.into();
+            assert!(manifest.trade_revision());
+        }
+        for revision in ["", " ", "\t\n"] {
+            manifest.revision = revision.into();
+            assert!(!manifest.trade_revision());
+        }
         manifest.repository = "CryptoHFTData".into();
         manifest.source_reference =
             Some("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data".into());
+        manifest.revision = "published-files-2026-01-01-2026-01-02".into();
         assert!(manifest.trade_revision());
         manifest.revision = "published-files-not-a-date".into();
-        assert!(!manifest.trade_revision());
+        assert!(manifest.trade_revision());
     }
 
     #[test]

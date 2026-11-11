@@ -379,3 +379,39 @@ test('explicit context sidecars retain exact source identity and owned bytes', a
     } finally { await rm(f.directory, { recursive: true, force: true }); }
   }
 });
+
+
+test('context export preserves source clocks under the native directional clock rules', async () => {
+  for (const receivedResearch of [false, true]) {
+    for (const receivedContext of [false, true]) {
+      const f = await preparedCache(undefined, true, false, receivedResearch);
+      try {
+        const csv = 'event_ns,oracle_px,mark_px\n10,3.0440,3.042500\n';
+        const manifest = { schema_version: 1,
+          format: receivedContext ? 'RECEIVED_TIME_CONTEXT_PRICE_CSV_V1' : 'EVENT_TIME_CONTEXT_PRICE_CSV_V1',
+          clock: receivedContext ? 'RECEIVED_TIME_OBSERVED' : 'EVENT_TIME_PROXY_UNVERIFIED',
+          source_revision: 'original-context-source', research_source_revision: f.request.input.source_revision,
+          start_ns: '0', end_ns: '80', rows: '1', instrument_ids: ['BTCUSDT.SIM'],
+          files: [{ instrument_id: 'BTCUSDT.SIM', path: 'context-prices-000.csv', bytes: String(Buffer.byteLength(csv)),
+            rows: '1', first_event_ns: '10', last_event_ns: '10' }] };
+        const sources = new Map([['context-prices.manifest.json', JSON.stringify(manifest)], ['context-prices-000.csv', csv]]);
+        for (const [name, bytes] of sources) {
+          const source = join(f.directory, name); await writeFile(source, bytes);
+          for (const part of ['research', 'independent']) await link(source, join(f.prepared, part, 'catalog', name));
+        }
+        const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8'));
+        metadata.economic_sources = [...sources].map(([path, bytes]) => ({ path, bytes: String(Buffer.byteLength(bytes)) }));
+        await writeFile(f.options.prepared, JSON.stringify(metadata));
+        if (receivedResearch && !receivedContext) {
+          await assert.rejects(exportDataset(f.options), /tick_context_source_coverage_mismatch/);
+        } else {
+          const result = await exportDataset(f.options);
+          for (const catalog of [result.data.catalog, (result.data.sealed as Record<string, unknown>).catalog]) {
+            assert.deepEqual(JSON.parse(await readFile(join(String(catalog), 'context-prices.manifest.json'), 'utf8')), manifest);
+            assert.equal(await readFile(join(String(catalog), 'context-prices-000.csv'), 'utf8'), csv);
+          }
+        }
+      } finally { await rm(f.directory, { recursive: true, force: true }); }
+    }
+  }
+});
