@@ -45,7 +45,7 @@ function last(transcript:{messages:readonly unknown[]},name:string):JsonObject {
   return JSON.parse(message.content.map(item=>item.text??'').join('')) as JsonObject;
 }
 const call=(name:string,args:JsonObject)=>fauxAssistantMessage(fauxToolCall(name,args),{stopReason:'toolUse'});
-for(const mode of ['COMPLETE','FAILED_COHORT','MISSING_INDEPENDENT_SOURCE'] as const) test(`portfolio finalizer ${mode} executes the real review gate before any heldout account`,{timeout:60000},async()=>{
+for(const mode of ['COMPLETE','FAILED_COHORT','MISSING_INDEPENDENT_SOURCE'] as const) test(`portfolio finalizer ${mode} retains its review conclusion alongside owner-only heldout measurement`,{timeout:60000},async()=>{
   const directory=await mkdtemp(join(tmpdir(),'qz-portfolio-finalizer-'));const log=join(directory,'native-calls.jsonl');const binary=join(directory,'job');const script=join(directory,'protocol.mjs');
   const before=process.env.QZ_JOB_BINARY;process.env.QZ_JOB_BINARY=binary;
   const faux=fauxProvider({tokensPerSecond:100000});const models=createModels();models.setProvider(faux.provider);const model={provider:faux.provider.id,modelId:faux.getModel().id};
@@ -71,21 +71,25 @@ for(const mode of ['COMPLETE','FAILED_COHORT','MISSING_INDEPENDENT_SOURCE'] as c
     assert.ok(report,JSON.stringify(state.research));
     const calls=(await readFile(log,'utf8')).trim().split('\n').map(row=>JSON.parse(row) as {command:string;input:JsonObject});
     const independent=calls.filter(row=>row.command==='simulate'&&BigInt((row.input.selection as JsonObject).event_start_ns as string)>=160n*DAY);
+    assert.equal(state.research!.final!.status,'COMPUTED',JSON.stringify(state.research!.final));
+    assert.equal(independent.length,1);
+    assert.equal(state.research!.final!.conclusion,report.decision);
+    assert.equal(state.research!.final!.reviewReportId,report.id);
+    assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('HELDOUT_OWNER_ONLY_999'),false,'no final statistic is returned to either model context');
     if(mode==='COMPLETE') {
-      assert.equal(report.decision,'PASS',JSON.stringify(report.reasonCodes));assert.equal(state.research!.final!.status,'COMPUTED',JSON.stringify(state.research!.final));assert.equal(independent.length,1);
+      assert.equal(report.decision,'PASS',JSON.stringify(report.reasonCodes));
       assert.equal(report.metrics.find(metric=>metric.key==='account.net_return_lower')?.scope,'SHARED_ACCOUNT');
       assert.equal(report.metrics.find(metric=>metric.key==='robustness.positive_fraction')?.scope,'SHARED_ACCOUNT');
       assert.ok(report.metrics.some(metric=>metric.key==='execution.stressed_net_return'&&metric.status==='AVAILABLE'));
       assert.ok(report.metrics.some(metric=>metric.key==='incremental.net_return_delta_lower'&&metric.status==='AVAILABLE'));
       const replays=calls.filter(row=>row.command==='blend-targets');assert.ok(replays.some(row=>JSON.stringify(row.input.weights)===JSON.stringify(['0.7','0.3'])));assert.ok(replays.some(row=>JSON.stringify(row.input.weights)===JSON.stringify(['0.5','0.5'])));assert.deepEqual(replays.at(-1)!.input.weights,['0.7','0.3'],'the actual heldout finalizer preserves the selected nonuniform ensemble');
-      assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('HELDOUT_OWNER_ONLY_999'),false,'no final statistic is returned to either model context');
     } else {
-      assert.equal(report.decision,'INCONCLUSIVE',JSON.stringify(report.reasonCodes));assert.equal(independent.length,0,'failed/missing proof must not grant a heldout read');assert.equal(state.research!.final!.status,'STOPPED');
+      assert.equal(report.decision,'INCONCLUSIVE',JSON.stringify(report.reasonCodes));
       if(mode==='FAILED_COHORT') {
         assert.ok(report.missingEvidence.some(reason=>reason.startsWith('selection.dsr:')),'failed original candidate remains in the selection denominator');
         const selectedAnalysis=calls.find(row=>row.command==='review-science'&&(row.input.analysis as JsonObject).kind==='SELECTION');
         assert.ok(selectedAnalysis);assert.equal((selectedAnalysis.input.analysis as JsonObject).total_trials,2);assert.equal((selectedAnalysis.input.analysis as JsonObject).ledger_complete,false);
-      } else assert.ok(report.reasonCodes.some(reason=>reason.startsWith('independent_window:')),'missing independent source has its own explicit gate');
+      } else assert.ok(report.reasonCodes.some(reason=>reason.startsWith('independent_window:')),'missing independent source retains its explicit review reason');
     }
     const count=calls.length;assert.deepEqual(await host.start(`portfolio-finalizer-${mode}`,input,false,source),receipt);assert.equal((await readFile(log,'utf8')).trim().split('\n').length,count);
   } finally {await host.close();if(before===undefined)delete process.env.QZ_JOB_BINARY;else process.env.QZ_JOB_BINARY=before;await rm(directory,{recursive:true,force:true});}
