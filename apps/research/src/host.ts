@@ -152,28 +152,25 @@ export async function openResearch(options: {
     } while (cursor);
     return null;
   }
+  async function settleOwnerStopFacts(tx: Tx, id: ConversationId) {
+    const campaign = await tx.doc(CampaignResearchDoc, id);
+    const study = await tx.doc(Study, id);
+    for (const trial of study.trials.filter(item => item.status === 'STARTED')) {
+      const task = await tx.task(trial.taskId as TaskId);
+      if (!task || task.state.status !== 'terminal') throw new Error('owner_stop_task_not_settled');
+      trial.status = 'FAILED'; trial.error = 'owner_stop';
+      trial.errorDetail = { operation: 'research_trial', stage: 'owner_stop', taskOutcome: task.state.outcome.status };
+      await settleCampaignTrial(tx, { conversationId: id, taskId: task.id }, null, 'owner_stop', null);
+    }
+    if (study.final?.status === 'STARTED') {
+      study.final.status = 'FAILED'; study.final.error = 'owner_stop';
+      study.final.errorDetail = { operation: 'independent_evaluation', stage: 'owner_stop' };
+    }
+    campaign.state = 'CONCLUDED';
+  }
   async function settleOwnerStop(id: ConversationId, stopContext = context) {
     await (await conversation(id)).abort(stopContext, { background: true });
-    await harness.commit(async tx => {
-      const campaign = await tx.doc(CampaignResearchDoc, id);
-      if (!campaign.binding) {
-        if (campaign.closingReason === 'owner_stop') campaign.state = 'CONCLUDED';
-        return;
-      }
-      const study = await tx.doc(Study, id);
-      for (const trial of study.trials.filter(item => item.status === 'STARTED')) {
-        const task = await tx.task(trial.taskId as TaskId);
-        if (!task || task.state.status !== 'terminal') throw new Error('owner_stop_task_not_settled');
-        trial.status = 'FAILED'; trial.error = 'owner_stop';
-        trial.errorDetail = { operation: 'research_trial', stage: 'owner_stop', taskOutcome: task.state.outcome.status };
-        await settleCampaignTrial(tx, { conversationId: id, taskId: task.id }, null, 'owner_stop', null);
-      }
-      if (study.final?.status === 'STARTED') {
-        study.final.status = 'FAILED'; study.final.error = 'owner_stop';
-        study.final.errorDetail = { operation: 'independent_evaluation', stage: 'owner_stop' };
-      }
-      campaign.state = 'CONCLUDED';
-    }, stopContext);
+    await harness.commit(tx => settleOwnerStopFacts(tx, id), stopContext);
   }
   async function state(id: number) {
     await conversation(id);
@@ -229,6 +226,7 @@ export async function openResearch(options: {
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
+      if (stopped && study.final?.reason === 'owner_stop') await settleOwnerStopFacts(tx, handle.id);
       const mode = intent?.recovery?.mode ?? (selected ? 'selected' : stopped ? 'stopped' : 'model_error');
       const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode, study.reviewSelection?.trialId) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
       if (!intent) {
