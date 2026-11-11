@@ -9,6 +9,7 @@ import { canonical, Study } from '../src/documents.ts';
 import { executeNativeValue, nativeTargetForData, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
 import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
+import { tickEconomicPolicy } from '../src/input.ts';
 import { object } from '../src/trials.ts';
 import { compileWasm, iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
@@ -25,7 +26,7 @@ export async function replayTickEconomic(target: NativeTarget, request: NativeTi
   return result;
 }
 
-type EconomicInput = { trialId: number; model: string; catalog: string; target: NativeTarget; request: NativeTickEconomicRequest; bookCores: number };
+type EconomicInput = { trialId: number; model: string; catalog: string; target: NativeTarget; request: NativeTickEconomicRequest; bookCores: number; partition?: 'HELDOUT' };
 
 export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, JsonObject>({
   name: 'qz.factor.tick-economic', version: 1, initial: () => ({ phase: 'compute' }),
@@ -37,11 +38,13 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       await writeFile(model, compileWasm(task.input.model, 'retained-factor.wat', 'replay-tick-economic'));
       const result = await withNativeRemoteTracking(task.id, runtime, context, () => replayTickEconomic(task.input.target,
         task.input.request, { catalog: task.input.catalog, model, bookCores: task.input.bookCores }, directory!, context));
+      const heldout = task.input.partition === 'HELDOUT';
       const summary: JsonObject = {
         model: result.model, methods: result.methods, limitations: result.limitations,
-        metrics: result.metrics.filter(row => row.partition === 'TRAIN' || row.partition === 'VALIDATION'),
-        days: result.days.filter(row => BigInt(row.day_start_ns) >= BigInt(task.input.request.research.input.event_start_ns)
-          && BigInt(row.day_start_ns) < BigInt(task.input.request.research.validation_end_ns)),
+        metrics: result.metrics.filter(row => heldout ? row.partition === 'HELDOUT' : row.partition === 'TRAIN' || row.partition === 'VALIDATION'),
+        ...(result.partition_metrics ? { partition_metrics: result.partition_metrics.filter(row => heldout ? row.partition === 'HELDOUT' : row.partition === 'TRAIN' || row.partition === 'VALIDATION') } : {}),
+        days: result.days.filter(row => BigInt(row.day_start_ns) >= BigInt(heldout ? task.input.request.research.validation_end_ns : task.input.request.research.input.event_start_ns)
+          && BigInt(row.day_start_ns) < BigInt(heldout ? task.input.request.research.input.event_end_ns : task.input.request.research.validation_end_ns)),
         native_fills: result.native_fills, native_rejections: result.native_rejections,
         fees_usdc_equivalent: result.fees_usdc_equivalent, fees_by_currency: result.fees_by_currency,
         initial_conversion_cost_usdc: result.initial_conversion_cost_usdc, funding_usdc: result.funding_usdc,
@@ -49,7 +52,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       };
       await runtime.commit(async tx => {
         const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        trial.economic = { taskId: task.id, status: 'COMPUTED', summary, error: null };
+        if (!heldout) trial.economic = { taskId: task.id, status: 'COMPUTED', summary, error: null };
         return { status: 'terminal', outcome: { status: 'completed', result: summary } };
       }, context);
     } catch (error) {
@@ -58,7 +61,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       const message = executionDiagnostic(error, 'tick_economic_replay_failed');
       await runtime.commit(async tx => {
         const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        trial.economic = { taskId: task.id, status: 'FAILED', summary: null, error: message };
+        if (task.input.partition !== 'HELDOUT') trial.economic = { taskId: task.id, status: 'FAILED', summary: null, error: message };
         return { status: 'terminal', outcome: { status: 'failed', error: { message,
           detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'replay-tick-economic' }) } } } };
       }, context);
@@ -67,7 +70,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
   async abort(task, runtime, context) {
     await runtime.commit(async tx => {
       const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-      trial.economic = { taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
+      if (task.input.partition !== 'HELDOUT') trial.economic = { taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
       return { status: 'terminal', outcome: { status: 'aborted' } };
     }, context);
   },
@@ -93,10 +96,7 @@ export async function runTickEconomic(api: ResearchRuntime, context: Context, tr
   if (trial?.status !== 'COMPUTED') throw new Error('tick_economic_computed_factor_required');
   const input = study.input;
   if (!isTickResearchInput(input.data)) throw new Error('tick_economic_tick_input_required');
-  const { bookCores = 1, ...policy } = object(input.policy.tickEconomic, 'tick_economic_policy');
-  if (!Number.isSafeInteger(bookCores) || (bookCores as number) < 1) throw new Error('tick_book_cores_invalid');
-  if ('research' in policy || 'schema_version' in policy) throw new Error('tick_economic_policy_fields_invalid');
-  const request = validateNativeTickEconomicRequest({ ...policy, schema_version: 1, research: iterationRequest(input.data, true) });
+  const { request, bookCores } = tickEconomicPolicy(input.data, input.policy);
   const proposal = object(trial.proposal, 'trial_proposal');
   if (typeof proposal.model !== 'string' || canonical(object(trial.result, 'trial_result').request!) !== canonical(iterationRequest(input.data))) throw new Error('tick_economic_original_request_mismatch');
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');

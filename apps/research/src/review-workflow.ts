@@ -16,6 +16,9 @@ import { CampaignResearchDoc } from './pm-campaign.ts';
 import { portfolioCohortSelectionEvidence } from './review-plans.ts';
 import { nativeFactorReviewMetrics } from './review-science-adapter.ts';
 import { checkExposure } from '../plugins/native-exposure.ts';
+import { tickEconomicSelectionValue } from './pm-comparison.ts';
+import { isTickEconomicResearch } from './input.ts';
+import { nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { iterationRequest } from '../plugins/native-wasm.ts';
 import { compileWasm } from '../plugins/native-wasm.ts';
 
@@ -55,9 +58,24 @@ export function validationReviewContext(input: ResearchInput, trial: JsonObject,
   const { data, policy } = modelBriefInput(input);
   const feedback = result ? modelFeedback(result) : null;
   const partitions = Array.isArray(feedback?.partitions) ? feedback.partitions.filter(value => object(value)?.partition === 'VALIDATION') : [];
+  const economic = isTickEconomicResearch(input) ? object(trial.economic) : null;
+  const economicSummary = object(economic?.summary);
+  const economicRequest = economicSummary ? nativeResearchRequest(input.data) : null;
+  const economicStart = economicRequest ? String(object(economicRequest.input)?.event_start_ns) : '0';
+  const economicEnd = economicRequest ? String(economicRequest.validation_end_ns) : '0';
+  const validationEconomic = economicSummary ? { taskId: economic!.taskId, status: economic!.status, error: economic!.error ?? null, summary: {
+    ...economicSummary,
+    metrics: (Array.isArray(economicSummary.metrics) ? economicSummary.metrics : []).filter(row => ['TRAIN', 'VALIDATION'].includes(String(object(row)?.partition))),
+    partition_metrics: (Array.isArray(economicSummary.partition_metrics) ? economicSummary.partition_metrics : []).filter(row => ['TRAIN', 'VALIDATION'].includes(String(object(row)?.partition))),
+    days: (Array.isArray(economicSummary.days) ? economicSummary.days : []).filter(row => {
+      const time = object(row)?.day_start_ns;
+      return typeof time === 'string' && BigInt(time) >= BigInt(economicStart) && BigInt(time) < BigInt(economicEnd);
+    }),
+  } } : economic;
   return json({ goal: input.goal, specification: input.specification ?? null,
     data: { source: data.source ?? null, revision: data.revision ?? null, modality: object(data.nativeInput)?.modality ?? 'BAR' }, policy,
     candidate: { trialId: trial.taskId, proposal: trial.proposal, status: trial.status,
+      ...(economic ? { economic: validationEconomic } : {}),
       feedback: feedback ? { schema_version: feedback.schema_version ?? null, request: feedback.request ?? null, partitions,
         portfolio: object(feedback.portfolio)?.partition === 'VALIDATION' ? feedback.portfolio : null } : null },
     ledger: trials.map(item => ({ trialId: item.taskId, status: item.status, error: item.error ?? null, proposal: item.proposal })),
@@ -110,6 +128,7 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
     if (!study.input) throw new Error('research_input_missing');
     const trial = study.trials.find(item => item.taskId === trialId);
     if (trial?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');
+    if (isTickEconomicResearch(study.input) && tickEconomicSelectionValue(trial) === null) throw new Error('tick_economic_validation_required');
     const kind: ReviewTargetKind = Array.isArray(object(trial.proposal)?.members) ? 'PORTFOLIO' : 'FACTOR';
     const policy = policyFor(study.input as ResearchInput, kind);
     if (!policy) return null; // Historical input retains its already-frozen semantics.

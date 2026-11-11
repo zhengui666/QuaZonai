@@ -11,9 +11,10 @@ import { LiteratureDoc } from '../src/literature-document.ts';
 import { literatureInstructions, literatureTools } from '../src/literature-tools.ts';
 import { CampaignResearchDoc } from '../src/pm-campaign.ts';
 import { registerHypothesis } from '../src/pm-ledger.ts';
-import { compareCampaign, freezeSelection } from '../src/pm-comparison.ts';
+import { compareCampaign, freezeSelection, tickEconomicSelectionValue } from '../src/pm-comparison.ts';
 import { closeResearch } from '../src/closure.ts';
 import { strategyIntakeTool } from '../src/strategy-intake.ts';
+import { isTickEconomicResearch } from '../src/input.ts';
 import { tickEconomicFeedback } from './tick-economic.ts';
 
 const ExplicitFinish = defineDoc<{ intent: JsonObject | null }>({ kind: 'qz.research-explicit-finish', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ intent: null }) });
@@ -132,6 +133,7 @@ ${literatureInstructions}`)],
           if (study.input?.specification && args.trialId === undefined) throw new Error('research_stop_condition_not_met');
           const selected = study.trials.find((item) => item.taskId === args.trialId);
           if (args.trialId !== undefined && selected?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');
+          if (selected && study.input && isTickEconomicResearch(study.input) && tickEconomicSelectionValue(selected) === null) throw new Error('tick_economic_validation_required');
           if (args.trialId !== undefined && study.input?.data.sealed && campaign.binding?.independentConsumer !== 'PM_PORTFOLIO') throw new Error('registered_final_evaluator_required');
           const modern = args.trialId !== undefined && study.input !== null
             && (study.input.policy.reviewPolicy !== undefined || study.input.policy.reviewPolicies !== undefined);
