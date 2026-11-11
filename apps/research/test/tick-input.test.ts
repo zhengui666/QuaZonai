@@ -94,6 +94,38 @@ test('regime iteration and feedback preserve evaluation data without exposing se
   assert.deepEqual(result, original); assert.deepEqual(request, before);
 });
 
+test('730-source 269-day feedback puts compact primary metrics before request metadata without mutating native evidence', () => {
+  const request = regimeRequest();
+  request.input.instrument_ids = Array.from({ length: 730 }, (_, index) => `MARKET-${index}-USD-PERP.HYPERLIQUID`);
+  request.input.event_end_ns = String(300n * dayNs); request.input.decision_cutoff_ns = request.input.event_end_ns;
+  request.train_end_ns = String(192n * dayNs); request.validation_end_ns = String(246n * dayNs);
+  request.evaluation_regimes!.days = Array.from({ length: 269 }, (_, index) => {
+    const beginning = BigInt(31 + index) * dayNs;
+    return { day_start_ns: String(beginning), previous: { event_ns: String(beginning - 1n), price: '1.050000000000000000000000000000000001' },
+      lookback: { event_ns: String(beginning - 30n * dayNs - 1n), price: '1' } };
+  });
+  const metric = { counts: { included: '75288000' }, pearson_ic: { value: 0.0005448503668154045, status: 'AVAILABLE' } };
+  const unavailable = { counts: { included: '0' }, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES', reason: 'NO_ELIGIBLE_LABELS' } };
+  for (const regimes of [false, true]) {
+    const result: JsonObject = { request, partitions: [{ partition: 'TRAIN', metric }, { partition: 'VALIDATION', metric }, { partition: 'HELDOUT', secret: 'OWNER_ONLY' }],
+      ...(regimes ? { regime_partitions: [{ partition: 'VALIDATION', regimes: [{ regime: 'BEAR', metric: unavailable, assets: [{ secret: 'OWNER_ASSET_DETAIL' }] }] }] } : {}) };
+    const original = structuredClone(result); const feedback = modelFeedback(result); const text = JSON.stringify(feedback);
+    assert.ok(JSON.stringify(result).length > 70_000);
+    assert.ok(text.length < 3000);
+    assert.equal(Object.keys(feedback)[0], 'partitions');
+    assert.deepEqual((feedback.partitions as JsonObject[])[1]!.metric, metric);
+    assert.equal(text.includes('OWNER_ONLY'), false); assert.equal(text.includes('OWNER_ASSET_DETAIL'), false);
+    assert.equal(text.includes('evaluation_regimes'), false);
+    const projected = feedback.request as JsonObject; const input = projected.input as JsonObject;
+    assert.equal(input.instrument_count, 730); assert.equal(input.instrument_ids, undefined);
+    assert.equal(input.source_revision, request.input.source_revision); assert.equal(input.availability, request.input.availability);
+    assert.deepEqual(projected.parameters, request.parameters); assert.deepEqual(projected.target, request.target);
+    assert.equal(input.event_end_ns, request.validation_end_ns);
+    if (regimes) assert.deepEqual((((feedback.regime_partitions as JsonObject[])[0]!.regimes as JsonObject[])[0]!).metric, unavailable);
+    assert.deepEqual(result, original);
+  }
+});
+
 test('explicit tick contract preserves nanosecond strings and rejects incompatible or mixed modalities', () => {
   const request = tick();
   request.input.decision_cutoff_ns = '9007199254740993';

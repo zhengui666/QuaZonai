@@ -26,19 +26,29 @@ export function modelFeedback(result: JsonObject): JsonObject {
     ...scalars(coverage), instrument_count: Array.isArray(coverage.instrument_ids) ? coverage.instrument_ids.length : null,
     limitations: coverage.limitations ?? null, source_evidence: scalars(record(coverage.source_evidence) ?? {}),
   } };
-  if (result.portfolio === undefined && result.regime_partitions !== undefined) {
-    const request = record(result.request);
-    return { ...result,
-      ...(request?.evaluation_regimes ? { request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns)) } : {}),
+  const request = record(result.request);
+  const tick = record(request?.input)?.modality === 'TRADE_TICK';
+  if (result.portfolio === undefined && (tick || coverage?.modality === 'TRADE_TICK' || result.regime_partitions !== undefined)) {
+    let projectedRequest = request?.evaluation_regimes
+      ? clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns)) : request;
+    if (tick && projectedRequest) {
+      const { evaluation_regimes: _regimes, ...summary } = projectedRequest;
+      const { instrument_ids, ...input } = record(summary.input)!;
+      projectedRequest = { ...summary, input: { ...input, instrument_count: Array.isArray(instrument_ids) ? instrument_ids.length : null } };
+    }
+    const { request: _request, partitions: _partitions, regime_partitions: _regimePartitions, ...summary } = result;
+    return {
       partitions: partitions(result.partitions),
-      regime_partitions: (Array.isArray(result.regime_partitions) ? result.regime_partitions : []).flatMap(item => {
+      ...(result.regime_partitions === undefined ? {} : { regime_partitions: (Array.isArray(result.regime_partitions) ? result.regime_partitions : []).flatMap(item => {
         const partition = record(item);
         if (!partition || !['TRAIN', 'VALIDATION'].includes(String(partition.partition))) return [];
         return [{ ...scalars(partition), regimes: (Array.isArray(partition.regimes) ? partition.regimes : []).map(item => {
           const regime = record(item) ?? {};
           return { ...scalars(regime), metric: regime.metric ?? null, label_spans: regime.label_spans ?? null };
         }) }];
-      }) };
+      }) }),
+      ...summary, ...(projectedRequest ? { request: projectedRequest } : {}),
+    };
   }
   if (result.portfolio === undefined) return result;
   const portfolio = record(result.portfolio);
