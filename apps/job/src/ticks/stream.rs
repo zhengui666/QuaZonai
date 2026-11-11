@@ -361,6 +361,7 @@ fn evaluate_asset(
     budget: &mut Budget,
     pooled: &mut [Metric; 3],
     mut groups: Option<&mut Groups>,
+    mut books: Option<&mut economic::books::FeatureBooks>,
 ) -> Result<AssetSummary> {
     let (mut rows, mut label_rows) = readers;
     let mut summary = AssetSummary {
@@ -464,11 +465,23 @@ fn evaluate_asset(
             Some(if let Some(signed) = signed_quantity {
                 let [a, b, c, d, e, f, g] = features;
                 let flow_features = [a, b, c, d, e, f, g, feature_at(signed, &current)?];
+                let mut book_features;
+                let features = if request.parameters.uses_book_features() {
+                    let frame = books
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("TICK_BOOK_FEATURE_SOURCE_REQUIRED"))?
+                        .advance(current.event)?;
+                    book_features = flow_features.to_vec();
+                    economic::books::BookFeatures::append(&mut book_features, frame, current.event);
+                    book_features.as_slice()
+                } else {
+                    &flow_features
+                };
                 model.predict(
                     current.event,
                     current.feature_event(observed),
                     ordinal,
-                    &flow_features,
+                    features,
                 )?
             } else {
                 model.predict(
@@ -616,6 +629,18 @@ pub(super) fn evaluate(
             | NativeTickTargetV1::FixedReceivedTime { .. } => Some(cache.cohorts(asset)?),
             NativeTickTargetV1::FixedTradeCohorts { .. } => None,
         };
+        let mut books = request
+            .parameters
+            .uses_book_features()
+            .then(|| {
+                economic::books::FeatureBooks::open(
+                    root,
+                    asset.instrument_id.parse()?,
+                    request.input.event_start_ns.get(),
+                    request.input.event_end_ns.get(),
+                )
+            })
+            .transpose()?;
         let summary = evaluate_asset(
             request,
             (
@@ -629,6 +654,7 @@ pub(super) fn evaluate(
             &mut budget,
             &mut pooled,
             groups.as_mut(),
+            books.as_mut(),
         )?;
         if let Some(groups) = &mut groups {
             groups.finish_asset(&asset.instrument_id);
@@ -689,7 +715,7 @@ pub(super) fn evaluate(
         native_versions: BTreeMap::from([("nautilus-model".into(), "0.68.0".into()), ("nautilus-persistence".into(), "0.68.0".into()), ("nautilus-indicators".into(), "0.68.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
             ("input".into(), format!("{}: derived complete sampling-clock cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
-            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), feature_schema(&request.input).into()),
+            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), feature_schema(request).into()),
             ("sampling".into(), sampling_method(&request.input).into()),
             ("label".into(), request.target.label_method().into()),
             ("partitioning".into(), "shared half-open sampling-clock cuts; cross-boundary labels excluded; warmup and state continue across source units".into()),
@@ -783,6 +809,7 @@ mod tests {
                 &mut budget,
                 &mut pooled,
                 None,
+                None,
             )
             .err()
             .unwrap();
@@ -813,6 +840,7 @@ mod tests {
                 &module,
                 &mut budget,
                 &mut pooled,
+                None,
                 None,
             )
             .unwrap();
@@ -917,6 +945,7 @@ mod tests {
                 &mut budget,
                 &mut std::array::from_fn(|_| Metric::default()),
                 None,
+                None,
             );
             assert_eq!(result.err().unwrap().to_string(), error);
         }
@@ -939,6 +968,7 @@ mod tests {
             &module,
             &mut budget,
             &mut std::array::from_fn(|_| Metric::default()),
+            None,
             None,
         );
         assert_eq!(result.err().unwrap().to_string(), "label read failed");
@@ -1040,6 +1070,7 @@ mod tests {
                     &mut budget,
                     &mut pooled,
                     Some(&mut groups),
+                    None,
                 )
                 .unwrap();
                 groups.finish_asset(id);

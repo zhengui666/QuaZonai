@@ -953,6 +953,87 @@ mod tests {
     }
 
     #[test]
+    fn received_book_features_match_research_and_economic_prediction() {
+        use super::super::{
+            books::{BookFeatures, Books, FeatureBooks},
+            models::EconomicModels,
+        };
+        use crate::{feature_model::FeatureModel, signals::SignalModule};
+        use contracts::science::{FeatureMissingReasonV1, FeatureValueV1};
+        let (root, id) = source(false);
+        let mut research = FeatureBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+        let mut economic = Books::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+        let mut head = economic.next().unwrap();
+        let mut latest = None;
+        let prefix = vec![
+            FeatureValueV1 {
+                value: Some(17.0),
+                missing_reason: None,
+                event_ns: None,
+                observed_available_ns: None,
+                effective_available_ns: None,
+                sequence: None,
+            };
+            8
+        ];
+        let times = [
+            START + 122,
+            START + 123,
+            START + 124,
+            START + 1_000_123,
+            START + HOUR + 123,
+        ];
+        for at in times {
+            while head.as_ref().is_some_and(|frame| frame.received() <= at) {
+                latest = Some(BookFeatures::from_snapshot(&head.take().unwrap()).unwrap());
+                head = economic.next().unwrap();
+            }
+            let mut research_features = prefix.clone();
+            BookFeatures::append(&mut research_features, research.advance(at).unwrap(), at);
+            let mut economic_features = prefix.clone();
+            BookFeatures::append(&mut economic_features, latest.as_ref(), at);
+            assert_eq!(research_features, economic_features);
+            assert_eq!(&research_features[..8], &prefix);
+            if at == START + 122 {
+                assert_eq!(
+                    research_features[8].missing_reason,
+                    Some(FeatureMissingReasonV1::NotYetAvailable)
+                );
+            } else if at == START + 1_000_123 {
+                assert!(research_features[8..].iter().all(|f| f.value.is_none()
+                    && f.missing_reason == Some(FeatureMissingReasonV1::SourceMissing)));
+            } else {
+                assert!(research_features[8..].iter().all(|f| f.value.is_some()));
+                if at <= START + 124 {
+                    assert_eq!(
+                        research_features[8].event_ns.unwrap().get(),
+                        START - 1_000_000
+                    );
+                    assert_eq!(
+                        research_features[8].effective_available_ns.unwrap().get(),
+                        START + 123
+                    );
+                }
+            }
+            for slot in 8..12 {
+                let wasm = crate::ticks::tests::model(slot);
+                let module = SignalModule::new(&wasm, false).unwrap();
+                let mut model = FeatureModel::new(&module, Some(1), None).unwrap();
+                let (mut models, _) = EconomicModels::new(&[(1.0, module)], 1, None).unwrap();
+                assert_eq!(
+                    model.predict(at, at, 0, &research_features).unwrap(),
+                    models
+                        .predict(at, at, 0, &economic_features, None)
+                        .unwrap()
+                        .0
+                );
+            }
+        }
+        let missing = tempfile::tempdir().unwrap();
+        assert!(FeatureBooks::open(missing.path(), id, START, START + HOUR).is_err());
+    }
+
+    #[test]
     fn raw_hour_replay_uses_receipt_window_keeps_exchange_time_and_clears_empty_books() {
         let (root, id) = source(false);
         let mut books = RawBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();

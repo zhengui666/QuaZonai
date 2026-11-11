@@ -20,7 +20,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-pub(super) struct Snapshot {
+pub(in crate::ticks) struct Snapshot {
     pub deltas: OrderBookDeltas,
     pub midpoint: Option<Decimal>,
     pub bid_depth: Decimal,
@@ -134,6 +134,110 @@ impl Snapshot {
     }
 }
 
+/// Original received-book observations shared by research and economic prediction.
+#[derive(Clone)]
+pub(in crate::ticks) struct BookFeatures([contracts::science::FeatureValueV1; 4]);
+
+impl BookFeatures {
+    pub fn from_snapshot(snapshot: &Snapshot) -> Result<Self> {
+        use contracts::science::{FeatureMissingReasonV1, FeatureValueV1};
+        use nautilus_indicators::{book::imbalance::BookImbalanceRatio, indicator::Indicator};
+        use nautilus_model::{enums::BookType, orderbook::OrderBook};
+
+        let mut book = OrderBook::new(snapshot.deltas.instrument_id, BookType::L2_MBP);
+        book.apply_deltas(&snapshot.deltas)?;
+        let mut ratio = BookImbalanceRatio::new();
+        ratio.handle_book(&book);
+        // Upstream retains its previous ratio when a side is absent.
+        let bid = book.best_bid_size().is_some();
+        let ask = book.best_ask_size().is_some();
+        let values = [
+            (bid && ask).then_some(ratio.value),
+            book.spread()
+                .zip(book.midpoint())
+                .map(|(spread, mid)| spread / mid * 10_000.0),
+            bid.then(|| book.bids(Some(5)).map(|level| level.exposure()).sum()),
+            ask.then(|| book.asks(Some(5)).map(|level| level.exposure()).sum()),
+        ];
+        let feature = |value: Option<f64>| -> Result<FeatureValueV1> {
+            ensure!(value.is_none_or(f64::is_finite), "TICK_FEATURE_NONFINITE");
+            Ok(FeatureValueV1 {
+                value,
+                missing_reason: value
+                    .is_none()
+                    .then_some(FeatureMissingReasonV1::SourceMissing),
+                event_ns: Some(super::super::counter(snapshot.deltas.ts_event.as_u64())?),
+                observed_available_ns: Some(super::super::counter(snapshot.received())?),
+                effective_available_ns: Some(super::super::counter(snapshot.received())?),
+                sequence: Some(super::super::counter(snapshot.deltas.sequence)?),
+            })
+        };
+        let [ratio, spread, bid, ask] = values;
+        Ok(Self([
+            feature(ratio)?,
+            feature(spread)?,
+            feature(bid)?,
+            feature(ask)?,
+        ]))
+    }
+
+    pub fn append(
+        features: &mut Vec<contracts::science::FeatureValueV1>,
+        frame: Option<&Self>,
+        decision: u64,
+    ) {
+        use contracts::science::{FeatureMissingReasonV1, FeatureValueV1};
+        if let Some(frame) =
+            frame.filter(|frame| frame.0[0].effective_available_ns.unwrap().get() <= decision)
+        {
+            features.extend_from_slice(&frame.0);
+        } else {
+            features.extend((0..4).map(|_| FeatureValueV1 {
+                value: None,
+                missing_reason: Some(FeatureMissingReasonV1::NotYetAvailable),
+                event_ns: None,
+                observed_available_ns: None,
+                effective_available_ns: None,
+                sequence: None,
+            }));
+        }
+    }
+}
+
+pub(in crate::ticks) struct FeatureBooks {
+    reader: Books,
+    next: Option<Snapshot>,
+    latest: Option<BookFeatures>,
+}
+
+impl FeatureBooks {
+    pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
+        ensure!(
+            root.join("book-snapshots.source.json").is_file(),
+            "TICK_BOOK_FEATURE_SOURCE_REQUIRED"
+        );
+        let mut reader = Books::open(root, id, start, end)?;
+        let next = reader.next()?;
+        Ok(Self {
+            reader,
+            next,
+            latest: None,
+        })
+    }
+
+    pub fn advance(&mut self, received: u64) -> Result<Option<&BookFeatures>> {
+        while self
+            .next
+            .as_ref()
+            .is_some_and(|frame| frame.received() <= received)
+        {
+            self.latest = Some(BookFeatures::from_snapshot(&self.next.take().unwrap())?);
+            self.next = self.reader.next()?;
+        }
+        Ok(self.latest.as_ref())
+    }
+}
+
 pub(super) fn floor_book_sizes(snapshot: &mut OrderBookDeltas, increment: Quantity) -> Result<()> {
     for delta in &mut snapshot.deltas {
         delta.order.size = delta
@@ -151,7 +255,7 @@ pub(super) fn floor_book_sizes(snapshot: &mut OrderBookDeltas, increment: Quanti
     Ok(())
 }
 
-pub(super) struct Books(Source);
+pub(in crate::ticks) struct Books(Source);
 enum Source {
     Native(NativeBooks),
     Published(super::source_books::RawBooks),
@@ -459,6 +563,72 @@ mod tests {
         rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
         OrderBookDeltas::new(id, rows)
     }
+    #[test]
+    fn native_features_preserve_clocks_and_mask_missing_sides() {
+        use contracts::science::FeatureMissingReasonV1;
+        let frame = Snapshot::new(snapshot()).unwrap();
+        let original = BookFeatures::from_snapshot(&frame).unwrap();
+        let mut features = Vec::new();
+        BookFeatures::append(&mut features, Some(&original), 199);
+        assert!(features.iter().all(|f| f.value.is_none()
+            && f.missing_reason == Some(FeatureMissingReasonV1::NotYetAvailable)));
+        features.clear();
+        BookFeatures::append(&mut features, Some(&original), 250);
+        assert_eq!(
+            features.iter().map(|f| f.value).collect::<Vec<_>>(),
+            [Some(2.0 / 3.0), Some(200.0), Some(198.0), Some(303.0)]
+        );
+        assert!(features
+            .iter()
+            .all(|f| f.event_ns.unwrap().get() == 100
+                && f.effective_available_ns.unwrap().get() == 200));
+        let mut one_sided = snapshot();
+        one_sided.deltas.pop();
+        one_sided.deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+        let frame = Snapshot::new(OrderBookDeltas::new(
+            one_sided.instrument_id,
+            one_sided.deltas,
+        ))
+        .unwrap();
+        let missing = BookFeatures::from_snapshot(&frame).unwrap();
+        features.clear();
+        BookFeatures::append(&mut features, Some(&missing), 250);
+        for index in [0, 1, 3] {
+            assert_eq!(features[index].value, None);
+            assert_eq!(
+                features[index].missing_reason,
+                Some(FeatureMissingReasonV1::SourceMissing)
+            );
+        }
+        assert_eq!(features[2].value, Some(198.0));
+    }
+
+    #[test]
+    fn native_depth_uses_only_five_levels_and_ratio_uses_top_level() {
+        let template = snapshot();
+        let mut deltas = vec![template.deltas[0]];
+        for (side, start, step, size) in [(OrderSide::Buy, 99, -1, 2), (OrderSide::Sell, 101, 1, 3)]
+        {
+            for index in 0..6 {
+                let mut delta = template.deltas[1];
+                delta.order = BookOrder::new(
+                    side,
+                    Price::from((start + index * step).to_string().as_str()),
+                    Quantity::from(size.to_string().as_str()),
+                    0,
+                );
+                delta.flags &= !(RecordFlag::F_LAST as u8);
+                deltas.push(delta);
+            }
+        }
+        deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+        let frame = Snapshot::new(OrderBookDeltas::new(template.instrument_id, deltas)).unwrap();
+        let features = BookFeatures::from_snapshot(&frame).unwrap();
+        assert_eq!(features.0[0].value, Some(2.0 / 3.0));
+        assert_eq!(features.0[2].value, Some(970.0));
+        assert_eq!(features.0[3].value, Some(1545.0));
+    }
+
     #[test]
     fn complete_snapshot_preserves_clocks_depth_and_empty_reset() {
         let frame = Snapshot::new(snapshot()).unwrap();

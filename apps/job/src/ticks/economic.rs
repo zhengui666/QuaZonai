@@ -27,7 +27,7 @@ use std::{
     str::FromStr,
 };
 
-mod books;
+pub(super) mod books;
 mod models;
 mod native;
 mod source_books;
@@ -2195,8 +2195,16 @@ pub fn replay_models_with_funding_and_cores(
         .context("ECONOMIC_USDT0_USDC_BRIDGE_REQUIRED")?;
     let observed = observed(s);
     let normalize_sizes = normalize_observed_book_sizes(s);
+    let book_profile = request.research.parameters.uses_book_features();
+    if book_profile {
+        ensure!(
+            funding_root.join("book-snapshots.source.json").is_file(),
+            "TICK_BOOK_FEATURE_SOURCE_REQUIRED"
+        );
+    }
+    let mut book_features = vec![None; assets.len()];
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
-    let mut book_readers = if observed {
+    let mut book_readers = if observed || book_profile {
         Some(books::BookReaders::open(
             funding_root,
             &assets
@@ -2211,15 +2219,9 @@ pub fn replay_models_with_funding_and_cores(
         None
     };
     let mut book_heads = Vec::new();
-    if observed {
-        for (i, asset) in assets.iter().enumerate() {
+    if observed || book_profile {
+        for i in 0..assets.len() {
             let head = book_readers.as_mut().unwrap().next(i)?;
-            let head = if normalize_sizes {
-                head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
-                    .transpose()?
-            } else {
-                head
-            };
             if let Some(head) = &head {
                 book_heap.push(Reverse((head.received(), i)));
             }
@@ -2378,14 +2380,16 @@ pub fn replay_models_with_funding_and_cores(
         {
             let i = book_heap.pop().unwrap().0 .1;
             let frame = book_heads[i].take().unwrap();
-            snapshots.insert(i, frame);
-            let next = book_readers.as_mut().unwrap().next(i)?;
-            book_heads[i] = if normalize_sizes {
-                next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
-                    .transpose()?
+            if book_profile {
+                book_features[i] = Some(books::BookFeatures::from_snapshot(&frame)?);
+            }
+            let frame = if normalize_sizes {
+                frame.floor_sizes(assets[i].instrument.size_increment())?
             } else {
-                next
+                frame
             };
+            snapshots.insert(i, frame);
+            book_heads[i] = book_readers.as_mut().unwrap().next(i)?;
             if let Some(next) = &book_heads[i] {
                 book_heap.push(Reverse((next.received(), i)));
             }
@@ -2520,6 +2524,18 @@ pub fn replay_models_with_funding_and_cores(
                             &current,
                         )?,
                     ];
+                    let mut extended_features;
+                    let features = if book_profile {
+                        extended_features = features.to_vec();
+                        books::BookFeatures::append(
+                            &mut extended_features,
+                            book_features[i].as_ref(),
+                            current.event,
+                        );
+                        extended_features.as_slice()
+                    } else {
+                        &features
+                    };
                     let model = a.model.as_mut().context("ECONOMIC_MODEL_MISSING")?;
                     let remaining_fuel = request
                         .research
@@ -2530,7 +2546,7 @@ pub fn replay_models_with_funding_and_cores(
                         event,
                         current.feature_event(received),
                         ordinal,
-                        &features,
+                        features,
                         remaining_fuel,
                     )?;
                     a.score = Some(score);
@@ -3149,6 +3165,12 @@ pub fn replay_models_with_funding_and_cores(
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if funding_manifest.is_none(){"PERIODIC_FUNDING_INAPPLICABLE_TO_CURRENCY_PAIR_ASSETS"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if book_profile {
+        result.methods.insert(
+            "features".into(),
+            super::feature_schema(&request.research).into(),
+        );
+    }
     if let Some(evidence) = initial_conversion_evidence {
         result
             .methods

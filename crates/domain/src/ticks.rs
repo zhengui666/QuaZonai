@@ -75,6 +75,13 @@ pub fn evaluation_request(
         return fail("TICK_SOURCE_REVISION_REQUIRED");
     }
     let p = &request.parameters;
+    if p.uses_book_features()
+        && (!received
+            || input.representation
+                != Some(NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1))
+    {
+        return fail("TICK_BOOK_FEATURE_RECEIVED_FLOW_REQUIRED");
+    }
     if p.fast_period_cohorts == 0
         || p.slow_period_cohorts <= p.fast_period_cohorts
         || p.slow_period_cohorts > MAXIMUM_TICK_ROWS
@@ -221,6 +228,44 @@ mod tests {
     use super::*;
     use contracts::ticks::NativeTickRepresentationV1;
     use serde_json::json;
+
+    #[test]
+    fn optional_book_profile_requires_received_flow_and_preserves_request_shape() {
+        let wire = json!({
+            "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
+                "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80",
+                "source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+            "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+            "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+            "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+            "train_end_ns":"30","validation_end_ns":"50"
+        });
+        let mut request: NativeTradeTickFactorEvaluationRequestV1 =
+            serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
+        request.parameters.feature_profile =
+            Some(contracts::ticks::NativeTickFeatureProfileV1::ReceivedFlowV1);
+        assert!(evaluation_request(&request).is_ok());
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["parameters"]["feature_profile"],
+            "RECEIVED_FLOW_V1"
+        );
+        request.parameters.feature_profile =
+            Some(contracts::ticks::NativeTickFeatureProfileV1::ReceivedFlowBookV1);
+        assert!(evaluation_request(&request).is_err());
+        request.input.availability =
+            contracts::ticks::NativeTickAvailabilityV1::ReceivedTimeObserved;
+        request.input.maximum_receive_delay_ns = Some(DbCounter::new(1).unwrap());
+        request.sampling.kind = NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+        request.input.representation = Some(NativeTickRepresentationV1::ReceivedTimeCohortCacheV1);
+        assert!(evaluation_request(&request).is_err());
+        request.input.representation =
+            Some(NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1);
+        assert!(evaluation_request(&request).is_ok());
+        let mut null = wire;
+        null["parameters"]["feature_profile"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<NativeTradeTickFactorEvaluationRequestV1>(null).is_err());
+    }
 
     #[test]
     fn explicit_cache_representations_reject_retired_row_allowances() {
