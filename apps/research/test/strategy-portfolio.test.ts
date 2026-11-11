@@ -1,3 +1,4 @@
+import { Study } from '../src/documents.ts';
 import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -333,12 +334,13 @@ test('catalog replay requires exact scientific fuel and row echoes for the seale
   assert.deepEqual(data, original, 'matching an execution echo cannot rewrite frozen requests or catalog bindings');
 });
 
-test('owner stop aborts the ensemble child and joins its provider-free native process', { timeout: 10_000 }, async () => {
+for (const legacy of [false, true]) test(`owner stop settles a standalone native trial and resumes original conditions${legacy ? ' from an old completed stop' : ''}`, { timeout: 10_000 }, async () => {
   const state = await setup(); const pidPath = join(state.directory, 'native.pid'); const script = join(state.directory, 'wait.mjs');
   await writeFile(script, `import {writeFileSync} from 'node:fs'; if (process.env.QZ_TEST_PROVIDER_SECRET) throw new Error('provider_environment_leaked'); writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000);`);
+  const originalBinary = await readFile(process.env.QZ_JOB_BINARY!, 'utf8');
   await writeFile(process.env.QZ_JOB_BINARY!, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
   state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Owned cancellation protocol, no computation result.', members })]);
-  const host = await openResearch(state.options);
+  let host = await openResearch(state.options);
   try {
     const receipt = await startLegacyResearch(host, 'ensemble-owner-stop', state.input);
     let pid: number;
@@ -346,17 +348,45 @@ test('owner stop aborts the ensemble child and joins its provider-free native pr
       try { pid = Number(await readFile(pidPath, 'utf8')); break; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await new Promise((resolve) => setTimeout(resolve, 5)); }
     }
+    const exposures = await host.harness.snapshot(Exposures, context);
     await host.stop(receipt.conversationId);
     assert.throws(() => process.kill(pid, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === 'ESRCH');
     assert.equal((await host.tasks()).tasks.length, 0);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.final!.status, 'STOPPED'); assert.equal(facts.final!.result, null);
+    assert.deepEqual(await host.harness.snapshot(Exposures, context), exposures);
     assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').members, members);
+    assert.equal(facts.trials[0]!.status, 'FAILED'); assert.equal(facts.trials[0]!.error, 'owner_stop');
     const children = await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context);
     assert.equal(children.items.length, 1);
     const child = children.items[0]!;
     assert.equal(child.state.status, 'terminal');
     if (child.state.status === 'terminal') assert.equal(child.state.outcome.status, 'aborted');
+    if (legacy) {
+      // Old standalone stops completed their controller task while leaving the trial STARTED.
+      await host.harness.commit(async tx => {
+        const trial = (await tx.doc(Study, receipt.conversationId)).trials[0]!;
+        trial.status = 'STARTED'; trial.error = null; delete trial.errorDetail;
+      }, context);
+    }
+    await host.close(); host = await openResearch(state.options);
+    const stopped = (await host.view(receipt.conversationId)).research!;
+    assert.equal(stopped.trials[0]!.status, legacy ? 'STARTED' : 'FAILED');
+    await writeFile(process.env.QZ_JOB_BINARY!, originalBinary, { mode: 0o700 });
+    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Owned cancellation protocol, no computation result.', members }),
+      tool('research_finish', { reason: 'Original-condition retry recorded after owner maintenance.' })]);
+    const recovery = await host.resume(receipt.conversationId, receipt.submissionId, 'Retry the original candidate under the unchanged input.');
+    await (await host.harness.submission(recovery.submissionId, context))!.wait(context);
+    const resumed = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(resumed.input, facts.input);
+    assert.deepEqual(resumed.trials.map(trial => trial.status), ['FAILED', 'COMPUTED']);
+    assert.equal(resumed.trials[0]!.error, 'owner_stop');
+    assert.deepEqual(resumed.trials[0]!.proposal, facts.trials[0]!.proposal);
+    assert.deepEqual(resumed.trials[1]!.proposal, facts.trials[0]!.proposal);
+    assert.equal(resumed.previousStops![0]!.previousSubmissionId, receipt.submissionId);
+    assert.equal(resumed.previousStops![0]!.final.reason, 'owner_stop');
+    assert.equal(resumed.final!.status, 'STOPPED');
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.slice(0, exposures!.windows.length), exposures!.windows);
   } finally { await host.close(); await state.cleanup(); }
 });
 
