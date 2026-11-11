@@ -2,12 +2,12 @@ import type { EquityPoint, JsonObject, ListPage, Metric } from './index.ts';
 import { addDecimal, compareDecimal, multiplyDecimal, subtractDecimal } from './pm-validation.ts';
 
 export type ParameterScanMode = 'FACTOR' | 'STRATEGY';
-export type ParameterScanKey = 'fast_period' | 'slow_period' | 'threshold' | 'investedWeight' | 'targetTtlNs';
+export type ParameterScanKey = 'fast_period' | 'slow_period' | 'threshold' | 'investedWeight' | 'targetTtlNs' | 'maximum_asset_weight' | 'participation_fraction';
 export type ParameterValues = Partial<Record<ParameterScanKey, string>>;
 export type ParameterScanSource = { kind: 'factor'; factorId: string } | { kind: 'research-trial'; researchId: number; trialId: number };
 export type ParameterDomain = { kind: 'values'; values: string[] } | { kind: 'range'; start: string; end: string; step: string };
 export interface ParameterAxis { key: ParameterScanKey; domain: ParameterDomain }
-export type ParameterScanMetricId = 'factor.pearson_ic' | 'account.sharpe252' | 'account.cagr' | 'account.maxDrawdown';
+export type ParameterScanMetricId = 'factor.pearson_ic' | 'account.sharpe252' | 'account.cagr' | 'account.maxDrawdown' | 'account.sharpe365' | 'account.cagr365';
 export interface ParameterScanObjective { metricId: ParameterScanMetricId; partition: 'VALIDATION'; direction: 'maximize' }
 export interface ParameterScanPlan {
   name: string; source: ParameterScanSource; mode: ParameterScanMode; axes: ParameterAxis[];
@@ -20,28 +20,32 @@ export interface ParameterScanGrid {
 }
 export interface ParameterScanPoint { ordinal: string; parameters: ParameterValues; skipReason: string | null }
 export interface ParameterScanParameterDefinition {
-  key: ParameterScanKey; label: string; kind: 'integer' | 'number' | 'decimal' | 'nanoseconds'; modes: ParameterScanMode[];
+  key: ParameterScanKey; label: string; kind: 'integer' | 'number' | 'decimal' | 'nanoseconds'; modes: ParameterScanMode[]; modalities?: ('BAR' | 'TRADE_TICK')[];
 }
 export interface ParameterScanObjectiveDefinition {
-  metricId: ParameterScanMetricId; label: string; mode: ParameterScanMode; partition: 'VALIDATION'; direction: 'maximize'; nativeKey: string; unit: string;
+  metricId: ParameterScanMetricId; label: string; mode: ParameterScanMode; partition: 'VALIDATION'; direction: 'maximize'; nativeKey: string; unit: string; modalities?: ('BAR' | 'TRADE_TICK')[];
 }
 export const parameterScanParameters: readonly ParameterScanParameterDefinition[] = [
   { key: 'fast_period', label: '快 EMA 周期', kind: 'integer', modes: ['FACTOR', 'STRATEGY'] },
   { key: 'slow_period', label: '慢 EMA 周期', kind: 'integer', modes: ['FACTOR', 'STRATEGY'] },
-  { key: 'threshold', label: '信号阈值', kind: 'number', modes: ['STRATEGY'] },
+  { key: 'threshold', modalities: ['BAR'], label: '信号阈值', kind: 'number', modes: ['STRATEGY'] },
   { key: 'investedWeight', label: '投入比例', kind: 'decimal', modes: ['STRATEGY'] },
-  { key: 'targetTtlNs', label: '目标有效期（纳秒）', kind: 'nanoseconds', modes: ['STRATEGY'] },
+  { key: 'targetTtlNs', modalities: ['BAR'], label: '目标有效期（纳秒）', kind: 'nanoseconds', modes: ['STRATEGY'] },
+  { key: 'maximum_asset_weight', label: '单资产最大权重', kind: 'decimal', modes: ['STRATEGY'], modalities: ['TRADE_TICK'] },
+  { key: 'participation_fraction', label: '成交参与比例', kind: 'decimal', modes: ['STRATEGY'], modalities: ['TRADE_TICK'] },
 ];
 export const parameterScanObjectives: readonly ParameterScanObjectiveDefinition[] = [
   { metricId: 'factor.pearson_ic', label: '验证集 Pearson IC', mode: 'FACTOR', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'pearson_ic', unit: 'RATIO' },
-  { metricId: 'account.sharpe252', label: '原生夏普比率（252 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'Sharpe Ratio (252 days)', unit: 'RATIO' },
-  { metricId: 'account.cagr', label: '原生 CAGR（252 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'CAGR (252 days)', unit: 'RATIO' },
+  { metricId: 'account.sharpe252', modalities: ['BAR'], label: '原生夏普比率（252 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'Sharpe Ratio (252 days)', unit: 'RATIO' },
+  { metricId: 'account.cagr', modalities: ['BAR'], label: '原生 CAGR（252 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'CAGR (252 days)', unit: 'RATIO' },
   { metricId: 'account.maxDrawdown', label: '原生最大回撤（负值，越接近零越好）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'Max Drawdown', unit: 'RATIO' },
+  { metricId: 'account.sharpe365', label: '原生夏普比率（365 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'sharpe_365', unit: 'RATIO', modalities: ['TRADE_TICK'] },
+  { metricId: 'account.cagr365', label: '原生 CAGR（365 天）', mode: 'STRATEGY', partition: 'VALIDATION', direction: 'maximize', nativeKey: 'annualized_return_365', unit: 'RATIO', modalities: ['TRADE_TICK'] },
 ];
 
 export interface ParameterScanSourceView {
   source: ParameterScanSource; label: string; researchId: number; trialId: number; memberIndexes: number[];
-  datasetId: string | null; datasetName: string | null; modality: 'BAR'; currency: string | null;
+  datasetId: string | null; datasetName: string | null; modality: 'BAR' | 'TRADE_TICK'; currency: string | null;
   interval: { startNs: string; endExclusiveNs: string }; assumptions: string[];
 }
 export interface ParameterScanOptions {
@@ -159,7 +163,7 @@ function normalizeAxis(value: unknown, mode: ParameterScanMode, index: number): 
     || ['integer', 'nanoseconds'].includes(definition.kind) && step.includes('.')) fail('parameter_scan_range_invalid', `${path}.domain`);
   const count = rangeLength(start, end, step);
   const normalized: NormalizedParameterAxis = { key, domain: { kind: 'range', start, end, step }, count: count.toString(), duplicates: '0' };
-  if (key === 'investedWeight' && (step.split('.')[1]?.length ?? 0) > 18) fail('parameter_scan_value_invalid', `${path}.domain.step`);
+  if (definition.kind === 'decimal' && (step.split('.')[1]?.length ?? 0) > 18) fail('parameter_scan_value_invalid', `${path}.domain.step`);
   if (key === 'threshold' && count > 1n) {
     // A range may cross a binary exponent boundary between its endpoints.
     // Require the exact decimal step to cover the widest f64 spacing anywhere

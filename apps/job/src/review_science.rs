@@ -437,7 +437,7 @@ fn interval_mean(values: &[f64], block: usize) -> Option<(f64, f64)> {
         quantile(&mut samples, 0.975)?,
     ))
 }
-fn native_max_drawdown(returns: &Returns) -> Option<f64> {
+pub(crate) fn native_max_drawdown(returns: &Returns) -> Option<f64> {
     if returns.is_empty() {
         return None;
     }

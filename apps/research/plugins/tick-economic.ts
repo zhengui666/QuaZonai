@@ -6,7 +6,8 @@ import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult } from '../../../packages/contracts/src/economic-tick.ts';
 import { canonical, Study } from '../src/documents.ts';
-import { executeNativeValue, nativeTargetForData, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { executeNativeValue, nativeTargetForData, retainNativeRemoteUncertainty, withNativeRemoteTracking, cancelUnsettledNativeExecutions, nativeUncertainTaskId, reconcileNativeExecution } from '../src/native-execution.ts';
+import type { NativeScanCheckpoint, NativeScanContext } from '../src/native-execution.ts';
 import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { tickEconomicPolicy } from '../src/input.ts';
@@ -26,9 +27,9 @@ export async function replayTickEconomic(target: NativeTarget, request: NativeTi
   return result;
 }
 
-type EconomicInput = { trialId: number; model: string; catalog: string; target: NativeTarget; request: NativeTickEconomicRequest; bookCores: number; partition?: 'HELDOUT' };
+type EconomicInput = { trialId: number; model: string; catalog: string; target: NativeTarget; request: NativeTickEconomicRequest; bookCores: number; partition?: 'HELDOUT'; scanContext?: NativeScanContext };
 
-export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, JsonObject>({
+export const TickEconomicTask = defineTask<EconomicInput, NativeScanCheckpoint, JsonObject>({
   name: 'qz.factor.tick-economic', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     let directory: string | undefined;
@@ -37,7 +38,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       const model = join(directory, 'model.wasm');
       await writeFile(model, compileWasm(task.input.model, 'retained-factor.wat', 'replay-tick-economic'));
       const result = await withNativeRemoteTracking(task.id, runtime, context, () => replayTickEconomic(task.input.target,
-        task.input.request, { catalog: task.input.catalog, model, bookCores: task.input.bookCores }, directory!, context));
+        task.input.request, { catalog: task.input.catalog, model, bookCores: task.input.bookCores }, directory!, context), task.input.scanContext);
       const heldout = task.input.partition === 'HELDOUT';
       const summary: JsonObject = {
         model: result.model, methods: result.methods, limitations: result.limitations,
@@ -51,26 +52,43 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
         ...(result.small_capital_diagnostics ? { small_capital_diagnostics: result.small_capital_diagnostics } : {}),
       };
       await runtime.commit(async tx => {
-        const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        if (!heldout) trial.economic = { taskId: task.id, status: 'COMPUTED', summary, error: null };
+        if (!heldout && !task.input.scanContext) {
+          const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
+          trial.economic = { taskId: task.id, status: 'COMPUTED', summary, error: null };
+        }
         return { status: 'terminal', outcome: { status: 'completed', result: summary } };
       }, context);
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
+      const nativeTaskId = task.input.scanContext ? nativeUncertainTaskId(error) : null;
+      if (nativeTaskId !== null) {
+        await runtime.commit(() => ({ status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'reconcile', nativeTaskId } }), context);
+        return;
+      }
       const message = executionDiagnostic(error, 'tick_economic_replay_failed');
       await runtime.commit(async tx => {
-        const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        if (task.input.partition !== 'HELDOUT') trial.economic = { taskId: task.id, status: 'FAILED', summary: null, error: message };
+        if (task.input.partition !== 'HELDOUT' && !task.input.scanContext) {
+          const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
+          trial.economic = { taskId: task.id, status: 'FAILED', summary: null, error: message };
+        }
         return { status: 'terminal', outcome: { status: 'failed', error: { message,
           detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'replay-tick-economic' }) } } } };
       }, context);
     } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+  }, async reconcile(task, runtime, context) {
+    if (task.state.checkpoint.phase !== 'reconcile') throw new Error('native_reconciliation_checkpoint_invalid');
+    const settled = await reconcileNativeExecution(task.id, runtime, task.state.checkpoint.nativeTaskId, context);
+    await runtime.commit(() => settled ? { status: 'running', checkpoint: { phase: 'compute' } }
+      : { status: 'sleeping', until: runtime.now() + 1000, checkpoint: task.state.checkpoint }, context);
   } },
   async abort(task, runtime, context) {
+    if (task.input.scanContext) await cancelUnsettledNativeExecutions(task.id, runtime, context);
     await runtime.commit(async tx => {
-      const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-      if (task.input.partition !== 'HELDOUT') trial.economic = { taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
+      if (task.input.partition !== 'HELDOUT' && !task.input.scanContext) {
+        const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
+        trial.economic = { taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
+      }
       return { status: 'terminal', outcome: { status: 'aborted' } };
     }, context);
   },

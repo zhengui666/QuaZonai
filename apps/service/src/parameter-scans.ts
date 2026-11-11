@@ -15,6 +15,9 @@ import { Study, canonical } from '../../research/src/documents.ts';
 import { FactorTask } from '../../research/plugins/native-factor-task.ts';
 import { CatalogScopeTask, CatalogScopes } from '../../research/plugins/native-catalog-scope.ts';
 import { PortfolioEvaluationTask } from '../../research/plugins/native-portfolio-task.ts';
+import { TickEconomicTask } from '../../research/plugins/tick-economic.ts';
+import { tickEconomicPolicy } from '../../research/src/input.ts';
+import { validateNativeTickEconomicRequest } from '../../../packages/contracts/src/economic-tick.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { resolveStrategyPolicy, strategyMembers, thresholdPolicy, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
 import type { StrategyMember, StrategyPolicy } from '../../research/src/strategy.ts';
@@ -22,7 +25,7 @@ import { NativeRemoteUncertainty, remoteNativeCapabilities } from '../../researc
 import { reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
 import { classifyExecutionError } from '../../research/src/execution-errors.ts';
-import { Application, json, object, Problem } from './facts.ts';
+import { Application, json, object, Problem, nsTime } from './facts.ts';
 import { boundScienceTarget } from './science-binding.ts';
 import type { ServiceConfig } from './config.ts';
 import { factorReference } from './factors.ts';
@@ -34,7 +37,7 @@ import { nativeCurve } from './projections.ts';
 const context = BACKGROUND_CONTEXT;
 type ScanMetric = ParameterScanMetric;
 type ScanTrial = ParameterScanTrial;
-type RetainedSource = { researchId: number; trialId: number; memberIndex: number | null; name: string; data: JsonObject; members: StrategyMember[]; policy: StrategyPolicy | null; target: NativeTarget; defaults: ParameterValues; view: ParameterScanSourceView };
+type RetainedSource = { researchId: number; trialId: number; memberIndex: number | null; name: string; data: JsonObject; members: StrategyMember[]; policy: StrategyPolicy | null; target: NativeTarget; defaults: ParameterValues; tickEconomic?: ReturnType<typeof tickEconomicPolicy>; view: ParameterScanSourceView };
 type ScanIndex = { conversationId: number; taskId: number; requestId: string; createdAt: string };
 type ScanFact = { original: ParameterScanStart; sourceView: ParameterScanSourceView; grid: ParameterScanGrid; trials: Record<string, ScanTrial>; createdAt: string; updatedAt: string; error: string | null; stoppedAt: string | null; stopTaskId?: number; scopeTaskId?: number };
 type ScanInput = { id: string; original: ParameterScanStart; grid: ParameterScanGrid; source: RetainedSource; implementationDigest?: string };
@@ -60,8 +63,15 @@ function inputPlan(value: unknown): ParameterScanPlan {
 function inputStart(value: unknown): ParameterScanStart {
   try { return parameterScanStart(value); } catch (error) { if (error instanceof ParameterScanError) throw new Problem(error.code, 422); throw error; }
 }
-function gridFor(plan: ParameterScanPlan, defaults: ParameterValues): ParameterScanGrid {
-  try { return normalizeParameterScan(plan, defaults); } catch (error) { if (error instanceof ParameterScanError) throw new Problem(error.code, 422); throw error; }
+function gridFor(plan: ParameterScanPlan, source: RetainedSource): ParameterScanGrid {
+  if (plan.axes.some(axis => !parameterScanParameters.some(row => row.key === axis.key && (!row.modalities || row.modalities.includes(source.view.modality))))
+    || !parameterScanObjectives.some(row => row.metricId === plan.objective.metricId && (!row.modalities || row.modalities.includes(source.view.modality)))) throw new Problem('parameter_scan_modality_unsupported', 422);
+  try {
+    const grid = normalizeParameterScan(plan, source.defaults);
+    if (source.view.modality === 'TRADE_TICK' && grid.axes.some(axis => ['fast_period', 'slow_period'].includes(axis.key)
+      && (axis.domain.kind === 'values' ? axis.domain.values : [axis.domain.end]).some(value => BigInt(value) > 1_000_000n))) throw new Problem('parameter_scan_tick_period_invalid', 422);
+    return grid;
+  } catch (error) { if (error instanceof ParameterScanError) throw new Problem(error.code, 422); throw error; }
 }
 function pointAt(grid: ParameterScanGrid, ordinal: string) {
   try { return parameterScanPoint(grid, ordinal); } catch (error) { if (error instanceof ParameterScanError) throw new Problem(error.code, 422); throw error; }
@@ -82,7 +92,7 @@ function sourceFromStudy(source: ParameterScanSource, mode: ParameterScanMode, s
   const trial = study.trials.find(row => row.taskId === ref.trialId);
   if (!trial || trial.status !== 'COMPUTED' || !trial.result) throw new Problem('parameter_scan_computed_source_required', 422);
   const native = nativeResearchInput(study.input.data);
-  if (native?.modality === 'TRADE_TICK') throw new Problem('parameter_scan_tick_unsupported', 422);
+  const tick = native?.modality === 'TRADE_TICK';
   const proposal = object(trial.proposal, 'parameter_scan_proposal');
   const allMembers = strategyMembers(proposal);
   const member = ref.memberIndex === null ? null : allMembers[ref.memberIndex];
@@ -94,11 +104,21 @@ function sourceFromStudy(source: ParameterScanSource, mode: ParameterScanMode, s
   // Scan feedback never receives the original independent-data binding.
   delete data.sealed;
   const target = boundScienceTarget(config, data);
-  const parameters = data.catalog_scan_request === undefined ? object(object(clipped.forecast, 'forecast').parameters, 'parameters') : object(clipped.parameters, 'parameters');
+  const parameters = tick ? object(clipped.parameters, 'parameters') : data.catalog_scan_request === undefined ? object(object(clipped.forecast, 'forecast').parameters, 'parameters') : object(clipped.parameters, 'parameters');
   const defaults: ParameterValues = {};
-  for (const key of ['fast_period', 'slow_period'] as const) if (typeof parameters[key] === 'number') defaults[key] = String(parameters[key]);
+  for (const key of ['fast_period', 'slow_period'] as const) {
+    const field = tick ? `${key}_cohorts` : key;
+    if (typeof parameters[field] === 'number') defaults[key] = String(parameters[field]);
+  }
   let policy: StrategyPolicy | null = null;
-  if (mode === 'STRATEGY') {
+  let tickEconomic: RetainedSource['tickEconomic'];
+  if (mode === 'STRATEGY' && tick) {
+    if (members.length !== 1) throw new Problem('parameter_scan_single_factor_required', 422);
+    tickEconomic = tickEconomicPolicy(data, study.input.policy);
+    defaults.investedWeight = tickEconomic.request.scenario.gross_fraction;
+    defaults.maximum_asset_weight = tickEconomic.request.scenario.maximum_asset_weight;
+    defaults.participation_fraction = tickEconomic.request.scenario.participation_fraction;
+  } else if (mode === 'STRATEGY') {
     if (data.catalog_scan_request !== undefined) throw new Problem('catalog_factor_only_account_binding_required', 422);
     policy = resolveStrategyPolicy(proposal, object(study.input.policy.strategy, 'strategy_policy'));
     validateNativeSimulationSettings(policy.simulationSettings, policy.kind === 'cross-market-threshold' ? policy.allocations!.map(row => row.instrumentId) : [policy.instrumentId!]);
@@ -108,21 +128,26 @@ function sourceFromStudy(source: ParameterScanSource, mode: ParameterScanMode, s
   const name = study.input.specification?.name ?? study.input.goal;
   const view: ParameterScanSourceView = { source, label: name, researchId: ref.researchId, trialId: ref.trialId,
     memberIndexes: ref.memberIndex === null ? allMembers.map((_, index) => index) : [ref.memberIndex], datasetId: null, datasetName: null,
-    modality: 'BAR', currency: typeof policy?.simulationSettings.base_currency === 'string' ? policy.simulationSettings.base_currency : null,
+    modality: tick ? 'TRADE_TICK' : 'BAR', currency: tickEconomic ? 'USDT' : typeof policy?.simulationSettings.base_currency === 'string' ? policy.simulationSettings.base_currency : null,
     interval: { startNs: String(clipped.train_end_ns), endExclusiveNs: String(clipped.validation_end_ns) }, assumptions: ['VALIDATION_ONLY', 'UNQUALIFIED_EXPLORATORY'] };
-  return { researchId: ref.researchId, trialId: ref.trialId, memberIndex: ref.memberIndex, name, data, members, policy, target, defaults, view };
+  return { researchId: ref.researchId, trialId: ref.trialId, memberIndex: ref.memberIndex, name, data, members, policy, target, defaults, ...(tickEconomic ? { tickEconomic } : {}), view };
 }
 
 function effectivePoint(source: RetainedSource, parameters: ParameterValues) {
   const data = json(source.data); const request = iterationRequest(data, true);
-  const native = data.catalog_scan_request === undefined ? object(object(request.forecast, 'forecast').parameters, 'parameters') : object(request.parameters, 'parameters');
-  native.fast_period = Number(parameters.fast_period); native.slow_period = Number(parameters.slow_period);
+  const tick = source.view.modality === 'TRADE_TICK';
+  const native = tick ? object(request.parameters, 'parameters') : data.catalog_scan_request === undefined ? object(object(request.forecast, 'forecast').parameters, 'parameters') : object(request.parameters, 'parameters');
+  native[tick ? 'fast_period_cohorts' : 'fast_period'] = Number(parameters.fast_period);
+  native[tick ? 'slow_period_cohorts' : 'slow_period'] = Number(parameters.slow_period);
   const policy = source.policy ? json(source.policy) as unknown as StrategyPolicy : null;
   if (policy) {
     policy.threshold = Number(parameters.threshold); policy.investedWeight = parameters.investedWeight!; policy.targetTtlNs = parameters.targetTtlNs!;
     thresholdPolicy(json(policy));
   }
-  return { data: withNativeResearchRequest(data, request), policy };
+  const effectiveData = withNativeResearchRequest(data, request);
+  const tickEconomic = source.tickEconomic ? { ...source.tickEconomic, request: validateNativeTickEconomicRequest({ ...source.tickEconomic.request, research: request,
+    scenario: { ...source.tickEconomic.request.scenario, gross_fraction: parameters.investedWeight!, maximum_asset_weight: parameters.maximum_asset_weight!, participation_fraction: parameters.participation_fraction! } }) } : undefined;
+  return { data: effectiveData, policy, tickEconomic };
 }
 
 function unavailable(reason: string, metricId: ParameterScanMetricId): ScanMetric {
@@ -143,9 +168,17 @@ function trialMetrics(summary: JsonObject): ScanMetric[] {
   const component = summary.partitions_component && typeof summary.partitions_component === 'object' && !Array.isArray(summary.partitions_component) ? summary.partitions_component.index : null;
   if (typeof component === 'number') { factorMetric.component = component; factorMetric.label = `component ${component}: ${factorMetric.label}`; }
   const result: ScanMetric[] = [factorMetric];
+  if (Array.isArray(summary.partition_metrics)) {
+    const rows = summary.partition_metrics.filter(value => value && typeof value === 'object' && !Array.isArray(value) && value.partition === 'VALIDATION');
+    const metrics = rows.length === 1 ? object(rows[0]) : {};
+    for (const [key, field] of [['account.sharpe365', 'sharpe_365'], ['account.cagr365', 'annualized_return_365'], ['account.maxDrawdown', 'max_drawdown']] as const) {
+      result.push(metricValue({ value: metrics[field] }, key));
+    }
+    return result;
+  }
   const portfolio = summary.portfolio && typeof summary.portfolio === 'object' && !Array.isArray(summary.portfolio) ? summary.portfolio : null;
   const rows = portfolio?.partition === 'VALIDATION' && Array.isArray(portfolio.statistics) ? portfolio.statistics.map(value => object(value, 'native_statistic')) : [];
-  for (const definition of parameterScanObjectives.filter(row => row.mode === 'STRATEGY')) {
+  for (const definition of parameterScanObjectives.filter(row => row.mode === 'STRATEGY' && (!row.modalities || row.modalities.includes('BAR')))) {
     const selected = rows.filter(row => row.native_key === definition.nativeKey);
     result.push(selected.length === 1 ? metricValue(selected[0], definition.metricId) : unavailable('native_metric_unavailable', definition.metricId));
   }
@@ -154,7 +187,12 @@ function trialMetrics(summary: JsonObject): ScanMetric[] {
 function selectedMetric(metrics: Metric[], metricId: ParameterScanMetricId): ScanMetric { return metrics.find(row => row.key === metricId) as ScanMetric | undefined ?? unavailable('metric_missing', metricId); }
 function sampleCounts(summary: JsonObject): Record<string, string> | null {
   const partitions = Array.isArray(summary.partitions) ? summary.partitions.filter(value => value && typeof value === 'object' && !Array.isArray(value) && value.partition === 'VALIDATION') : [];
-  if (partitions.length !== 1) return null;
+  if (partitions.length !== 1) {
+    const economic = Array.isArray(summary.partition_metrics) ? summary.partition_metrics.find(value => value && typeof value === 'object' && !Array.isArray(value) && value.partition === 'VALIDATION') : null;
+    if (!economic) return null;
+    const row = object(economic);
+    return Object.fromEntries(['days', 'valid_return_days'].flatMap(key => typeof row[key] === 'string' ? [[key, row[key] as string]] : []));
+  }
   const metric = object(object(partitions[0]).metric, 'factor_metric');
   const counts = metric.counts;
   if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return null;
@@ -221,7 +259,9 @@ export const ParameterScanTask = defineTask<ScanInput, ScanCheckpoint, null>({
           if (task.state.checkpoint.scope) effective.data.catalog_scope = task.state.checkpoint.scope;
           const scanContext = { scanId: task.input.id, ordinal: point.ordinal, ...(task.input.implementationDigest ? { implementationDigest: task.input.implementationDigest } : {}) };
           const ownership = { ownership: { kind: 'task' as const, taskId: task.id } };
-          const child = task.input.original.mode === 'FACTOR'
+          const child = effective.tickEconomic
+            ? await tx.createTask(TickEconomicTask, { trialId: task.input.source.trialId, model: task.input.source.members[0]!.model, catalog: String(effective.data.catalog), target: task.input.source.target, ...effective.tickEconomic, scanContext }, ownership)
+            : task.input.original.mode === 'FACTOR'
             ? await tx.createTask(FactorTask, { model: task.input.source.members[0]!.model, data: effective.data, binary: task.input.source.target, scanContext }, ownership)
             : await tx.createTask(PortfolioEvaluationTask, { data: effective.data, members: task.input.source.members, policy: effective.policy!, partition: 'VALIDATION', binary: task.input.source.target, scanContext }, ownership);
           active.push({ ordinal: point.ordinal, taskId: child });
@@ -293,7 +333,7 @@ export function createParameterScanExtension(harness: () => Harness) {
     },
     abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
   });
-  const scientificTasks = [FactorTask, PortfolioEvaluationTask, CatalogScopeTask] as const;
+  const scientificTasks = [FactorTask, PortfolioEvaluationTask, CatalogScopeTask, TickEconomicTask] as const;
   return { stopTask: StopTask, scientificTasks, extension: defineExtension({ name: 'qz.parameter-scans', tasks: [ParameterScanTask, StopTask, ...scientificTasks] }) };
 }
 
@@ -307,7 +347,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     const dataset = original?.dataset;
     retained.view.datasetId = typeof dataset?.id === 'string' ? dataset.id : null;
     retained.view.datasetName = typeof dataset?.name === 'string' ? dataset.name : null;
-    if (typeof dataset?.currency === 'string') retained.view.currency = dataset.currency;
+    if (typeof dataset?.currency === 'string' && !retained.tickEconomic) retained.view.currency = dataset.currency;
     if (retained.data.catalog_scan_request !== undefined && retained.data.catalog_scope === undefined) {
       const cached = (await host.harness.snapshot(CatalogScopes, context))?.roots.find(row => row.catalog === retained.data.catalog
         && (typeof retained.target === 'string' ? row.nautilusTarget === undefined : row.nautilusTarget !== undefined && canonical(row.nautilusTarget) === canonical(json(retained.target))));
@@ -328,14 +368,14 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     try { await source(input, 'STRATEGY'); modes.push('STRATEGY'); } catch (error) {
       if (mode === 'STRATEGY') throw error;
     }
-    const selected = mode ?? (retained.policy ? 'STRATEGY' : 'FACTOR');
+    const selected = mode ?? (retained.policy || retained.tickEconomic ? 'STRATEGY' : 'FACTOR');
     return { source: retained.view, modes, defaults: retained.defaults,
-      parameters: parameterScanParameters.filter(row => row.modes.includes(selected)),
-      objectives: parameterScanObjectives.filter(row => row.mode === selected), reason: null };
+      parameters: parameterScanParameters.filter(row => row.modes.includes(selected) && (!row.modalities || row.modalities.includes(retained.view.modality))).map(row => retained.view.modality === 'TRADE_TICK' && ['fast_period', 'slow_period'].includes(row.key) ? { ...row, label: row.label + '（cohort）' } : row),
+      objectives: parameterScanObjectives.filter(row => row.mode === selected && (!row.modalities || row.modalities.includes(retained.view.modality))), reason: null };
   }
   async function preview(value: unknown): Promise<ParameterScanPreview> {
     const input = inputPlan(value); const retained = await source(input.source, input.mode);
-    const grid = gridFor(input, retained.defaults);
+    const grid = gridFor(input, retained);
     const examples = Array.from({ length: Number(BigInt(grid.total) < 5n ? BigInt(grid.total) : 5n) }, (_, index) => parameterScanPoint(grid, String(index)));
     return { input, source: retained.view, grid, objective: parameterScanObjectives.find(row => row.metricId === input.objective.metricId)!, examples,
       warnings: ['UNQUALIFIED_EXPLORATORY', ...(BigInt(grid.skipped) ? ['INVALID_PERIOD_PAIRS_SKIPPED'] : [])] };
@@ -408,12 +448,12 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     }, context);
     if (old) return get(old);
     const retained = await source(input.source, input.mode);
-    const grid = gridFor(input, retained.defaults);
+    const grid = gridFor(input, retained);
     if (grid.eligible === '0') throw new Problem('parameter_scan_no_eligible_points', 422);
     let implementationDigest: string | undefined;
     if (typeof retained.target !== 'string') {
       const capabilities = await remoteNativeCapabilities(retained.target);
-      const required = input.mode === 'FACTOR' ? [retained.data.catalog_scan_request === undefined ? 'evaluate-factor' : 'scan-factor-catalog']
+      const required = retained.view.modality === 'TRADE_TICK' ? [input.mode === 'FACTOR' ? 'evaluate-tick-factor' : 'replay-tick-economic'] : input.mode === 'FACTOR' ? [retained.data.catalog_scan_request === undefined ? 'evaluate-factor' : 'scan-factor-catalog']
         : ['evaluate-factor', retained.policy?.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast', 'blend-targets', 'simulate'];
       if (retained.data.catalog_scan_request !== undefined) required.push('catalog-factor-scope');
       if (required.some(command => !capabilities.commands.includes(command))) throw new Problem('nautilus_command_unsupported', 422);
@@ -490,8 +530,13 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     }
     const input = task.input as unknown as ScanInput;
     const effective = effectivePoint(input.source, point.parameters);
-    const details = json({ ...row.details, effectiveRequest: iterationRequest(effective.data, true), effectivePolicy: effective.policy,
+    const details = json({ ...row.details, effectiveRequest: iterationRequest(effective.data, true), effectivePolicy: effective.tickEconomic?.request ?? effective.policy,
       ...(row.taskId === null ? {} : { evidenceTaskId: row.taskId }) });
+    if (input.source.view.modality === 'TRADE_TICK' && Array.isArray(native?.days)) {
+      return { ...row, curve: native.days.map(value => object(value)).filter(day => typeof day.day_start_ns === 'string'
+        && BigInt(day.day_start_ns) >= BigInt(input.source.view.interval.startNs) && BigInt(day.day_start_ns) < BigInt(input.source.view.interval.endExclusiveNs))
+        .map(day => ({ at: nsTime(day.day_start_ns as string)!, value: typeof day.equity_usdt === 'string' ? day.equity_usdt : null })), details };
+    }
     if (native?.simulation && typeof native.simulation === 'object' && !Array.isArray(native.simulation) && effective.policy && typeof effective.policy.simulationSettings.base_currency === 'string') {
       try { return { ...row, curve: nativeCurve(native.simulation, effective.policy.simulationSettings.base_currency), details }; }
       catch (error) { if (!(error instanceof Problem)) throw error; details.curveReason = error.message; }
@@ -512,7 +557,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     const remaining = fact.grid.axes.filter(axis => axis.key !== x.key && axis.key !== y.key);
     if (remaining.some(axis => fixed[axis.key] === undefined) || Object.keys(fixed).some(key => !remaining.some(axis => axis.key === key))) throw new Problem('parameter_scan_surface_fixed_required');
     const metricId = query.metricId ?? fact.original.objective.metricId;
-    if (!parameterScanObjectives.some(row => row.metricId === metricId && row.mode === fact.original.mode)) throw new Problem('parameter_scan_metric_invalid');
+    if (!parameterScanObjectives.some(row => row.metricId === metricId && row.mode === fact.original.mode && (!row.modalities || row.modalities.includes(fact.sourceView.modality)))) throw new Problem('parameter_scan_metric_invalid');
     const chosenMetric = metricId as ParameterScanMetricId;
     const limit = query.limit === undefined ? 50 : positiveId(query.limit, 'parameter_scan_surface_limit');
     if (limit > 100) throw new Problem('parameter_scan_surface_limit_invalid');
