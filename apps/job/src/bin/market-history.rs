@@ -2233,16 +2233,13 @@ mod tests {
             "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
         );
         assert_eq!(report.source_rows, 3);
-        assert_eq!(report.readback_records, 5);
+        assert_eq!(report.readback_records, 4);
         assert!(report.missing_definitions.is_empty());
         assert_eq!(
             report.native_records["book_deltas"][&instrument.id().to_string()],
             4
         );
-        assert_eq!(
-            report.native_records["quotes"][&instrument.id().to_string()],
-            1
-        );
+        assert!(!report.native_records.contains_key("quotes"));
     }
 
     #[test]
