@@ -23,8 +23,8 @@ QuaZonai 是基于 **NautilusTrader 与官方 Pi Durable 封装**的单人量化
 | `apps/service/src/` | Fastify HTTP `/api/v3`、实例与模型配置、所有者会话、业务事实、研究准入、科学适配、组合、目标回执和账户观测。业务编排留在这一层。 |
 | `apps/research/src/` | 官方 Pi Durable 宿主、研究文档和账本、工具调用、延续与恢复、文献和研究评价。`host.ts` 负责打开官方存储及 Harness。 |
 | `apps/research/plugins/` | 通过官方 Extension 接入研究与评价工具；使用原宿主，不自建运行时。 |
-| `apps/nautilus/src/` | 独立部署的远程 Nautilus HTTP 适配层，连接科学进程与数据目录；不把科学引擎嵌入业务服务。 |
-| `apps/job/src/` | Rust 原生科学入口，执行 Nautilus 数据处理、回测、组合及必要数值计算。 |
+| `apps/nautilus/src/` | 既有远程 Nautilus HTTP 适配层，连接科学进程、数据目录及显式配置的账户原生宿主；账户与科学执行复用现有容器。 |
+| `apps/job/src/` | Rust 原生入口，执行科学计算及官方 LiveNode 账户宿主；订单、成交、持仓与账户恢复沿用 Nautilus 公开接口，业务控制留在 TypeScript。 |
 | `crates/contracts/src/` | 原生科学 Wire 类型、Arrow 类型与可生成的科学合同。 |
 | `crates/domain/src/` | 科学计算所需的纯规则、数值与结果校验，不承担 HTTP 服务和 Agent 调度。 |
 | `apps/cli/src/` | 同一 HTTP API 的客户端、命令和合同读取；不得直接打开或修改服务存储。 |
@@ -56,6 +56,7 @@ Web / CLI
 - 应用启动时重开原 Durable 存储，由官方运行时恢复原 Task。浏览器断开不构成研究取消，本地进程退出不代表远端任务终止。
 - 配置、凭据、研究状态、原生结果和既有数据随安装目录持久化。日常改动不得清空数据或改变已存在对象的身份来绕过兼容问题。
 - QZ 本身不持有券商账户、不直接发送金融订单；通过配置的下游接口交付目标并读取账户事实。
+- 资金退出复用上述账户下游及现有容器，由官方 LiveNode、Strategy、RiskEngine、ExecutionEngine、Cache 与 Hyperliquid 适配器执行。QZ 通过现有 Pi Durable 保存退出意图、预留和命令；外部划转和提现由用户完成并以平台流水对账。资金合同校验在共享 TypeScript 层执行，不依赖科学 Worker。
 
 ### 合同与数值
 
@@ -86,6 +87,14 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 3. 在当前分层内做最小修改，复用已有业务规则与组件，不新建平行路径。
 4. 根据影响运行必要的类型检查、编译或相关单元测试。不要运行上面禁止的流程，不以数量代替验证价值。
 5. 交付时说明行为变化、实际验证结果与未完成事项；用户要求合并到 dev 时完成远程合并并读回提交状态。
+
+## 账户资金退出运行配置
+
+既有远程 Nautilus 入口通过 `QZ_NAUTILUS_ACCOUNTS` 显式配置账户数组；每项包含 `id`、`clientId`、`accountId`、`mode` 和原生现货 `instruments`。Paper 另外要求 `startingBalance` 与显式 `paperFeeRate`；LIVE 使用 `accountAddress` 指定 master 地址，`network` 选择 mainnet/testnet。签名密钥通过账户宿主读取的 `HYPERLIQUID_PK` / `HYPERLIQUID_TESTNET_PK` 注入，不写入源码或业务请求。
+
+应用账户连接 URL 指向既有 Nautilus 服务的 `/accounts/<id>/`，凭据沿用该服务配置。`QZ_ACCOUNT_BINARY` 可指定原生宿主，默认使用科学可执行文件同目录的 `account-runtime`。账户业务记录与官方缓存保存在既有 Nautilus 数据目录下 `accounts/<id>/`；保留该目录以恢复原始账户和未决订单。原生宿主使用 `cargo build --locked -p job --features account-runtime --bin account-runtime` 构建，并由现有镜像构建脚本打包。
+
+资金流程使用账户页的“退出资金”或同一 HTTP API 的 CLI `capital context/status/preview/command/get`。Paper 的现金与可提取证据始终标记为模拟；实盘现货余额、提现路径可提取额和用户外部已完成提取分别核实。
 
 ## 常用入口与命令
 

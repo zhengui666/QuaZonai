@@ -23,7 +23,7 @@ async function fixture(keepMonitor = false) {
     const accepted: JsonObject[] = [], gets: string[] = [], receipts = new Map<string, JsonObject>();
     for (const prefix of ['', '/alias']) {
       const identity = { clientId: prefix ? 'alias-client' : source.connection.clientId, accountId: prefix ? 'alias-account' : source.connection.accountId, mode: 'paper', currency: 'USDC' };
-      remote.get(`${prefix}/capabilities`, () => ({ ...identity, capitalExit: { version: 1, supported: false, readable: true },
+      remote.get(`${prefix}/capabilities`, () => ({ ...identity, capitalExit: { version: 2, supported: false, readable: true },
         automaticTargets: { supported: true, revisionBound: true, snapshotBound: true } }));
       remote.get(`${prefix}/capital-exits`, () => ({ ...identity, accountSourceId: remoteAccount.accountSourceId, observationId: remoteAccount.observationId,
         controlRevision: remoteAccount.controlRevision, reserved: '0', blocked: false, exits: [] }));
@@ -223,10 +223,10 @@ test('an admitted PM controller also blocks legacy automatic enablement on its a
     await f.state.service.research.harness.commit(async tx => {
       const app = await tx.doc(Application); const prior = observation(app.observations[f.connections[1]!.id]);
       const portfolio: PortfolioFact = { input: { requestId: 'legacy:portfolio', name: 'Legacy control protocol', researchIds: [record.conversationId], datasetId: 'controlled', capital: '1000' },
-        view: { id: prior.input.portfolioId, name: 'Legacy control protocol', researchIds: [record.conversationId], datasetId: 'controlled',
+        view: { id: prior.input.portfolioId!, name: 'Legacy control protocol', researchIds: [record.conversationId], datasetId: 'controlled',
           status: 'COMPUTED', capital: '1000', currency: 'USDC', createdAt: new Date().toISOString(), taskId: null,
           metrics: [], curve: [], targets: [], error: null }, evidence: [], policy: {}, native: null, target: {} };
-      app.portfolios[prior.input.portfolioId] = json(portfolio);
+      app.portfolios[prior.input.portfolioId!] = json(portfolio);
     }, context);
     const response = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${encodeURIComponent(f.connections[1]!.id)}/automatic`, headers: f.state.headers,
       payload: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } });
@@ -243,8 +243,8 @@ async function controlledTarget(f: Awaited<ReturnType<typeof fixture>>, id: stri
     const record = pmState(await tx.doc(PmDocument)).mandates[id]!;
     const app = await tx.doc(Application);
     const source = observation(app.observations[f.connections[1]!.id]);
-    app.portfolios[source.input.portfolioId] = json({ input: { requestId: 'controller:prior-portfolio', name: 'Control protocol original portfolio', researchIds: [record.conversationId], datasetId: 'controlled', capital: '1000' },
-      view: { id: source.input.portfolioId, name: 'Control protocol original portfolio', researchIds: [record.conversationId], datasetId: 'controlled', status: 'COMPUTED', capital: '1000', currency: 'USDC', createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null },
+    app.portfolios[source.input.portfolioId!] = json({ input: { requestId: 'controller:prior-portfolio', name: 'Control protocol original portfolio', researchIds: [record.conversationId], datasetId: 'controlled', capital: '1000' },
+      view: { id: source.input.portfolioId!, name: 'Control protocol original portfolio', researchIds: [record.conversationId], datasetId: 'controlled', status: 'COMPUTED', capital: '1000', currency: 'USDC', createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null },
       evidence: [], policy: {}, native: null, target: {} } satisfies PortfolioFact);
     const basis = captureAccount(app, f.connections[1]!.id).basis;
     originalBasis = { accountSourceId: basis.accountSourceId, observationId: basis.observationId, snapshotSequence: basis.sequence,

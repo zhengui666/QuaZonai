@@ -11,7 +11,7 @@ import { defineExtension, defineTask, defineTool, MemoryStorage } from '@earendi
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { openResearch } from '../../research/src/host.ts';
-import { validateCapitalDocument } from '../src/capital-exit.ts';
+import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { implementationIdentity } from '../src/pm-science.ts';
 
 const digest = `sha256:${'c'.repeat(64)}`;
@@ -42,11 +42,11 @@ async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T>
   })]); } finally { if (timer) clearTimeout(timer); }
 }
 
-test('PM implementation identity and capital validation interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
+test('PM implementation identity and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-helper-capabilities-abort-'));
   const host = await explicitHost(directory);
   try {
-    for (const helper of ['implementation', 'capital']) {
+    for (const helper of ['implementation', 'science']) {
       const accepted = signal(); const requests: string[] = []; const controller = new AbortController();
       const source = await peer((request, _response) => {
         requests.push(`${request.method} ${request.url}`); accepted.resolve();
@@ -54,7 +54,7 @@ test('PM implementation identity and capital validation interrupt a connected ca
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
       const operation = host.withNativeHost(() => helper === 'implementation' ? implementationIdentity(source.target, context)
-        : validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'REQUEST', {}, context));
+        : executeNative(source.target, 'size-account', {}, [], directory, context));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {
         await bounded(accepted.promise);
@@ -68,18 +68,18 @@ test('PM implementation identity and capital validation interrupt a connected ca
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('capital validation forwards task abort and cancels only the accepted original request', { timeout: 10_000 }, async () => {
+test('scientific execution forwards task abort and cancels only the accepted original request', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-capital-request-abort-'));
   const accepted = signal(); const requests: string[] = []; const controller = new AbortController(); let original: NativeExecutionRequest | undefined;
   const source = await peer(async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['validate-capital-exit'] });
+    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['size-account'] });
     if (request.method === 'POST') { original = await readRequest(request); accepted.resolve(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
     reply(response, { schemaVersion: 1, requestId: original!.requestId, status: 'CANCELLED' });
   });
   const host = await explicitHost(directory);
-  const operation = host.withNativeHost(() => validateCapitalDocument({ dataDir: directory, jobBinary: source.target }, 'VIEW', { amount: '9007199254740993.0001' }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
+  const operation = host.withNativeHost(() => executeNative(source.target, 'size-account', { amount: '9007199254740993.0001' }, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
   const settled = operation.then(() => ({ error: null }), error => ({ error }));
   try {
     await bounded(accepted.promise); controller.abort(new Error('owner_stop_capital_validation'));
@@ -88,21 +88,21 @@ test('capital validation forwards task abort and cancels only the accepted origi
     assert.equal(requests.some(value => value.startsWith('DELETE')), false, 'an observer abort does not cancel owned work');
     const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0]!;
     await host.harness.abortTask(task.id, BACKGROUND_CONTEXT); await host.harness.waitForTask(task.id, BACKGROUND_CONTEXT);
-    assert.equal(original!.command, 'validate-capital-exit');
-    assert.deepEqual(original!.input, { kind: 'VIEW', value: { amount: '9007199254740993.0001' } });
+    assert.equal(original!.command, 'size-account');
+    assert.deepEqual(original!.input, { amount: '9007199254740993.0001' });
     assert.deepEqual(requests, ['GET /v1/capabilities', 'POST /v1/execute', `DELETE /v1/executions/${original!.requestId}`]);
     assert.deepEqual(source.failures, []);
   } finally { await host.close(); await source.close(); await settled; await rm(directory, { recursive: true, force: true }); }
 });
 
-test('unanswered capital cancellation retains the original reference through Durable stop and reopen', { timeout: 15_000 }, async t => {
+test('unanswered scientific cancellation retains the original reference through Durable stop and reopen', { timeout: 15_000 }, async t => {
   const actualTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
   // Leave time for the real loopback DELETE to reach the peer under concurrent CI work.
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 100 : milliseconds); });
   const directory = await mkdtemp(join(tmpdir(), 'qz-capital-unknown-receipt-')); const accepted = signal();
   let original: NativeExecutionRequest | undefined; let posts = 0; let cancels = 0;
   const source = await peer(async (request, response) => {
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['validate-capital-exit'] });
+    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['size-account'] });
     if (request.method === 'POST') { posts++; original = await readRequest(request); accepted.resolve(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`); cancels++;
     // Never confirm cancellation. The helper must preserve the unknown identity.
@@ -112,7 +112,7 @@ test('unanswered capital cancellation retains the original reference through Dur
     phases: { async validate(task, runtime, context) {
       try {
         await withNativeRemoteTracking(task.id, runtime, context,
-          () => validateCapitalDocument({ dataDir: directory, jobBinary: task.input.target }, 'VIEW', {}, context));
+          () => executeNative(task.input.target, 'size-account', {}, [], directory, context));
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context);
       } catch (error) {
         await retainNativeRemoteUncertainty(error, task.id, runtime, context);

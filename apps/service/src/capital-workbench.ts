@@ -1,11 +1,11 @@
-import { scienceTarget } from './config.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ConversationId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
+import type { CapitalExitAction } from '../../../packages/contracts/src/capital-exit.ts';
 import type { ServiceConfig } from './config.ts';
-import { Application, counter, decimal, decimalUnits, json, object, observation, portfolio, Problem, text } from './facts.ts';
-import { accountKey, assertCapitalCommandPermission, capitalCommandPermission, CapitalExitCommand, capitalStatusForBinding, control, physicalCapitalState, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
+import { Application, counter, decimal, decimalUnits, json, object, observation, Problem, text } from './facts.ts';
+import { accountKey, assertCapitalCommandPermission, assertEnvelope, capitalCommandPermission, CapitalExitCommand, capitalStatusForBinding, control, physicalCapitalState, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
+import { ensureCapitalWatch } from './capital-watch.ts';
 import { downstreamRequest } from './downstream.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -19,10 +19,10 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const original = await fact(id); let key = accountKey(original.connection, (await host.harness.snapshot(Application, context))?.accountControls);
     try {
       const fresh = await readCapitalControl(original.connection, original.view.currency);
-      for (const exit of fresh.status.exits) await validateCapitalDocument(config, 'VIEW', exit);
       await host.harness.commit(async tx => {
         const facts = await tx.doc(Application);
-        facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls!, original.connection, fresh);
+        facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls, original.connection, fresh);
+        if (fresh.status.exits.some(exit => !['COMPLETED', 'CLOSED'].includes(exit.state))) await ensureCapitalWatch(tx, original.connection, original.view.currency);
       }, context);
     } catch (error) {
       await host.harness.commit(async tx => {
@@ -34,6 +34,32 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const state = control((await host.harness.snapshot(Application, context))?.accountControls?.[key]);
     return { ...capitalStatusForBinding(state, original.connection), commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error, result: value.result })) };
   }
+  async function planningContext(id: string) {
+    const original = await fact(id);
+    const response = await downstreamRequest(original.connection, 'capital-exits/planning-context', 'GET');
+    assertEnvelope(original.connection, response, original.view.currency);
+    const plan = object(response.context);
+    await validateCapitalDocument(config, 'CONTEXT', plan);
+    if (plan.currency !== original.view.currency || plan.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_context_binding_mismatch', 409);
+    await host.harness.commit(async tx => {
+      const app = await tx.doc(Application); const binding = observation(app.observations[id]);
+      binding.capitalPlanningContexts = Object.fromEntries(Object.entries(binding.capitalPlanningContexts ?? {}).filter(([, value]) => Date.parse(String(value.valid_until)) > Date.now()));
+      binding.capitalPlanningContexts[String(plan.id)] = json(plan);
+      app.observations[id] = json(binding);
+    }, context);
+    return plan;
+  }
+  async function getCapitalExit(id: string, exitId: string) {
+    const original = await fact(id);
+    const response = await downstreamRequest(original.connection, `capital-exits/${encodeURIComponent(exitId)}`, 'GET');
+    assertEnvelope(original.connection, response, original.view.currency);
+    const exit = object(response.exit); await validateCapitalDocument(config, 'VIEW', exit);
+    const controls = (await host.harness.snapshot(Application, context))?.accountControls;
+    const known = control(controls?.[accountKey(original.connection, controls)]).status;
+    if (exit.id !== exitId || known?.accountSourceId && exit.account_source_id !== known.accountSourceId
+      || exit.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE') || object(exit.scope).currency !== original.view.currency) throw new Problem('capital_exit_identity_mismatch', 409);
+    return exit;
+  }
   async function previewCapital(id: string, value: unknown) {
     const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = await fact(id);
     let captured = original.capitalPreviews?.[requestId];
@@ -41,9 +67,20 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     if (!captured) {
       const status = await refreshCapital(id);
       if (status.capability !== 'SUPPORTED' || !status.accountSourceId || !status.observationId || !status.controlRevision) throw new Problem(status.reason ?? 'capital_exit_unavailable', 409);
+      const plan = original.capitalPlanningContexts?.[String(body.contextId)];
+      if (!plan || body.contextId !== plan.id || plan.account_source_id !== status.accountSourceId || plan.account_control_revision !== status.controlRevision || Date.parse(String(plan.valid_until)) <= Date.now()) throw new Problem('capital_exit_context_stale', 409);
       const amount = decimal(body.amount, 'amount'); if (decimalUnits(amount) <= 0n || body.currency !== original.view.currency) throw new Problem('capital_exit_amount_or_currency_invalid', 422);
-      const request = { schema_version: 1, account_source_id: status.accountSourceId, expected_source_observation_id: status.observationId,
-        scope: { kind: 'AMOUNT', amount, currency: body.currency }, policy: body.policy === undefined ? { kind: 'CASH_ONLY' } : object(body.policy) };
+      const policy = body.policy === undefined ? { kind: 'CASH_ONLY' } : object(body.policy);
+      if (!status.supportedPolicies?.includes(String(policy.kind) as 'CASH_ONLY' | 'NATURAL_RELEASE' | 'BOUNDED_LIMIT')) throw new Problem('capital_exit_policy_unsupported', 409);
+      if (body.resumeExitId !== undefined || body.expectedExitRevision !== undefined) {
+        const exit = status.exits.find(item => item.id === body.resumeExitId);
+        if (!exit || exit.revision !== body.expectedExitRevision) throw new Problem('capital_exit_revision_conflict', 409);
+        if (decimalUnits(amount) !== decimalUnits(exit.funds.reserved_amount.amount)) throw new Problem('capital_exit_resume_amount_mismatch', 422);
+      }
+      const request = { schema_version: 2, account_source_id: status.accountSourceId, expected_source_observation_id: plan.observation_id,
+        expected_account_control_revision: status.controlRevision, planning_context_id: text(body.contextId, 'context_id'),
+        scope: { kind: 'AMOUNT', amount, currency: body.currency }, policy,
+        ...(body.resumeExitId !== undefined ? { resume_exit_id: text(body.resumeExitId, 'resume_exit_id'), expected_exit_revision: counter(body.expectedExitRevision, 'exit_revision') } : {}) };
       await validateCapitalDocument(config, 'REQUEST', request);
       captured = await host.harness.commit(async tx => {
         const facts = await tx.doc(Application); const current = observation(facts.observations[id]);
@@ -56,9 +93,9 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const envelope = object(captured.envelope); const request = object(envelope.request);
     const response = await downstreamRequest(original.connection, 'capital-exits/preview', 'POST', envelope);
     if (response.requestId !== requestId || response.clientId !== original.connection.clientId || response.accountId !== original.connection.accountId) throw new Problem('capital_exit_preview_identity_mismatch', 409);
-    const preview = object(response.preview);
-    await validateCapitalDocument(config, 'PREVIEW', preview);
+    const preview = object(response.preview); await validateCapitalDocument(config, 'PREVIEW', preview);
     if (preview.account_source_id !== request.account_source_id || preview.original_observation_id !== request.expected_source_observation_id || preview.expected_account_control_revision !== captured.controlRevision
+      || preview.resume_exit_id !== request.resume_exit_id || preview.expected_exit_revision !== request.expected_exit_revision
       || canonical(preview.scope!) !== canonical(json(request.scope)) || canonical(preview.policy!) !== canonical(json(request.policy)) || preview.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_preview_binding_mismatch', 409);
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const current = observation(facts.observations[id]);
@@ -70,19 +107,20 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function commandCapital(id: string, value: unknown) {
     const original = object(value); const requestId = text(original.requestId, 'request_id'); const current = await fact(id);
+    const priorControls = (await host.harness.snapshot(Application, context))?.accountControls;
+    const existing = control(priorControls?.[accountKey(current.connection, priorControls)]).commands[requestId];
+    if (existing) { if (canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return { requestId, state: existing.state, result: existing.result }; }
     const status = await refreshCapital(id); const controls = (await host.harness.snapshot(Application, context))?.accountControls; const key = accountKey(current.connection, controls);
-    const old = control(controls?.[key]).commands[requestId];
-    if (old) { if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return { requestId, state: old.state, result: old.result }; }
-    if (status.capability !== 'SUPPORTED') throw new Problem(status.reason ?? 'capital_exit_unavailable', 409);
-    const permissionBasis = capitalCommandPermission(control(controls?.[key]), current.connection);
+    const action = text(original.action, 'action') as CapitalExitAction;
+    const permissionBasis = capitalCommandPermission(control(controls?.[key]), current.connection, action);
     if (canonical(physicalCapitalState(permissionBasis.status)) !== canonical(physicalCapitalState(status))) throw new Problem('capital_exit_permission_basis_changed', 409);
     const previews = Object.values(current.capitalPreviews ?? {}).filter(value => value.preview).map(value => object(value.preview));
     let native: import('@earendil-works/pi-durable').JsonObject; let path: string; let reserved = '0';
-    if (original.action === 'START') {
+    if (action === 'START') {
       const preview = previews.find(value => value.id === original.previewId);
-      if (!preview || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
-      if (preview.expected_account_control_revision !== status.controlRevision || preview.original_observation_id !== status.observationId) throw new Problem('capital_exit_preview_stale', 409);
-      native = { schema_version: 1, preview_id: preview.id!, expected_account_control_revision: counter(preview.expected_account_control_revision, 'control_revision'),
+      if (!preview || preview.resume_exit_id !== undefined || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
+      if (preview.expected_account_control_revision !== status.controlRevision || preview.account_source_id !== status.accountSourceId) throw new Problem('capital_exit_preview_stale', 409);
+      native = { schema_version: 2, preview_id: preview.id!, expected_account_control_revision: counter(preview.expected_account_control_revision, 'control_revision'),
         acknowledged_plan_artifact_id: preview.plan_artifact_id!, expected_source_observation_id: preview.original_observation_id! };
       await validateCapitalDocument(config, 'START', native);
       reserved = decimal(object(object(preview.funds).requested).amount, 'requested_amount'); path = 'capital-exits';
@@ -90,13 +128,16 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       const exitId = text(original.exitId, 'capital_exit_id'); const exit = status.exits.find(value => value.id === exitId);
       if (!exit) throw new Problem('capital_exit_not_found', 404);
       if (original.expectedRevision !== exit.revision) throw new Problem('capital_exit_revision_conflict', 409);
-      native = { schema_version: 1, expected_revision: exit.revision, action: text(original.action, 'action') };
-      if (original.action === 'RESUME') {
+      const availability = exit.action_availability[action]; if (availability?.allowed !== true) throw new Problem(availability?.reason ?? 'capital_exit_action_unavailable', 409);
+      native = { schema_version: 2, expected_revision: exit.revision, action };
+      if (action === 'RESUME') {
         const preview = previews.find(value => value.id === original.previewId);
-        if (!preview || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
+        if (!preview || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()
+          || preview.resume_exit_id !== exitId || preview.expected_exit_revision !== exit.revision || preview.expected_account_control_revision !== status.controlRevision
+          || preview.account_source_id !== status.accountSourceId) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
         native.preview_id = preview.id!;
       }
-      if (original.action === 'RECONCILE_WITHDRAWAL') {
+      if (action === 'RECONCILE_WITHDRAWAL' || action === 'RECONCILE_EXTERNAL_TRANSFER') {
         const amount = decimal(original.amount, 'withdrawal_amount'); if (decimalUnits(amount) <= 0n || original.currency !== current.view.currency) throw new Problem('capital_exit_amount_or_currency_invalid', 422);
         native.user_reported_amount = amount; native.currency = current.view.currency;
         native.external_transfer_ref = text(original.externalTransferRef, 'external_transfer_ref');
@@ -110,15 +151,13 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       assertCapitalCommandPermission(state, current.connection, permissionBasis);
       if (Object.values(state.commands).some(value => ['PENDING', 'UNCERTAIN'].includes(value.state))) throw new Problem('capital_exit_command_requires_reconciliation', 409);
       if (state.status?.controlRevision !== status.controlRevision) throw new Problem('capital_exit_revision_conflict', 409);
-      // Local reservation and durable command admission are one transaction, before any unsafe POST.
-      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: scienceTarget(config), dataDir: config.dataDir },
-        { conversationId: portfolio(facts.portfolios[current.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true });
-      state.commands[requestId] = { original: json(original), body: native, path, reserved, state: 'PENDING', result: null, error: null, taskId, permissionBasis };
-      facts.accountControls ??= {}; facts.accountControls[key] = json(state); return { requestId, state: 'PENDING', result: null };
+      const owner = await ensureCapitalWatch(tx, current.connection, current.view.currency);
+      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: config.jobBinary, dataDir: config.dataDir },
+        { conversationId: owner.conversationId, ownership: { kind: 'conversation' }, background: true });
+      const admitted = control(facts.accountControls![owner.key]);
+      admitted.commands[requestId] = { original: json(original), body: native, path, reserved, state: 'PENDING', result: null, error: null, taskId, permissionBasis };
+      facts.accountControls![owner.key] = json(admitted); return { requestId, state: 'PENDING', result: null };
     }, context);
   }
-  function scoped<A extends unknown[], R>(operation: (...args: A) => R): (...args: A) => R {
-    return (...args) => host.withNativeHost(() => operation(...args));
-  }
-  return { refreshCapital: scoped(refreshCapital), previewCapital: scoped(previewCapital), commandCapital: scoped(commandCapital) };
+  return { refreshCapital, planningContext, getCapitalExit, previewCapital, commandCapital };
 }

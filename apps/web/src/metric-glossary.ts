@@ -91,7 +91,7 @@ const glossary: Record<string, MetricDefinition> = {
   releasedCash: definition('已释放现金', '原生所有者报告已从持仓释放的现金，单位：账户币种。仍需可提取证据和外部对账。'),
   withdrawable: definition('有证据的可提取额', '原生所有者根据可提取证据确认的金额，单位：账户币种。模拟证据不证明实盘可提取；未知不补零。'),
   reconciledWithdrawal: definition('已对账外部提取', '下游已核对实际外部现金变动的累计金额，单位：账户币种。QZ 本身不转账。'),
-  executionCost: definition('预计执行成本', '原生计划根据其成本证据给出的估计金额，单位：账户币种。不是既有未实现盈亏，也不是最终实际费用。'),
+  executionCost: definition('预计经济损失', '资本退出原生计划估计的经济损失，单位：账户币种。逐笔计算原参考买价乘成交数量减实际含费净卖出回款，负值按零后累计。有利价格只抵本笔费用，不抵销过去损失；真实手续费单独展示，不重复相加。'),
   unrealizedPnl: definition('既有未实现盈亏（非提取成本）', '原生计划单独报告的既有持仓未实现盈亏，单位：账户币种。不是本次资金提取引起的执行成本。'),
   economicCapacity: definition('经济容量', '在匹配资金规模的样本外净收益、市场校准冲击、价差费用、执行时序与退出证据下才能评估的盈利容量，单位：报告币种。历史 BAR 参与率上限不能替代它；缺少输入时保持不可用。'),
   decisionNs: definition('决策时钟', '原生限制决策的 Unix 纳秒时钟。可读时间按 UTC 显示，下方保留完整纳秒整数，不将整个时钟转换为 JavaScript 浮点数。'),
@@ -167,7 +167,7 @@ const aliases: Record<string, string> = {
   '上限': 'maximumCapital', '历史可执行上限': 'maximumCapital', '条件容量上限': 'maximumCapital', '最低实用本金': 'minimumCapital', '约束资金上限': 'maximumCapital',
   '所用成交量参与率': 'participation', '成交量参与率': 'participation', '流动性数据最大时差': 'maximumAgeSeconds', '资本情景': 'scenarioCapital',
   '账户总预留': 'reserved', '保留预留': 'exitReserved', '显式现金缓冲': 'cashBuffer', '扣预留后的可用权益': 'budget', '有效策略资金': 'strategyCapital', '交易预算': 'strategyCapital', '本次建议资金': 'strategyCapital', '剩余可交易资金': 'remainingManagedCapital',
-  '现金 / 费用后剩余': 'residualCash', '预算缩放': 'scale', '请求金额': 'requestedAmount', '已释放现金': 'releasedCash', '有证据的可提取额': 'withdrawable', '已对账外部提取': 'reconciledWithdrawal', '预计执行成本': 'executionCost', '既有未实现盈亏（非提取成本）': 'unrealizedPnl',
+  '现金 / 费用后剩余': 'residualCash', '预算缩放': 'scale', '请求金额': 'requestedAmount', '已释放现金': 'releasedCash', '有证据的可提取额': 'withdrawable', '已对账外部提取': 'reconciledWithdrawal', '预计执行成本': 'executionCost', '预计经济损失': 'executionCost', '既有未实现盈亏（非提取成本）': 'unrealizedPnl',
   '取消开启订单 / 减仓腿': 'cancellationsAndLegs', '输入 Token': 'inputTokens', '输出 Token': 'outputTokens', '费用': 'cost', '活动任务': 'activeTasks',
 };
 export function factMetricKey(label: string): string | undefined { return aliases[label]; }

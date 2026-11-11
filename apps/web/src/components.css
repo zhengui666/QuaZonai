@@ -104,6 +104,12 @@ details[open] > summary { margin-bottom: 14px; }
 .capital-preview, .capital-intent { padding-top: 24px; border-top: 1px solid var(--line); }
 .capital-preview .facts, .capital-intent .facts, .adjustment-receipt .facts { margin-block: 20px; }
 .capital-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.capital-create { margin-block: 24px; }
+.capital-create > summary { cursor: pointer; font-weight: 600; }
+.capital-create > .ant-btn { margin-top: 14px; }
+.capital-action { max-width: 300px; }
+.capital-action .record-reason, .capital-action > .quiet { margin-top: 8px; }
+.bounded-leg { margin-block: 18px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
 .bounded-leg { border-left: 2px solid var(--line); padding-left: 18px; margin-block: 22px; }
 .submission-preview, .mandate-section { margin-block: 26px; }
 .submission-preview > summary { padding-block: 12px; }

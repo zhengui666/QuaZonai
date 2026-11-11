@@ -214,6 +214,10 @@ test('portfolio capacity posts exact assumptions to the original ID without a ne
     assert.deepEqual(sent, [{ method: 'POST', url: '/api/v3/portfolios/p%2Foriginal/capacity', bytes }]);
     assert.deepEqual(output, [{ status: 'UNAVAILABLE', reason: 'TEST_ONLY_PROTOCOL' }]);
     assert.equal((await schemas('CapitalAssumptions') as { entry: string }).entry, 'CapitalAssumptions');
+    const capitalSchema = await schemas('CapitalExitPreviewInput') as { entry: string; source: string };
+    assert.equal(capitalSchema.entry, 'CapitalExitPreviewInput');
+    assert.match(capitalSchema.source, /RECONCILE_EXTERNAL_TRANSFER/);
+    assert.match(capitalSchema.source, /NATURAL_RELEASE/);
     const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
     assert.equal(code, 0); assert.match(help, /portfolio capacity ID --file ASSUMPTIONS.json/);
@@ -250,11 +254,17 @@ test('structured validation and factor/account-control commands preserve origina
     const assumptions = '{ "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60 }\n'; await writeFile(file, assumptions); await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, assumptions);
     await writeFile(file, '{"scenarios":["1000"],"participation":"2","maximumAgeSeconds":60}'); await assert.rejects(run(['factor', 'capacity', 'r2.t3.m0', '--file', file]), /research_participation_invalid/);
     const preview = '{ "requestId":"preview-original", "amount":"100.000000000000000001", "currency":"USD" }\n'; await writeFile(file, preview);
-    await run(['capital', 'status', 'o-original'], () => {}); await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
+    await run(['capital', 'status', 'o-original'], () => {});
+    await run(['capital', 'context', 'o-original'], () => {});
+    await run(['capital', 'get', 'o-original', 'exit/original'], () => {});
+    await assert.rejects(run(['capital', 'get', 'o-original'], () => {}), /resource_id_required/);
+    await assert.rejects(run(['capital', 'get', 'o-original', 'exit-original', 'extra'], () => {}), /unexpected_argument/);
+    await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
     const command = '{"requestId":"command-original","action":"START","previewId":"native-original"}\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
     const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); await run(['observation', 'automatic', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, policy);
     assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
       ['GET', '/api/v3/factors'], ['GET', '/api/v3/factors/r2.t3.m0'], ['GET', '/api/v3/factors/r2.t3.m0/capacity'], ['POST', '/api/v3/factors/r2.t3.m0/capacity'], ['GET', '/api/v3/observations/o-original/capital-exits'],
+      ['GET', '/api/v3/observations/o-original/capital-exits/planning-context'], ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
       ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'], ['POST', '/api/v3/observations/o-original/automatic'],
     ]);
   } finally { await config.close(); await api.close(); }

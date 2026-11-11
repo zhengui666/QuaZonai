@@ -19,7 +19,7 @@ for value in "$@"; do
   [[ "$value" != market-history,catalog-prepare,hyperliquid-offline ]] || precision=high
 done
 mkdir -p "$CARGO_TARGET_DIR/$profile/examples"
-for binary in job source-tools catalog-prepare market-history; do
+for binary in job source-tools catalog-prepare market-history account-runtime; do
   cat > "$CARGO_TARGET_DIR/$profile/$binary" <<EOF
 #!/bin/sh
 # $precision:$binary
@@ -42,6 +42,7 @@ done
       for (const [name, binary] of [['job-high-precision', 'job'], ['catalog-prepare-high-precision', 'catalog-prepare'], ['market-history', 'market-history']]) {
         assert.ok((await readFile(join(destination, name), 'utf8')).includes(`high:${binary}`));
       }
+      assert.ok((await readFile(join(destination, 'account-runtime'), 'utf8')).includes(':account-runtime'), 'existing native payload includes the account host');
       const manifest = JSON.parse(await readFile(join(destination, 'native-manifest.json'), 'utf8'));
       assert.equal(manifest.nautilusRevision, 'a'.repeat(40));
       assert.equal(manifest.binaries.job.precision, 'standard');

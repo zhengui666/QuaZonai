@@ -64,6 +64,7 @@ RUN --mount=type=bind,from=native,source=/,target=/native \
     --mount=type=bind,from=compiler,source=/,target=/compiler \
     mkdir -p /opt/quazonai/bin /opt/quazonai/operator/bin \
  && install -m755 /native/job /opt/quazonai/bin/job \
+ && install -m755 /native/account-runtime /opt/quazonai/bin/account-runtime \
  && install -m755 /native/job-high-precision /opt/quazonai/bin/job-high-precision \
  && install -m644 /native/native-manifest.json /opt/quazonai/bin/native-manifest.json \
  && install -m755 /native/catalog-prepare-high-precision /opt/quazonai/operator/bin/catalog-prepare-high-precision \
@@ -77,7 +78,7 @@ LABEL org.opencontainers.image.title="QuaZonai remote Nautilus" \
       org.opencontainers.image.source="https://github.com/zhengui666/QuaZonai" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
-ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision QZ_NATIVE_MANIFEST=/opt/quazonai/bin/native-manifest.json QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
+ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_ACCOUNT_BINARY=/opt/quazonai/bin/account-runtime QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision QZ_NATIVE_MANIFEST=/opt/quazonai/bin/native-manifest.json QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
 USER node
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \

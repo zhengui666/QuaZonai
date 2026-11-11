@@ -2,14 +2,14 @@ import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import { assessCapacityCurve } from '../../../packages/contracts/src/decision.ts';
-import { Application, json, nowNs, nsTime, object, observation, Problem } from './facts.ts';
+import { Application, decimalUnits, json, nowNs, nsTime, object, observation, Problem } from './facts.ts';
 import type { ObservationFact } from './facts.ts';
-import { accountKey, control, transportCapability } from './capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, transportCapability } from './capital-exit.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { digest } from './pm-facts.ts';
 import { PmDocument, pmRecord, pmState, revise } from './pm-facts.ts';
 import type { PmRecord } from './pm-facts.ts';
-import { captureAccount } from './pm-account.ts';
+import { capitalExitTargetControl, captureAccount, managedTradingBudget } from './pm-account.ts';
 import { downstream, isPreTransportRejection } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
@@ -49,10 +49,21 @@ export function pmTargetAllocation(record: PmRecord, decision: Pm.PortfolioDecis
     sequence: basis.sequence, nativeClockNs: basis.observedAtNs, controlRevision: basis.controlRevision, currency: basis.currency })) {
     if (snapshot[field] !== value) throw new Problem('target_account_allocation_basis_mismatch', 409);
   }
+  if (Object.values(original.commands).some(command => ['PENDING', 'UNCERTAIN'].includes(command.state)
+    || command.state === 'ACCEPTED' && command.reserved !== '0')) throw new Problem('capital_exit_command_requires_reconciliation', 409);
+  const status = capitalStatusForBinding(original, source.connection);
+  // PM target weights are targetNotional / original NAV. Buffer and capacity
+  // already shaped that native decision; clipping its denominator again would
+  // manufacture an extra sale. Only the independent buy budget is reduced.
+  const exitControl = capitalExitTargetControl(status, capabilities, pmTargetPayload(record, decision), capital.equity.amount);
+  const managedBudget = managedTradingBudget(capital.equity.amount, basis.reserved.amount, capital.ownerLiquidityReserve.amount);
+  const budget = decimalUnits(managedBudget) < decimalUnits(capital.deployableBudget.amount) ? managedBudget : capital.deployableBudget.amount;
+  const committed = decimalUnits(budget) < decimalUnits(capital.committedCapital.amount) ? budget : capital.committedCapital.amount;
   return json({ snapshotSequence: basis.sequence, nativeClockNs: basis.observedAtNs, accountSourceId: basis.accountSourceId,
     observationId: basis.observationId, controlRevision: basis.controlRevision, reserved: basis.reserved.amount,
     equity: basis.equity?.amount ?? null, validUntilNs: decision.validUntilNs,
-    budget: capital.deployableBudget.amount, capital: capital.committedCapital.amount, cashBuffer: capital.ownerLiquidityReserve.amount,
+    budget, capital: committed, cashBuffer: capital.ownerLiquidityReserve.amount,
+    ...(exitControl ? { capitalExit: exitControl } : {}),
     ...(basis.valuation ? { valuation: basis.valuation } : {}),
     decisionId: decision.id, basisRevision: decision.basisRevision, policyRevisionId: decision.policyRevisionId,
     positionsEvidenceRef: basis.positionsEvidenceRef, outstandingCommandsRef: basis.outstandingCommandsRef });

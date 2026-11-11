@@ -12,6 +12,8 @@ publish = false
 # Optional official node observer and controlled Sandbox integration.
 native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
 native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
+# Persistent account execution inside the existing remote native process.
+account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "nautilus-hyperliquid/high-precision", "high-precision"]
 # Operator data preparation only; default scientific job images remain offline.
 catalog-prepare = ["dep:sha2"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
@@ -34,7 +36,17 @@ name = "source-tools"
 path = "src/bin/source-tools.rs"
 required-features = ["catalog-prepare"]
 
+[[bin]]
+name = "account-runtime"
+path = "src/bin/account-runtime.rs"
+required-features = ["account-runtime"]
+
 [dependencies]
+ahash = { version = "=0.8.12", features = ["serde"] }
+async-trait = "=0.1.92"
+bytes = { version = "=1.12.1", features = ["serde"] }
+ustr = "=1.1.0"
+indexmap = "=2.14.2"
 nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
 nautilus-live = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["node"], optional = true }
 nautilus-sandbox = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }

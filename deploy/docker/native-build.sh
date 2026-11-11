@@ -19,4 +19,8 @@ cargo build --locked "${args[@]}" -p job \
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/job" "$output/job-high-precision"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/catalog-prepare" "$output/catalog-prepare-high-precision"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/market-history" "$output/market-history"
+cargo build --locked "${args[@]}" -p job \
+  --features account-runtime \
+  --bin account-runtime
+install -m755 "${CARGO_TARGET_DIR:-target}/$profile/account-runtime" "$output/account-runtime"
 node runtimes/native/build-identity.mjs "$output"

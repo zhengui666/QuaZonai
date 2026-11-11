@@ -44,7 +44,7 @@ export async function paperReceiver(input: { source: JsonObject; directory: stri
   const envelope = { clientId: connection.clientId, accountId: connection.accountId, mode: 'paper', currency };
   remote.get('/account', (_request, reply) => snapshot ? json(snapshot) : reply.code(503).send({ error: 'archival_account_not_currently_published' }));
   remote.get('/capabilities', (_request, reply) => snapshot ? { ...envelope,
-    capitalExit: { version: 1, supported: false, readable: true },
+    capitalExit: { version: 2, supported: false, readable: true },
     // Advertised only because POST below compares the actual whole source
     // identity synchronously with acceptance, not just controlRevision.
     automaticTargets: { version: 1, supported: true, revisionBound: true, snapshotBound: true },

@@ -219,7 +219,7 @@ test('observation final admission rechecks a portfolio deleted during the real d
   let reached!: () => void; const reading = new Promise<void>(resolve => { reached = resolve; });
   let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
   downstream.get('/capabilities', () => ({ clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
-    capitalExit: { version: 1, supported: false, readable: true } }));
+    capitalExit: { version: 2, supported: false, readable: true } }));
   downstream.get('/capital-exits', async () => {
     reached(); await released;
     return { clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
