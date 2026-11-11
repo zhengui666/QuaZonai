@@ -501,6 +501,155 @@ fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
 }
 
 #[test]
+fn minimum_notional_exemption_keeps_entry_spot_and_lot_rules() {
+    let mut instruments = definitions();
+    let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+        unreachable!()
+    };
+    perp.min_notional = Some(Money::from("10 USD"));
+    let price = Decimal::from(100);
+    let residual = Decimal::new(5, 2);
+    for signed in [residual, -residual] {
+        assert_eq!(
+            small_legal_quantity(&instruments[2], signed, price, true).unwrap(),
+            signed
+        );
+        assert_eq!(
+            small_legal_quantity(&instruments[2], signed, price, false).unwrap(),
+            Decimal::ZERO
+        );
+    }
+    assert_eq!(
+        small_legal_quantity(&instruments[1], residual, price, true).unwrap(),
+        Decimal::ZERO
+    );
+    assert_eq!(
+        small_legal_quantity(&instruments[2], Decimal::new(9, 5), price, true).unwrap(),
+        Decimal::ZERO
+    );
+    let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+        unreachable!()
+    };
+    perp.min_quantity = Some(Quantity::from("0.0600"));
+    assert_eq!(
+        small_legal_quantity(&instruments[2], residual, price, true).unwrap(),
+        Decimal::ZERO
+    );
+}
+
+#[test]
+fn observed_perp_reduction_closes_subminimum_residual_through_replay_preflight() {
+    use nautilus_model::{
+        data::{BookOrder, OrderBookDelta},
+        enums::{BookAction, RecordFlag},
+    };
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+
+    for sign in [1, -1] {
+        let directory = tempfile::tempdir().unwrap();
+        let (prepared, mut request, _) = source(directory.path(), 0, Some(5 * HOUR), true);
+        let research = prepared.join("research/catalog");
+        let economic = directory.path().join("source/catalog");
+        request.research.input.instrument_ids = vec![LATE.into()];
+        request.research.clip_end(counter(2 * DAY).unwrap());
+        request.scenario.maximum_asset_weight = "0.02".parse().unwrap();
+        request.scenario.execution_model =
+            Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
+        request.context_source = Some(CONTEXT_MANIFEST.into());
+        let mut instruments = definitions();
+        let InstrumentAny::CryptoPerpetual(perp) = &mut instruments[2] else {
+            unreachable!()
+        };
+        perp.min_notional = Some(Money::from("10 USD"));
+        let manifest_path = research.join(cohort_cache::MANIFEST_FILE);
+        let mut manifest = cohort_cache::manifest(&research).unwrap();
+        manifest.source_report["instrument_source"]["instruments"] =
+            serde_json::to_value(&instruments).unwrap();
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+        let csv = "event_ns,oracle_px,mark_px\n0,100,100\n";
+        std::fs::write(economic.join("context-prices-000.csv"), csv).unwrap();
+        std::fs::write(economic.join(CONTEXT_MANIFEST), serde_json::to_vec(&json!({
+            "schema_version":1,"format":"EVENT_TIME_CONTEXT_PRICE_CSV_V1","clock":"EVENT_TIME_PROXY_UNVERIFIED",
+            "source_revision":"controlled-books","research_source_revision":"fixed-source","start_ns":"0","end_ns":(3*DAY).to_string(),
+            "rows":"1","instrument_ids":[LATE],"files":[{"instrument_id":LATE,"path":"context-prices-000.csv", "bytes":csv.len().to_string(),
+                "rows":"1","first_event_ns":"0","last_event_ns":"0"}]
+        })).unwrap()).unwrap();
+        let catalog = ParquetDataCatalog::new(&economic, None, None, None, None);
+        let opened = 3 * HOUR + 15 * 60 * SECOND;
+        let close = 5 * HOUR;
+        for instrument in &instruments {
+            if instrument.id().to_string() == SPOT {
+                continue;
+            }
+            let bridge = instrument.id().to_string() == BRIDGE;
+            let mut times = vec![8 * SECOND, 18 * SECOND];
+            times.extend((0..=32).map(|n| opened + n * 2 * SECOND));
+            times.extend((0..=16).map(|n| close + n * 2 * SECOND));
+            let mut rows = Vec::new();
+            for at in times {
+                let mut clear =
+                    OrderBookDelta::clear(instrument.id(), 0, (at - 100).into(), at.into());
+                clear.order.price = Price::zero(instrument.price_precision());
+                clear.order.size = Quantity::zero(instrument.size_precision());
+                rows.push(clear);
+                // The first exit leaves 0.05 contracts, worth $5 at the next book.
+                let size = if !bridge && at == close + 2 * SECOND {
+                    "0.2500"
+                } else {
+                    "10000.0000"
+                };
+                for side in [OrderSide::Buy, OrderSide::Sell] {
+                    rows.push(OrderBookDelta::new(
+                        instrument.id(),
+                        BookAction::Add,
+                        BookOrder::new(
+                            side,
+                            Price::from(if bridge { "1.000" } else { "100.00" }),
+                            Quantity::from(size),
+                            0,
+                        ),
+                        RecordFlag::F_SNAPSHOT as u8,
+                        0,
+                        (at - 100).into(),
+                        at.into(),
+                    ));
+                }
+                rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+            }
+            catalog.write_to_parquet(&rows, None, None, None).unwrap();
+        }
+        let wasm = wat::parse_str(format!(
+            r#"(module
+            (global $flow (mut f64) (f64.const 0))
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+                local.get 0 i32.const 7 i32.eq if local.get 1 global.set $flow end)
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+                global.get $flow f64.const {sign} f64.mul))"#
+        ))
+        .unwrap();
+        let result = replay_with_funding(&research, &economic, &request, &wasm).unwrap();
+        assert_eq!(result.native_rejections.get(), 0);
+        assert_eq!(result.skipped_minimum.get(), 0);
+        assert_eq!(
+            result.native_fills.get(),
+            4,
+            "sign={sign}: conversion, entry, partial exit and residual exit"
+        );
+        assert_eq!(
+            result
+                .assets
+                .iter()
+                .find(|a| a.instrument_id == LATE)
+                .unwrap()
+                .execution_attempts
+                .get(),
+            3
+        );
+    }
+}
+
+#[test]
 fn book_only_spot_source_survives_preparation_in_both_views() {
     let directory = tempfile::tempdir().unwrap();
     let (_, mut request, _) = source(directory.path(), 1, None, true);

@@ -1037,6 +1037,7 @@ fn small_legal_quantity(
     instrument: &InstrumentAny,
     quantity: Decimal,
     price: Decimal,
+    reduce_only: bool,
 ) -> Result<Decimal> {
     let direction = if quantity < Decimal::ZERO {
         -Decimal::ONE
@@ -1049,9 +1050,10 @@ fn small_legal_quantity(
         || instrument
             .min_quantity()
             .is_some_and(|m| amount < m.as_decimal())
-        || instrument
-            .min_notional()
-            .is_some_and(|m| amount * price * instrument.multiplier().as_decimal() < m.as_decimal())
+        || !(reduce_only && matches!(instrument, InstrumentAny::CryptoPerpetual(_)))
+            && instrument.min_notional().is_some_and(|m| {
+                amount * price * instrument.multiplier().as_decimal() < m.as_decimal()
+            })
     {
         return Ok(Decimal::ZERO);
     }
@@ -1321,8 +1323,12 @@ fn small_new_entries(
             .instrument
             .try_make_price(price.to_f64().context("ECONOMIC_NONFINITE")?)?
             .as_decimal();
-        let mut quantity =
-            small_legal_quantity(&a.instrument, notional / unit * direction, native_price)?;
+        let mut quantity = small_legal_quantity(
+            &a.instrument,
+            notional / unit * direction,
+            native_price,
+            false,
+        )?;
         if quantity.is_zero() {
             continue;
         }
@@ -1354,6 +1360,7 @@ fn small_new_entries(
                             * a.instrument.multiplier().as_decimal()
                             * (Decimal::ONE + fee)),
                     native_price,
+                    false,
                 )?;
                 if affordable > Decimal::ZERO {
                     quantity = quantity.min(affordable);
@@ -1402,6 +1409,7 @@ fn small_new_entries(
                                 &assets[j].instrument,
                                 additional / bridge_unit,
                                 bridge_price,
+                                false,
                             )?;
                             if buy > Decimal::ZERO {
                                 let held = cash
@@ -1549,6 +1557,7 @@ fn small_cap_entries(
                     Decimal::ONE
                 },
             native_price,
+            false,
         )?;
         if let Some(snapshots) = observed_books {
             let difference = quantity - current;
@@ -1595,6 +1604,7 @@ fn small_cap_entries(
                     snapshot
                         .price(buy)
                         .context("ECONOMIC_BOOK_EXECUTION_PRICE_REQUIRED")?,
+                    false,
                 )?;
                 if change.is_zero() {
                     row.target_quantity = None;
@@ -2620,6 +2630,7 @@ pub fn replay_models_with_funding_and_cores(
                                 &a.instrument,
                                 (quantity - held).abs().min(capacity),
                                 price,
+                                reducing,
                             )
                         })
                         .transpose()?
