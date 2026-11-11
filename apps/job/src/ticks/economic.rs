@@ -412,7 +412,7 @@ struct ContextReader {
     last: Option<u64>,
     rows: u64,
 }
-fn context_decimal(text: &str) -> Result<Option<Decimal>> {
+pub fn context_decimal(text: &str) -> Result<Option<Decimal>> {
     if text.is_empty() {
         return Ok(None);
     }

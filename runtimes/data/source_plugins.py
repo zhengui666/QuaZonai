@@ -92,6 +92,8 @@ def cryptohftdata_options(parser, convert=False, plan=False):
             mode.add_argument("--trade-ticks", action="store_true", help="native trade-only catalog")
             mode.add_argument("--cohort-cache", action="store_true", help="derived trade cohort cache")
             mode.add_argument("--cohort-flow-cache", action="store_true", help="derived trade cohort cache with aggressive flow")
+            mode.add_argument("--context-prices", action="store_true", help="received-time oracle/mark economic sidecars")
+            parser.add_argument("--research-source-revision", help="research revision bound to context-price sidecars")
             parser.add_argument("--received-time", action="store_true", help="select and group original collector receive times")
             parser.add_argument("--maximum-receive-delay-ns", type=int,
                                 help="explicit maximum receive minus exchange-event time for received-time input")
@@ -120,7 +122,17 @@ def cryptohftdata_convert(args):
     output = local_path(args.output)
     if output.exists():
         raise ValueError("native output must be a new directory; failed artifacts are never removed")
+    if args.context_prices:
+        if args.market != "perpetual" or args.received_time or args.maximum_receive_delay_ns is not None:
+            raise ValueError("context prices use perpetual context's original received_time without a trade delay selection")
+        if not args.research_source_revision or not args.research_source_revision.strip():
+            raise ValueError("context prices require an explicit research source revision")
+        args.stream = args.stream or ["context"]
+    elif args.research_source_revision is not None:
+        raise ValueError("research source revision requires context prices")
     manifest = cryptohftdata_manifest(args)
+    if args.context_prices and manifest["selection"]["streams"] != ["context"]:
+        raise ValueError("context prices require --stream context only")
     mode = next((name for name in ("trade_ticks", "cohort_cache", "cohort_flow_cache") if getattr(args, name)), None)
     if mode and manifest["selection"]["streams"] != ["trades"]:
         raise ValueError("trade/catalog cache mode requires --stream trades only")
@@ -131,6 +143,9 @@ def cryptohftdata_convert(args):
     source_file.parent.mkdir(parents=True, exist_ok=True)
     cryptohftdata.publish(source_file, manifest)
     native = ["import", "--manifest", str(source_file), "--instruments", str(local_path(args.instruments)), "--native-precision"]
+    if args.context_prices:
+        native = ["context-prices", "--manifest", str(source_file), "--instruments", str(local_path(args.instruments)),
+                  "--research-source-revision", args.research_source_revision]
     if mode:
         native.append("--" + mode.replace("_", "-"))
     if args.received_time:
