@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool, type JsonObject } from '@earendil-works/pi-durable';
+import { defineExtension, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createNautilusWorker } from '../../nautilus/src/server.ts';
 import { openResearch } from '../src/host.ts';
@@ -18,9 +18,10 @@ import { researchInput } from '../src/input.ts';
 import { legacySelection } from '../src/pm-comparison.ts';
 import { validationReviewContext } from '../src/review-workflow.ts';
 import heldout from '../plugins/heldout-wasm.ts';
-import { tickEconomicFeedback } from '../plugins/tick-economic.ts';
+import { runTickEconomic, tickEconomicFeedback } from '../plugins/tick-economic.ts';
 import factor from '../plugins/factor-wasm.ts';
 import research from '../plugins/research.ts';
+import { Exposures } from '../plugins/native-exposure.ts';
 import { startLegacyResearch } from './legacy-study.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -32,7 +33,7 @@ function feedback(transcript: { messages: readonly unknown[] }, name: string): J
   return JSON.parse(message.content.map(item => item.text ?? '').join('')) as JsonObject;
 }
 
-for (const mode of ['completed', 'failed', 'recovered', 'financial', 'financial-final-failed'] as const) test(`tick economic research preserves primary/model binding and original ${mode} child`, { timeout: 30_000, concurrency: false }, async () => {
+for (const mode of ['completed', 'failed', 'stopped', 'recovered', 'financial', 'financial-final-failed'] as const) test(`tick economic research preserves primary/model binding and original ${mode} child`, { timeout: 30_000, concurrency: false }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-research-tick-economic-'));
   const catalog = join(directory, 'primary'); const sealed = join(directory, 'sealed');
   await mkdir(catalog); await mkdir(sealed);
@@ -55,8 +56,8 @@ assert request['small_capital_policy']['decision_clock']=='FIXED_INTERVAL_V1'
 model=open(sys.argv[sys.argv.index('--model')+1],'rb').read()
 assert model==bytes([0,97,115,109,1,0,0,0])
 with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
-if ${JSON.stringify(mode)}=='failed' or (${JSON.stringify(mode)}=='financial-final-failed' and heldout): raise RuntimeError('CONTROLLED_ECONOMIC_FAILURE')
-while ${JSON.stringify(mode)}=='recovered' and not os.path.exists(${JSON.stringify(allow)}): time.sleep(0.01)
+if (${JSON.stringify(mode)}=='failed' and len(open(${JSON.stringify(calls)}).readlines())==1) or (${JSON.stringify(mode)}=='financial-final-failed' and heldout): raise RuntimeError('CONTROLLED_ECONOMIC_FAILURE')
+while ${JSON.stringify(mode)} in ['recovered','stopped'] and not os.path.exists(${JSON.stringify(allow)}): time.sleep(0.01)
 print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'protocol only'},'coverage':{},'assets':[],
 'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'CONTROLLED_MISSING_MARK'}, {'day_start_ns':str(6*86400000000000),'equity_usdt':'999','net_return':99,'unknown_reason':None}],
 'partition_metrics':[{'partition':p,'days':'1','valid_return_days':'1','sharpe_365':6 if p!='HELDOUT' else 12345,'annualized_return_365':4} for p in ['TRAIN','VALIDATION','HELDOUT']],
@@ -85,6 +86,13 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const result = await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Controlled original trial', request: full }, async () => ({ request: iterationRequest(data) }));
       return { output: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, result }) }] };
     },
+  }), defineTool({
+    name: 'economic_pair', description: 'Concurrent calls retain one economic attempt', parameters: obj({}), replay: 'safe',
+    async execute(_args, api, ctx) {
+      const [left, right] = await Promise.all([runTickEconomic(api, ctx, trialId), runTickEconomic(api, ctx, trialId)]);
+      assert.deepEqual(left, right);
+      return { output: [{ type: 'text', text: JSON.stringify({ trialId, economic: left }) }] };
+    },
   })] });
   let trialId = 0; let first: JsonObject; let repeated: JsonObject; let readback: JsonObject;
   faux.setResponses([
@@ -102,8 +110,8 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       assert.equal(rejected.isError, true, 'only a computed trial in the original conversation can be replayed');
       return tool('factor_economic_evaluate', { trialId });
     },
-    transcript => { first = feedback(transcript, 'factor_economic_evaluate'); return tool('factor_economic_evaluate', { trialId }); },
-    transcript => { repeated = feedback(transcript, 'factor_economic_evaluate'); return tool('research_trial', { trialId }); },
+    transcript => { first = feedback(transcript, 'factor_economic_evaluate'); return mode === 'failed' ? tool('research_finish', { reason: 'Retain failed economic attempt before recovery.' }) : tool('economic_pair'); },
+    transcript => { repeated = feedback(transcript, 'economic_pair'); return tool('research_trial', { trialId }); },
     transcript => { readback = feedback(transcript, 'research_trial'); return mode.startsWith('financial') ? tool('factor_finalize', { trialId, reason: 'Controlled protocol completed' }) : tool('research_finish', { reason: 'Controlled protocol completed' }); },
   ]);
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [factor, research, register, heldout] };
@@ -115,7 +123,11 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       assert.throws(() => researchInput({ goal: specification.question, specification, model: { provider: 'test', modelId: 'test' }, data: {}, policy }), /tick_economic_tick_input_required/);
     }
     const receipt = await startLegacyResearch(host, `economic-${mode}`, { goal: 'Check primary-only economics protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy, ...(mode.startsWith('financial') ? { specification } : {}) });
-    if (mode === 'recovered') {
+    const originalInput = structuredClone((await host.state(receipt.conversationId)).research!.input);
+    let submissionId = receipt.submissionId;
+    let previousAttempt: Awaited<ReturnType<typeof host.harness.getTask>>;
+    let previousExposures = await host.harness.snapshot(Exposures, context);
+    if (mode === 'recovered' || mode === 'stopped') {
       const deadline = Date.now() + 10_000;
       for (;;) {
         try { if ((await readFile(calls, 'utf8')).includes('run')) break; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -126,28 +138,68 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const running = await tickEconomicFeedback(host.harness, context, active.economic as JsonObject);
       assert.equal(running.status, 'STARTED'); assert.notEqual(running.taskStatus, 'terminal');
       const originalChildId = (active.economic as JsonObject).taskId;
+      if (mode === 'stopped') {
+        previousExposures = await host.harness.snapshot(Exposures, context);
+        await host.stop(receipt.conversationId);
+        const stopped = (await host.state(receipt.conversationId)).research!;
+        assert.equal(stopped.trials[0]!.status, 'COMPUTED');
+        first = { trialId, economic: stopped.trials[0]!.economic! };
+        assert.equal((first.economic as JsonObject).status, 'STOPPED');
+        previousAttempt = await host.harness.getTask(originalChildId as TaskId<unknown>, context);
+        assert.equal(previousAttempt!.state.status, 'terminal');
+        assert.deepEqual(await host.harness.snapshot(Exposures, context), previousExposures);
+      }
       await host.close(); await writeFile(allow, 'continue'); host = await openResearch(options);
       const recovered = (await host.state(receipt.conversationId)).research!.trials[0]!;
       assert.equal((recovered.economic as JsonObject).taskId, originalChildId);
     }
-    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    if (mode === 'failed') {
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      previousExposures = await host.harness.snapshot(Exposures, context);
+      previousAttempt = await host.harness.getTask((first!.economic as JsonObject).taskId as TaskId<unknown>, context);
+      await host.close(); host = await openResearch(options);
+    }
+    if (mode === 'stopped' || mode === 'failed') {
+      faux.setResponses([tool('economic_pair'),
+        transcript => { repeated = feedback(transcript, 'economic_pair'); return tool('factor_economic_evaluate', { trialId }); },
+        transcript => { assert.deepEqual(feedback(transcript, 'factor_economic_evaluate'), repeated!); return tool('research_trial', { trialId }); },
+        transcript => { readback = feedback(transcript, 'research_trial'); return tool('research_finish', { reason: 'Same computed factor retained after owner resume.' }); },
+      ]);
+      submissionId = (await host.resume(receipt.conversationId, receipt.submissionId, 'Retry economic evaluation of the original computed factor.')).submissionId;
+    }
+    await (await host.harness.submission(submissionId, context))!.wait(context);
     const source = (await host.harness.snapshot(Study, receipt.conversationId, context))!.trials[0]!;
+    assert.deepEqual((await host.state(receipt.conversationId)).research!.input, originalInput);
     assert.equal(source.status, 'COMPUTED'); assert.equal(source.taskId, trialId);
     assert.deepEqual(source.proposal, { model: '(module)', hypothesis: 'Controlled original trial', request: full });
     assert.deepEqual(source.result, { request: iterationRequest(data) });
     const economic = first!.economic as JsonObject;
-    assert.equal(economic.status, mode === 'failed' ? 'FAILED' : 'COMPUTED');
-    assert.deepEqual(repeated!, first!); assert.deepEqual(readback!.economic, economic);
+    const retry = mode === 'failed' || mode === 'stopped';
+    assert.equal(economic.status, mode === 'failed' ? 'FAILED' : mode === 'stopped' ? 'STOPPED' : 'COMPUTED');
+    if (retry) {
+      assert.notEqual((repeated!.economic as JsonObject).taskId, economic.taskId);
+      assert.equal((repeated!.economic as JsonObject).status, 'COMPUTED');
+      const original = await host.harness.getTask(economic.taskId as TaskId<unknown>, context);
+      assert.equal(original!.state.status, 'terminal');
+      assert.deepEqual(original, previousAttempt);
+      assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.slice(0, previousExposures!.windows.length), previousExposures!.windows);
+      assert.deepEqual(readback!.economic, repeated!.economic);
+      const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.tick-economic' }, 100), context);
+      assert.deepEqual(tasks.items[0]!.input, tasks.items[1]!.input);
+      assert.equal((await host.state(receipt.conversationId)).research!.trials.length, 1);
+    } else {
+      assert.deepEqual(repeated!, first!); assert.deepEqual(readback!.economic, economic);
+    }
     if (mode.startsWith('financial')) {
       const current = (await host.state(receipt.conversationId)).research!;
       assert.equal(current.final?.status, mode === 'financial-final-failed' ? 'FAILED' : 'COMPUTED', JSON.stringify(current.final));
     }
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, mode.startsWith('financial') ? 2 : 1, 'invalid overrides, repeat reads and host recovery never start another native execution');
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, mode.startsWith('financial') || retry ? 2 : 1, 'only failed or stopped economic attempts create another native execution');
     const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.tick-economic' }, 100), context);
-    assert.equal(tasks.items.length, mode.startsWith('financial') ? 2 : 1); assert.ok(tasks.items.some(task => task.id === economic.taskId));
+    assert.equal(tasks.items.length, mode.startsWith('financial') || retry ? 2 : 1); assert.ok(tasks.items.some(task => task.id === economic.taskId));
     assert.equal(tasks.items[0]!.conversationId, receipt.conversationId);
     const native = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
-    assert.equal(native.items.length, mode.startsWith('financial') ? 3 : 1);
+    assert.equal(native.items.length, mode.startsWith('financial') ? 3 : retry ? 2 : 1);
     if (mode.startsWith('financial')) {
       const current = (await host.state(receipt.conversationId)).research!;
       if (mode === 'financial-final-failed') {
@@ -171,7 +223,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       assert.equal(((review.candidate as JsonObject).economic as JsonObject).taskId, economic.taskId);
     }
     if (mode === 'failed') assert.match(String(economic.error), /CONTROLLED_ECONOMIC_FAILURE/);
-    else {
+    else if (mode !== 'stopped') {
       const summary = economic.summary as JsonObject;
       assert.deepEqual((summary.metrics as JsonObject[]).map(row => row.partition), ['TRAIN', 'VALIDATION']);
       assert.equal((summary.days as JsonObject[]).length, 1);

@@ -37,7 +37,7 @@ export default defineExtension({
     },
   }), defineTool({
     name: 'factor_economic_evaluate',
-    description: 'Replay one original COMPUTED tick factor on its original TRAIN/VALIDATION primary data with the initial policy.tickEconomic capital, costs and execution policy. Returns after-cost economic feedback before final selection. Reuses the original model and recorded economic child on repeated calls.',
+    description: 'Replay one original COMPUTED tick factor on its original TRAIN/VALIDATION primary data with the initial policy.tickEconomic capital, costs and execution policy. Returns after-cost economic feedback before final selection. Reuses the original model and pending or completed economic child. Failed or stopped economic attempts can be retried on the same computed factor.',
     parameters: obj({ trialId: int({ minimum: 1 }) }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const economic = await runTickEconomic(api, context, args.trialId);
