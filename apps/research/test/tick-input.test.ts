@@ -211,9 +211,10 @@ test('book profile appends four received-flow features and preserves legacy prof
   const brief = modelBriefInput({ data: tagged(book), policy: {} }).data.feature_model as JsonObject;
   assert.equal(brief.abi, legacy.abi);
   assert.equal(brief.schema, 'qz.tick-received-cohort-flow-book-features.v1');
-  assert.deepEqual(brief.features, [...legacy.features as string[], 'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_usd', 'book_ask_depth_5_usd']);
+  assert.deepEqual(brief.features, [...legacy.features as string[], 'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_quote', 'book_ask_depth_5_quote']);
   assert.match(JSON.stringify(brief.definitions), /min\(size\)\/max\(size\)/);
   assert.match(JSON.stringify(brief.definitions), /original availability timestamp/);
+  assert.match(JSON.stringify(brief.definitions), /BookLevel::exposure.*quote units/);
   assert.match(JSON.stringify(brief.definitions), /trade-cohort-triggered/);
   assert.match(String(brief.missing), /one-sided book snapshots use the existing feature masks/);
   for (const original of [tick(), { ...tick(), input: { ...tick().input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' as const } },

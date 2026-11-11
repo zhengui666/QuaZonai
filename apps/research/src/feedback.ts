@@ -99,7 +99,7 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
       ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : []),
       ...(book ? ['Book features use the latest real snapshot received at or before the current trade cohort and retain its original availability timestamp.',
         'native_book_imbalance_ratio is the official Nautilus BookImbalanceRatio at the best bid/ask, min(size)/max(size), symmetric in [0,1] with no direction.',
-        'book_spread_bps is current native book spread divided by midpoint times 10000. book_bid_depth_5_usd and book_ask_depth_5_usd sum price times quantity over the first five levels on each side.',
+        'book_spread_bps is current native book spread divided by midpoint times 10000. book_bid_depth_5_quote and book_ask_depth_5_quote sum native BookLevel::exposure (original price times quantity) over the first five levels on each side, in quote units.',
         'Predictions remain trade-cohort-triggered. FIXED_INTERVAL execution consumes the latest new score at its configured interval.'] : [])],
     missing: `The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.${book ? ' Missing or one-sided book snapshots use the existing feature masks.' : ''}`,
     scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',

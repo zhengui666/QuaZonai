@@ -43,7 +43,7 @@ export const TICK_FLOW_FEATURE_KEYS = [...TICK_FEATURE_KEYS, 'signed_quantity'] 
 export const TICK_RECEIVED_FEATURE_KEYS = [...TICK_FEATURE_KEYS.slice(0, 6), 'elapsed_received_ns'] as const;
 export const TICK_RECEIVED_FLOW_FEATURE_KEYS = [...TICK_RECEIVED_FEATURE_KEYS, 'signed_quantity'] as const;
 export const TICK_RECEIVED_FLOW_BOOK_FEATURE_KEYS = [...TICK_RECEIVED_FLOW_FEATURE_KEYS,
-  'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_usd', 'book_ask_depth_5_usd'] as const;
+  'native_book_imbalance_ratio', 'book_spread_bps', 'book_bid_depth_5_quote', 'book_ask_depth_5_quote'] as const;
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
