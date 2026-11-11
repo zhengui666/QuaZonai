@@ -251,3 +251,55 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const retrying of [false, true]) test(`scan capacity cancellation preserves ${retrying ? 'an in-flight retry' : 'explicit non-admission'}`, { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-scan-capacity-stop-'));
+  let posts = 0; let deletes = 0;
+  const server = createServer(async (incoming, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-tick-factor'] })); return; }
+    if (incoming.method === 'POST') {
+      posts++; let body = ''; for await (const chunk of incoming) body += chunk;
+      const original = JSON.parse(body) as NativeExecutionRequest;
+      if (posts === 1) {
+        response.statusCode = 429;
+        response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' }));
+      }
+      return;
+    }
+    if (incoming.method === 'DELETE') deletes++;
+    response.statusCode = 404; response.end('{"error":"not_found"}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const target = { id: 'scan-capacity-stop-protocol', url: `http://127.0.0.1:${address.port}` };
+  const models = createModels(); models.setProvider(fauxProvider().provider);
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-capacity-stop-protocol', tasks: [FactorTask] })] });
+  try {
+    const root = await host.harness.root(context);
+    const tickRequest = { schema_version: 1, input: { modality: 'TRADE_TICK', instrument_ids: ['TEST.SIM'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', source_revision: 'capacity-protocol', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+      sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 },
+      parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '10', validation_end_ns: '20' };
+    const id = await root.commit(tx => tx.createTask(FactorTask, { model: '(module)', data: { catalog: directory, nativeInput: { modality: 'TRADE_TICK', request: tickRequest } }, binary: target,
+      scanContext: { scanId: 'capacity-stopped-scan', ordinal: '0' } }, { ownership: { kind: 'conversation' } }), context);
+    const deadline = Date.now() + 8000;
+    for (;;) {
+      const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
+      const native = tasks.items[0];
+      if (retrying ? posts === 2 : native?.state.status === 'sleeping') break;
+      assert.ok(Date.now() < deadline, 'original invocation did not reach capacity wait');
+      await delay(5);
+    }
+    await host.harness.abortTask(id, context);
+    assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
+    const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context);
+    assert.equal(facts!.requests[0]!.status, retrying ? 'UNKNOWN' : 'REJECTED');
+    assert.equal(posts, retrying ? 2 : 1);
+    assert.equal(deletes === 0, !retrying);
+    await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
+    assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, retrying ? 'UNKNOWN' : 'REJECTED');
+  } finally {
+    await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

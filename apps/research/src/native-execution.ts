@@ -330,6 +330,13 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
       });
       const request = stored.request as unknown as NativeExecutionRequest;
       if (request.requestId !== task.input.requestId || request.command !== task.input.command) throw new Error('native_request_identity_conflict');
+      // A retry can be admitted before its response arrives, so retire the prior refusal before sending it.
+      await runtime.commit(async tx => {
+        const facts = await tx.doc(NativeRemoteUncertainty, runtime.conversationId, String(task.input.ownerTaskId ?? task.id), null);
+        const prior = facts.requests.find(row => row.requestId === task.input.requestId);
+        if (prior?.status === 'REJECTED') { prior.status = 'PENDING'; prior.error = null; delete prior.admission; }
+        return undefined;
+      }, context);
       let state: NativeExecutionReceipt;
       try { state = receipt(await remoteRequest(task.input.target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal), task.input.requestId); }
       catch (error) {
@@ -363,6 +370,13 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
     },
   },
   async abort(task, runtime, context) {
+    if (task.state.checkpoint.phase === 'submit') {
+      const facts = await runtime.snapshot(NativeRemoteUncertainty, runtime.conversationId, String(task.input.ownerTaskId ?? task.id), withoutAbortSignal(context));
+      if (facts?.requests.some(row => row.requestId === task.input.requestId && row.status === 'REJECTED' && row.admission === 'REJECTED')) {
+        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), withoutAbortSignal(context));
+        return;
+      }
+    }
     let state: NativeExecutionReceipt;
     try { state = receipt(await remoteRequest(task.input.target, `v1/executions/${task.input.requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), task.input.requestId); }
     catch (error) {
