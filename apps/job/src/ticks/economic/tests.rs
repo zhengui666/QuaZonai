@@ -247,6 +247,28 @@ fn partition_metrics_use_all_observed_daily_returns_and_keep_missing_partitions_
     assert_eq!(heldout.valid_return_days.get(), 0);
     assert_eq!(heldout.sharpe_365, None);
     assert_eq!(heldout.annualized_return_365, None);
+    assert_eq!(train.max_drawdown, None);
+    assert_eq!(validation.max_drawdown, Some(0.0));
+    assert_eq!(heldout.max_drawdown, None);
+    let known = [0.1, -0.25, 0.1]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| NativeTickEconomicDayV1 {
+            day_start_ns: counter(index as u64 * DAY).unwrap(),
+            equity_usdt: None,
+            net_return: Some(value),
+            unknown_reason: None,
+            missing_balances: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let known_metrics = partition_metrics(&request, &known).unwrap();
+    assert!((known_metrics[0].max_drawdown.unwrap() + 0.25).abs() < 1e-12);
+    let mut gap = known;
+    gap.remove(1);
+    assert_eq!(
+        partition_metrics(&request, &gap).unwrap()[0].max_drawdown,
+        None
+    );
 }
 
 #[test]

@@ -165,6 +165,8 @@ pub struct NativeTickEconomicPartitionMetricV1 {
     pub valid_return_days: DbCounter,
     pub sharpe_365: Option<f64>,
     pub annualized_return_365: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_drawdown: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

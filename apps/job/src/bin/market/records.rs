@@ -654,7 +654,7 @@ mod tests {
             };
             assert_eq!(
                 bar.bar_type.to_string(),
-                "AUD/USD.SIM-100-MILLISECOND-LAST-INTERNAL"
+                "AUD/USD.SIM-100-MILLISECOND-LAST-EXTERNAL"
             );
             assert_eq!(bar.ts_event.as_u64(), 1_100_000_000);
             assert_eq!(bar.ts_init.as_u64(), 1_150_000_000);

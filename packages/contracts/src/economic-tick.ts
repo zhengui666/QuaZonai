@@ -114,7 +114,7 @@ export type NativeTickEconomicResult = {
   assets: { instrument_id: string; native_kind: string; cohorts: string; decisions: string; execution_attempts: string }[];
   // Balance FX failures only; absence or emptiness does not establish complete NAV, marks, reporting FX, or funding.
   days: { day_start_ns: string; equity_usdt: string | null; net_return: number | null; unknown_reason: string | null; missing_balances?: { ledger: 'CASH' | 'MARGIN'; currency: string; amount: string }[] }[];
-  metrics: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; regime: 'BULL' | 'BEAR' | 'RANGE' | 'UNKNOWN'; days: string; valid_return_days: string; sharpe_365: number | null; conditional_annualized_return_365: number | null }[];
+  metrics: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; regime: 'BULL' | 'BEAR' | 'RANGE' | 'UNKNOWN'; days: string; valid_return_days: string; sharpe_365: number | null; conditional_annualized_return_365: number | null; max_drawdown?: number | null }[];
   partition_metrics?: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; days: string; valid_return_days: string; sharpe_365: number | null; annualized_return_365: number | null }[];
   conversion_ns: string | null; initial_usdc_after_cost: string | null; funding_usdc: string;
   fees_usdc_equivalent: string | null; fees_by_currency: Record<string, string>; initial_conversion_cost_usdc: string; nominal_usd_settled_usdc: string;
@@ -188,9 +188,9 @@ export function validateNativeTickEconomicResult(value: unknown): NativeTickEcon
   }) || Object.entries(object(result.fees_by_currency)).some(([currency, amount]) => !currency || !decimal(amount))
     || !decimal(result.initial_conversion_cost_usdc) || !decimal(result.nominal_usd_settled_usdc)) throw new Error('tick_economic_result_metrics_or_costs_invalid');
   if (result.partition_metrics !== undefined && (!Array.isArray(result.partition_metrics) || result.partition_metrics.some(value => {
-    const row = object(value); fields(row, ['partition', 'days', 'valid_return_days', 'sharpe_365', 'annualized_return_365']);
+    const row = object(value); fields(row, ['partition', 'days', 'valid_return_days', 'sharpe_365', 'annualized_return_365', 'max_drawdown']);
     return !['TRAIN', 'VALIDATION', 'HELDOUT'].includes(String(row.partition)) || !counter(row.days) || !counter(row.valid_return_days)
-      || [row.sharpe_365, row.annualized_return_365].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
+      || [row.sharpe_365, row.annualized_return_365, ...(row.max_drawdown === undefined ? [] : [row.max_drawdown])].some(value => value !== null && (typeof value !== 'number' || !Number.isFinite(value)));
   }))) throw new Error('tick_economic_result_partition_metrics_invalid');
   if (!Array.isArray(result.targets) || result.targets.some(value => {
     const row = object(value); fields(row, ['instrument_id', 'currency', 'weight']);

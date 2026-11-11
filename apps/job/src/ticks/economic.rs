@@ -3757,6 +3757,27 @@ fn partition_metrics(
             valid_return_days: counter(n as u64)?,
             sharpe_365: sharpe,
             annualized_return_365: annualized,
+            max_drawdown: {
+                use nautilus_analysis::Returns;
+                let returns: Returns = selected
+                    .iter()
+                    .filter_map(|day| {
+                        day.net_return.map(|value| {
+                            (
+                                nautilus_core::UnixNanos::from(day.day_start_ns.get()),
+                                value,
+                            )
+                        })
+                    })
+                    .collect();
+                (returns.len() == selected.len()
+                    && returns.values().all(|value| *value >= -1.0)
+                    && selected
+                        .windows(2)
+                        .all(|pair| pair[1].day_start_ns.get() - pair[0].day_start_ns.get() == DAY))
+                .then(|| crate::review_science::native_max_drawdown(&returns))
+                .flatten()
+            },
         })
     })
     .collect()
