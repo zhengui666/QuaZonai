@@ -4,7 +4,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::{Data, TradeTick},
+    data::{Data, FundingRateUpdate, TradeTick},
     identifiers::{InstrumentId, Symbol, TradeId},
     instruments::{Instrument, InstrumentAny},
 };
@@ -35,6 +35,20 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Obtain settled funding history for perpetuals selected by native definitions.
+    HyperliquidFunding {
+        #[arg(long)]
+        instruments: PathBuf,
+        #[arg(long)]
+        start_seconds: u64,
+        #[arg(long)]
+        end_seconds: u64,
+        #[arg(long)]
+        output: PathBuf,
+        /// Research source revision to which the funding sidecar belongs.
+        #[arg(long)]
+        source_revision: String,
+    },
     /// Concatenate complete, disjoint source-day cohort units without changing their marks.
     ComposeCohorts {
         #[arg(long)]
@@ -339,6 +353,159 @@ fn hyperliquid_symbol_id(raw_symbol: &str) -> Result<InstrumentId> {
         )),
         *HYPERLIQUID_VENUE,
     ))
+}
+
+fn publish_funding_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let mut file =
+        tempfile::NamedTempFile::new_in(path.parent().context("FUNDING_OUTPUT_PARENT")?)?;
+    serde_json::to_writer(file.as_file_mut(), value)?;
+    writeln!(file)?;
+    file.persist(path)?;
+    Ok(())
+}
+
+fn funding_parts(output: &Path, request: &serde_json::Value) -> Result<PathBuf> {
+    let parts = output.join(".funding-parts");
+    let metadata = parts.join("request.json");
+    ensure!(
+        !output.join("funding-rates.manifest.json").exists(),
+        "FUNDING_OUTPUT_ALREADY_COMPLETE"
+    );
+    if output.exists() {
+        ensure!(metadata.is_file(), "FUNDING_OUTPUT_ALREADY_EXISTS");
+        ensure!(
+            json::<serde_json::Value>(&metadata)? == *request,
+            "FUNDING_RESUME_REQUEST_CHANGED"
+        );
+    } else {
+        fs::create_dir(output)?;
+        fs::create_dir(&parts)?;
+        publish_funding_json(&metadata, request)?;
+    }
+    Ok(parts)
+}
+
+fn publish_funding(
+    output: &Path,
+    source_revision: &str,
+    start_ns: u64,
+    end_ns: u64,
+    instruments: Vec<String>,
+    rates: BTreeMap<(u64, String), rust_decimal::Decimal>,
+) -> Result<()> {
+    let observed: BTreeSet<_> = rates.keys().map(|(_, id)| id.as_str()).collect();
+    let missing: Vec<_> = instruments
+        .iter()
+        .filter(|id| !observed.contains(id.as_str()))
+        .collect();
+    let mut file = tempfile::NamedTempFile::new_in(output)?;
+    for ((event_ns, instrument_id), rate) in &rates {
+        serde_json::to_writer(
+            &mut file,
+            &serde_json::json!({
+                "instrument_id": instrument_id,
+                "event_ns": event_ns.to_string(),
+                "rate": rate.to_string(),
+            }),
+        )?;
+        writeln!(file)?;
+    }
+    file.flush()?;
+    file.persist(output.join("funding-rates.jsonl"))?;
+    publish_funding_json(
+        &output.join("funding-rates.manifest.json"),
+        &serde_json::json!({
+            "source_revision": source_revision,
+            "start_ns": start_ns.to_string(),
+            "end_ns": end_ns.to_string(),
+            "instruments": instruments,
+            "rows": rates.len(),
+            "missing_instruments": missing,
+            "source": "Hyperliquid public fundingHistory at https://api.hyperliquid.xyz/info via official NautilusTrader adapter; settled hourly interval-end timestamps; half-open event-time window; no collector receive timestamps",
+        }),
+    )?;
+    eprintln!(
+        "{} funding rows, {} missing perpetuals",
+        rates.len(),
+        missing.len()
+    );
+    Ok(())
+}
+
+async fn hyperliquid_funding(
+    instruments_path: &Path,
+    start_seconds: u64,
+    end_seconds: u64,
+    output: &Path,
+    source_revision: &str,
+) -> Result<()> {
+    use nautilus_hyperliquid::{
+        common::{consts::HYPERLIQUID_VENUE, enums::HyperliquidEnvironment},
+        http::client::HyperliquidHttpClient,
+    };
+    ensure!(start_seconds < end_seconds, "FUNDING_TIME_RANGE_INVALID");
+    ensure!(
+        !source_revision.trim().is_empty(),
+        "FUNDING_SOURCE_REVISION_EMPTY"
+    );
+    let start_ns = start_seconds
+        .checked_mul(1_000_000_000)
+        .context("FUNDING_TIME_RANGE_INVALID")?;
+    let end_ns = end_seconds
+        .checked_mul(1_000_000_000)
+        .context("FUNDING_TIME_RANGE_INVALID")?;
+    let start = DateTime::from_timestamp(start_seconds as i64, 0)
+        .context("FUNDING_TIME_RANGE_INVALID")?
+        .to_rfc3339()
+        .parse()?;
+    let end = DateTime::from_timestamp(end_seconds as i64, 0)
+        .context("FUNDING_TIME_RANGE_INVALID")?
+        .to_rfc3339()
+        .parse()?;
+    let instruments: BTreeMap<_, _> = job::catalog::currencies::read_instruments(instruments_path)?
+        .into_iter()
+        .filter(|instrument| matches!(instrument, InstrumentAny::CryptoPerpetual(_)))
+        .map(|instrument| (instrument.id().to_string(), instrument))
+        .collect();
+    ensure!(!instruments.is_empty(), "FUNDING_PERPETUALS_EMPTY");
+    let selected: Vec<_> = instruments.keys().cloned().collect();
+    let parts = funding_parts(
+        output,
+        &serde_json::json!({
+            "source_revision": source_revision,
+            "start_ns": start_ns.to_string(),
+            "end_ns": end_ns.to_string(),
+            "instruments": instruments.iter().map(|(id, instrument)| (id, instrument.raw_symbol().to_string())).collect::<BTreeMap<_, _>>(),
+        }),
+    )?;
+    let client = HyperliquidHttpClient::new(HyperliquidEnvironment::Mainnet, 60, None)?;
+    let mut rates = BTreeMap::new();
+    for (index, (id, instrument)) in instruments.iter().enumerate() {
+        ensure!(
+            instrument.id().venue == *HYPERLIQUID_VENUE,
+            "FUNDING_HYPERLIQUID_INSTRUMENT_REQUIRED: {id}"
+        );
+        let part = parts.join(format!("{index}.json"));
+        let updates: Vec<FundingRateUpdate> = if part.exists() {
+            json(&part)?
+        } else {
+            let updates = client
+                .request_funding_rates(instrument, Some(start), Some(end), None)
+                .await
+                .with_context(|| format!("FUNDING_REQUEST_FAILED: {id}"))?;
+            publish_funding_json(&part, &updates)?;
+            updates
+        };
+        for update in updates {
+            let time = update.ts_event.as_u64();
+            if (start_ns..end_ns).contains(&time) {
+                rates.insert((time, id.clone()), update.rate);
+            }
+        }
+    }
+    publish_funding(output, source_revision, start_ns, end_ns, selected, rates)?;
+    fs::remove_dir_all(parts)?;
+    Ok(())
 }
 
 async fn hyperliquid_instruments(output: &Path, manifest: Option<&Path>) -> Result<()> {
@@ -1269,6 +1436,23 @@ fn trade_memory_limit() -> Result<()> {
 
 fn main() {
     let result = match Arguments::parse().command {
+        Command::HyperliquidFunding {
+            instruments,
+            start_seconds,
+            end_seconds,
+            output,
+            source_revision,
+        } => tokio::runtime::Runtime::new()
+            .context("FUNDING_RUNTIME_UNAVAILABLE")
+            .and_then(|runtime| {
+                runtime.block_on(hyperliquid_funding(
+                    &instruments,
+                    start_seconds,
+                    end_seconds,
+                    &output,
+                    &source_revision,
+                ))
+            }),
         Command::ComposeCohorts {
             manifest,
             instruments,
@@ -1349,6 +1533,111 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn funding_sidecar_preserves_decimal_time_order_and_missing_markets() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("funding");
+        let request = serde_json::json!({"source_revision":"research-v1", "start_ns":"18000000000000000000", "end_ns":"18000000000000000002"});
+        let parts = funding_parts(&output, &request).unwrap();
+        publish_funding_json(&parts.join("0.json"), &Vec::<FundingRateUpdate>::new()).unwrap();
+        assert_eq!(funding_parts(&output, &request).unwrap(), parts);
+        assert!(json::<Vec<FundingRateUpdate>>(&parts.join("0.json"))
+            .unwrap()
+            .is_empty());
+        assert!(
+            funding_parts(&output, &serde_json::json!({"source_revision":"different"})).is_err()
+        );
+        let rates = BTreeMap::from([
+            (
+                (18_000_000_000_000_000_001, "Z.HYPERLIQUID".into()),
+                "-0.000012345678901234".parse().unwrap(),
+            ),
+            (
+                (18_000_000_000_000_000_001, "A.HYPERLIQUID".into()),
+                "0.000000000000000001".parse().unwrap(),
+            ),
+        ]);
+        publish_funding(
+            &output,
+            "research-v1",
+            18_000_000_000_000_000_000,
+            18_000_000_000_000_000_002,
+            vec![
+                "A.HYPERLIQUID".into(),
+                "M.HYPERLIQUID".into(),
+                "Z.HYPERLIQUID".into(),
+            ],
+            rates,
+        )
+        .unwrap();
+        let rows: Vec<serde_json::Value> = fs::read_to_string(output.join("funding-rates.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows[0]["instrument_id"], "A.HYPERLIQUID");
+        assert_eq!(rows[0]["event_ns"], "18000000000000000001");
+        assert_eq!(rows[0]["rate"], "0.000000000000000001");
+        assert_eq!(rows[1]["rate"], "-0.000012345678901234");
+        let manifest: serde_json::Value =
+            json(&output.join("funding-rates.manifest.json")).unwrap();
+        assert_eq!(manifest["rows"], 2);
+        assert_eq!(manifest["source_revision"], "research-v1");
+        assert_eq!(
+            manifest["missing_instruments"],
+            serde_json::json!(["M.HYPERLIQUID"])
+        );
+    }
+
+    #[tokio::test]
+    async fn funding_acquisition_reuses_completed_markets_and_excludes_end_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("funding");
+        let definitions = root.path().join("instruments.json");
+        let mut instrument = nautilus_model::instruments::stubs::crypto_perpetual_ethusdt();
+        instrument.id = "ETHUSDT-PERP.HYPERLIQUID".parse().unwrap();
+        let id = instrument.id;
+        let raw_symbol = instrument.raw_symbol.to_string();
+        publish(
+            &definitions,
+            &vec![InstrumentAny::CryptoPerpetual(instrument)],
+        )
+        .unwrap();
+        let parts = funding_parts(
+            &output,
+            &serde_json::json!({
+                "source_revision":"research-v1", "start_ns":"1000000000", "end_ns":"2000000000",
+                "instruments":{id.to_string():raw_symbol},
+            }),
+        )
+        .unwrap();
+        let updates: Vec<_> = [1_000_000_000, 2_000_000_000]
+            .into_iter()
+            .map(|time| {
+                FundingRateUpdate::new(
+                    id,
+                    "0.00001".parse().unwrap(),
+                    Some(60),
+                    None,
+                    UnixNanos::from(time),
+                    UnixNanos::from(time),
+                )
+            })
+            .collect();
+        publish_funding_json(&parts.join("0.json"), &updates).unwrap();
+        hyperliquid_funding(&definitions, 1, 2, &output, "research-v1")
+            .await
+            .unwrap();
+        assert!(!parts.exists());
+        let rows = fs::read_to_string(output.join("funding-rates.jsonl")).unwrap();
+        assert_eq!(rows.lines().count(), 1);
+        let row: serde_json::Value = serde_json::from_str(rows.trim()).unwrap();
+        assert_eq!(row["event_ns"], "1000000000");
+        let manifest: serde_json::Value =
+            json(&output.join("funding-rates.manifest.json")).unwrap();
+        assert_eq!(manifest["missing_instruments"], serde_json::json!([]));
+    }
 
     fn tick_options(prefixes: &[String], resume: bool, rows: u64, bytes: u64) -> ImportOptions<'_> {
         ImportOptions {
