@@ -20,6 +20,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+#[derive(Clone)]
 pub(in crate::ticks) struct Snapshot {
     pub deltas: OrderBookDeltas,
     pub midpoint: Option<Decimal>,
@@ -205,9 +206,10 @@ impl BookFeatures {
 }
 
 pub(in crate::ticks) struct FeatureBooks {
-    reader: Books,
+    reader: Option<Books>,
     next: Option<Snapshot>,
     latest: Option<BookFeatures>,
+    clock_error: Option<anyhow::Error>,
 }
 
 impl FeatureBooks {
@@ -219,13 +221,40 @@ impl FeatureBooks {
         let mut reader = Books::open(root, id, start, end)?;
         let next = reader.next()?;
         Ok(Self {
-            reader,
+            reader: Some(reader),
             next,
             latest: None,
+            clock_error: None,
         })
     }
 
+    pub fn shared() -> Self {
+        Self {
+            reader: None,
+            next: None,
+            latest: None,
+            clock_error: None,
+        }
+    }
+
+    pub fn observe(&mut self, frame: &Snapshot) {
+        // Retain skipped-frame clock failures until the model consumes this stream.
+        if self.clock_error.is_none() {
+            self.clock_error = [
+                frame.deltas.ts_event.as_u64(),
+                frame.received(),
+                frame.deltas.sequence,
+            ]
+            .into_iter()
+            .find_map(|clock| super::super::counter(clock).err());
+        }
+        self.next = Some(frame.clone());
+    }
+
     pub fn advance(&mut self, received: u64) -> Result<Option<&BookFeatures>> {
+        if let Some(error) = self.clock_error.take() {
+            return Err(error);
+        }
         let mut selected = None;
         while self
             .next
@@ -242,7 +271,7 @@ impl FeatureBooks {
                 super::super::counter(clock)?;
             }
             selected = Some(frame);
-            self.next = self.reader.next()?;
+            self.next = self.reader.as_mut().map(Books::next).transpose()?.flatten();
         }
         if let Some(frame) = selected {
             self.latest = Some(BookFeatures::from_snapshot(&frame)?);

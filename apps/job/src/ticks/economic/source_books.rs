@@ -1054,7 +1054,7 @@ mod tests {
         .unwrap();
         let output = research_books.path().join("ticks");
         let mut builder = cohort_cache::Builder::new_received(&output, 100, 0, 0, true, 0).unwrap();
-        for at in [START + 200, START + 300, START + 400] {
+        for at in [START + 120, START + 123, START + 400] {
             for (index, instrument) in [id, bridge.id()].into_iter().enumerate() {
                 builder
                     .push(TradeTick::new(
@@ -1145,6 +1145,52 @@ mod tests {
                 3
             );
         }
+        // Identical source through a separate root retains the original two-reader path.
+        research_manifest["repository"] = serde_json::json!("CryptoHFTData");
+        research_manifest["source_reference"] =
+            serde_json::json!("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data");
+        research_manifest["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
+        research_manifest["instrument_source"]["instruments"] =
+            serde_json::to_value(&instruments).unwrap();
+        research_manifest["instrument_source"]["currencies"] =
+            serde_json::to_value(crate::catalog::currencies::definitions(&instruments)).unwrap();
+        let same_source = tempfile::tempdir().unwrap();
+        for directory in [&root, &same_source.path().to_path_buf()] {
+            std::fs::write(
+                directory.join("book-snapshots.source.json"),
+                serde_json::to_vec(&research_manifest).unwrap(),
+            )
+            .unwrap();
+        }
+        for model in [
+            contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV1,
+            contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV2,
+        ] {
+            request.scenario.execution_model = Some(model);
+            let original =
+                super::super::replay_with_funding(&root, same_source.path(), &request, &wasm)
+                    .unwrap();
+            let shared = super::super::replay_models_with_funding_and_cores(
+                &root,
+                &root,
+                &request,
+                &[wasm.clone()],
+                3,
+            )
+            .unwrap();
+            let mut shared = serde_json::to_value(shared).unwrap();
+            let mut original = serde_json::to_value(original).unwrap();
+            for result in [&mut shared, &mut original] {
+                let evidence = &mut result["methods"]["initial_conversion_native_evidence"];
+                let mut native: serde_json::Value =
+                    serde_json::from_str(evidence.as_str().unwrap()).unwrap();
+                native.as_object_mut().unwrap().remove("native_session_id");
+                *evidence = serde_json::to_value(native.to_string()).unwrap();
+            }
+            for (key, value) in shared.as_object().unwrap() {
+                assert_eq!(value, &original[key], "{key}");
+            }
+        }
         let mut clipped = request.research.clone();
         clipped.input.instrument_ids.push(empty_id.to_string());
         let prepared = research_books.path().join("clipped");
@@ -1203,7 +1249,17 @@ mod tests {
             true,
         );
         let mut reader = FeatureBooks::open(root.path(), id, START, START + HOUR).unwrap();
-        assert!(reader.advance(START + 1_000_123).is_err());
+        let expected = reader.advance(START + 1_000_123).err().unwrap().to_string();
+        let mut raw =
+            super::super::books::Books::open(root.path(), id, START, START + HOUR).unwrap();
+        let mut shared = FeatureBooks::shared();
+        while let Some(frame) = raw.next().unwrap() {
+            shared.observe(&frame);
+        }
+        assert_eq!(
+            shared.advance(START + 1_000_123).err().unwrap().to_string(),
+            expected
+        );
     }
 
     #[test]
@@ -1218,6 +1274,7 @@ mod tests {
         let mut research = FeatureBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
         let mut economic = Books::open(root.path(), id, START, START + 2 * HOUR).unwrap();
         let mut head = economic.next().unwrap();
+        let mut shared = FeatureBooks::shared();
         let mut latest = None;
         let prefix = vec![
             FeatureValueV1 {
@@ -1239,7 +1296,13 @@ mod tests {
         ];
         for at in times {
             while head.as_ref().is_some_and(|frame| frame.received() <= at) {
-                latest = Some(BookFeatures::from_snapshot(&head.take().unwrap()).unwrap());
+                let frame = head.take().unwrap();
+                shared.observe(&frame);
+                latest = Some(BookFeatures::from_snapshot(&frame).unwrap());
+                // Execution normalization must never replace the observed feature frame.
+                frame
+                    .floor_sizes(nautilus_model::types::Quantity::from("1"))
+                    .unwrap();
                 head = economic.next().unwrap();
             }
             let mut research_features = prefix.clone();
@@ -1247,6 +1310,9 @@ mod tests {
             let mut economic_features = prefix.clone();
             BookFeatures::append(&mut economic_features, latest.as_ref(), at);
             assert_eq!(research_features, economic_features);
+            let mut shared_features = prefix.clone();
+            BookFeatures::append(&mut shared_features, shared.advance(at).unwrap(), at);
+            assert_eq!(shared_features, research_features);
             assert_eq!(&research_features[..8], &prefix);
             if at == START + 122 {
                 assert_eq!(
