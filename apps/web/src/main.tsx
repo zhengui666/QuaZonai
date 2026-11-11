@@ -11,4 +11,4 @@ if ('serviceWorker' in navigator) {
 }
 const root = document.getElementById('root');
 if (!root) throw new Error('Application root is missing');
-createRoot(root, { onCaughtError: () => { console.error('QuaZonai: page unavailable'); } }).render(<StrictMode><App /></StrictMode>);
+createRoot(root, { onCaughtError: (error, info) => { console.error('QuaZonai: page unavailable', error, info.componentStack); } }).render(<StrictMode><App /></StrictMode>);
