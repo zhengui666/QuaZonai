@@ -305,13 +305,17 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     assert.deepEqual((await host.state(first.conversationId)).research, original);
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
 
-    faux.setResponses([tool('factor_evaluate', { hypothesis: 'A copied BAR path cannot reset tick history', model: legacyModel }), tool('research_finish', { reason: 'Failed attempt remains disclosed' })]);
-    const second = await startLegacyResearch(host, 'copied-bar', { ...input, data: { catalog: copied, request: bar() } });
+    faux.setResponses([tool('factor_evaluate', { hypothesis: 'Reuse tick history for BAR development', model: legacyModel }), async () => {
+      const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
+      return tool('factor_finalize', { trialId, reason: 'Previously exposed tick history cannot be independent BAR evidence' });
+    }]);
+    const second = await startLegacyResearch(host, 'copied-bar', { ...input, data: { catalog: copied, request: bar(), sealed: { catalog: copied, request: bar() } } });
     await (await host.harness.submission(second.submissionId, context))!.wait(context);
     const rejected = (await host.state(second.conversationId)).research!;
-    assert.equal(rejected.trials[0]!.status, 'FAILED');
-    assert.equal(rejected.trials[0]!.error, 'heldout_already_exposed');
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
+    assert.equal(rejected.trials[0]!.status, 'COMPUTED');
+    assert.equal(rejected.final!.error, 'heldout_already_exposed');
+    assert.equal(rejected.final!.status, 'FAILED');
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 3);
 
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Original BAR feedback', model: legacyModel }), tool('research_finish', { reason: 'End BAR protocol' })]);
     const third = await startLegacyResearch(host, 'bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });

@@ -115,11 +115,14 @@ test('one ensemble trial retains members/weights, validation-only account feedba
     const restored = await openResearch(state.options);
     try {
       assert.deepEqual((await restored.view(receipt.conversationId)).research, facts);
-      state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'No exposure reset through a new root.', members }), tool('research_finish', { reason: 'Previously exposed final is not unseen.' })]);
+      state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'No exposure reset through a new root.', members }), (transcript) => tool('strategy_portfolio_finalize', { trialId: textResult(transcript, 'strategy_portfolio_evaluate').trialId, reason: 'Previously exposed final is not unseen.' })]);
       const reset = await restored.start('not-a-fresh-exposure', state.input);
       await (await restored.harness.submission(reset.submissionId, context))!.wait(context);
-      assert.equal((await restored.view(reset.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
-      assert.equal((await state.calls()).length, calls.length);
+      const development = (await restored.view(reset.conversationId)).research!;
+      assert.equal(development.trials[0]!.status, 'COMPUTED');
+      assert.equal(development.final!.error, 'heldout_already_exposed');
+      assert.equal((await state.calls()).filter(call => call.command === 'simulate' && object(call.binding, 'binding').name === 'SEALED').length,
+        calls.filter(call => call.command === 'simulate' && object(call.binding, 'binding').name === 'SEALED').length);
     } finally { await restored.close(); }
   } finally { await host.close(); await state.cleanup(); }
 });
@@ -389,12 +392,17 @@ test('explicit historical reassessment preserves prior exposure and cannot becom
     const calls = await state.calls();
     const strict = JSON.parse(JSON.stringify(state.input)) as typeof state.input;
     delete (strict.policy.strategy as JsonObject).evidenceMode;
-    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Renaming cannot undo historical exposure.', members }), tool('research_finish', { reason: 'Still exposed.' })]);
+    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Renaming cannot undo historical exposure.', members }), (transcript) => tool('strategy_portfolio_finalize', { trialId: textResult(transcript, 'strategy_portfolio_evaluate').trialId, reason: 'Still exposed.' })]);
     const reset = await startLegacyResearch(host, 'still-not-fresh', strict);
     await (await host.harness.submission(reset.submissionId, context))!.wait(context);
-    assert.equal((await host.view(reset.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
-    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, windows);
-    assert.equal((await state.calls()).length, calls.length);
+    const development = (await host.view(reset.conversationId)).research!;
+    assert.equal(development.trials[0]!.status, 'COMPUTED');
+    assert.equal(development.final!.error, 'heldout_already_exposed');
+    const updated = (await host.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(updated.slice(0, windows.length), windows);
+    assert.equal(updated.at(-1)!.kind, 'ITERATION');
+    assert.equal((await state.calls()).filter(call => call.command === 'simulate' && object(call.binding, 'binding').name === 'SEALED').length,
+      calls.filter(call => call.command === 'simulate' && object(call.binding, 'binding').name === 'SEALED').length);
   } finally { await host.close(); await state.cleanup(); }
 });
 
