@@ -188,8 +188,8 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, async request => { await detail(Number(request.params.id)); return research.diagnostics(Number(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
     const body = object(request.body);
-    if (Object.keys(body).length !== 1 || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
-    return reply.code(202).send(await research.resume(Number(request.params.id), body.submissionId));
+    if (Object.keys(body).some(key => !['submissionId', 'instruction'].includes(key)) || ('instruction' in body && (typeof body.instruction !== 'string' || !body.instruction.trim())) || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
+    return reply.code(202).send(await research.resume(Number(request.params.id), body.submissionId, body.instruction as string | undefined));
   });
   app.post(`${API}/research`, async (request, reply) => reply.code(202).send(await work.startResearch(request.body)));
   app.post<{ Params: { id: string } }>(`${API}/research/:id/stop`, async (request, reply) => {

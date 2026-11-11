@@ -110,9 +110,19 @@ test('owner reads retain the complete prior unselected stop after same-study con
     const receipt = start.json(); assert.equal(start.statusCode, 202, start.body);
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const before = (await state.service.research.state(receipt.conversationId)).research!;
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-    const resumed = await state.service.app.inject({ method: 'POST', url: `/api/v3/research/${receipt.conversationId}/resume`, headers: state.headers, payload: { submissionId: receipt.submissionId } });
+    const instruction = 'Recompute the original candidates with the repaired engine';
+    state.faux.setResponses([transcript => { assert.ok(JSON.stringify(transcript).includes(instruction)); return fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' }); }]);
+    const url = `/api/v3/research/${receipt.conversationId}/resume`;
+    for (const invalid of ['', '   ', 42, null]) {
+      const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId, instruction: invalid } });
+      assert.equal(response.statusCode, 400, response.body);
+    }
+    const resumed = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId, instruction } });
     assert.equal(resumed.statusCode, 202, resumed.body);
+    for (const changed of [undefined, 'Different instruction']) {
+      const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId, ...(changed === undefined ? {} : { instruction: changed }) } });
+      assert.equal(response.statusCode, 409, response.body);
+    }
     const next = resumed.json(); await (await state.service.research.harness.submission(next.submissionId, context))!.wait(context);
     const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
     assert.deepEqual(detail.previousStops, [{ previousSubmissionId: receipt.submissionId, final: before.final }]);
@@ -144,6 +154,7 @@ test('legacy model-error continuation receipt replays without clearing a later s
     const before = (await state.service.research.state(receipt.conversationId)).research;
     await state.restart();
     assert.deepEqual(await state.service.research.resume(receipt.conversationId, receipt.submissionId), next);
+    await assert.rejects(state.service.research.resume(receipt.conversationId, receipt.submissionId, 'Added instruction'), /recovery_request_conflict/);
     assert.deepEqual((await state.service.research.state(receipt.conversationId)).research, before);
     const recoveryKey = `qz.research.resume:${receipt.conversationId}:${receipt.submissionId}`;
     const admissions = (await readResearchAdmissions(state.service.research));

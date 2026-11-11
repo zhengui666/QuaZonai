@@ -26,7 +26,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
-  research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
+  research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]
   factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
@@ -50,6 +50,7 @@ const options = {
   model: { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
+  instruction: { type: 'string' as const },
   'tick-book-cores': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
@@ -167,7 +168,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (action === 'resume') {
         const submissionId = researchId(values['submission-id']);
         if (submissionId < 1) throw new CliError('original_failed_submission_id_required');
-        method = 'POST'; path += '/resume'; body = JSON.stringify({ submissionId });
+        method = 'POST'; path += '/resume'; body = JSON.stringify({ submissionId, instruction: values.instruction });
       }
     } else throw new CliError('unknown_research_command');
   } else if (group === 'maintenance') {

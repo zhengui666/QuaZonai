@@ -195,3 +195,23 @@ test('native continuation instructions distinguish response boundaries from actu
     assert.equal((await state.host.state(next.conversationId)).research!.final!.reason, 'Protocol test complete');
   } finally { await state.close(); }
 });
+
+
+test('owner instruction reaches the same study and only identical recovery requests replay', { timeout: 15_000 }, async () => {
+  const state = await stoppedStudy(3, true);
+  const instruction = 'Recompute primary for the same three candidates with the corrected engine. Preserve private scope.';
+  try {
+    state.faux.setResponses([
+      transcript => { assert.ok(JSON.stringify(transcript).includes(instruction)); return responses()[0]!; },
+      responses()[1]!,
+    ]);
+    const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId, instruction);
+    await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
+    assert.deepEqual((await state.host.state(next.conversationId)).research!.input, state.before.input);
+    await state.reopen();
+    assert.deepEqual(await state.host.resume(next.conversationId, next.previousSubmissionId, instruction), next);
+    await assert.rejects(state.host.resume(next.conversationId, next.previousSubmissionId, 'Different instruction'), /recovery_request_conflict/);
+    await assert.rejects(state.host.resume(next.conversationId, next.previousSubmissionId), /recovery_request_conflict/);
+    assert.equal(state.faux.state.callCount, 3);
+  } finally { await state.close(); }
+});

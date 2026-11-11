@@ -194,6 +194,8 @@ test('diagnostics and resume use the original numeric identities without implici
     assert.deepEqual(output.at(-1), { conversationId: 508, submissionId: 625, previousSubmissionId: 516 });
     await assert.rejects(run(['research', 'resume', '508']), /native_numeric_research_id_required/);
     assert.equal(sent.length, 3);
+    await run(['research', 'resume', '508', '--submission-id', '516', '--instruction', 'Recompute the original candidates'], emit);
+    assert.deepEqual(JSON.parse(sent[3]!.bytes), { submissionId: 516, instruction: 'Recompute the original candidates' });
   } finally { await config.close(); await api.close(); }
 });
 

@@ -34,7 +34,7 @@ export const Requests = defineDoc<{ requests: Record<string, {
   submissionId?: SubmissionId | null;
   metadata?: JsonObject;
   sourceEvidence?: JsonObject;
-  recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' | 'selected' };
+  recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' | 'selected'; instruction?: string };
 }> }>({
   kind: 'qz.research-requests', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session',
   initial: () => ({ requests: {} }),

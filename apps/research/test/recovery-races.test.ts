@@ -116,3 +116,21 @@ test('an owner stop between intake phases fences the original input without a st
     assert.equal(faux.state.callCount, 0);
   } finally { release.resolve(); Object.defineProperty(ResearchIntakeTask.definition.phases, 'submit', { value: original }); await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+
+test('model-error recovery delivers an optional owner instruction through native input', { timeout: 10_000 }, async () => {
+  const state = await failedStudy();
+  const instruction = 'Recompute the original candidates after the engine fix';
+  try {
+    state.faux.setResponses([transcript => {
+      assert.ok(JSON.stringify(transcript).includes(instruction));
+      return fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 unsupported response test-only' });
+    }]);
+    const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId, instruction);
+    await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
+    assert.equal((await state.host.submission(next.submissionId)).type, 'input');
+    assert.deepEqual(await state.host.resume(next.conversationId, next.previousSubmissionId, instruction), next);
+    await assert.rejects(state.host.resume(next.conversationId, next.previousSubmissionId), /recovery_request_conflict/);
+    assert.equal(state.faux.state.callCount, 2);
+  } finally { await state.close(); }
+});
