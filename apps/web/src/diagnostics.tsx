@@ -82,6 +82,21 @@ const reasons: Record<string, string> = {
   source_target_expired: '原目标已经过期，本次仅展示资金投影，不延长有效期。',
   current_execution_capability_or_evidence_unavailable: '缺少当前执行能力或账户证据，本次不交付。',
   account_reservation_unknown: '账户总预留未知，不能据此增加交易资金。',
+  capital_exit_context_expired: '账户或报价依据已过期，请刷新规划依据并重新预览。',
+  capital_exit_context_stale: '账户或报价已变化，请保留原边界并重新预览。',
+  capital_exit_preview_stale: '账户控制修订已变化，请刷新后重新预览。',
+  capital_exit_preview_invalid_or_expired: '原预览已过期或不可用，请重新预览退出计划。',
+  capital_exit_revision_conflict: '计划已在其他操作中更新，请刷新计划后核对。',
+  capital_exit_command_requires_reconciliation: '原资金命令结果尚待核对，请等待原命令完成，勿创建重复请求。',
+  capital_exit_status_unavailable: '暂时无法读取原生资金状态。已有计划仍由下游运行，请恢复连接后核对。',
+  downstream_capital_exit_unsupported: '此账户连接尚未提供资金退出能力，请在实例设置中连接兼容的账户接收端。',
+  capital_exit_initiation_unavailable: '当前连接不能发起新计划；已有计划的停止和对账按各自动作能力处理。',
+  capital_exit_natural_release_waiting: '正在等待原策略自然减仓，新增买入不会使用退出预留。',
+  capital_exit_minimum_notional: '当前分批金额不足原生最小成交金额，请重新预览并明确调整界限。',
+  capital_exit_depth_unavailable: '当前没有有效的价限内买盘，等待新的原生盘口依据。',
+  capital_exit_external_transfer_unverified: '外部划转尚未匹配到原生流水；现货预留继续保留。',
+  capital_exit_withdrawal_unverified: '外部提现尚未匹配到原生现金变动，不能据此标记已提现。',
+  capital_exit_release_requires_cancel: '请先取消计划并等待原生订单核对完成，再解除预留。',
 };
 export function reasonText(value?: string | null, fallback = '原因尚未分类，请展开原始原因并按原始身份核对。'): string { return value ? reasons[value] ?? fallback : fallback; }
 export function Reason({ value, fallback }: { value?: string | null; fallback?: string }) {

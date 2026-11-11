@@ -24,7 +24,7 @@ async function fixture(initialReceipt: 'UNAVAILABLE' | 'PENDING' | 'LEGACY_ACKNO
   const idempotencyKey = 'original-preexisting-target-receipt';
   remote.get('/account', () => snapshot);
   remote.get('/capabilities', () => ({ clientId: source.connection.clientId, accountId: source.connection.accountId,
-    mode: 'paper', currency: 'USDC', capitalExit: { version: 1, supported: false, readable: true },
+    mode: 'paper', currency: 'USDC', capitalExit: { version: 2, supported: false, readable: true },
     automaticTargets: { version: 1, supported: false, revisionBound: false, snapshotBound: false } }));
   remote.get('/capital-exits', () => ({ clientId: source.connection.clientId, accountId: source.connection.accountId,
     mode: 'paper', currency: 'USDC', accountSourceId: snapshot.accountSourceId, observationId: snapshot.observationId,

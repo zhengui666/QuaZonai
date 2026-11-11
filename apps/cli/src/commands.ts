@@ -38,7 +38,8 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
-  capital status OBSERVATION_ID | preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
+  capital status OBSERVATION_ID | context OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
+  capital preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
   settings get | set --file SETTINGS.json | set --tick-book-cores COUNT
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
@@ -108,8 +109,8 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (positionals[0] === 'client') positionals.shift();
   if (values.version) { process.stdout.write('quazonai 3.0.0-dev.1\n'); return 0; }
   if (values.help || positionals.length === 0) { process.stdout.write(help); return 0; }
-  if (positionals.length > 3) throw new CliError('unexpected_argument');
-  const [group, action, id] = positionals;
+  if (positionals.length > 3 && !(positionals[0] === 'capital' && positionals[1] === 'get' && positionals.length === 4)) throw new CliError('unexpected_argument');
+  const [group, action, id, exitId] = positionals;
   if (group === 'schema') {
     if (!['list', 'show'].includes(action) || (action === 'show' && !id)) throw new CliError('schema_command_required');
     emit(await schemas(action === 'show' ? id : undefined, values.domain)); return 0;
@@ -251,7 +252,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else throw new CliError('unknown_observation_command');
   } else if (group === 'capital') {
     path = `/observations/${resourceId(id)}/capital-exits`;
-    if (action === 'preview' || action === 'command') {
+    if (action === 'context') path += '/planning-context';
+    else if (action === 'get') path += `/${resourceId(exitId)}`;
+    else if (action === 'preview' || action === 'command') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']); body = file.bytes; method = 'POST'; path += action === 'preview' ? '/preview' : '/commands';
     } else if (action !== 'status') throw new CliError('unknown_capital_command');
   } else if (group === 'settings') {

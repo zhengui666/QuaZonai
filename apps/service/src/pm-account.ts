@@ -1,10 +1,47 @@
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { counter, decimal, json, nowNs, object, observation, Problem } from './facts.ts';
-import { accountKey, capitalStatusForBinding, control, physicalCapitalState, transportBindingKey, transportCapability, transportControlFailure } from './capital-exit.ts';
+import { counter, decimal, decimalUnits, json, nowNs, object, observation, Problem } from './facts.ts';
+import type { CapitalExitStatus } from '../../../packages/contracts/src/capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, moneyString, physicalCapitalState, transportBindingKey, transportCapability, transportControlFailure } from './capital-exit.ts';
 import { identity } from './pm-facts.ts';
 
 export interface CapturedAccount { basis: Pm.AccountBasis; evidence: Pm.EvidenceRef; artifact: JsonObject }
+
+/** Capital preparation constrains buying separately from the approved strategy
+ * signal. This applies while paused/cancelled too: a smaller reserve budget must
+ * never create an ordinary sale that bypasses the exit's price or cost limits. */
+export function capitalExitTargetControl(status: CapitalExitStatus, capabilities: JsonObject, signalTarget: JsonObject, signalCapital: string): JsonObject | null {
+  const active = status.exits.filter(exit => !['COMPLETED', 'CLOSED'].includes(exit.state));
+  if (!active.length) return null;
+  if (!status.controlRevision || status.reserved === null || status.capability === 'BLOCKED') throw new Problem('capital_exit_target_control_unavailable', 409);
+  const permission = object(capabilities.capitalExit ?? {}), automatic = object(capabilities.automaticTargets ?? {});
+  if (permission.version !== 2 || automatic.revisionBound !== true || automatic.snapshotBound !== true)
+    throw new Problem('capital_exit_budget_fence_required', 409);
+  const modes = [...new Set(active.map(exit => exit.policy.kind))];
+  if (modes.includes('NATURAL_RELEASE') && modes.includes('BOUNDED_LIMIT')) throw new Problem('capital_exit_policy_conflict', 409);
+  if (decimalUnits(signalCapital) < 0n) throw new Problem('capital_exit_signal_capital_invalid', 409);
+  const mode = modes.includes('NATURAL_RELEASE') ? 'NATURAL_RELEASE' : modes.includes('BOUNDED_LIMIT') ? 'BOUNDED_LIMIT' : 'CASH_ONLY';
+  return json({ mode, transition: active.some(exit => exit.remaining_trading === 'FENCED_PENDING_TARGET'),
+    controlRevision: status.controlRevision, exitIds: active.map(exit => exit.id).sort(), signalTarget, signalCapital });
+}
+
+/** Only reservations still inside the managed account reduce its observed NAV.
+ * Staged transfers and withdrawals already left that NAV and are not deducted. */
+export function managedTradingBudget(equity: string, reserved: string, cashBuffer: string): string {
+  const values = [equity, reserved, cashBuffer].map(decimalUnits);
+  if (values[1]! < 0n || values[2]! < 0n) throw new Problem('account_reservation_invalid', 409);
+  const budget = values[0]! - values[1]! - values[2]!;
+  return moneyString(budget > 0n ? budget : 0n);
+}
+
+/** Legacy factor weights precede account sizing. Their original funding base is
+ * the same size-account budget with R=0, including its existing buffer/capacity. */
+export function unreservedStrategyCapital(equity: string, cashBuffer: string, maximumCapital: string): string {
+  const budget = decimalUnits(managedTradingBudget(equity, '0', cashBuffer));
+  const maximum = decimalUnits(maximumCapital);
+  if (maximum < 0n) throw new Problem('account_capacity_invalid', 409);
+  return moneyString(budget < maximum ? budget : maximum);
+}
 
 export function captureAccount(application: { observations: Record<string, JsonObject>; accountControls?: Record<string, JsonObject> }, id: string, atNs = nowNs()): CapturedAccount {
   const value = application.observations[id]; if (!value) throw new Problem('account_binding_not_found', 404);

@@ -1,8 +1,12 @@
 import { resolve } from 'node:path';
 import { createNautilusWorker } from './server.ts';
+import type { AccountOptions } from './account-runtime.ts';
 
 const roots = JSON.parse(process.env.QZ_NAUTILUS_CATALOG_ROOTS ?? '[]') as unknown;
 if (!Array.isArray(roots) || !roots.every(root => typeof root === 'string' && root.startsWith('/'))) throw new Error('QZ_NAUTILUS_CATALOG_ROOTS must be a JSON array of absolute paths');
+const accounts = JSON.parse(process.env.QZ_NAUTILUS_ACCOUNTS ?? '[]') as AccountOptions[];
+if (!Array.isArray(accounts) || accounts.some(account => !account || !['paper', 'live'].includes(account.mode)
+  || !Array.isArray(account.instruments) || !account.instruments.every(value => typeof value === 'string'))) throw new Error('QZ_NAUTILUS_ACCOUNTS must contain explicit Paper/LIVE account configurations');
 const worker = await createNautilusWorker({
   binary: process.env.QZ_JOB_BINARY ?? '/opt/quazonai/bin/job',
   tickBinary: process.env.QZ_TICK_JOB_BINARY,
@@ -12,6 +16,8 @@ const worker = await createNautilusWorker({
   token: process.env.QZ_NAUTILUS_TOKEN,
   maximumConcurrentTickExecutions: Number(process.env.QZ_NAUTILUS_TICK_CONCURRENCY ?? '1'),
   calibrationThreads: process.env.QZ_CALIBRATION_THREADS === undefined ? undefined : Number(process.env.QZ_CALIBRATION_THREADS),
+  accounts,
+  accountBinary: process.env.QZ_ACCOUNT_BINARY,
 });
 const port = Number(process.env.QZ_NAUTILUS_PORT ?? '8090');
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error('QZ_NAUTILUS_PORT is invalid');

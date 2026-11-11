@@ -26,13 +26,15 @@ export interface PortfolioFact {
   evidence: JsonObject[]; weights?: string[]; policy: JsonObject; native: JsonObject | null; target: JsonObject | null;
 }
 export interface ObservationFact {
+  accountOnlyRequest?: import('../../../packages/contracts/src/index.ts').AccountObservationStart;
   reviewSources?: import('./review-delivery.ts').ReviewDeliverySource[];
-  input: ObservationStart; view: ObservationView; connection: ConnectionConfig;
-  target: JsonObject; taskId: number; snapshot: JsonObject | null;
+  input: ObservationStart | import('../../../packages/contracts/src/index.ts').AccountObservationStart; view: ObservationView; connection: ConnectionConfig;
+  target: JsonObject | null; taskId: number; snapshot: JsonObject | null;
   /** First local receipt of this exact native snapshot; never producer event time. */
   snapshotReceivedAtNs?: string;
   automaticTaskId?: number;
   capitalPreviews?: Record<string, JsonObject>;
+  capitalPlanningContexts?: Record<string, JsonObject>;
   allocationTarget?: JsonObject;
   allocationContext?: JsonObject;
 }

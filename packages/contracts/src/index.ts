@@ -1,3 +1,5 @@
+export * from './capital-exit.ts';
+import type { CapitalExitStatus } from './capital-exit.ts';
 export type * from './pm.ts';
 export type * from './maintenance.ts';
 export type * from './data-sources.ts';
@@ -158,27 +160,11 @@ export interface AutomaticAllocation {
   controlRevision: string | null; members: { factorId: string; capital: string; scale: string }[];
   targets: TargetWeight[]; receipt: TargetReceipt | null; epoch: string;
 }
-export interface CapitalMoney { amount: string; currency: string }
-/** Original native capital-exit documents are retained, not reimplemented as a brokerage ledger. */
-export interface CapitalExitView {
-  id: string; revision: string; state: string; account_control_revision: string; reason_codes: string[];
-  funds: { requested_amount: CapitalMoney; reserved_amount: CapitalMoney; released_cash_amount: CapitalMoney | null;
-    verified_withdrawable_amount: CapitalMoney | null; reconciled_withdrawal_amount: CapitalMoney; withdrawability: string };
-  [key: string]: unknown;
-}
-export interface CapitalExitPreview {
-  id: string; plan_artifact_id: string; original_observation_id: string; expected_account_control_revision: string | null;
-  capability: string; reason_codes: string[]; valid_until: string;
-  funds: { requested: CapitalMoney; remaining_managed_capital: CapitalMoney | null; estimated_execution_cost: CapitalMoney | null; existing_unrealized_pnl?: CapitalMoney | null };
-  proposed_cancellations: unknown[]; reduction_legs: unknown[]; [key: string]: unknown;
-}
-export interface CapitalExitStatus {
-  capability: 'SUPPORTED' | 'UNSUPPORTED' | 'BLOCKED'; reason: string | null; accountSourceId: string | null;
-  observationId: string | null; controlRevision: string | null; reserved: string | null; exits: CapitalExitView[];
-}
+export interface AccountObservationStart { requestId: string; purpose: 'ACCOUNT_ONLY'; mode: ObservationMode; connectionId: string; portfolioId?: never; automatic?: never }
 export interface ObservationStart { requestId: string; portfolioId: string; mode: ObservationMode; connectionId: string; automatic?: AutomaticPolicy }
 export interface ObservationView {
-  id: string; name: string; portfolioId: string; mode: ObservationMode; status: string;
+  purpose?: 'ACCOUNT_ONLY';
+  id: string; name: string; portfolioId: string | null; mode: ObservationMode; status: string;
   currency: string; equity: string | null; cash: string | null; updatedAt: string | null;
   positions: PositionView[]; curve: EquityPoint[]; receipt: TargetReceipt | null; error: string | null;
   automaticPolicy?: AutomaticPolicy; allocation?: AutomaticAllocation; capitalExit?: CapitalExitStatus;

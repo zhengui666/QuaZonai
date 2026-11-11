@@ -17,7 +17,7 @@ async function receiver() {
   for (const prefix of ['', '/alias']) {
     const envelope = { clientId: prefix ? 'client-B' : source.connection.clientId, accountId: prefix ? 'account-B' : source.connection.accountId, mode: 'paper', currency: 'USDC' };
     server.get(`${prefix}/capabilities`, (_request, reply) => { gets.push(`${prefix}/capabilities`); return unavailable ? reply.code(503).send({ error: 'original_capabilities_unavailable' }) : { ...envelope,
-      capitalExit: { version: 1, supported: !prefix && !hidden.has(prefix), readable: !hidden.has(prefix) }, automaticTargets: { supported: !prefix, revisionBound: !prefix, snapshotBound: !prefix } }; });
+      capitalExit: { version: 2, supported: !prefix && !hidden.has(prefix), readable: !hidden.has(prefix) }, automaticTargets: { supported: !prefix, revisionBound: !prefix, snapshotBound: !prefix } }; });
     server.get(`${prefix}/capital-exits`, () => { gets.push(`${prefix}/capital-exits`); return { ...envelope, accountSourceId: 'native-source', observationId: 'native-observation', controlRevision: revision, reserved: '0', blocked, exits: [] }; });
     server.get(`${prefix}/account`, () => { gets.push(`${prefix}/account`); return { ...snapshot, clientId: envelope.clientId, accountId: envelope.accountId }; });
     server.get(`${prefix}/targets/prior`, () => { gets.push(`${prefix}/targets/prior`); return { ...envelope, id: 'prior', status: 'EXPIRED', externalId: 'original-prior', expiresAt: nsTime('1000') }; });
