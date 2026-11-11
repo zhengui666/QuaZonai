@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord';
-import { defineDoc, defineTask, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
+import { defineTask, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -49,7 +49,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       };
       await runtime.commit(async tx => {
         const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        trial.economic = { ...object(trial.economic, 'tick_economic'), taskId: task.id, status: 'COMPUTED', summary, error: null };
+        trial.economic = { taskId: task.id, status: 'COMPUTED', summary, error: null };
         return { status: 'terminal', outcome: { status: 'completed', result: summary } };
       }, context);
     } catch (error) {
@@ -58,7 +58,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
       const message = executionDiagnostic(error, 'tick_economic_replay_failed');
       await runtime.commit(async tx => {
         const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-        trial.economic = { ...object(trial.economic, 'tick_economic'), taskId: task.id, status: 'FAILED', summary: null, error: message };
+        trial.economic = { taskId: task.id, status: 'FAILED', summary: null, error: message };
         return { status: 'terminal', outcome: { status: 'failed', error: { message,
           detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'replay-tick-economic' }) } } } };
       }, context);
@@ -67,7 +67,7 @@ export const TickEconomicTask = defineTask<EconomicInput, { phase: 'compute' }, 
   async abort(task, runtime, context) {
     await runtime.commit(async tx => {
       const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
-      trial.economic = { ...object(trial.economic, 'tick_economic'), taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
+      trial.economic = { taskId: task.id, status: 'STOPPED', summary: null, error: 'tick_economic_local_stop' };
       return { status: 'terminal', outcome: { status: 'aborted' } };
     }, context);
   },
@@ -79,17 +79,13 @@ export async function tickEconomicFeedback(api: Pick<ResearchRuntime, 'getTask'>
   const state = task.state;
   if (state.status !== 'terminal') return { ...economic, taskStatus: state.status };
   const outcome = state.outcome;
-  return { ...economic, taskId: task.id, taskStatus: state.status,
+  return { taskId: task.id, taskStatus: state.status,
     status: outcome.status === 'completed' ? 'COMPUTED' : outcome.status === 'aborted' || outcome.status === 'orphaned' ? 'STOPPED' : 'FAILED',
     summary: outcome.status === 'completed' ? outcome.result : null,
     error: 'error' in outcome ? outcome.error?.message ?? outcome.status : outcome.status === 'completed' ? null : outcome.status };
 }
 
-const EconomicChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
-  kind: 'qz.factor-economic-child', version: 1, scope: 'task', checkpointWhen: () => true, initial: () => ({ taskId: null }),
-});
-
-export async function runTickEconomic(api: ResearchRuntime, context: Context, trialId: number, recompute = false): Promise<JsonObject> {
+export async function runTickEconomic(api: ResearchRuntime, context: Context, trialId: number): Promise<JsonObject> {
   const study = await api.snapshot(Study, api.conversationId, context);
   if (!study?.input) throw new Error('research_input_missing');
   if (study.final !== null || study.reviewSelection) throw new Error('research_search_closed');
@@ -108,29 +104,13 @@ export async function runTickEconomic(api: ResearchRuntime, context: Context, tr
   const id = await api.commit(async tx => {
     const current = await tx.doc(Study, api.conversationId);
     if (current.final !== null || current.reviewSelection) throw new Error('research_search_closed');
-    const binding = await tx.doc(EconomicChild, api.taskId);
-    if (binding.taskId !== null) return binding.taskId;
     const source = current.trials.find(row => row.taskId === trialId)!;
-    let history: JsonObject[] | undefined;
-    if (source.economic) {
-      const economic = object(source.economic, 'tick_economic');
-      const child = await tx.task(economic.taskId as TaskId<JsonObject>);
-      if (!child) throw new Error('tick_economic_task_missing');
-      if (!recompute || child.state.status !== 'terminal') {
-        binding.taskId = child.id as TaskId<JsonObject>;
-        return binding.taskId;
-      }
-      const { history: previous, ...record } = economic;
-      history = [...((previous ?? []) as JsonObject[]), record];
-    }
+    if (source.economic) return object(source.economic, 'tick_economic').taskId as TaskId<JsonObject>;
     const taskId = await tx.createTask(TickEconomicTask, { trialId, model: proposal.model as string, catalog: input.data.catalog as string,
       target: nativeTargetForData(input.data), request, bookCores: bookCores as number }, { ownership: { kind: 'task', taskId: api.taskId } });
-    source.economic = { taskId, status: 'STARTED', summary: null, error: null, ...(history ? { history } : {}) };
-    binding.taskId = taskId;
+    source.economic = { taskId, status: 'STARTED', summary: null, error: null };
     return taskId;
   }, context);
   await api.waitForTask(id, context);
-  const economic = object((await api.snapshot(Study, api.conversationId, context))!.trials.find(row => row.taskId === trialId)!.economic, 'tick_economic');
-  const selected = economic.taskId === id ? economic : object((economic.history as JsonObject[]).find(row => row.taskId === id), 'tick_economic_history');
-  return tickEconomicFeedback(api, context, selected);
+  return tickEconomicFeedback(api, context, object((await api.snapshot(Study, api.conversationId, context))!.trials.find(row => row.taskId === trialId)!.economic, 'tick_economic'));
 }

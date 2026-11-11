@@ -1,4 +1,4 @@
-import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { evaluateTrial, object, studyInput, trialFeedback, trialFeedbackSchema } from '../src/trials.ts';
 import { FactorTask, runFactor } from './native-factor-task.ts';
@@ -30,10 +30,10 @@ export default defineExtension({
     },
   }), defineTool({
     name: 'factor_economic_evaluate',
-    description: 'Replay one original COMPUTED tick factor on its original TRAIN/VALIDATION primary data with the initial policy.tickEconomic capital, costs and execution policy. Returns after-cost economic feedback before final selection. Default calls reuse the recorded economic child. Explicit recompute:true starts another child after the current child is terminal and retains previous outcomes in economic.history. Calls during active computation reuse that child.',
-    parameters: obj({ trialId: int({ minimum: 1 }), recompute: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
+    description: 'Replay one original COMPUTED tick factor on its original TRAIN/VALIDATION primary data with the initial policy.tickEconomic capital, costs and execution policy. Returns after-cost economic feedback before final selection. Reuses the original model and recorded economic child on repeated calls.',
+    parameters: obj({ trialId: int({ minimum: 1 }) }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
-      const economic = await runTickEconomic(api, context, args.trialId, args.recompute);
+      const economic = await runTickEconomic(api, context, args.trialId);
       return { output: [{ type: 'text', text: JSON.stringify({ trialId: args.trialId, economic }) }], isError: economic.status !== 'COMPUTED' };
     },
   })],

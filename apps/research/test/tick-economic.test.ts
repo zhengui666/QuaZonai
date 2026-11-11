@@ -5,17 +5,16 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { awaitWithContext, BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask, defineTool, hook, ToolTask, type JsonObject } from '@earendil-works/pi-durable';
+import { defineExtension, defineTool, type JsonObject } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createNautilusWorker } from '../../nautilus/src/server.ts';
 import { openResearch } from '../src/host.ts';
 import { Study } from '../src/documents.ts';
 import { evaluateTrial } from '../src/trials.ts';
 import { iterationRequest } from '../plugins/native-wasm.ts';
-import { runTickEconomic, tickEconomicFeedback } from '../plugins/tick-economic.ts';
-import { researchRuntime } from '../src/research-runtime.ts';
+import { tickEconomicFeedback } from '../plugins/tick-economic.ts';
 import factor from '../plugins/factor-wasm.ts';
 import research from '../plugins/research.ts';
 import { startLegacyResearch } from './legacy-study.ts';
@@ -72,39 +71,14 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl',
     small_capital_policy: { maximum_entry_notional_usdc: '30', maximum_holding_ns: '60000000000', decision_clock: 'FIXED_INTERVAL_V1' }, bookCores: 3 } };
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  let joinedActive!: (taskId: number) => void;
-  const activeJoin = new Promise<number>(resolve => { joinedActive = resolve; });
-  const activeProbe = defineTask<{ trialId: number }, { phase: 'compute' }, JsonObject>({
-    name: 'test.active-economic-recompute', version: 1, initial: () => ({ phase: 'compute' }),
-    phases: { async compute(task, runtime, ctx) {
-      const api = researchRuntime(runtime); const wait = api.waitForTask;
-      api.waitForTask = (id, taskContext) => { joinedActive(id); return wait(id, taskContext); };
-      const result = await runTickEconomic(api, ctx, task.input.trialId, true);
-      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), ctx);
-    } },
-    async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); },
-  });
-  const register = defineExtension({ name: 'test.tick-economic-source', tasks: [activeProbe], tools: [defineTool({
+  const register = defineExtension({ name: 'test.tick-economic-source', tools: [defineTool({
     name: 'record_source', description: 'Protocol-only original computed trial', parameters: obj({}), replay: 'safe',
     async execute(_args, api, ctx) {
       const result = await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Controlled original trial', request: full }, async () => ({ request: iterationRequest(data) }));
       return { output: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, result }) }] };
     },
   })] });
-  let recomputeSettled!: () => void;
-  const settledBeforeReceipt = new Promise<void>(resolve => { recomputeSettled = resolve; });
-  let interruptedRecompute = false;
-  const pause = defineExtension({ name: 'test.tick-economic-recompute-recovery', hooks: [hook(ToolTask, {
-    async afterTool(call, _result, _api, ctx) {
-      if (mode === 'recovered' && call.name === 'factor_economic_evaluate' && call.arguments.recompute === true && !interruptedRecompute) {
-        interruptedRecompute = true;
-        recomputeSettled();
-        await awaitWithContext(new Promise<never>(() => {}), ctx);
-      }
-      return undefined;
-    },
-  })] });
-  let trialId = 0; let first: JsonObject; let repeated: JsonObject; let recomputed: JsonObject; let twice: JsonObject; let readback: JsonObject;
+  let trialId = 0; let first: JsonObject; let repeated: JsonObject; let readback: JsonObject;
   faux.setResponses([
     tool('record_source'),
     transcript => { trialId = feedback(transcript, 'record_source').trialId as number; return tool('factor_economic_evaluate', { trialId, model: '(module invalid)', catalog: sealed }); },
@@ -121,12 +95,10 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       return tool('factor_economic_evaluate', { trialId });
     },
     transcript => { first = feedback(transcript, 'factor_economic_evaluate'); return tool('factor_economic_evaluate', { trialId }); },
-    transcript => { repeated = feedback(transcript, 'factor_economic_evaluate'); return tool('factor_economic_evaluate', { trialId, recompute: true }); },
-    transcript => { recomputed = feedback(transcript, 'factor_economic_evaluate'); return tool('factor_economic_evaluate', { trialId, recompute: true }); },
-    transcript => { twice = feedback(transcript, 'factor_economic_evaluate'); return tool('research_trial', { trialId }); },
+    transcript => { repeated = feedback(transcript, 'factor_economic_evaluate'); return tool('research_trial', { trialId }); },
     transcript => { readback = feedback(transcript, 'research_trial'); return tool('research_finish', { reason: 'Controlled protocol completed' }); },
   ]);
-  const options = { database: join(directory, 'research.sqlite'), models, extensions: [factor, research, register, pause] };
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [factor, research, register] };
   let host = await openResearch(options);
   try {
     const receipt = await startLegacyResearch(host, `economic-${mode}`, { goal: 'Check primary-only economics protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy });
@@ -141,20 +113,9 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       const running = await tickEconomicFeedback(host.harness, context, active.economic as JsonObject);
       assert.equal(running.status, 'STARTED'); assert.notEqual(running.taskStatus, 'terminal');
       const originalChildId = (active.economic as JsonObject).taskId;
-      const probeId = await host.harness.commit(tx => tx.createTask(activeProbe, { trialId },
-        { conversationId: receipt.conversationId, ownership: { kind: 'conversation' } }), context);
-      assert.equal(await activeJoin, originalChildId, 'concurrent explicit recompute joins the current active child');
-      assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.tick-economic' }, 100), context)).items.length, 1);
       await host.close(); await writeFile(allow, 'continue'); host = await openResearch(options);
       const recovered = (await host.state(receipt.conversationId)).research!.trials[0]!;
       assert.equal((recovered.economic as JsonObject).taskId, originalChildId);
-      const joined = await host.harness.waitForTask(probeId, context);
-      assert.equal(joined.state.outcome.status, 'completed');
-      if (joined.state.outcome.status === 'completed') assert.equal(joined.state.outcome.result.taskId, originalChildId);
-      await settledBeforeReceipt;
-      const recomputeId = ((await host.state(receipt.conversationId)).research!.trials[0]!.economic as JsonObject).taskId;
-      await host.close(); host = await openResearch(options);
-      assert.equal(((await host.state(receipt.conversationId)).research!.trials[0]!.economic as JsonObject).taskId, recomputeId);
     }
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const source = (await host.harness.snapshot(Study, receipt.conversationId, context))!.trials[0]!;
@@ -163,20 +124,13 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.deepEqual(source.result, { request: iterationRequest(data) });
     const economic = first!.economic as JsonObject;
     assert.equal(economic.status, mode === 'failed' ? 'FAILED' : 'COMPUTED');
-    assert.deepEqual(repeated!, first!);
-    const second = recomputed!.economic as JsonObject; const third = twice!.economic as JsonObject;
-    assert.notEqual(second.taskId, economic.taskId); assert.notEqual(third.taskId, second.taskId);
-    const { taskStatus: _firstState, ...originalRecord } = economic;
-    const { taskStatus: _secondState, history: _history, ...secondRecord } = second;
-    assert.deepEqual(second.history, [originalRecord]);
-    assert.deepEqual(third.history, [originalRecord, secondRecord]);
-    assert.deepEqual(readback!.economic, third);
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 3, 'each explicit recomputation runs once across host recovery; default reads reuse');
+    assert.deepEqual(repeated!, first!); assert.deepEqual(readback!.economic, economic);
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 1, 'invalid overrides, repeat reads and host recovery never start another native execution');
     const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.tick-economic' }, 100), context);
-    assert.equal(tasks.items.length, 3); assert.equal(tasks.items[0]!.id, economic.taskId);
+    assert.equal(tasks.items.length, 1); assert.equal(tasks.items[0]!.id, economic.taskId);
     assert.equal(tasks.items[0]!.conversationId, receipt.conversationId);
     const native = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
-    assert.equal(native.items.length, 3);
+    assert.equal(native.items.length, 1);
     if (mode === 'failed') assert.match(String(economic.error), /CONTROLLED_ECONOMIC_FAILURE/);
     else {
       const summary = economic.summary as JsonObject;
