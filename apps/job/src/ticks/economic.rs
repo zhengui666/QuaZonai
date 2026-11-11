@@ -815,6 +815,7 @@ struct Asset {
     fast: ExponentialMovingAverage,
     slow: ExponentialMovingAverage,
     model: Option<EconomicModels>,
+    feature_books: Option<books::FeatureBooks>,
     score: Option<f64>,
     mark: Option<(u64, Decimal)>,
     cohorts: u64,
@@ -2154,6 +2155,16 @@ pub fn replay_models_with_funding_and_cores(
             consumed += used;
             Some(model)
         };
+        let feature_books = (request.research.parameters.uses_book_features() && model.is_some())
+            .then(|| {
+                books::FeatureBooks::open(
+                    root,
+                    instrument.id(),
+                    request.research.input.event_start_ns.get(),
+                    request.research.input.event_end_ns.get(),
+                )
+            })
+            .transpose()?;
         assets.push(Asset {
             instrument,
             reader,
@@ -2168,6 +2179,7 @@ pub fn replay_models_with_funding_and_cores(
                 None,
             ),
             model,
+            feature_books,
             score: None,
             mark: None,
             cohorts: 0,
@@ -2196,15 +2208,8 @@ pub fn replay_models_with_funding_and_cores(
     let observed = observed(s);
     let normalize_sizes = normalize_observed_book_sizes(s);
     let book_profile = request.research.parameters.uses_book_features();
-    if book_profile {
-        ensure!(
-            funding_root.join("book-snapshots.source.json").is_file(),
-            "TICK_BOOK_FEATURE_SOURCE_REQUIRED"
-        );
-    }
-    let mut book_features = vec![None; assets.len()];
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
-    let mut book_readers = if observed || book_profile {
+    let mut book_readers = if observed {
         Some(books::BookReaders::open(
             funding_root,
             &assets
@@ -2219,9 +2224,15 @@ pub fn replay_models_with_funding_and_cores(
         None
     };
     let mut book_heads = Vec::new();
-    if observed || book_profile {
-        for i in 0..assets.len() {
+    if observed {
+        for (i, asset) in assets.iter().enumerate() {
             let head = book_readers.as_mut().unwrap().next(i)?;
+            let head = if normalize_sizes {
+                head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
+                    .transpose()?
+            } else {
+                head
+            };
             if let Some(head) = &head {
                 book_heap.push(Reverse((head.received(), i)));
             }
@@ -2380,16 +2391,14 @@ pub fn replay_models_with_funding_and_cores(
         {
             let i = book_heap.pop().unwrap().0 .1;
             let frame = book_heads[i].take().unwrap();
-            if book_profile {
-                book_features[i] = Some(books::BookFeatures::from_snapshot(&frame)?);
-            }
-            let frame = if normalize_sizes {
-                frame.floor_sizes(assets[i].instrument.size_increment())?
-            } else {
-                frame
-            };
             snapshots.insert(i, frame);
-            book_heads[i] = book_readers.as_mut().unwrap().next(i)?;
+            let next = book_readers.as_mut().unwrap().next(i)?;
+            book_heads[i] = if normalize_sizes {
+                next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
+                    .transpose()?
+            } else {
+                next
+            };
             if let Some(next) = &book_heads[i] {
                 book_heap.push(Reverse((next.received(), i)));
             }
@@ -2529,7 +2538,10 @@ pub fn replay_models_with_funding_and_cores(
                         extended_features = features.to_vec();
                         books::BookFeatures::append(
                             &mut extended_features,
-                            book_features[i].as_ref(),
+                            a.feature_books
+                                .as_mut()
+                                .context("TICK_BOOK_FEATURE_SOURCE_REQUIRED")?
+                                .advance(current.event)?,
                             current.event,
                         );
                         extended_features.as_slice()

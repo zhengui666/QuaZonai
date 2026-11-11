@@ -791,6 +791,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         fast: ExponentialMovingAverage::new(1, None),
         slow: ExponentialMovingAverage::new(2, None),
         model: None,
+        feature_books: None,
         score: None,
         mark: Some((0, Decimal::from(100))),
         cohorts: 0,
@@ -942,6 +943,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
                 fast: ExponentialMovingAverage::new(1, None),
                 slow: ExponentialMovingAverage::new(2, None),
                 model: None,
+                feature_books: None,
                 score: None,
                 mark: Some(if id == SPOT {
                     (2 * SECOND, Decimal::from(100))
@@ -1319,6 +1321,7 @@ fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
                 fast,
                 slow: ExponentialMovingAverage::new(2, None),
                 model: None,
+                feature_books: None,
                 score: Some(1.0),
                 mark: Some((
                     2 * SECOND,

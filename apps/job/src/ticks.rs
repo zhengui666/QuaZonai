@@ -22,7 +22,7 @@ pub const FLOW_FEATURE_SCHEMA: &str = "qz.tick-cohort-flow-features.v1: cohort_v
 pub const RECEIVED_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns";
 pub const RECEIVED_FLOW_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-flow-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns,signed_quantity";
 
-pub const RECEIVED_FLOW_BOOK_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-flow-book-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns,signed_quantity,native_book_imbalance_ratio,book_spread_bps,book_bid_depth_5_usd,book_ask_depth_5_usd";
+pub const RECEIVED_FLOW_BOOK_FEATURE_SCHEMA: &str = "qz.tick-received-cohort-flow-book-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_received_ns,signed_quantity,native_book_imbalance_ratio,book_spread_bps,book_bid_depth_5_quote,book_ask_depth_5_quote";
 
 pub fn feature_schema(request: &NativeTradeTickFactorEvaluationRequestV1) -> &'static str {
     if request.parameters.uses_book_features() {

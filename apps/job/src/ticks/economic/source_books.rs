@@ -953,6 +953,158 @@ mod tests {
     }
 
     #[test]
+    fn economic_book_predictions_use_research_root_with_independent_execution_books() {
+        use crate::ticks::cohort_cache;
+        use contracts::ticks::{
+            NativeTickAvailabilityV1, NativeTickFeatureProfileV1, NativeTickRepresentationV1,
+            NativeTickSamplingKindV1,
+        };
+        use nautilus_model::{
+            data::TradeTick,
+            enums::{AggressorSide, CurrencyType},
+            identifiers::{Symbol, TradeId},
+            instruments::CurrencyPair,
+            types::{Currency, Price, Quantity},
+        };
+        let (research_books, id) = source(false);
+        let (execution, _) = source(false);
+        replace_first_hour(
+            execution.path(),
+            &[
+                (START / 1_000_000 - 1, START + 123, "bid", "10.12", "1"),
+                (START / 1_000_000 - 1, START + 123, "ask", "10.13", "10"),
+            ],
+            "BTC_USDT",
+            None,
+            true,
+        );
+        let usdt0 = Currency::try_from_str("USDT0").unwrap_or_else(|| {
+            let currency = Currency::new("USDT0", 8, 0, "USDT0", CurrencyType::Crypto);
+            Currency::register(currency, false).unwrap();
+            currency
+        });
+        let bridge = InstrumentAny::CurrencyPair(
+            CurrencyPair::builder()
+                .instrument_id(InstrumentId::from("USDT0-USDC-SPOT.HYPERLIQUID"))
+                .raw_symbol(Symbol::new("BOOK-ROOT-TEST"))
+                .base_currency(usdt0)
+                .quote_currency(Currency::USDC())
+                .price_precision(3)
+                .size_precision(4)
+                .price_increment(Price::from("0.001"))
+                .size_increment(Quantity::from("0.0001"))
+                .ts_event(0_u64.into())
+                .ts_init(0_u64.into())
+                .build()
+                .unwrap(),
+        );
+        let path = research_books.path().join("book-snapshots.source.json");
+        let mut research_manifest: serde_json::Value =
+            serde_json::from_reader(File::open(&path).unwrap()).unwrap();
+        research_manifest["end_date"] = serde_json::json!("2026-01-04");
+        let mut instruments: Vec<InstrumentAny> =
+            crate::catalog::currencies::instruments_from_value(
+                research_manifest["instrument_source"].clone(),
+            )
+            .unwrap();
+        instruments.push(bridge.clone());
+        let execution_path = execution.path().join("book-snapshots.source.json");
+        let mut execution_manifest: serde_json::Value =
+            serde_json::from_reader(File::open(&execution_path).unwrap()).unwrap();
+        execution_manifest["end_date"] = serde_json::json!("2026-01-04");
+        execution_manifest["instrument_source"]["instruments"] =
+            serde_json::to_value(&instruments).unwrap();
+        execution_manifest["instrument_source"]["currencies"] =
+            serde_json::to_value(crate::catalog::currencies::definitions(&instruments)).unwrap();
+        std::fs::write(
+            &execution_path,
+            serde_json::to_vec(&execution_manifest).unwrap(),
+        )
+        .unwrap();
+        let output = research_books.path().join("ticks");
+        let mut builder = cohort_cache::Builder::new_received(&output, 100, 0, 0, true, 0).unwrap();
+        for at in [START + 200, START + 300, START + 400] {
+            for (index, instrument) in [id, bridge.id()].into_iter().enumerate() {
+                builder
+                    .push(TradeTick::new(
+                        instrument,
+                        Price::from("10.12"),
+                        Quantity::from("1.0000"),
+                        AggressorSide::Buy,
+                        TradeId::from(format!("{index}-{at}").as_str()),
+                        at.into(),
+                        at.into(),
+                    ))
+                    .unwrap();
+            }
+        }
+        let end = START + 3 * super::super::DAY;
+        let manifest = builder.seal("fixed-source", START, end).unwrap();
+        builder.publish(manifest, serde_json::json!({
+            "status":"IMPORTED","availability":"RECEIVED_TIME_OBSERVED","source_revision":"fixed-source",
+            "event_start_ns":START.to_string(),"event_end_ns":end.to_string(),
+            "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
+            "instrument_source":{"currencies":crate::catalog::currencies::definitions(&instruments),"instruments":instruments}
+        })).unwrap();
+        let root = output.join("catalog");
+        std::fs::write(
+            root.join("book-snapshots.source.json"),
+            serde_json::to_vec(&research_manifest).unwrap(),
+        )
+        .unwrap();
+        let mut request = super::super::tests::request();
+        request.research.input.instrument_ids = vec![id.to_string()];
+        request.research.input.event_start_ns = super::super::counter(START).unwrap();
+        request.research.input.event_end_ns = super::super::counter(end).unwrap();
+        request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+        request.research.input.availability = NativeTickAvailabilityV1::ReceivedTimeObserved;
+        request.research.input.representation =
+            Some(NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1);
+        request.research.input.maximum_receive_delay_ns = Some(super::super::counter(0).unwrap());
+        request.research.sampling.kind = NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+        request.research.parameters.feature_profile =
+            Some(NativeTickFeatureProfileV1::ReceivedFlowBookV1);
+        request.research.train_end_ns = super::super::counter(START + super::super::DAY).unwrap();
+        request.research.validation_end_ns =
+            super::super::counter(START + 2 * super::super::DAY).unwrap();
+        request.fx_instrument_ids = vec![bridge.id().to_string()];
+        let wasm = wat::parse_str(format!(
+            r#"(module
+            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+                local.get 0 i32.const 8 i32.eq if
+                    local.get 1 f64.const 0.6172835 f64.ne if unreachable end
+                    local.get 2 i32.eqz i32.eqz if unreachable end
+                    local.get 3 i64.const {} i64.ne if unreachable end
+                    local.get 4 i64.const {} i64.ne if unreachable end end)
+            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+                local.get 4 i32.const 12 i32.ne if unreachable end f64.const 0))"#,
+            START - 1_000_000,
+            START + 123
+        ))
+        .unwrap();
+        crate::ticks::evaluate(&root, &request.research, &wasm, true).unwrap();
+        for model in [
+            None,
+            Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV1),
+        ] {
+            request.scenario.execution_model = model;
+            let result =
+                super::super::replay_with_funding(&root, execution.path(), &request, &wasm)
+                    .unwrap();
+            assert_eq!(
+                result
+                    .assets
+                    .iter()
+                    .find(|a| a.instrument_id == id.to_string())
+                    .unwrap()
+                    .cohorts
+                    .get(),
+                3
+            );
+        }
+    }
+
+    #[test]
     fn received_book_features_match_research_and_economic_prediction() {
         use super::super::{
             books::{BookFeatures, Books, FeatureBooks},
