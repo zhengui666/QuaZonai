@@ -10,6 +10,7 @@ import strategyPortfolio from '../../research/plugins/strategy-portfolio.ts';
 import { FactorTask } from '../../research/plugins/native-factor-task.ts';
 import { CatalogScopeTask } from '../../research/plugins/native-catalog-scope.ts';
 import { PortfolioEvaluationTask } from '../../research/plugins/native-portfolio-task.ts';
+import { TickEconomicTask } from '../../research/plugins/tick-economic.ts';
 import { nativeCommands } from '../../research/src/native-execution.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 import type { ParameterScanPlan, ParameterScanView } from '../../../packages/contracts/src/parameter-scans.ts';
@@ -290,7 +291,7 @@ test('a persisted scientific Task created under the original research extension 
     const settled = await p.state.service.research.harness.waitForTask(taskId!, context);
     assert.equal(settled.id, taskId!); assert.equal(settled.kind, FactorTask.definition.name); assert.equal(settled.version, FactorTask.definition.version);
     assert.equal(settled.state.outcome.status, 'completed'); assert.equal(p.requests.length, 1);
-    assert.equal(p.state.service.research.registry.snapshot().extension(factorWasm.name)?.tasks?.length, 0);
+    assert.deepEqual(p.state.service.research.registry.snapshot().extension(factorWasm.name)?.tasks, [TickEconomicTask]);
     assert.ok(p.state.service.research.registry.snapshot().extension('qz.parameter-scans')?.tasks?.includes(FactorTask));
     assert.deepEqual(await p.state.service.research.harness.snapshot(Study, p.researchId, context), p.original);
   } finally { await p.close(); }
