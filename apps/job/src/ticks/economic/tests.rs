@@ -19,6 +19,60 @@ pub(super) fn request() -> NativeTickEconomicRequestV1 {
 }
 
 #[test]
+fn instrument_fee_overrides_keep_defaults_and_add_extra_cost_once() {
+    let mut request = request();
+    assert!(serde_json::to_value(&request).unwrap()["scenario"]
+        .get("taker_fee_bps_by_instrument")
+        .is_none());
+    let id = "BTC-USDC-SPOT.HYPERLIQUID".parse().unwrap();
+    assert_eq!(
+        fee_schedule(&request.scenario, false)
+            .unwrap()
+            .rates_for(id)
+            .taker,
+        Decimal::new(17, 4)
+    );
+    assert_eq!(
+        fee_schedule(&request.scenario, true)
+            .unwrap()
+            .rates_for(id)
+            .taker,
+        Decimal::new(145, 5)
+    );
+    request.scenario.taker_fee_bps_by_instrument = Some(BTreeMap::from([
+        (id.to_string(), "1.4".parse().unwrap()),
+        ("xyz:NVDA.HYPERLIQUID".into(), "9".parse().unwrap()),
+    ]));
+    validate(&request).unwrap();
+    let schedule = fee_schedule(&request.scenario, false).unwrap();
+    assert_eq!(schedule.rates_for(id).taker, Decimal::new(114, 5));
+    assert_eq!(
+        schedule
+            .rates_for("xyz:NVDA.HYPERLIQUID".parse().unwrap())
+            .taker,
+        Decimal::new(19, 4)
+    );
+    assert_eq!(
+        schedule
+            .rates_for("OTHER.HYPERLIQUID".parse().unwrap())
+            .taker,
+        Decimal::new(17, 4)
+    );
+    for fee in ["-1", "9990"] {
+        request
+            .scenario
+            .taker_fee_bps_by_instrument
+            .as_mut()
+            .unwrap()
+            .insert(id.to_string(), fee.parse().unwrap());
+        assert_eq!(
+            validate(&request).unwrap_err().to_string(),
+            "ECONOMIC_COST_INVALID"
+        );
+    }
+}
+
+#[test]
 fn registered_latency_seed_is_reproducible_and_absolute_lag_is_not_jitter() {
     let request = request();
     validate(&request).unwrap();

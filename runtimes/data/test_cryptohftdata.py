@@ -224,6 +224,36 @@ class CryptoHFTDataTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             source_plugins.parser().parse_args(argv + ["--trade-ticks"])
 
+    def test_received_context_prices_dispatches_original_mapping_and_explicit_revision(self):
+        raw = self.file("hyperliquid_futures/2026-10-13/23/BTC_mark_price.parquet")
+        output = self.root / "context-prices"
+        argv = ["convert", cryptohftdata.PLUGIN, "--archive", str(self.archive),
+                "--market", "perpetual", "--symbol", "BTC", "--start-date", "2026-10-13",
+                "--end-date", "2026-10-14", "--hour", "23", "--context-prices",
+                "--research-source-revision", "original-research", "--instruments", str(self.root / "instruments.json"),
+                "--output", str(output)]
+
+        def run(args, native, binary):
+            self.assertEqual(binary, "market-history")
+            self.assertEqual(native[0], "context-prices")
+            self.assertEqual(native[-2:], ["--research-source-revision", "original-research"])
+            manifest = json.loads(Path(native[native.index("--manifest") + 1]).read_text())
+            self.assertEqual(manifest["selection"]["streams"], ["context"])
+            self.assertEqual(manifest["profile"]["streams"][0]["columns"]["available_at"], "received_time")
+            self.assertEqual(manifest["instrument_source"], self.instruments)
+            output.mkdir()
+            (output / "import-report.json").write_text(json.dumps({"status": "IMPORTED", "readback_records": 1}))
+
+        with patch.object(source_plugins, "run_native", side_effect=run) as native, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(source_plugins.main(argv), 0)
+            self.assertEqual(native.call_count, 1)
+        self.assertEqual(raw.read_bytes(), b"original downloaded file")
+        invalid = argv[:argv.index("--research-source-revision")] + argv[argv.index("--research-source-revision") + 2:]
+        invalid[-1] = str(self.root / "unbound")
+        with patch.object(source_plugins, "run_native") as native, self.assertRaises(ValueError):
+            source_plugins.cryptohftdata_convert(source_plugins.parser().parse_args(invalid))
+        native.assert_not_called()
+
     def test_received_trade_modes_use_existing_native_flags(self):
         self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
         for mode in ("--trade-ticks", "--cohort-cache", "--cohort-flow-cache"):

@@ -10,6 +10,7 @@ use nautilus_indicators::{
     indicator::{Indicator, MovingAverage},
 };
 use nautilus_model::{
+    fees::{MakerTakerFeeRates, MakerTakerFeeSchedule},
     instruments::{Instrument, InstrumentAny},
     types::{Currency, Money},
 };
@@ -116,12 +117,25 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             "ECONOMIC_FRACTION_INVALID"
         );
     }
-    for fee in [&s.perp_taker_fee_bps, &s.spot_taker_fee_bps] {
+    for fee in [&s.perp_taker_fee_bps, &s.spot_taker_fee_bps]
+        .into_iter()
+        .chain(
+            s.taker_fee_bps_by_instrument
+                .iter()
+                .flat_map(|fees| fees.values()),
+        )
+    {
         ensure!(
             decimal(fee)? >= Decimal::ZERO
                 && decimal(&s.extra_cost_bps)? >= Decimal::ZERO
                 && decimal(fee)? + decimal(&s.extra_cost_bps)? < Decimal::from(10000),
             "ECONOMIC_COST_INVALID"
+        );
+    }
+    if let Some(fees) = &s.taker_fee_bps_by_instrument {
+        ensure!(
+            fees.keys().all(|id| !id.trim().is_empty()),
+            "ECONOMIC_FEE_INSTRUMENT_INVALID"
         );
     }
     ensure!(
@@ -398,7 +412,7 @@ struct ContextReader {
     last: Option<u64>,
     rows: u64,
 }
-fn context_decimal(text: &str) -> Result<Option<Decimal>> {
+pub fn context_decimal(text: &str) -> Result<Option<Decimal>> {
     if text.is_empty() {
         return Ok(None);
     }
@@ -1179,7 +1193,6 @@ fn small_quote_available(
     currency: Currency,
     now: u64,
     age: u64,
-    fee: Decimal,
 ) -> Option<Decimal> {
     let mut available = cash
         .balance(currency)
@@ -1196,8 +1209,9 @@ fn small_quote_available(
                     .base_currency()
                     .and_then(|c| cash.balance(c))
                     .map_or(Decimal::ZERO, |b| b.as_decimal());
-                available -=
-                    (q - held).max(Decimal::ZERO) * mark(a, now, age)? * (Decimal::ONE + fee);
+                available -= (q - held).max(Decimal::ZERO)
+                    * mark(a, now, age)?
+                    * (Decimal::ONE + cash.cost_fraction(a.instrument.id()));
             }
         }
     }
@@ -1220,8 +1234,6 @@ fn small_new_entries(
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     let bucket = event / s.decision_interval_ns.get();
-    let fee_cash =
-        (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?) / Decimal::from(10000);
     for &i in fresh {
         if small.buckets[i] == Some(bucket) {
             continue;
@@ -1264,10 +1276,11 @@ fn small_new_entries(
         };
         let reference = finite(a.fast.value())?;
         let fee = if is_margin {
-            (decimal(&s.perp_taker_fee_bps)? + decimal(&s.extra_cost_bps)?) / Decimal::from(10000)
+            margin.context("TICK_ECONOMIC_LEDGER_INPUT")?
         } else {
-            fee_cash
-        };
+            cash
+        }
+        .cost_fraction(a.instrument.id());
         if reference <= Decimal::ZERO
             || (price - reference).abs() / reference <= Decimal::from(2) * fee
         {
@@ -1353,8 +1366,7 @@ fn small_new_entries(
             * (Decimal::ONE + fee);
         if !is_margin {
             let currency = a.instrument.quote_currency();
-            let Some(available) =
-                small_quote_available(small, assets, cash, currency, event, age, fee_cash)
+            let Some(available) = small_quote_available(small, assets, cash, currency, event, age)
             else {
                 continue;
             };
@@ -1399,7 +1411,6 @@ fn small_new_entries(
                                 Currency::USDC(),
                                 event,
                                 age,
-                                fee_cash,
                             ) else {
                                 continue;
                             };
@@ -1410,7 +1421,11 @@ fn small_new_entries(
                                     (capital * decimal(&s.gross_fraction)? - gross)
                                         .max(Decimal::ZERO),
                                 )
-                                .min(usdc.max(Decimal::ZERO) / (Decimal::ONE + fee_cash));
+                                .min(
+                                    usdc.max(Decimal::ZERO)
+                                        / (Decimal::ONE
+                                            + cash.cost_fraction(assets[j].instrument.id())),
+                                );
                             let additional = ((needed - available) * quote_rate).min(allowed);
                             let buy = small_legal_quantity(
                                 &assets[j].instrument,
@@ -1529,8 +1544,7 @@ fn small_cap_entries(
         let mut capped = target.abs().min(allowed / unit);
         let mut quote_budget = None;
         if !is_margin {
-            let fee = (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                / Decimal::from(10000);
+            let fee = cash.cost_fraction(a.instrument.id());
             let quote_unit =
                 native_price * a.instrument.multiplier().as_decimal() * (Decimal::ONE + fee);
             let owned = small.cycles[i]
@@ -1545,7 +1559,6 @@ fn small_cap_entries(
                 a.instrument.quote_currency(),
                 event,
                 age,
-                fee,
             );
             let Some(available) = available else {
                 row.target_quantity = None;
@@ -2321,15 +2334,13 @@ pub fn replay_models_with_funding_and_cores(
         Some(NativeLedger::new_conversion(
             assets[bridge].instrument.clone(),
             Money::from_decimal(remaining, usdt0)?,
-            decimal(&s.spot_taker_fee_bps)?,
-            decimal(&s.extra_cost_bps)?,
+            fee_schedule(s, false)?,
         )?)
     } else {
         Some(NativeLedger::new_conversion_scenario(
             assets[bridge].instrument.clone(),
             Money::from_decimal(remaining, usdt0)?,
-            decimal(&s.spot_taker_fee_bps)?,
-            decimal(&s.extra_cost_bps)?,
+            fee_schedule(s, false)?,
             s.execution_model.is_some(),
         )?)
     };
@@ -3268,6 +3279,28 @@ pub fn replay_models_with_funding_and_cores(
     Ok(result)
 }
 
+fn fee_schedule(s: &NativeTickEconomicScenarioV1, margin: bool) -> Result<MakerTakerFeeSchedule> {
+    let extra = decimal(&s.extra_cost_bps)?;
+    let fraction = |fee: &DecimalValue| -> Result<Decimal> {
+        Ok((decimal(fee)? + extra) / Decimal::from(10000))
+    };
+    let default = fraction(if margin {
+        &s.perp_taker_fee_bps
+    } else {
+        &s.spot_taker_fee_bps
+    })?;
+    let mut schedule = MakerTakerFeeSchedule::new(Decimal::ZERO, default);
+    if let Some(fees) = &s.taker_fee_bps_by_instrument {
+        for (id, fee) in fees {
+            schedule.set_override(
+                id.parse()?,
+                MakerTakerFeeRates::new(Decimal::ZERO, fraction(fee)?),
+            );
+        }
+    }
+    Ok(schedule)
+}
+
 fn build(
     assets: &[Asset],
     margin: bool,
@@ -3279,24 +3312,18 @@ fn build(
         .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)) == margin)
         .map(|a| a.instrument.clone())
         .collect();
-    let fee = decimal(if margin {
-        &s.perp_taker_fee_bps
-    } else {
-        &s.spot_taker_fee_bps
-    })?;
+    let fees = fee_schedule(s, margin)?;
     if observed(s) {
-        let (initial_margin, maintenance_margin, extra_cost) = (
+        let (initial_margin, maintenance_margin) = (
             decimal(&s.initial_margin_fraction)?,
             decimal(&s.maintenance_margin_fraction)?,
-            decimal(&s.extra_cost_bps)?,
         );
         return if normalize_observed_book_sizes(s) {
             NativeLedger::new_observed_v2(
                 instruments,
                 capital,
                 margin,
-                fee,
-                extra_cost,
+                fees,
                 initial_margin,
                 maintenance_margin,
             )
@@ -3305,8 +3332,7 @@ fn build(
                 instruments,
                 capital,
                 margin,
-                fee,
-                extra_cost,
+                fees,
                 initial_margin,
                 maintenance_margin,
             )
@@ -3316,8 +3342,7 @@ fn build(
         instruments,
         capital,
         margin,
-        fee,
-        decimal(&s.extra_cost_bps)?,
+        fees,
         decimal(&s.initial_margin_fraction)?,
         decimal(&s.maintenance_margin_fraction)?,
         s.execution_model == Some(NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1),
@@ -3568,9 +3593,7 @@ fn schedule(
                 .sum::<Decimal>();
             let required = (*q - held).max(Decimal::ZERO)
                 * mark(a, event, age).unwrap()
-                * (Decimal::ONE
-                    + (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                        / Decimal::from(10000));
+                * (Decimal::ONE + cash.as_ref().unwrap().cost_fraction(a.instrument.id()));
             let quote = a.instrument.quote_currency();
             let entry = quote_needs
                 .entry(quote.to_string())

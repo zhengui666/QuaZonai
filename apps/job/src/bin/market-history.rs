@@ -18,6 +18,8 @@ use std::{
 
 #[path = "market/compose.rs"]
 mod compose;
+#[path = "market/context.rs"]
+mod context;
 #[path = "market/records.rs"]
 mod records;
 #[path = "market/writer.rs"]
@@ -35,6 +37,17 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Derive received-time oracle/mark CSV sidecars from published context files.
+    ContextPrices {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        instruments: PathBuf,
+        #[arg(long)]
+        research_source_revision: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Obtain settled funding history for perpetuals selected by native definitions.
     HyperliquidFunding {
         #[arg(long)]
@@ -1453,6 +1466,17 @@ fn main() {
                     &source_revision,
                 ))
             }),
+        Command::ContextPrices {
+            manifest,
+            instruments,
+            research_source_revision,
+            output,
+        } => context::run(&manifest, &instruments, &research_source_revision, &output).and_then(
+            |report| {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                Ok(())
+            },
+        ),
         Command::ComposeCohorts {
             manifest,
             instruments,
@@ -1533,6 +1557,67 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn received_context_sidecar_keeps_clock_decimal_missing_and_aliases() {
+        let temp = tempfile::tempdir().unwrap();
+        let raw = temp.path().join("context.csv");
+        let text = concat!(
+            "symbol,received_time,index,mark,rate\n",
+            "ALIAS,1767225600000000002,,123.123456789012345678901,999999\n",
+            "ALIAS,1767225600000000001,1e-8,0.0000000200,-999999\n",
+            "ALIAS,1767225600000000001,1e-8,0.0000000200,-999999\n"
+        );
+        fs::write(&raw, text).unwrap();
+        let first = nautilus_model::instruments::stubs::crypto_perpetual_ethusdt();
+        let mut second = first.clone();
+        second.id = "Z-ETHUSDT-PERP.BINANCE".parse().unwrap();
+        second.raw_symbol = Symbol::from("ZETHUSDT");
+        let first_id = first.id.to_string();
+        let second_id = second.id.to_string();
+        let definitions = temp.path().join("definitions.json");
+        publish(&definitions, &serde_json::json!({"currencies":[],
+            "instruments":[InstrumentAny::CryptoPerpetual(first),InstrumentAny::CryptoPerpetual(second)],
+            "symbol_ids":{"ALIAS":first_id,"EMPTY":second_id}})).unwrap();
+        let manifest = temp.path().join("source.json");
+        let source = serde_json::json!({"schema_version":1,"repository":"CryptoHFTData","revision":"original-context",
+            "license":"original","attribution":"original","retrieved_at":"2026-01-02T00:00:00Z",
+            "source_root":temp.path(),"source_reference":"https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data",
+            "coverage":"OBSERVED_PUBLISHED_FILES","start_date":"2026-01-01","end_date":"2026-01-02",
+            "selection":{"symbols":["ALIAS","EMPTY"]},"missing":[{"stream":"context","symbol":"EMPTY"}],
+            "files":[{"path":"context.csv","size":text.len(),"stream":"context"}],
+            "profile":{"streams":[{"name":"context","kind":"context","format":"csv","time_unit":"ns",
+                "available_time_unit":"ns","columns":{"symbol":"symbol","available_at":"received_time","index_price":"index","mark_price":"mark"}}]}});
+        publish(&manifest, &source).unwrap();
+        let output = temp.path().join("derived");
+        let report = context::run(&manifest, &definitions, "original-research", &output).unwrap();
+        assert_eq!(report["readback_records"], 2);
+        let catalog = output.join("catalog");
+        let result: serde_json::Value =
+            json(&catalog.join("context-prices.manifest.json")).unwrap();
+        assert_eq!(result["clock"], "RECEIVED_TIME_OBSERVED");
+        assert_eq!(result["source_revision"], "original-context");
+        assert_eq!(result["research_source_revision"], "original-research");
+        assert_eq!(result["missing"], source["missing"]);
+        let rows = fs::read_to_string(catalog.join("context-prices-000.csv")).unwrap();
+        assert_eq!(rows,"event_ns,oracle_px,mark_px\n1767225600000000001,1e-8,0.0000000200\n1767225600000000002,,123.123456789012345678901\n");
+        assert_eq!(result["files"][1]["rows"], "0");
+        assert_eq!(
+            result["files"][1]["first_event_ns"],
+            serde_json::Value::Null
+        );
+        assert!(!catalog.join("funding-rates.jsonl").exists());
+        assert_eq!(fs::read_to_string(&raw).unwrap(), text);
+        assert!(context::run(&manifest, &definitions, "", &temp.path().join("unbound")).is_err());
+        fs::write(&raw, text.replace("1e-8", "-1e8")).unwrap();
+        assert!(context::run(
+            &manifest,
+            &definitions,
+            "research",
+            &temp.path().join("invalid")
+        )
+        .is_err());
+    }
 
     #[test]
     fn funding_sidecar_preserves_decimal_time_order_and_missing_markets() {

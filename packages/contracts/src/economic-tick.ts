@@ -8,6 +8,7 @@ export type NativeTickEconomicScenario = {
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
   perp_taker_fee_bps: string; spot_taker_fee_bps: string; extra_cost_bps: string;
+  taker_fee_bps_by_instrument?: Record<string, string>;
   initial_margin_fraction: string; maintenance_margin_fraction: string;
   decision_interval_ns: string; base_latency_ns: string; jitter_min_ns: string; jitter_max_ns: string;
   random_seed: string; maximum_mark_age_ns: string;
@@ -39,7 +40,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
     .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
-  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model', 'decision_clock']);
+  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model', 'decision_clock', 'taker_fee_bps_by_instrument']);
   if (scenario.execution_model !== undefined && !['SYNTHETIC_QUOTE_IOC_V1', 'OBSERVED_L2_IOC_V1', 'OBSERVED_L2_IOC_V2'].includes(scenario.execution_model as string)) throw new Error('tick_economic_execution_model_invalid');
   if (scenario.decision_clock !== undefined && scenario.decision_clock !== 'COHORT_BUCKET_V1' && scenario.decision_clock !== 'FIXED_INTERVAL_V1') throw new Error('tick_economic_decision_clock_invalid');
   for (const key of decimalFields) {
@@ -50,14 +51,16 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
     const value = scenario[key];
     if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > 9223372036854775807n) throw new Error(`tick_economic_${key}_invalid`);
   }
+  const overrides = scenario.taker_fee_bps_by_instrument === undefined ? undefined : object(scenario.taker_fee_bps_by_instrument);
+  if (overrides && Object.entries(overrides).some(([id, fee]) => !id.trim() || typeof fee !== 'string' || fee.length > 64
+    || !/^[+-]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(fee))) throw new Error('tick_economic_taker_fee_bps_by_instrument_invalid');
   const s = scenario as NativeTickEconomicScenario;
   for (const key of ['initial_usdt', 'usdt0_per_usdt'] as const) if (compareDecimal(s[key], '0') <= 0) throw new Error(`tick_economic_${key}_invalid`);
   for (const key of ['spot_fraction', 'gross_fraction', 'maximum_asset_weight', 'participation_fraction', 'initial_margin_fraction', 'maintenance_margin_fraction'] as const) {
     if (compareDecimal(s[key], '0') <= 0 || compareDecimal(s[key], '1') > 0) throw new Error(`tick_economic_${key}_invalid`);
   }
   if (compareDecimal(s.spot_fraction, '1') >= 0 || compareDecimal(s.maintenance_margin_fraction, s.initial_margin_fraction) >= 0) throw new Error('tick_economic_allocation_or_margin_invalid');
-  if (compareDecimal(s.extra_cost_bps, '0') < 0 || (['perp_taker_fee_bps', 'spot_taker_fee_bps'] as const).some(key => {
-    const fee = s[key];
+  if (compareDecimal(s.extra_cost_bps, '0') < 0 || [s.perp_taker_fee_bps, s.spot_taker_fee_bps, ...Object.values(overrides ?? {}) as string[]].some(fee => {
     return compareDecimal(fee, '0') < 0 || compareDecimal(addDecimal(fee, s.extra_cost_bps), '10000') >= 0;
   })) throw new Error('tick_economic_costs_invalid');
   if (s.decision_interval_ns === '0' || s.maximum_mark_age_ns === '0' || BigInt(s.jitter_min_ns) > BigInt(s.jitter_max_ns)) throw new Error('tick_economic_clocks_invalid');
@@ -88,6 +91,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   }
   if (s.decision_clock !== undefined && policy?.decision_clock !== undefined && s.decision_clock !== policy.decision_clock) throw new Error('tick_economic_decision_clock_conflict');
   const normalized = { ...s }; for (const key of decimalFields) normalized[key] = addDecimal(s[key], '0');
+  if (overrides) normalized.taker_fee_bps_by_instrument = Object.fromEntries(Object.entries(overrides).map(([id, fee]) => [id, addDecimal(fee as string, '0')]));
   return { schema_version: 1, research, scenario: normalized,
     fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,
     ...(request.context_source === undefined ? {} : { context_source: request.context_source }),
