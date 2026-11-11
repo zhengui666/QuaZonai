@@ -1343,6 +1343,37 @@ fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
 }
 
 #[test]
+fn small_pending_quote_reservations_use_each_instruments_own_fee() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, mut request) = small_assets(directory.path());
+    request.scenario.taker_fee_bps_by_instrument = Some(BTreeMap::from([
+        (BRIDGE.into(), "10".parse().unwrap()),
+        (SPOT.into(), "20".parse().unwrap()),
+    ]));
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    for a in &mut assets {
+        if a.instrument.id().to_string() == BRIDGE {
+            a.pending = Some((SECOND, 2 * SECOND, Decimal::from(10)));
+        } else if a.instrument.id().to_string() == SPOT {
+            a.pending = Some((SECOND, 2 * SECOND, Decimal::ONE));
+        }
+    }
+    let small = SmallCapital::new(assets.len());
+    assert_eq!(
+        small_quote_available(
+            &small,
+            &assets,
+            &cash,
+            Currency::USDC(),
+            2 * SECOND,
+            request.scenario.maximum_mark_age_ns.get()
+        ),
+        Some(Decimal::new(88979, 2))
+    );
+    cash.finish().unwrap();
+}
+
+#[test]
 fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
     let directory = tempfile::tempdir().unwrap();
     let (mut assets, mut request) = small_assets(directory.path());
@@ -1714,7 +1745,6 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
             Currency::USDC(),
             2 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
-            Decimal::ZERO
         ),
         Some(Decimal::from(70))
     );
@@ -2421,7 +2451,6 @@ fn small_quote_shrink_keeps_signed_deficit_and_protects_other_pending_reservatio
             quote,
             3 * SECOND,
             request.scenario.maximum_mark_age_ns.get(),
-            Decimal::ZERO
         ),
         Some(Decimal::from(-20))
     );

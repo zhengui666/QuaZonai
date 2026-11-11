@@ -17,6 +17,8 @@ pub struct NativeTickEconomicScenarioV1 {
     pub participation_fraction: DecimalValue,
     pub perp_taker_fee_bps: DecimalValue,
     pub spot_taker_fee_bps: DecimalValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taker_fee_bps_by_instrument: Option<BTreeMap<String, DecimalValue>>,
     pub extra_cost_bps: DecimalValue,
     pub initial_margin_fraction: DecimalValue,
     pub maintenance_margin_fraction: DecimalValue,

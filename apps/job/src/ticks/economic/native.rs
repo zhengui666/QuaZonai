@@ -33,6 +33,7 @@ use nautilus_model::{
         PositionAdjustmentType, PriceType, TimeInForce,
     },
     events::{OrderDenied, OrderFilled, OrderRejected, PositionEvent},
+    fees::MakerTakerFeeSchedule,
     identifiers::{InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orderbook::OrderBook,
@@ -194,7 +195,7 @@ fn closing_limit(
 }
 
 #[derive(Debug)]
-struct ScenarioFee(Decimal);
+struct ScenarioFee(MakerTakerFeeSchedule);
 impl FeeModel for ScenarioFee {
     fn get_commission(
         &self,
@@ -204,7 +205,11 @@ impl FeeModel for ScenarioFee {
         instrument: &InstrumentAny,
     ) -> Result<Money> {
         let notional = instrument.try_calculate_notional_value(quantity, price, None)?;
-        let amount = arithmetic(notional.as_decimal().checked_mul(self.0))?;
+        let amount = arithmetic(
+            notional
+                .as_decimal()
+                .checked_mul(self.0.rates_for(instrument.id()).taker),
+        )?;
         let currency = if matches!(instrument, InstrumentAny::CurrencyPair(_)) {
             instrument.quote_currency()
         } else {
@@ -292,7 +297,7 @@ struct CohortStrategy {
     cash: bool,
     synthetic_quote_ioc: bool,
     observed_l2: bool,
-    cost_fraction: Decimal,
+    fees: MakerTakerFeeSchedule,
     state: Rc<RefCell<State>>,
 }
 impl fmt::Debug for CohortStrategy {
@@ -454,7 +459,9 @@ impl CohortStrategy {
                             .as_decimal()
                             .checked_mul(instrument.multiplier().as_decimal()),
                     )?
-                    .checked_mul(arithmetic(Decimal::ONE.checked_add(self.cost_fraction))?),
+                    .checked_mul(arithmetic(
+                        Decimal::ONE.checked_add(self.fees.rates_for(id).taker),
+                    )?),
                 )?;
                 let budget = free.max(Decimal::ZERO);
                 let affordable = arithmetic(budget.checked_div(unit))?;
@@ -467,7 +474,7 @@ impl CohortStrategy {
                         amount.min(affordable),
                         Decimal::ZERO,
                         budget,
-                        self.cost_fraction,
+                        self.fees.rates_for(id).taker,
                     )?
                 } else {
                     affordable
@@ -733,6 +740,7 @@ pub(super) struct NativeLedger {
     venue: Venue,
     instruments: BTreeMap<InstrumentId, InstrumentAny>,
     initial_balances: Vec<Money>,
+    fees: MakerTakerFeeSchedule,
     state: Rc<RefCell<State>>,
     adjustments: Adjustments,
     last_event: Option<u64>,
@@ -747,8 +755,7 @@ impl NativeLedger {
         instruments: Vec<InstrumentAny>,
         initial_usdc: Decimal,
         margin: bool,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         initial_margin_fraction: Decimal,
         maintenance_margin_fraction: Decimal,
         synthetic_quote_ioc: bool,
@@ -757,8 +764,7 @@ impl NativeLedger {
             instruments,
             initial_usdc,
             margin,
-            taker_fee_bps,
-            extra_cost_bps,
+            fees,
             initial_margin_fraction,
             maintenance_margin_fraction,
             synthetic_quote_ioc,
@@ -772,8 +778,7 @@ impl NativeLedger {
         instruments: Vec<InstrumentAny>,
         initial_usdc: Decimal,
         margin: bool,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         initial_margin_fraction: Decimal,
         maintenance_margin_fraction: Decimal,
     ) -> Result<Self> {
@@ -781,8 +786,7 @@ impl NativeLedger {
             instruments,
             initial_usdc,
             margin,
-            taker_fee_bps,
-            extra_cost_bps,
+            fees,
             initial_margin_fraction,
             maintenance_margin_fraction,
             false,
@@ -796,8 +800,7 @@ impl NativeLedger {
         instruments: Vec<InstrumentAny>,
         initial_usdc: Decimal,
         margin: bool,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         initial_margin_fraction: Decimal,
         maintenance_margin_fraction: Decimal,
     ) -> Result<Self> {
@@ -805,8 +808,7 @@ impl NativeLedger {
             instruments,
             initial_usdc,
             margin,
-            taker_fee_bps,
-            extra_cost_bps,
+            fees,
             initial_margin_fraction,
             maintenance_margin_fraction,
             false,
@@ -818,41 +820,24 @@ impl NativeLedger {
     pub fn new_conversion(
         instrument: InstrumentAny,
         initial_base: Money,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
     ) -> Result<Self> {
-        Self::conversion(
-            instrument,
-            initial_base,
-            taker_fee_bps,
-            extra_cost_bps,
-            true,
-            false,
-        )
+        Self::conversion(instrument, initial_base, fees, true, false)
     }
 
     pub fn new_conversion_scenario(
         instrument: InstrumentAny,
         initial_base: Money,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         synthetic_quote_ioc: bool,
     ) -> Result<Self> {
-        Self::conversion(
-            instrument,
-            initial_base,
-            taker_fee_bps,
-            extra_cost_bps,
-            false,
-            synthetic_quote_ioc,
-        )
+        Self::conversion(instrument, initial_base, fees, false, synthetic_quote_ioc)
     }
 
     fn conversion(
         instrument: InstrumentAny,
         initial_base: Money,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         observed_l2: bool,
         synthetic_quote_ioc: bool,
     ) -> Result<Self> {
@@ -866,8 +851,7 @@ impl NativeLedger {
             vec![instrument],
             Decimal::ZERO,
             false,
-            taker_fee_bps,
-            extra_cost_bps,
+            fees,
             Decimal::ONE,
             Decimal::new(5, 1),
             synthetic_quote_ioc,
@@ -886,8 +870,7 @@ impl NativeLedger {
         instruments: Vec<InstrumentAny>,
         initial_usdc: Decimal,
         margin: bool,
-        taker_fee_bps: Decimal,
-        extra_cost_bps: Decimal,
+        fees: MakerTakerFeeSchedule,
         initial_margin_fraction: Decimal,
         maintenance_margin_fraction: Decimal,
         synthetic_quote_ioc: bool,
@@ -900,9 +883,9 @@ impl NativeLedger {
             "TICK_ECONOMIC_LEDGER_INPUT"
         );
         ensure!(
-            taker_fee_bps >= Decimal::ZERO
-                && extra_cost_bps >= Decimal::ZERO
-                && arithmetic(taker_fee_bps.checked_add(extra_cost_bps))? < Decimal::from(10000)
+            std::iter::once(&fees.default)
+                .chain(fees.overrides.values())
+                .all(|rates| rates.taker >= Decimal::ZERO && rates.taker < Decimal::ONE)
                 && maintenance_margin_fraction > Decimal::ZERO
                 && initial_margin_fraction > maintenance_margin_fraction
                 && initial_margin_fraction <= Decimal::ONE,
@@ -920,10 +903,6 @@ impl NativeLedger {
                 }),
             "TICK_ECONOMIC_LEDGER_INSTRUMENT"
         );
-        let fee_fraction = arithmetic(
-            arithmetic(taker_fee_bps.checked_add(extra_cost_bps))?
-                .checked_div(Decimal::from(10000)),
-        )?;
         let mut config = BacktestEngineConfig {
             cache: Some(
                 CacheConfig::builder()
@@ -1004,7 +983,7 @@ impl NativeLedger {
                     maintenance: maintenance_margin_fraction,
                 }))
                 .modules(vec![SimulationModuleHandle::new(adjustments.clone())])
-                .fee_model(FeeModelHandle::new(ScenarioFee(fee_fraction)))
+                .fee_model(FeeModelHandle::new(ScenarioFee(fees.clone())))
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     1.0,
                     0.0,
@@ -1078,7 +1057,7 @@ impl NativeLedger {
             cash: !margin,
             synthetic_quote_ioc,
             observed_l2,
-            cost_fraction: fee_fraction,
+            fees: fees.clone(),
             state: state.clone(),
         })?;
         Ok(Self {
@@ -1087,6 +1066,7 @@ impl NativeLedger {
             venue,
             instruments,
             initial_balances,
+            fees,
             state,
             adjustments,
             last_event: None,
@@ -1095,6 +1075,10 @@ impl NativeLedger {
             observed_l2,
             normalize_book_sizes,
         })
+    }
+
+    pub fn cost_fraction(&self, id: InstrumentId) -> Decimal {
+        self.fees.rates_for(id).taker
     }
 
     /// FX bridge targets reserve actual quote inventory; alpha targets remain per pair.
@@ -1627,13 +1611,16 @@ mod tests {
                 .unwrap(),
         )
     }
+    fn fees(bps: Decimal) -> MakerTakerFeeSchedule {
+        MakerTakerFeeSchedule::new(Decimal::ZERO, bps / Decimal::from(10000))
+    }
+
     fn ledger(instrument: &InstrumentAny, margin: bool, fee: Decimal) -> NativeLedger {
         NativeLedger::new(
             vec![instrument.clone()],
             Decimal::from(1000),
             margin,
-            fee,
-            Decimal::ZERO,
+            fees(fee),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
             false,
@@ -1682,8 +1669,7 @@ mod tests {
         let mut native = NativeLedger::new_conversion_scenario(
             instrument.clone(),
             Money::from("2 BTC"),
-            Decimal::from(100),
-            Decimal::ZERO,
+            fees(Decimal::from(100)),
             true,
         )
         .unwrap();
@@ -1807,8 +1793,7 @@ mod tests {
                 vec![instrument.clone()],
                 Decimal::from(1000),
                 true,
-                Decimal::ZERO,
-                Decimal::ZERO,
+                fees(Decimal::ZERO),
                 Decimal::new(5, 1),
                 Decimal::new(25, 2),
                 true,
@@ -1867,8 +1852,7 @@ mod tests {
             vec![instrument.clone()],
             Decimal::from(1000),
             true,
-            Decimal::from(100),
-            Decimal::ZERO,
+            fees(Decimal::from(100)),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
             true,
@@ -2158,8 +2142,7 @@ mod tests {
             vec![first.clone(), second.clone(), bridge.clone()],
             Decimal::from(1000),
             false,
-            Decimal::ZERO,
-            Decimal::ZERO,
+            fees(Decimal::ZERO),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
             false,
@@ -2401,8 +2384,7 @@ mod tests {
                 vec![instrument.clone()],
                 Decimal::from(3000),
                 matches!(instrument, InstrumentAny::CryptoPerpetual(_)),
-                Decimal::ZERO,
-                Decimal::ZERO,
+                fees(Decimal::ZERO),
                 Decimal::new(5, 1),
                 Decimal::new(25, 2),
             )
@@ -2501,8 +2483,7 @@ mod tests {
             vec![instrument.clone()],
             Decimal::from(1000),
             false,
-            Decimal::ZERO,
-            Decimal::ZERO,
+            fees(Decimal::ZERO),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
         )
@@ -2568,8 +2549,7 @@ mod tests {
             vec![instrument.clone()],
             Decimal::from(1000),
             false,
-            Decimal::ZERO,
-            Decimal::ZERO,
+            fees(Decimal::ZERO),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
         )
@@ -2647,8 +2627,7 @@ mod tests {
                 vec![instrument.clone()],
                 Decimal::from(1000),
                 true,
-                Decimal::ZERO,
-                Decimal::ZERO,
+                fees(Decimal::ZERO),
                 Decimal::new(5, 1),
                 Decimal::new(25, 2),
             )
@@ -2776,12 +2755,19 @@ mod tests {
     fn observed_cash_buy_sizes_crossed_levels_and_fees_within_wallet() {
         for (fee, filled, cash) in [("0", "1.9901", "0.0098"), ("100", "1.9705", "0.009090")] {
             let instrument = spot();
+            let mut schedule = fees(Decimal::from(50));
+            schedule.set_override(
+                instrument.id(),
+                nautilus_model::fees::MakerTakerFeeRates::new(
+                    Decimal::ZERO,
+                    fee.parse::<Decimal>().unwrap() / Decimal::from(10000),
+                ),
+            );
             let mut ledger = NativeLedger::new_observed(
                 vec![instrument.clone()],
                 Decimal::from(202),
                 false,
-                fee.parse().unwrap(),
-                Decimal::ZERO,
+                schedule,
                 Decimal::new(5, 1),
                 Decimal::new(25, 2),
             )
@@ -2838,8 +2824,7 @@ mod tests {
             vec![instrument.clone()],
             Decimal::from(1000),
             false,
-            Decimal::ZERO,
-            Decimal::ZERO,
+            fees(Decimal::ZERO),
             Decimal::new(5, 1),
             Decimal::new(25, 2),
         )
@@ -2925,8 +2910,7 @@ mod tests {
                 vec![instrument.clone()],
                 Decimal::from(1000),
                 margin,
-                Decimal::ZERO,
-                Decimal::ZERO,
+                fees(Decimal::ZERO),
                 Decimal::new(5, 1),
                 Decimal::new(25, 2),
             )
@@ -3005,8 +2989,7 @@ mod tests {
         let mut ledger = NativeLedger::new_conversion(
             instrument.clone(),
             Money::from("2 BTC"),
-            Decimal::from(100),
-            Decimal::ZERO,
+            fees(Decimal::from(100)),
         )
         .unwrap();
         ledger
