@@ -64,8 +64,15 @@ enum Command {
     },
     /// Concatenate complete, disjoint source-day cohort units without changing their marks.
     ComposeCohorts {
+        #[arg(
+            long,
+            required_unless_present = "source_revision",
+            conflicts_with = "source_revision"
+        )]
+        manifest: Option<PathBuf>,
+        /// Explicit version of a derived Received bundle; preserves every unit's original provenance.
         #[arg(long)]
-        manifest: PathBuf,
+        source_revision: Option<String>,
         #[arg(long)]
         instruments: PathBuf,
         #[arg(long, required = true)]
@@ -1479,16 +1486,27 @@ fn main() {
         ),
         Command::ComposeCohorts {
             manifest,
+            source_revision,
             instruments,
             units,
             output,
             max_output_bytes,
-        } => compose::run(&manifest, &instruments, &units, &output, max_output_bytes).and_then(
-            |report| {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-                Ok(())
-            },
-        ),
+        } => (if let Some(revision) = source_revision {
+            compose::received(&revision, &instruments, &units, &output, max_output_bytes)
+        } else {
+            compose::run(
+                manifest.as_deref().unwrap(),
+                &instruments,
+                &units,
+                &output,
+                max_output_bytes,
+            )
+            .and_then(|report| Ok(serde_json::to_value(report)?))
+        })
+        .and_then(|report| {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }),
         Command::HyperliquidInstruments { output, manifest } => tokio::runtime::Runtime::new()
             .context("METADATA_RUNTIME_UNAVAILABLE")
             .and_then(|runtime| {
@@ -2277,6 +2295,123 @@ mod tests {
             }
             assert_eq!(fs::read(csv).unwrap(), original);
         }
+    }
+
+    #[test]
+    fn compose_received_units_retains_source_reports_and_adds_published_book_only_market() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut units = Vec::new();
+        let mut originals = Vec::new();
+        for (index, day) in ["2026-01-01", "2026-01-02"].iter().enumerate() {
+            let directory = temp.path().join(format!("source-{index}"));
+            let (manifest, instruments, csv) = tick_source(&directory, "");
+            let start_ms = 1767225600000_u64 + index as u64 * 86400000;
+            let start_ns = start_ms * 1000000;
+            let mut rows = format!("coin,timestamp,price,size,trade_id,side,received\nBTCUSDT,{},10.12,0.1,T-{index},B,{}\n", start_ms + 1, start_ns + 2000000);
+            if index == 0 {
+                rows.push_str(&format!("BTCUSDT,{},10.12,0.1,T-{index},B,{}\nBTCUSDT,{},10.12,0.1,STALE,B,{}\nBTCUSDT,{},10.12,0.1,OUTSIDE,B,{}\n", start_ms + 1, start_ns + 3000000, start_ms - 2 * 86400000, start_ns + 4000000, start_ms - 1, start_ns - 1));
+            }
+            fs::write(&csv, rows).unwrap();
+            let mut source: serde_json::Value = json(&manifest).unwrap();
+            source["repository"] = serde_json::json!("CryptoHFTData");
+            source["source_reference"] = serde_json::json!(
+                "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
+            );
+            source["revision"] = serde_json::json!(format!("published-{day}"));
+            source["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
+            source["start_date"] = serde_json::json!(day);
+            source["end_date"] = serde_json::json!(if index == 0 {
+                "2026-01-02"
+            } else {
+                "2026-01-03"
+            });
+            source["profile"]["streams"][0]["available_time_unit"] = serde_json::json!("ns");
+            source["profile"]["streams"][0]["columns"]["available_at"] =
+                serde_json::json!("received");
+            source["files"][0]["size"] = serde_json::json!(fs::metadata(&csv).unwrap().len());
+            source["files"].as_array_mut().unwrap().truncate(1);
+            source["missing"] =
+                serde_json::json!([{"stream":"trades","pattern":"perps/unpublished.csv"}]);
+            fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+            let prefixes = ["perps/".into()];
+            let mut options = tick_options(&prefixes, false, 0, 0);
+            options.trade_ticks = false;
+            options.cohort_flow_cache = true;
+            options.received_time = true;
+            options.maximum_receive_delay_ns = Some(86400000000000);
+            let output = temp.path().join(format!("unit-{index}"));
+            let report = import(&manifest, &instruments, &output, options).unwrap();
+            assert_eq!(report.status, "IMPORTED");
+            originals.push(
+                job::ticks::cohort_cache::manifest(&output.join("catalog"))
+                    .unwrap()
+                    .source_report,
+            );
+            units.push(output);
+        }
+        let definitions = vec![
+            InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::currency_pair_btcusdt()),
+            InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::currency_pair_ethusdt()),
+        ];
+        let ids = definitions
+            .iter()
+            .map(|i| i.id().to_string())
+            .collect::<Vec<_>>();
+        let instruments = temp.path().join("current.json");
+        fs::write(&instruments, serde_json::to_vec(&serde_json::json!({
+            "currencies":job::catalog::currencies::definitions(&definitions),"instruments":definitions,
+            "source_selection":{"native_ids_by_stream":{"trades":[ids[0]],"orderbook":ids}}
+        })).unwrap()).unwrap();
+        let output = temp.path().join("combined");
+        compose::received(
+            "derived-received-bundle-v1",
+            &instruments,
+            &units,
+            &output,
+            0,
+        )
+        .unwrap();
+        let cache = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
+        assert_eq!(cache.source_revision, "derived-received-bundle-v1");
+        assert_eq!(cache.trade_count.get(), 2);
+        assert_eq!(cache.cohort_count.get(), 2);
+        assert_eq!(
+            cache.maximum_receive_delay_ns.unwrap().get(),
+            86400000000000
+        );
+        assert_eq!(
+            cache.source_report["source_manifest"]["components"],
+            serde_json::json!(originals)
+        );
+        assert_eq!(cache.source_report["duplicate_trades"], 1);
+        assert_eq!(cache.source_report["source_age_excluded_rows"], 1);
+        assert_eq!(cache.source_report["outside_window_rows"], 1);
+        assert_eq!(
+            cache.source_report["missing_partitions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let empty = cache
+            .files
+            .iter()
+            .find(|file| file.instrument_id == ids[1])
+            .unwrap();
+        assert_eq!(empty.bytes.get(), 0);
+        assert_eq!(empty.trade_count.get(), 0);
+        assert!(empty.first_event_ns.is_none());
+        assert!(fs::read(output.join("catalog").join(&empty.path))
+            .unwrap()
+            .is_empty());
+        assert!(compose::received(
+            "overlap",
+            &instruments,
+            &[units[0].clone(), units[0].clone()],
+            &temp.path().join("overlap"),
+            0
+        )
+        .is_err());
     }
 
     #[test]

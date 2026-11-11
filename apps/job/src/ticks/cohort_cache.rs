@@ -46,6 +46,25 @@ pub struct CacheFile {
     pub source_event_end_ns: Option<DbCounter>,
 }
 
+fn empty_cache_file(instrument_id: String) -> Result<CacheFile> {
+    Ok(CacheFile {
+        path: format!(
+            "data/cohorts/{}.bin",
+            nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(&instrument_id)
+        ),
+        instrument_id,
+        bytes: counter(0)?,
+        byte_start: counter(0)?,
+        byte_end: counter(0)?,
+        trade_count: counter(0)?,
+        cohort_count: counter(0)?,
+        first_event_ns: None,
+        last_event_ns: None,
+        source_event_start_ns: None,
+        source_event_end_ns: None,
+    })
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -689,12 +708,24 @@ fn missing_hours(entries: &[Value]) -> Result<u64> {
 
 // The catalog keeps the full report; trial evidence carries its facts and reference.
 fn compact_published_report(report: &mut Value) -> Result<()> {
+    compact_published_report_at(report, &format!("{MANIFEST_FILE}#source_report"))
+}
+
+fn compact_published_report_at(report: &mut Value, reference: &str) -> Result<()> {
     if !super::catalog::observed_published_files(report) {
         return Ok(());
     }
     let source = report["source_manifest"]
         .as_object_mut()
         .context("TICK_CACHE_SOURCE_FIELD: source_manifest")?;
+    if let Some(components) = source.get_mut("components").and_then(Value::as_array_mut) {
+        for (index, component) in components.iter_mut().enumerate() {
+            compact_published_report_at(
+                component,
+                &format!("{reference}/source_manifest/components/{index}"),
+            )?;
+        }
+    }
     if let Some(files) = source.remove("files") {
         let entries = files.as_array().context("TICK_CACHE_SOURCE_FIELD: files")?;
         let bytes = entries.iter().try_fold(0_u64, |total, file| {
@@ -730,10 +761,7 @@ fn compact_published_report(report: &mut Value) -> Result<()> {
             .context("TICK_CACHE_SOURCE_FIELD: source_age_excluded_files")?;
         fields.insert("source_age_excluded_file_count".into(), json!(files.len()));
     }
-    fields.insert(
-        "full_report_reference".into(),
-        json!(format!("{MANIFEST_FILE}#source_report")),
-    );
+    fields.insert("full_report_reference".into(), json!(reference));
     exact_json(report);
     Ok(())
 }
@@ -1012,7 +1040,20 @@ pub fn concatenate(
     let mut combined: Option<Manifest> = None;
     let mut outputs: BTreeMap<String, CacheFile> = BTreeMap::new();
     let mut written = 0_u64;
-    for unit in units {
+    let components = source_report["source_manifest"]["components"].as_array();
+    let revision = components
+        .map(|components| -> Result<&str> {
+            ensure!(
+                components.len() == units.len(),
+                "TICK_CACHE_COMPONENT_COUNT_MISMATCH"
+            );
+            source_report["source_revision"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .context("TICK_CACHE_BUNDLE_REVISION_REQUIRED")
+        })
+        .transpose()?;
+    for (index, unit) in units.iter().enumerate() {
         let unit = crate::catalog::catalog_root(unit)?;
         let current = manifest(&unit)?;
         let width = frame_bytes(&current.representation)?;
@@ -1028,10 +1069,55 @@ pub fn concatenate(
                     },
             "TICK_CACHE_VIEW_MISMATCH"
         );
+        if let Some(components) = components {
+            let report = &current.source_report;
+            ensure!(
+                components[index] == *report,
+                "TICK_CACHE_COMPONENT_REPORT_MISMATCH"
+            );
+            ensure!(
+                received
+                    && width == RECEIVED_FLOW_FRAME_BYTES
+                    && current
+                        .event_start_ns
+                        .get()
+                        .is_multiple_of(86_400_000_000_000)
+                    && current
+                        .event_end_ns
+                        .get()
+                        .is_multiple_of(86_400_000_000_000)
+                    && report["status"] == "IMPORTED"
+                    && report["availability"] == current.availability
+                    && report["representation"] == current.representation
+                    && report["source_revision"] == current.source_revision
+                    && report["revision"] == current.source_revision
+                    && number(report, "event_start_ns")? == current.event_start_ns.get()
+                    && number(report, "event_end_ns")? == current.event_end_ns.get()
+                    && Some(number(report, "maximum_receive_delay_ns")?)
+                        == current.maximum_receive_delay_ns.map(|v| v.get()),
+                "TICK_CACHE_COMPONENT_SOURCE_MISMATCH"
+            );
+            for field in ["missing_symbols", "rejected_rows"] {
+                ensure!(
+                    report[field]
+                        .as_object()
+                        .is_some_and(|values| values.is_empty()),
+                    "TICK_CACHE_SOURCE_INCOMPLETE"
+                );
+            }
+            super::catalog::validate_source_observations(report)?;
+            let duplicates = number(report, "duplicate_trades")?;
+            ensure!(
+                number(report, "selected_rows")?.checked_sub(duplicates)
+                    == Some(current.trade_count.get())
+                    && number(report, "readback_records")? == current.cohort_count.get(),
+                "TICK_CACHE_COUNTS_MISMATCH"
+            );
+        }
         if let Some(previous) = &mut combined {
             ensure!(
                 previous.representation == current.representation
-                    && previous.source_revision == current.source_revision
+                    && (revision.is_some() || previous.source_revision == current.source_revision)
                     && previous.availability == current.availability
                     && previous.maximum_receive_delay_ns == current.maximum_receive_delay_ns
                     && previous.event_end_ns == current.event_start_ns,
@@ -1052,7 +1138,7 @@ pub fn concatenate(
             combined = Some(Manifest {
                 schema_version: SchemaV1,
                 representation: current.representation.clone(),
-                source_revision: current.source_revision.clone(),
+                source_revision: revision.unwrap_or(&current.source_revision).to_owned(),
                 availability: current.availability.clone(),
                 event_start_ns: current.event_start_ns,
                 event_end_ns: current.event_end_ns,
@@ -1082,38 +1168,18 @@ pub fn concatenate(
                 "TICK_CACHE_FULL_UNIT_REQUIRED"
             );
             let path = cache_path(&unit, &record.path)?;
-            let source = File::open(path)?;
+            let source = File::open(&path)?;
             ensure!(
                 source.metadata()?.is_file() && source.metadata()?.len() == record.bytes.get(),
                 "TICK_CACHE_FILE_INCOMPLETE"
             );
             if !outputs.contains_key(&record.instrument_id) {
-                let path = format!(
-                    "data/cohorts/{}.bin",
-                    nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(
-                        &record.instrument_id
-                    )
-                );
+                let empty = empty_cache_file(record.instrument_id.clone())?;
                 OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(root.join(&path))?;
-                outputs.insert(
-                    record.instrument_id.clone(),
-                    CacheFile {
-                        instrument_id: record.instrument_id.clone(),
-                        path,
-                        bytes: counter(0)?,
-                        byte_start: counter(0)?,
-                        byte_end: counter(0)?,
-                        trade_count: counter(0)?,
-                        cohort_count: counter(0)?,
-                        first_event_ns: None,
-                        last_event_ns: None,
-                        source_event_start_ns: None,
-                        source_event_end_ns: None,
-                    },
-                );
+                    .open(root.join(&empty.path))?;
+                outputs.insert(record.instrument_id.clone(), empty);
             }
             let reader = CacheReader {
                 frame_bytes: width,
@@ -1138,6 +1204,16 @@ pub fn concatenate(
                     .append(true)
                     .open(root.join(&target.path))?,
             );
+            let copied = target.bytes.get() == 0;
+            if copied {
+                let destination = root.join(&target.path);
+                let permissions = fs::metadata(&destination)?.permissions();
+                ensure!(
+                    fs::copy(&path, &destination)? == record.bytes.get(),
+                    "TICK_CACHE_FILE_INCOMPLETE"
+                );
+                fs::set_permissions(destination, permissions)?;
+            }
             for cohort in reader {
                 let cohort = cohort?;
                 ensure!(
@@ -1150,13 +1226,15 @@ pub fn concatenate(
                     .checked_add(width)
                     .context("TICK_CACHE_OUTPUT_LIMIT")?;
 
-                writer.write_all(
-                    &frame(
-                        &cohort,
-                        width == FLOW_FRAME_BYTES || width == RECEIVED_FLOW_FRAME_BYTES,
-                        received,
-                    )?[..width as usize],
-                )?;
+                if !copied {
+                    writer.write_all(
+                        &frame(
+                            &cohort,
+                            width == FLOW_FRAME_BYTES || width == RECEIVED_FLOW_FRAME_BYTES,
+                            received,
+                        )?[..width as usize],
+                    )?;
+                }
                 target.first_event_ns.get_or_insert(counter(cohort.event)?);
                 target.last_event_ns = Some(counter(cohort.event)?);
                 if received {
@@ -1211,6 +1289,24 @@ pub fn concatenate(
             trades == current.trade_count.get() && cohorts == current.cohort_count.get(),
             "TICK_CACHE_COUNTS_MISMATCH"
         );
+    }
+    if revision.is_some() {
+        for id in source_report["source_manifest"]["instrument_ids"]
+            .as_array()
+            .context("TICK_CACHE_BUNDLE_UNIVERSE_REQUIRED")?
+        {
+            let id = id
+                .as_str()
+                .context("TICK_CACHE_BUNDLE_INSTRUMENT_INVALID")?;
+            if !outputs.contains_key(id) {
+                let empty = empty_cache_file(id.to_owned())?;
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(root.join(&empty.path))?;
+                outputs.insert(id.to_owned(), empty);
+            }
+        }
     }
     let mut result = combined.unwrap();
     for (_, record) in outputs {
@@ -1673,7 +1769,17 @@ mod resource_tests {
         )
         .unwrap();
         let original = fs::read(temp.path().join(MANIFEST_FILE)).unwrap();
+        report["source_manifest"]["components"] = json!([report.clone()]);
         compact_published_report(&mut report).unwrap();
+        let component = &report["source_manifest"]["components"][0];
+        assert!(component["source_manifest"].get("files").is_none());
+        assert_eq!(component["source_manifest"]["file_count"], 2);
+        assert_eq!(
+            component["full_report_reference"],
+            "cohort-cache.json#source_report/source_manifest/components/0"
+        );
+        assert_eq!(component["deduplicated_trades"], 1);
+        assert_eq!(component["source_age_excluded_rows"], 2);
         assert_eq!(
             report["full_report_reference"],
             "cohort-cache.json#source_report"

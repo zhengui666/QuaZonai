@@ -217,3 +217,204 @@ pub(super) fn run(
     )?;
     json(&output.join("import-report.json"))
 }
+
+fn report_count(report: &Value, field: &str) -> Result<u64> {
+    report[field]
+        .as_u64()
+        .or_else(|| report[field].as_str().and_then(|value| value.parse().ok()))
+        .with_context(|| format!("COHORT_COMPOSE_REPORT_FIELD_INVALID: {field}"))
+}
+
+/// Compose original Received units, retaining their separate source declarations.
+pub(super) fn received(
+    revision: &str,
+    instruments_path: &Path,
+    units: &[PathBuf],
+    output: &Path,
+    maximum_output_bytes: u64,
+) -> Result<Value> {
+    ensure!(
+        !revision.trim().is_empty() && !units.is_empty(),
+        "COHORT_COMPOSE_EMPTY_SELECTION"
+    );
+    let instruments: Value = json(instruments_path)?;
+    let definitions = job::catalog::currencies::instruments_from_value(instruments.clone())?
+        .into_iter()
+        .map(|instrument| (instrument.id().to_string(), instrument))
+        .collect::<BTreeMap<_, _>>();
+    let mut universe = BTreeSet::new();
+    if let Some(streams) = instruments["source_selection"]["native_ids_by_stream"].as_object() {
+        for ids in streams.values() {
+            for id in ids
+                .as_array()
+                .context("COHORT_COMPOSE_SOURCE_UNIVERSE_INVALID")?
+            {
+                universe.insert(
+                    id.as_str()
+                        .context("COHORT_COMPOSE_SOURCE_UNIVERSE_INVALID")?
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    let mut ordered = Vec::new();
+    for unit in units {
+        let root = unit.join("catalog");
+        let cache = cohort_cache::manifest(&root)?;
+        ordered.push((cache.event_start_ns.get(), root));
+    }
+    ordered.sort_by_key(|(start, _)| *start);
+    let mut result = serde_json::json!({
+        "schema_version":1,"status":"IMPORTED","source_revision":revision,"revision":revision,
+        "modality":"TRADE_TICK","availability":"RECEIVED_TIME_OBSERVED",
+        "representation":cohort_cache::RECEIVED_FLOW_REPRESENTATION,
+        "selected_streams":[],"selected_path_prefixes":[],"instrument_source":instruments,
+        "missing_symbols":{},"rejected_rows":{},"missing_definitions":{},"missing_partitions":[],
+        "source_coverage":{},"registered_in_quazonai":false,
+        "definition_semantics":"Selected current official definitions provide one representation contract for the full historical window. Original unit definitions remain in source_manifest.components. For legacy USD-quoted, USDC-settled perpetuals, selecting USDC quotes changes native Money rounding from USD cents to USDC precision.",
+        "source_manifest":{"revision":revision,"composition":"DERIVED_RECEIVED_COHORT_BUNDLE_V1","components":[]}
+    });
+    let mut streams = BTreeSet::new();
+    let mut roots = Vec::new();
+    let scalar_fields = [
+        "source_reference",
+        "license",
+        "attribution",
+        "record_precision",
+        "historical_availability",
+        "coverage",
+        "deduplication_policy",
+        "source_age_population",
+    ];
+    let counters = [
+        "source_rows",
+        "outside_window_rows",
+        "filtered_rows",
+        "selected_rows",
+        "duplicate_trades",
+        "deduplicated_trades",
+        "definitions_observed_after_event_rows",
+        "empty_books",
+        "one_sided_books",
+        "readback_records",
+        "source_age_excluded_rows",
+    ];
+    for (_, root) in ordered {
+        let cache = cohort_cache::manifest(&root)?;
+        let report = cache.source_report;
+        for file in cache.files {
+            universe.insert(file.instrument_id);
+        }
+        // Cohort floats retain their source values; current encodings must retain the same tick and lot representation.
+        for original in
+            job::catalog::currencies::instruments_from_value(report["instrument_source"].clone())?
+        {
+            let current = definitions
+                .get(&original.id().to_string())
+                .context("COHORT_COMPOSE_CURRENT_DEFINITION_MISSING")?;
+            ensure!(
+                current.price_precision() == original.price_precision()
+                    && current.size_precision() == original.size_precision()
+                    && current.price_increment() == original.price_increment()
+                    && current.size_increment() == original.size_increment(),
+                "COHORT_COMPOSE_NATIVE_PRECISION_CHANGED"
+            );
+        }
+        if roots.is_empty() {
+            for key in scalar_fields {
+                result[key] = report[key].clone();
+            }
+            result["source_observed_at"] = Value::Null;
+            for key in ["repository", "coverage", "source_reference"] {
+                result["source_manifest"][key] = report["source_manifest"][key].clone();
+            }
+        } else {
+            for key in scalar_fields {
+                ensure!(result[key] == report[key], "COHORT_COMPOSE_RECIPE_MISMATCH");
+            }
+            ensure!(
+                result["source_manifest"]["repository"] == report["source_manifest"]["repository"],
+                "COHORT_COMPOSE_RECIPE_MISMATCH"
+            );
+        }
+        for field in counters {
+            let mut total = result[field].as_u64().unwrap_or(0);
+            if !report[field].is_null() {
+                add(&mut total, report_count(&report, field)?)?;
+            }
+            result[field] = serde_json::json!(total);
+        }
+        for (name, count) in report["missing_definitions"]
+            .as_object()
+            .context("COHORT_COMPOSE_REPORT_INVALID")?
+        {
+            let mut total = result["missing_definitions"][name].as_u64().unwrap_or(0);
+            add(
+                &mut total,
+                count.as_u64().context("COHORT_COMPOSE_REPORT_INVALID")?,
+            )?;
+            result["missing_definitions"][name] = serde_json::json!(total);
+        }
+        result["missing_partitions"].as_array_mut().unwrap().extend(
+            report["missing_partitions"]
+                .as_array()
+                .context("COHORT_COMPOSE_REPORT_INVALID")?
+                .iter()
+                .cloned(),
+        );
+        for stream in report["selected_streams"]
+            .as_array()
+            .context("COHORT_COMPOSE_REPORT_INVALID")?
+        {
+            streams.insert(
+                stream
+                    .as_str()
+                    .context("COHORT_COMPOSE_REPORT_INVALID")?
+                    .to_owned(),
+            );
+        }
+        for (stream, coverage) in report["source_coverage"]
+            .as_object()
+            .context("COHORT_COMPOSE_REPORT_INVALID")?
+        {
+            if result["source_coverage"][stream].is_null() {
+                result["source_coverage"][stream] =
+                    serde_json::json!({"source_rows":0,"selected_rows":0});
+            }
+            let target = &mut result["source_coverage"][stream];
+            for key in ["source_rows", "selected_rows"] {
+                let mut total = report_count(target, key)?;
+                add(&mut total, report_count(coverage, key)?)?;
+                target[key] = serde_json::json!(total);
+            }
+            for key in ["first_event_ns", "last_event_ns"] {
+                if !coverage[key].is_null() {
+                    let value = report_count(coverage, key)?;
+                    let previous = if target[key].is_null() {
+                        value
+                    } else {
+                        report_count(target, key)?
+                    };
+                    target[key] = serde_json::json!(if key == "first_event_ns" {
+                        value.min(previous)
+                    } else {
+                        value.max(previous)
+                    });
+                }
+            }
+        }
+        result["source_manifest"]["components"]
+            .as_array_mut()
+            .unwrap()
+            .push(report);
+        roots.push(root);
+    }
+    ensure!(
+        universe.iter().all(|id| definitions.contains_key(id)),
+        "COHORT_COMPOSE_CURRENT_DEFINITION_MISSING"
+    );
+    result["source_manifest"]["instrument_ids"] = serde_json::json!(universe);
+    result["selected_streams"] = serde_json::json!(streams);
+    cohort_cache::concatenate(&roots, output, result, maximum_output_bytes)?;
+    json(&output.join("import-report.json"))
+}
