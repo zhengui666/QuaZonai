@@ -1073,7 +1073,7 @@ fn import(
         ..Report::default()
     };
     // shortcut: deduplication retains IDs for this import; split long histories into dated catalogs when ID memory grows.
-    let mut trades = BTreeMap::new();
+    let mut trades: BTreeMap<_, (TradeTick, usize)> = BTreeMap::new();
     // shortcut: excluded identities use each file and the eligible D-window; all-history identity claims need a separate index.
     let mut published_trades = PublishedTrades::default();
     for file in selected_files {
@@ -1262,18 +1262,21 @@ fn import(
                 if let Data::Trade(trade) = &data {
                     let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
                     if let Some(previous) = trades.get(&key) {
-                        if previous != trade && options.trade_ticks {
+                        if &previous.0 != trade && options.trade_ticks {
                             *report
                                 .rejected_rows
                                 .entry("CONFLICTING_SOURCE_TRADE_ID".into())
                                 .or_default() += 1;
                             continue;
                         }
-                        ensure!(previous == trade, "CONFLICTING_SOURCE_TRADE_ID");
+                        ensure!(&previous.0 == trade, "CONFLICTING_SOURCE_TRADE_ID");
                         report.duplicate_trades += 1;
                         continue;
                     }
-                    trades.insert(key, *trade);
+                    trades.insert(key, (*trade, trades.len()));
+                    if options.trade_ticks {
+                        continue;
+                    }
                     if let Some(bar) = aggregation.update(trade)? {
                         sink.as_mut().unwrap().push(Data::Bar(bar))?;
                     }
@@ -1406,6 +1409,18 @@ fn import(
         return Ok(report);
     }
     let mut sink = sink.unwrap();
+    if options.trade_ticks && !published_source {
+        let mut ordered = trades.values().collect::<Vec<_>>();
+        ordered.sort_by_key(|(trade, ordinal)| (trade.instrument_id, *ordinal));
+        for group in
+            ordered.chunk_by(|(left, _), (right, _)| left.instrument_id == right.instrument_id)
+        {
+            for (trade, _) in group {
+                sink.push(Data::Trade(*trade))?;
+            }
+            sink.finish()?;
+        }
+    }
     for bar in aggregation.finish()? {
         sink.push(Data::Bar(bar))?;
     }
@@ -1792,6 +1807,109 @@ mod tests {
         )
         .unwrap();
         (manifest, instruments, csv)
+    }
+
+    #[test]
+    fn native_trade_ticks_group_interleaved_instruments_before_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut rows = String::new();
+        for index in 0..100_001_u64 {
+            for symbol in ["BTCUSDT", "ETHUSDT"] {
+                rows.push_str(&format!(
+                    "{symbol},{},10.1234567890123456,0.1234567890,T-{index},B\n",
+                    1_767_225_600_001 + index
+                ));
+            }
+        }
+        let (manifest, instruments, _) = tick_source(temp.path(), &rows);
+        fs::write(
+            &instruments,
+            serde_json::to_vec(&vec![
+                InstrumentAny::CurrencyPair(
+                    nautilus_model::instruments::stubs::currency_pair_btcusdt(),
+                ),
+                InstrumentAny::CurrencyPair(
+                    nautilus_model::instruments::stubs::currency_pair_ethusdt(),
+                ),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        let prefixes = vec!["perps/".into()];
+        let report = import(
+            &manifest,
+            &instruments,
+            &temp.path().join("native"),
+            tick_options(&prefixes, false, 0, 0),
+        )
+        .unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.readback_records, 200_002);
+        assert_eq!(report.duplicate_trades, 0);
+        assert!(report.rejected_rows.is_empty());
+        assert_eq!(
+            report
+                .native_files
+                .iter()
+                .filter(|file| file.path.starts_with("data/trades/"))
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn native_trade_grouping_resumes_legacy_and_new_equal_time_source_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, instruments, _) = tick_source(
+            temp.path(),
+            "BTCUSDT,1767225600001,10.1234567890123456,0.1234567890,Z,B\nBTCUSDT,1767225600001,10.1234567890123456,0.1234567890,A,B\n",
+        );
+        let definitions = job::catalog::currencies::read_instruments(&instruments).unwrap();
+        let legacy = temp.path().join("legacy");
+        let mut writer = writer::Writer::configured(&legacy, &definitions, false, None).unwrap();
+        for id in ["Z", "A"] {
+            writer
+                .push(Data::Trade(
+                    nautilus_model::data::TradeTick::new_checked(
+                        definitions[0].id(),
+                        "10.1234567890123456".parse().unwrap(),
+                        "0.1234567890000000".parse().unwrap(),
+                        nautilus_model::enums::AggressorSide::Buy,
+                        TradeId::new(id),
+                        1_767_225_600_001_000_000.into(),
+                        1_767_225_600_001_000_000.into(),
+                    )
+                    .unwrap(),
+                ))
+                .unwrap();
+        }
+        writer.finish().unwrap();
+        let prefixes = vec!["perps/".into()];
+        let output = temp.path().join("new");
+        let mut report = import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, false, 0, 0),
+        )
+        .unwrap();
+        report.native_files = native_files(&legacy.join("catalog")).unwrap();
+        report.native_records = writer.counts;
+        publish(&legacy.join("import-report.json"), &report).unwrap();
+        publish(&legacy.join("catalog/import-provenance.json"), &report).unwrap();
+        for path in [&legacy, &output] {
+            assert_eq!(
+                import(
+                    &manifest,
+                    &instruments,
+                    path,
+                    tick_options(&prefixes, true, 0, 0),
+                )
+                .unwrap()
+                .status,
+                "IMPORTED"
+            );
+        }
     }
 
     #[test]
