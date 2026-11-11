@@ -90,7 +90,7 @@ test('PM observed account: later local reservations and releases cannot inherit 
 test('PM observed account: original target capabilities become available at their own receipt and cannot backdate the account bundle', () => {
   const f = fixture(); const control = f.application.accountControls[accountKey(f.connection)] as unknown as JsonObject;
   control.capabilities = { clientId: f.connection.clientId, accountId: f.connection.accountId, mode: f.connection.mode, currency: 'USDC',
-    capitalExit: { version: 1, supported: true, readable: true }, automaticTargets: { supported: true, revisionBound: true } };
+    capitalExit: { version: 2, supported: true, readable: true }, automaticTargets: { supported: true, revisionBound: true } };
   control.capabilitiesReceivedAtNs = '108';
   const capture = f.capture();
   assert.equal(capture.basis.availableAtNs, '108'); assert.equal(capture.basis.observedAtNs, '99');

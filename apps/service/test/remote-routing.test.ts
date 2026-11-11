@@ -14,7 +14,7 @@ async function peer(mode: 'paper' | 'live', suffix: string) {
   const receipt = () => ({ ...offered, status: 'ACKNOWLEDGED', externalId: `${mode}-original-receipt`, acknowledgedAt: '2026-10-25T00:00:00.000000001Z' });
   app.post('/targets', async request => { offered = request.body as Record<string, unknown>; return receipt(); });
   app.get('/targets/:id', receipt);
-  app.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, supported: false, readable: true } }));
+  app.get('/capabilities', () => ({ ...identity, capitalExit: { version: 2, supported: false, readable: true } }));
   app.get('/capital-exits', () => ({ ...identity,
     accountSourceId: `01900000-0000-7000-8000-${suffix}1`, observationId: `01900000-0000-7000-8000-${suffix}2`,
     controlRevision: '1', reserved: '0', exits: [] }));

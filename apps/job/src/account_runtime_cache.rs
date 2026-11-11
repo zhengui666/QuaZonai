@@ -1,0 +1,519 @@
+//! Native Cache persistence in the existing worker account directory. Values are
+//! official Nautilus objects; event application and recovery remain in Nautilus.
+use ahash::AHashMap;
+use anyhow::{anyhow, bail, ensure, Result};
+use bytes::Bytes;
+use nautilus_common::{
+    cache::{
+        database::{
+            register_loaded_currencies, CacheDatabaseAdapter, CacheDatabaseFactory, CacheMap,
+        },
+        CacheConfig,
+    },
+    signal::Signal,
+};
+use nautilus_core::{UnixNanos, UUID4};
+use nautilus_model::{
+    accounts::AccountAny,
+    data::{Bar, CustomData, DataType, FundingRateUpdate, InstrumentClose, QuoteTick, TradeTick},
+    events::{position::snapshot::PositionSnapshot, OrderEventAny, OrderSnapshot},
+    identifiers::{
+        AccountId, ActorId, ClientId, ClientOrderId, InstrumentId, PositionId, StrategyId,
+        TraderId, VenueOrderId,
+    },
+    instruments::{Instrument, InstrumentAny, SyntheticInstrument},
+    orderbook::OrderBook,
+    orders::{Order, OrderAny},
+    position::Position,
+    types::{Currency, Money},
+};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
+use std::{
+    collections::BTreeMap,
+    fs::{self, File, OpenOptions},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
+use ustr::Ustr;
+
+#[derive(Debug, Clone)]
+pub struct AccountCacheFactory {
+    pub directory: PathBuf,
+    pub failed: Arc<AtomicBool>,
+}
+impl AccountCacheFactory {
+    pub fn new(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            failed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn restored_balances(&self, account: &AccountId) -> Result<Option<Vec<Money>>> {
+        let root = self.directory.join("native-cache");
+        if !root.exists() {
+            return Ok(None);
+        }
+        let stored = load_state(&root)?;
+        if let Some(currencies) = stored.records.get("currencies") {
+            for value in currencies.values() {
+                let currency: Currency = serde_json::from_value(value.clone())?;
+                Currency::register(currency, false)?;
+            }
+        }
+        stored
+            .records
+            .get("accounts")
+            .and_then(|rows| rows.get(&account.to_string()))
+            .cloned()
+            .map(|value| {
+                let account: AccountAny = serde_json::from_value(value)?;
+                Ok(account.balances().into_values().map(|b| b.total).collect())
+            })
+            .transpose()
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Stored {
+    version: String,
+    revision: String,
+    trader: String,
+    records: BTreeMap<String, BTreeMap<String, Value>>,
+}
+struct AccountCache {
+    path: PathBuf,
+    state: Mutex<Stored>,
+    _lock: File,
+    failed: Arc<AtomicBool>,
+}
+fn load_state(path: &Path) -> Result<Stored> {
+    let mut state: Stored = serde_json::from_slice(&fs::read(path.join("metadata.json"))?)?;
+    state.records.clear();
+    for kind in fs::read_dir(path)? {
+        let kind = kind?;
+        if !kind.file_type()?.is_dir() {
+            continue;
+        }
+        let name = kind
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow!("account_native_cache_kind"))?;
+        let rows = state.records.entry(name).or_default();
+        for entry in fs::read_dir(kind.path())? {
+            let entry = entry?;
+            if entry.path().extension().is_none_or(|v| v != "json") {
+                continue;
+            }
+            let row: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
+            let key = row["key"]
+                .as_str()
+                .ok_or_else(|| anyhow!("account_native_cache_key"))?;
+            rows.insert(key.into(), row["value"].clone());
+        }
+    }
+    Ok(state)
+}
+fn atomic_value(path: &Path, value: &impl Serialize) -> Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("account_native_cache_directory"))?;
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    serde_json::to_writer(&mut temporary, value)?;
+    temporary.flush()?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|e| e.error)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+impl std::fmt::Debug for AccountCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountCache")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl CacheDatabaseFactory for AccountCacheFactory {
+    async fn create(
+        &self,
+        trader_id: TraderId,
+        _instance_id: UUID4,
+        config: CacheConfig,
+    ) -> Result<Box<dyn CacheDatabaseAdapter>> {
+        ensure!(
+            !config.flush_on_start,
+            "account_native_cache_reset_forbidden"
+        );
+        fs::create_dir_all(&self.directory)?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.directory.join("native-cache.lock"))?;
+        lock.try_lock()
+            .map_err(|_| anyhow!("account_native_owner_already_running"))?;
+        let path = self.directory.join("native-cache");
+        let state = if path.exists() {
+            load_state(&path)?
+        } else {
+            let state = Stored {
+                version: crate::NAUTILUS_VERSION.into(),
+                revision: crate::NAUTILUS_REVISION.into(),
+                trader: trader_id.to_string(),
+                records: BTreeMap::new(),
+            };
+            atomic_value(&path.join("metadata.json"), &state)?;
+            state
+        };
+        ensure!(
+            state.version == crate::NAUTILUS_VERSION
+                && state.revision == crate::NAUTILUS_REVISION
+                && state.trader == trader_id.to_string(),
+            "account_native_cache_identity_or_version_changed"
+        );
+        Ok(Box::new(AccountCache {
+            path,
+            state: Mutex::new(state),
+            _lock: lock,
+            failed: self.failed.clone(),
+        }))
+    }
+}
+impl AccountCache {
+    fn read<T: DeserializeOwned>(&self, kind: &str, key: &str) -> Result<Option<T>> {
+        self.state
+            .lock()
+            .map_err(|_| anyhow!("account_native_cache_poisoned"))?
+            .records
+            .get(kind)
+            .and_then(|rows| rows.get(key))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(Into::into)
+    }
+    fn all<K: DeserializeOwned + Eq + std::hash::Hash, T: DeserializeOwned>(
+        &self,
+        kind: &str,
+    ) -> Result<AHashMap<K, T>> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("account_native_cache_poisoned"))?;
+        state
+            .records
+            .get(kind)
+            .into_iter()
+            .flat_map(|rows| rows.iter())
+            .map(|(k, v)| {
+                Ok((
+                    serde_json::from_value(Value::String(k.clone()))?,
+                    serde_json::from_value(v.clone())?,
+                ))
+            })
+            .collect()
+    }
+    fn file(&self, kind: &str, key: &str) -> PathBuf {
+        let encoded = key
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        self.path.join(kind).join(format!("{encoded}.json"))
+    }
+    fn put<T: Serialize>(&self, kind: &str, key: impl ToString, value: &T) -> Result<()> {
+        ensure!(
+            !self.failed.load(Ordering::SeqCst),
+            "account_native_cache_write_failed"
+        );
+        let key = key.to_string();
+        let value = serde_json::to_value(value).map_err(|error| {
+            self.failed.store(true, Ordering::SeqCst);
+            error
+        })?;
+        if let Err(e) = atomic_value(
+            &self.file(kind, &key),
+            &serde_json::json!({"key":key,"value":value}),
+        ) {
+            self.failed.store(true, Ordering::SeqCst);
+            return Err(e);
+        }
+        self.state
+            .lock()
+            .map_err(|_| anyhow!("account_native_cache_poisoned"))?
+            .records
+            .entry(kind.into())
+            .or_default()
+            .insert(key, value);
+        Ok(())
+    }
+    fn remove(&self, kind: &str, key: &str) -> Result<()> {
+        let path = self.file(kind, key);
+        if path.exists() {
+            fs::remove_file(&path)?;
+            File::open(path.parent().unwrap())?.sync_all()?;
+        }
+        if let Some(rows) = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("account_native_cache_poisoned"))?
+            .records
+            .get_mut(kind)
+        {
+            rows.remove(key);
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl CacheDatabaseAdapter for AccountCache {
+    fn close(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<()> {
+        bail!("account_native_cache_reset_forbidden")
+    }
+    async fn load_all(&self) -> Result<CacheMap> {
+        let mut currencies = self.load_currencies().await?;
+        register_loaded_currencies(&mut currencies)?;
+        Ok(CacheMap {
+            currencies,
+            instruments: self.load_instruments().await?,
+            instrument_closes: self.load_instrument_closes().await?,
+            synthetics: self.load_synthetics().await?,
+            accounts: self.load_accounts().await?,
+            orders: self.load_orders().await?,
+            positions: self.load_positions().await?,
+            ..Default::default()
+        })
+    }
+    fn load(&self) -> Result<AHashMap<String, Bytes>> {
+        self.all("raw")
+    }
+    async fn load_currencies(&self) -> Result<AHashMap<Ustr, Currency>> {
+        self.all("currencies")
+    }
+    async fn load_instruments(&self) -> Result<AHashMap<InstrumentId, InstrumentAny>> {
+        self.all("instruments")
+    }
+    async fn load_instrument_closes(&self) -> Result<AHashMap<InstrumentId, InstrumentClose>> {
+        self.all("closes")
+    }
+    async fn load_synthetics(&self) -> Result<AHashMap<InstrumentId, SyntheticInstrument>> {
+        self.all("synthetics")
+    }
+    async fn load_accounts(&self) -> Result<AHashMap<AccountId, AccountAny>> {
+        self.all("accounts")
+    }
+    async fn load_orders(&self) -> Result<AHashMap<ClientOrderId, OrderAny>> {
+        self.all("orders")
+    }
+    async fn load_positions(&self) -> Result<AHashMap<PositionId, Position>> {
+        self.all("positions")
+    }
+    fn load_index_order_position(&self) -> Result<AHashMap<ClientOrderId, PositionId>> {
+        self.all("order_position")
+    }
+    fn load_index_order_client(&self) -> Result<AHashMap<ClientOrderId, ClientId>> {
+        self.all("order_client")
+    }
+    async fn load_currency(&self, code: &Ustr) -> Result<Option<Currency>> {
+        self.read("currencies", code.as_str())
+    }
+    async fn load_instrument(&self, id: &InstrumentId) -> Result<Option<InstrumentAny>> {
+        self.read("instruments", &id.to_string())
+    }
+    async fn load_synthetic(&self, id: &InstrumentId) -> Result<Option<SyntheticInstrument>> {
+        self.read("synthetics", &id.to_string())
+    }
+    async fn load_account(&self, id: &AccountId) -> Result<Option<AccountAny>> {
+        self.read("accounts", &id.to_string())
+    }
+    async fn load_order(&self, id: &ClientOrderId) -> Result<Option<OrderAny>> {
+        self.read("orders", id.as_str())
+    }
+    async fn load_position(&self, id: &PositionId) -> Result<Option<Position>> {
+        self.read("positions", &id.to_string())
+    }
+    fn load_actor(&self, id: &ActorId) -> Result<AHashMap<String, Bytes>> {
+        let prefix = format!("{id}:");
+        Ok(self
+            .all::<String, Bytes>("actor_state")?
+            .into_iter()
+            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|k| (k.into(), v)))
+            .collect())
+    }
+    fn load_strategy(&self, id: &StrategyId) -> Result<AHashMap<String, Bytes>> {
+        let prefix = format!("{id}:");
+        Ok(self
+            .all::<String, Bytes>("strategy_state")?
+            .into_iter()
+            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|k| (k.into(), v)))
+            .collect())
+    }
+    fn load_signals(&self, name: &str) -> Result<Vec<Signal>> {
+        Ok(self.read("signals", name)?.unwrap_or_default())
+    }
+    fn load_custom_data(&self, _: &DataType) -> Result<Vec<CustomData>> {
+        bail!("account_native_custom_data_unsupported")
+    }
+    fn load_order_snapshot(&self, id: &ClientOrderId) -> Result<Option<OrderSnapshot>> {
+        self.read("order_snapshots", id.as_str())
+    }
+    fn load_position_snapshot(&self, id: &PositionId) -> Result<Option<PositionSnapshot>> {
+        self.read("position_snapshots", &id.to_string())
+    }
+    fn load_quotes(&self, id: &InstrumentId) -> Result<Vec<QuoteTick>> {
+        Ok(self.read("quotes", &id.to_string())?.unwrap_or_default())
+    }
+    fn load_trades(&self, id: &InstrumentId) -> Result<Vec<TradeTick>> {
+        Ok(self.read("trades", &id.to_string())?.unwrap_or_default())
+    }
+    fn load_funding_rates(&self, id: &InstrumentId) -> Result<Vec<FundingRateUpdate>> {
+        Ok(self.read("funding", &id.to_string())?.unwrap_or_default())
+    }
+    fn load_bars(&self, id: &InstrumentId) -> Result<Vec<Bar>> {
+        Ok(self.read("bars", &id.to_string())?.unwrap_or_default())
+    }
+    fn add(&self, key: String, value: Bytes) -> Result<()> {
+        self.put("raw", key, &value)
+    }
+    fn add_currency(&self, v: &Currency) -> Result<()> {
+        self.put("currencies", v.code, &v)
+    }
+    fn add_instrument(&self, v: &InstrumentAny) -> Result<()> {
+        self.put("instruments", v.id(), v)
+    }
+    fn add_instrument_close(&self, v: &InstrumentClose) -> Result<()> {
+        self.put("closes", v.instrument_id, v)
+    }
+    fn add_synthetic(&self, v: &SyntheticInstrument) -> Result<()> {
+        self.put("synthetics", v.id, v)
+    }
+    fn add_account(&self, v: &AccountAny) -> Result<()> {
+        self.put("accounts", v.id(), v)
+    }
+    fn add_order(&self, v: &OrderAny, client: Option<ClientId>) -> Result<()> {
+        // Persist the routing index before the native order. A crash between
+        // these writes leaves an unused index, rather than an unroutable order.
+        if let Some(c) = client {
+            self.put("order_client", v.client_order_id(), &c)?;
+        }
+        self.put("orders", v.client_order_id(), v)
+    }
+    fn add_order_snapshot(&self, v: &OrderSnapshot) -> Result<()> {
+        self.put("order_snapshots", v.client_order_id, v)
+    }
+    fn add_position(&self, v: &Position) -> Result<()> {
+        self.put("positions", v.id, v)
+    }
+    fn add_position_snapshot(&self, v: &PositionSnapshot) -> Result<()> {
+        self.put("position_snapshots", v.position_id, v)
+    }
+    fn add_order_book(&self, _: &OrderBook) -> Result<()> {
+        bail!("account_native_market_data_persistence_disabled")
+    }
+    fn add_signal(&self, _: &Signal) -> Result<()> {
+        bail!("account_native_signal_persistence_unsupported")
+    }
+    fn add_custom_data(&self, _: &CustomData) -> Result<()> {
+        bail!("account_native_custom_data_unsupported")
+    }
+    fn add_quote(&self, _: &QuoteTick) -> Result<()> {
+        bail!("account_native_market_data_persistence_disabled")
+    }
+    fn add_trade(&self, _: &TradeTick) -> Result<()> {
+        bail!("account_native_market_data_persistence_disabled")
+    }
+    fn add_funding_rate(&self, _: &FundingRateUpdate) -> Result<()> {
+        bail!("account_spot_funding_unsupported")
+    }
+    fn add_bar(&self, _: &Bar) -> Result<()> {
+        bail!("account_native_market_data_persistence_disabled")
+    }
+    fn delete_actor(&self, id: &ActorId) -> Result<()> {
+        for key in self.load_actor(id)?.keys() {
+            self.remove("actor_state", &format!("{id}:{key}"))?;
+        }
+        Ok(())
+    }
+    fn delete_strategy(&self, id: &StrategyId) -> Result<()> {
+        for key in self.load_strategy(id)?.keys() {
+            self.remove("strategy_state", &format!("{id}:{key}"))?;
+        }
+        Ok(())
+    }
+    fn delete_order(&self, id: &ClientOrderId) -> Result<()> {
+        self.remove("orders", id.as_str())
+    }
+    fn delete_position(&self, id: &PositionId) -> Result<()> {
+        self.remove("positions", &id.to_string())
+    }
+    fn delete_account_event(&self, _: &AccountId, _: &str) -> Result<()> {
+        bail!("account_native_event_deletion_forbidden")
+    }
+    fn index_venue_order_id(&self, client: ClientOrderId, venue: VenueOrderId) -> Result<()> {
+        self.put("order_venue", client, &venue)
+    }
+    fn index_order_position(&self, client: ClientOrderId, position: PositionId) -> Result<()> {
+        self.put("order_position", client, &position)
+    }
+    fn index_order_clients(&self, claims: &[(ClientOrderId, ClientId)]) -> Result<()> {
+        for (id, client) in claims {
+            self.put("order_client", id, client)?;
+        }
+        Ok(())
+    }
+    fn update_actor(&self, id: &ActorId, state: &AHashMap<String, Bytes>) -> Result<()> {
+        for (key, value) in state {
+            let key = format!("{id}:{key}");
+            if self.read::<Bytes>("actor_state", &key)?.as_ref() != Some(value) {
+                self.put("actor_state", key, value)?;
+            }
+        }
+        Ok(())
+    }
+    fn update_strategy(&self, id: &StrategyId, state: &AHashMap<String, Bytes>) -> Result<()> {
+        for (key, value) in state {
+            let key = format!("{id}:{key}");
+            if self.read::<Bytes>("strategy_state", &key)?.as_ref() != Some(value) {
+                self.put("strategy_state", key, value)?;
+            }
+        }
+        Ok(())
+    }
+    fn update_account(&self, v: &AccountAny) -> Result<()> {
+        self.add_account(v)
+    }
+    fn update_order(&self, event: &OrderEventAny) -> Result<()> {
+        let id = event.client_order_id();
+        let mut order: OrderAny = self
+            .read("orders", id.as_str())?
+            .ok_or_else(|| anyhow!("account_native_order_initialization_missing"))?;
+        order.apply(event.clone()).map_err(|error| {
+            self.failed.store(true, Ordering::SeqCst);
+            error
+        })?;
+        self.put("orders", id, &order)
+    }
+    fn update_position(&self, v: &Position) -> Result<()> {
+        self.add_position(v)
+    }
+    fn snapshot_order_state(&self, v: &OrderAny) -> Result<()> {
+        self.put("orders", v.client_order_id(), v)
+    }
+    fn snapshot_position_state(&self, v: &Position, _: UnixNanos, _: Option<Money>) -> Result<()> {
+        self.add_position(v)
+    }
+    fn heartbeat(&self, v: UnixNanos) -> Result<()> {
+        self.put("metadata", "heartbeat", &v)
+    }
+}

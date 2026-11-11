@@ -1,3 +1,4 @@
+import { ensureCapitalWatch } from './capital-watch.ts';
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -392,7 +393,36 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const found = (await snapshot())!.observations[id]; if (!found) throw new Problem('observation_not_found', 404);
     return observation(found);
   }
+  async function startAccountObservation(value: unknown) {
+    const body = object(value); const requestId = text(body.requestId, 'request_id');
+    if (Object.keys(body).some(key => !['requestId', 'purpose', 'mode', 'connectionId'].includes(key))) throw new Problem('account_observation_field_unsupported', 422);
+    const old = Object.values((await snapshot())!.observations).map(observation).find(item => item.input.requestId === requestId);
+    if (old) { if (canonical(json(old.accountOnlyRequest ?? old.input)) !== canonical(body)) throw new Problem('request_id_conflict', 409); return old.view; }
+    const connection = config.connections.find(item => item.id === body.connectionId && item.mode === body.mode);
+    if (!connection) throw new Problem('connection_not_configured', 422);
+    const native = await downstreamRequest(connection, 'account', 'GET');
+    if (native.clientId !== connection.clientId || native.accountId !== connection.accountId || native.mode !== connection.mode) throw new Problem('account_identity_mismatch', 409);
+    const currency = text(native.currency, 'account_currency');
+    const fresh = await readCapitalControl(connection, currency);
+    const id = randomUUID();
+    return host.harness.commit(async tx => {
+      const facts = await tx.doc(Application); assertBusinessAdmission(facts);
+      const prior = Object.values(facts.observations).map(observation).find(item => item.input.requestId === requestId);
+      if (prior) { if (canonical(json(prior.accountOnlyRequest ?? prior.input)) !== canonical(body)) throw new Problem('request_id_conflict', 409); return prior.view; }
+      facts.accountControls ??= {}; recordCapitalControl(facts.accountControls, connection, fresh);
+      const owner = await ensureCapitalWatch(tx, connection, currency);
+      const taskId = await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: {}, receiptId: '', refresh: true, accountOnly: true },
+        { conversationId: owner.conversationId, ownership: { kind: 'conversation' }, background: true });
+      const fact: ObservationFact = { accountOnlyRequest: structuredClone(body) as unknown as import('../../../packages/contracts/src/index.ts').AccountObservationStart,
+        input: { requestId, purpose: 'ACCOUNT_ONLY', connectionId: connection.id, mode: connection.mode }, connection: structuredClone(connection), target: null, taskId, snapshot: null,
+        view: { id, purpose: 'ACCOUNT_ONLY', name: connection.name, portfolioId: null, mode: connection.mode, status: 'OBSERVING', currency, equity: null, cash: null,
+          updatedAt: null, positions: [], curve: [], receipt: null, error: null, connectionId: connection.id, connectionName: connection.name } };
+      acceptSnapshot(fact, native); fact.view.capitalExit = capitalStatusForBinding(control(facts.accountControls[owner.key]), connection);
+      facts.observations[id] = json(fact); return fact.view;
+    }, context);
+  }
   async function startObservation(value: unknown) {
+    if (object(value).purpose === 'ACCOUNT_ONLY') return startAccountObservation(value);
     const input = object(value) as unknown as ObservationStart; text(input.requestId, 'request_id');
     const old = Object.values((await snapshot())!.observations).map(observation).find((item) => item.input.requestId === input.requestId);
     if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return old.view; }
@@ -421,7 +451,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (!input.automatic?.enabled) {
         const state = capitalStatusForBinding(control(accountControl), connection);
         if (state.reserved === null) throw new Problem('account_reservation_unknown', 409);
-        if (decimalUnits(state.reserved) > 0n || state.exits.some(exit => exit.remaining_trading !== 'BUDGET_AWARE')) throw new Problem('account_capital_exit_requires_budget_aware_target', 409);
+        if (decimalUnits(state.reserved) > 0n || state.exits.some(exit => !['COMPLETED', 'CLOSED'].includes(exit.state) && exit.remaining_trading !== 'BUDGET_AWARE')) throw new Problem('account_capital_exit_requires_budget_aware_target', 409);
       }
       const unsettled = Object.values(facts.observations).map(observation).some((fact) => accountKey(fact.connection, facts.accountControls) === accountKey(connection, facts.accountControls)
         && (['PENDING', 'UNCERTAIN'].includes(fact.view.receipt?.status ?? '') || unsettledAdjustment(fact)));
@@ -483,6 +513,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) throw new Problem('observation_not_found', 404);
       if (maintenanceState(facts)?.state === 'QUIESCED') throw new Problem('service_maintenance', 503);
       const fact = observation(value);
+      if (!fact.input.portfolioId || !fact.target) throw new Problem('account_strategy_binding_required', 409);
       const previous = await tx.task(fact.taskId as TaskId);
       if (!fact.view.automaticPolicy && previous && previous.state.status !== 'terminal') return fact.taskId;
       const originalUnsettled = ['PENDING', 'UNCERTAIN'].includes(fact.view.receipt?.status ?? '');
@@ -503,11 +534,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function configureAutomatic(id: string, value: unknown) {
     const input = object(value) as unknown as AutomaticPolicy; validateAutomatic(input);
+    if ((await getObservation(id)).view.purpose === 'ACCOUNT_ONLY') throw new Problem('account_only_observation_has_no_strategy', 409);
     let abortId: number | undefined;
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const found = facts.observations[id]; if (!found) throw new Problem('observation_not_found', 404);
       assertBusinessAdmission(facts);
       const fact = observation(found);
+      if (!fact.input.portfolioId || !fact.target) throw new Problem('account_only_observation_has_no_strategy', 409);
       if (input.enabled && fact.view.status === 'STOPPED') throw new Problem('observation_stopped', 409);
       if (input.enabled) assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
         { kind: 'LEGACY', observationId: id, ...(fact.view.automaticPolicy?.enabled && fact.view.allocation?.receipt ? { commandId: fact.view.allocation.receipt.id } : {}) });

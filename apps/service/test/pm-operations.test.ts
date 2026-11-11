@@ -49,7 +49,7 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
     });
     remote.get('/account', () => remoteAccount);
     remote.get('/capabilities', () => ({ clientId: connection.clientId, accountId: connection.accountId, mode: connection.mode, currency: 'USD',
-      capitalExit: { version: 1, supported: keepMonitor, readable: true }, automaticTargets: { supported: true, revisionBound: true, snapshotBound: true } }));
+      capitalExit: { version: 2, supported: keepMonitor, readable: true }, automaticTargets: { supported: true, revisionBound: true, snapshotBound: true } }));
     remote.get('/capital-exits', () => ({ clientId: connection.clientId, accountId: connection.accountId, mode: connection.mode, currency: 'USD',
       accountSourceId: remoteAccount.accountSourceId, observationId: remoteAccount.observationId, controlRevision: remoteAccount.controlRevision, reserved: '0', exits: [] }));
     const url = await remote.listen({ host: '127.0.0.1', port: 0 });
@@ -147,10 +147,10 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
         const application = await tx.doc(Application);
         const portfolio: PortfolioFact = { input: { requestId: 'controlled-prior-portfolio', name: 'Controlled prior account binding',
           researchIds: [record.conversationId], datasetId, capital: '1000.000000000000000001' },
-          view: { id: account.input.portfolioId, name: 'Controlled prior account binding', researchIds: [record.conversationId], datasetId,
+          view: { id: account.input.portfolioId!, name: 'Controlled prior account binding', researchIds: [record.conversationId], datasetId,
             status: 'COMPUTED', capital: '1000.000000000000000001', currency: 'USD', createdAt: new Date().toISOString(), taskId: null,
             metrics: [], curve: [], targets: [], error: null }, evidence: [], policy: {}, native: null, target: {} };
-        application.portfolios[account.input.portfolioId] = json(portfolio);
+        application.portfolios[account.input.portfolioId!] = json(portfolio);
       }
     }, context);
     async function read() {

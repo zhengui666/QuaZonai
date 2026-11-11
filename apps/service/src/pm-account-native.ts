@@ -28,7 +28,7 @@ function money(value: unknown): { amount: string; currency: string } {
  * The old equity/cash/positions transport cannot reconstruct native balances,
  * prove no pending orders, or move a current account into past validation.
  */
-export function toNativeObservedSpotStart(capture: CapturedAccount, options: { selectionStartNs: string }): NativeObservedSpotStart {
+export function toNativeObservedSpotStart(capture: CapturedAccount, options: { selectionStartNs: string; reservationMode?: 'SEPARATE_TARGET_BUDGET' }): NativeObservedSpotStart {
   const transport = object(capture.artifact.snapshot, 'captured_account_snapshot');
   const original = object(transport.nativeObservation, 'native_account_observation');
   exactKeys(original, ['schema_version', 'binding', 'sequence', 'dropped_events', 'observed_at_ns', 'connection', 'snapshot'], 'native_observation');
@@ -67,10 +67,15 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   const capabilityDocument = capture.artifact.capitalCapabilities ? object(object(capture.artifact.capitalCapabilities).document) : null;
   const capitalPermission = capabilityDocument?.capitalExit ? object(capabilityDocument.capitalExit) : null;
   const readableControl = control.capability === 'SUPPORTED' || control.capability === 'UNSUPPORTED' && control.reason === 'capital_exit_initiation_unavailable'
-    && capitalPermission?.version === 1 && capitalPermission.readable === true;
+    && capitalPermission?.version === 2 && capitalPermission.readable === true;
   if (!readableControl || control.accountSourceId !== capture.basis.accountSourceId || control.observationId !== capture.basis.observationId
     || control.controlRevision !== capture.basis.controlRevision || transport.controlRevision !== capture.basis.controlRevision) refuse('capital_control_not_matched');
-  if (!capture.basis.reserved || capture.basis.reserved.currency !== capture.basis.currency || compareDecimal(capture.basis.reserved.amount, '0') !== 0) refuse('capital_reserved_or_unknown');
+  // Reservations are a control constraint, not an invented native balance.
+  // The raw observed account is retained for inference; target admission carries
+  // its separate managed budget and the receiver prevents spending the reserve.
+  if (!capture.basis.reserved || capture.basis.reserved.currency !== capture.basis.currency
+    || compareDecimal(capture.basis.reserved.amount, '0') < 0
+    || options.reservationMode !== 'SEPARATE_TARGET_BUDGET' && compareDecimal(capture.basis.reserved.amount, '0') !== 0) refuse('capital_reserved_or_unknown');
   const balances = array(native.balances, 'native_balances'); if (!balances.length) refuse('native_balances_required');
   const currencies = new Set<string>();
   for (const value of balances) {

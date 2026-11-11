@@ -1,37 +1,29 @@
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
-import { scienceTarget } from './config.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import type { CapitalExitStatus } from '../../../packages/contracts/src/index.ts';
+import type { CapitalExitAction, CapitalExitCommandReceipt, CapitalExitStatus } from '../../../packages/contracts/src/capital-exit.ts';
+import { validateCapitalDocument as validateSharedCapitalDocument } from '../../../packages/contracts/src/capital-exit.ts';
 import { canonical } from '../../research/src/documents.ts';
 import type { ConnectionConfig, ServiceConfig } from './config.ts';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, object, Problem, text } from './facts.ts';
 import { connectionBase, downstreamRequest } from './downstream.ts';
 
-export async function validateCapitalDocument(config: Pick<ServiceConfig, 'dataDir' | 'nautilus'> & { jobBinary: NativeTarget }, kind: string, value: unknown, context: Context = BACKGROUND_CONTEXT) {
-  const directory = await mkdtemp(join(config.dataDir, 'capital-contract-'));
-  try { await executeNative(scienceTarget(config), 'validate-capital-exit', json({ kind, value }), [], directory, context); }
-  catch (error) {
-    if (context.abortSignal?.aborted || typeof scienceTarget(config) !== 'string') throw error;
-    throw new Problem('native_capital_exit_contract_invalid', 422);
-  }
-  finally { await rm(directory, { recursive: true, force: true }); }
+export async function validateCapitalDocument(_config: Pick<ServiceConfig, 'dataDir' | 'nautilus'> & { jobBinary: NativeTarget }, kind: string, value: unknown, _context: Context = BACKGROUND_CONTEXT) {
+  try { validateSharedCapitalDocument(kind, value); }
+  catch (error) { throw new Problem(error instanceof Error ? error.message : 'capital_exit_contract_invalid', 422); }
 }
 const connectionKey = (connection: ConnectionConfig) => `${connectionBase(connection).href}|${connection.mode}|${connection.accountId}`;
 export function accountKey(connection: ConnectionConfig, records?: Record<string, JsonObject>): string {
   const key = connectionKey(connection);
   return Object.entries(records ?? {}).find(([, value]) => control(value).bindings?.includes(key))?.[0] ?? key;
 }
-export interface CapitalCommandPermission { bindingKey: string; capability: TransportCapability; status: CapitalExitStatus }
-export interface CapitalCommand { original: JsonObject; body: JsonObject; path: string; reserved: string; state: string; result: JsonObject | null; error: string | null; taskId: number; permissionBasis?: CapitalCommandPermission }
-export interface TransportCapability { document: JsonObject; receivedAtNs: string }
-export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[]; receivedAtNs?: string; capabilities?: JsonObject; capabilitiesReceivedAtNs?: string;
+export interface CapitalCommandPermission { action?: CapitalExitAction; bindingKey: string; capability: TransportCapability; status: CapitalExitStatus }
+export interface CapitalCommand { original: JsonObject; body: JsonObject; path: string; reserved: string; state: CapitalExitCommandReceipt['state']; result: JsonObject | null; error: string | null; taskId: number; permissionBasis?: CapitalCommandPermission }
+export interface TransportCapability { document: JsonObject; receivedAtNs: string; lastObservedAtNs?: string }
+export interface AccountControl { conversationId?: number; monitorTaskId?: number; monitorConnection?: ConnectionConfig; monitorConnectionReceivedAtNs?: string; watchSnapshot?: JsonObject; watchSnapshotReceivedAtNs?: string; status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[]; receivedAtNs?: string; capabilities?: JsonObject; capabilitiesReceivedAtNs?: string;
   capabilitiesByBinding?: Record<string, TransportCapability>; refreshFailuresByBinding?: Record<string, { code: string; receivedAtNs: string }> }
 export function control(value: unknown): AccountControl { return value as AccountControl ?? { commands: {} }; }
 export const transportBindingKey = (connection: ConnectionConfig) => JSON.stringify([connectionBase(connection).href, connection.mode, connection.clientId, connection.accountId]);
@@ -53,10 +45,15 @@ export function transportCapability(value: AccountControl, connection: Connectio
 export function transportControlFailure(value: AccountControl, connection: ConnectionConfig) { return value.refreshFailuresByBinding?.[transportBindingKey(connection)] ?? null; }
 /** Compare physical state without treating a different client's initiation
  * permission as a new reservation/account event. */
+/** Progress and evidence freshness do not change a financial control epoch. */
+export function capitalControlEconomics(status: CapitalExitStatus): JsonObject {
+  return json({ accountSourceId: status.accountSourceId, reserved: status.reserved,
+    exits: status.exits.map(exit => ({ id: exit.id, command_id: exit.command_id, scope: exit.scope, policy: exit.policy,
+      requested_amount: exit.funds.requested_amount, reserved_amount: exit.funds.reserved_amount })).sort((a, b) => a.id.localeCompare(b.id)) });
+}
 export function physicalCapitalState(status: CapitalExitStatus): JsonObject {
-  return json({ accountSourceId: status.accountSourceId, observationId: status.observationId, controlRevision: status.controlRevision,
-    reserved: status.reserved, exits: status.exits, blocked: status.capability === 'BLOCKED',
-    reason: status.reason === 'capital_exit_initiation_unavailable' ? null : status.reason });
+  return json({ ...capitalControlEconomics(status), observationId: status.observationId, controlRevision: status.controlRevision,
+    blocked: status.capability === 'BLOCKED', reason: status.reason === 'capital_exit_initiation_unavailable' ? null : status.reason });
 }
 export function recordCapitalControlFailure(records: Record<string, JsonObject>, connection: ConnectionConfig, code: string): void {
   const key = accountKey(connection, records), value = control(records[key]), binding = transportBindingKey(connection);
@@ -84,52 +81,59 @@ export function capitalStatusForBinding(value: AccountControl, connection: Conne
   if (!capability) return value.capabilitiesByBinding === undefined ? status
     : { ...status, capability: status.capability === 'BLOCKED' ? 'BLOCKED' : 'UNSUPPORTED', reason: 'transport_capability_not_observed', reserved: null };
   const permission = object(capability.document.capitalExit ?? {});
-  const readable = permission.version === 1 && (permission.supported === true || permission.readable === true);
+  const readable = permission.version === 2 && (permission.supported === true || permission.readable === true);
   if (!readable) return { ...status, capability: status.capability === 'BLOCKED' ? 'BLOCKED' : 'UNSUPPORTED',
     reason: status.capability === 'BLOCKED' ? status.reason : 'downstream_capital_exit_unsupported', reserved: null };
   if (status.capability !== 'BLOCKED' && status.accountSourceId) {
     status.capability = permission.supported === true ? 'SUPPORTED' : 'UNSUPPORTED';
     if (status.reason === 'capital_exit_initiation_unavailable' || status.reason === null) status.reason = status.capability === 'SUPPORTED' ? null : 'capital_exit_initiation_unavailable';
   }
+  status.availableActions = Array.isArray(permission.actions) ? permission.actions as CapitalExitAction[] : [];
+  status.supportedPolicies = Array.isArray(permission.policies) ? permission.policies as CapitalExitStatus['supportedPolicies'] : [];
   return status;
 }
 /** An original command binds both its exact permission source and the physical
  * account state. This is independent of the downstream receipt identity. */
-export function capitalCommandPermission(value: AccountControl, connection: ConnectionConfig): CapitalCommandPermission {
+export function capitalCommandPermission(value: AccountControl, connection: ConnectionConfig, action: CapitalExitAction = 'START'): CapitalCommandPermission {
   const capability = transportCapability(value, connection), status = capitalStatusForBinding(value, connection);
-  if (!capability || status.capability !== 'SUPPORTED' || !status.accountSourceId || !status.observationId || !status.controlRevision || status.reserved === null)
+  const initiation = action === 'START' || action === 'RESUME';
+  if (!capability || initiation && (status.capability !== 'SUPPORTED' || status.reserved === null) || !status.availableActions?.includes(action) || !status.accountSourceId || !status.observationId || !status.controlRevision)
     throw new Problem(status.reason ?? 'capital_exit_permission_unavailable', 409);
-  return { bindingKey: transportBindingKey(connection), capability, status: json(status) as unknown as CapitalExitStatus };
+  return { action, bindingKey: transportBindingKey(connection), capability, status: json(status) as unknown as CapitalExitStatus };
 }
 export function assertCapitalCommandPermission(value: AccountControl, connection: ConnectionConfig, expected: CapitalCommandPermission | undefined, ownRequestId?: string): void {
   if (!expected) throw new Problem('capital_exit_permission_basis_missing', 409);
   // The command's own newly retained reservation must not invalidate the
   // original pre-admission basis; every other command remains in that basis.
   const comparable = ownRequestId === undefined ? value : { ...value, commands: Object.fromEntries(Object.entries(value.commands).filter(([id]) => id !== ownRequestId)) };
-  const current = capitalCommandPermission(comparable, connection);
-  if (canonical(json(current)) !== canonical(json(expected))) throw new Problem('capital_exit_permission_basis_changed', 409);
+  const current = capitalCommandPermission(comparable, connection, expected.action);
+  const comparablePermission = (permission: CapitalCommandPermission) => json({ action: permission.action ?? 'START', bindingKey: permission.bindingKey, capability: permission.capability, status: { ...capitalControlEconomics(permission.status), controlRevision: permission.status.controlRevision } });
+  if (canonical(comparablePermission(current)) !== canonical(comparablePermission(expected))) throw new Problem('capital_exit_permission_basis_changed', 409);
 }
 export function assertEnvelope(connection: ConnectionConfig, value: JsonObject, currency: string) {
   if (value.clientId !== connection.clientId || value.accountId !== connection.accountId || value.mode !== connection.mode || value.currency !== currency) throw new Problem('downstream_control_identity_mismatch', 409);
 }
-export async function readCapitalControl(connection: ConnectionConfig, currency: string, signal?: AbortSignal): Promise<{ status: CapitalExitStatus; native: JsonObject; capabilities: JsonObject }> {
+export async function readCapitalControl(connection: ConnectionConfig, currency: string, signal?: AbortSignal): Promise<{ status: CapitalExitStatus; native: JsonObject; capabilities: JsonObject; capabilitiesReceivedAtNs?: string }> {
   const capabilities = await downstreamRequest(connection, 'capabilities', 'GET', undefined, signal);
+  const capabilitiesReceivedAtNs = nowNs();
   assertEnvelope(connection, capabilities, currency);
   const capability = capabilities.capitalExit ? object(capabilities.capitalExit) : null;
-  if (capability?.version !== 1 || capability.supported !== true && capability.readable !== true) return { capabilities, native: {}, status: { capability: 'UNSUPPORTED', reason: capability && capability.version !== 1 ? 'capital_exit_version_unsupported' : typeof capability?.reason === 'string' ? capability.reason : 'downstream_capital_exit_unsupported', accountSourceId: null, observationId: null, controlRevision: null, reserved: null, exits: [] } };
+  if (capability?.version !== 2 || capability.supported !== true && capability.readable !== true) return { capabilities, capabilitiesReceivedAtNs, native: {}, status: { capability: 'UNSUPPORTED', reason: capability && capability.version !== 2 ? 'capital_exit_version_unsupported' : typeof capability?.reason === 'string' ? capability.reason : 'downstream_capital_exit_unsupported', accountSourceId: null, observationId: null, controlRevision: null, reserved: null, exits: [] } };
   const native = await downstreamRequest(connection, 'capital-exits', 'GET', undefined, signal);
   assertEnvelope(connection, native, currency);
   const exits = Array.isArray(native.exits) ? native.exits.map(value => object(value)) : [];
   const source = text(native.accountSourceId, 'account_source_id');
   for (const exit of exits) {
-    if (exit.account_source_id !== source || exit.schema_version !== 1 || exit.environment !== (connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_native_scope_mismatch', 409);
+    if (exit.account_source_id !== source || exit.schema_version !== 2 || exit.environment !== (connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_native_scope_mismatch', 409);
+    validateSharedCapitalDocument('VIEW', exit);
     counter(exit.revision, 'capital_exit_revision'); const funds = object(exit.funds);
     for (const key of ['requested_amount', 'reserved_amount', 'reconciled_withdrawal_amount']) {
       const money = object(funds[key]); if (money.currency !== currency || decimalUnits(decimal(money.amount, 'capital_exit_amount')) < 0n) throw new Problem('capital_exit_money_mismatch');
     }
   }
   const reserved = native.reserved == null ? null : decimal(native.reserved, 'outstanding_reservation'); if (reserved !== null && decimalUnits(reserved) < 0n) throw new Problem('capital_exit_reservation_invalid');
-  return { capabilities, native, status: { capability: native.blocked === true ? 'BLOCKED' : capability?.supported === true ? 'SUPPORTED' : 'UNSUPPORTED', reason: typeof native.reason === 'string' ? native.reason : capability?.supported === true ? null : 'capital_exit_initiation_unavailable',
+  if (reserved !== null && exits.reduce((sum, exit) => sum + decimalUnits(String(object(object(exit.funds).reserved_amount).amount)), 0n) > decimalUnits(reserved)) throw new Problem('capital_exit_aggregate_reservation_mismatch', 409);
+  return { capabilities, capabilitiesReceivedAtNs, native, status: { capability: native.blocked === true ? 'BLOCKED' : capability?.supported === true ? 'SUPPORTED' : 'UNSUPPORTED', reason: typeof native.reason === 'string' ? native.reason : capability?.supported === true ? null : 'capital_exit_initiation_unavailable',
     accountSourceId: source, observationId: text(native.observationId, 'source_observation_id'), controlRevision: counter(native.controlRevision, 'account_control_revision'), reserved, exits: exits as unknown as CapitalExitStatus['exits'] } };
 }
 
@@ -218,7 +222,10 @@ function acceptCommand(input: CommandInput, state: AccountControl, value: JsonOb
   const command = state.commands[input.requestId]!;
   if (value.requestId !== input.requestId || value.clientId !== input.connection.clientId || value.accountId !== input.connection.accountId || canonical(value.command!) !== canonical(command.body)) throw new Problem('capital_exit_command_identity_mismatch', 409);
   if (!['ACCEPTED', 'REJECTED'].includes(String(value.status))) throw new Problem('capital_exit_command_unsettled');
-  command.state = String(value.status); command.result = value; command.error = null;
+  command.state = String(value.status) as CapitalExitCommandReceipt['state']; command.result = value;
+  command.error = value.status === 'REJECTED'
+    ? typeof value.error === 'string' && /^(?:capital|account|target|hyperliquid)_[a-z0-9_]+$/.test(value.error) ? value.error : 'capital_exit_command_rejected'
+    : null;
   // Do not release a local reservation until an authoritative status includes this command.
   // Its reservation remains part of the shared account control fact until status reconciliation.
 }
@@ -228,7 +235,7 @@ export function reconcileControl(previous: AccountControl, fresh: Awaited<Return
   if (previous.status?.accountSourceId && fresh.status.accountSourceId && previous.status.accountSourceId !== fresh.status.accountSourceId) throw new Problem('capital_control_identity_mismatch', 409);
   const oldRevision = previous.status?.controlRevision; const revision = fresh.status.controlRevision;
   if (oldRevision && revision && BigInt(revision) < BigInt(oldRevision)) throw new Problem('capital_control_out_of_order', 409);
-  if (oldRevision && revision === oldRevision && previous.status && (previous.status.reserved !== null && fresh.status.reserved !== null && previous.status.reserved !== fresh.status.reserved || canonical(json(previous.status.exits)) !== canonical(json(fresh.status.exits)))) throw new Problem('capital_control_conflict', 409);
+  if (oldRevision && revision === oldRevision && previous.status && canonical(capitalControlEconomics(previous.status)) !== canonical(capitalControlEconomics(fresh.status))) throw new Problem('capital_control_conflict', 409);
   // No permission to read is not an authoritative physical account update.
   // recordCapitalControl retains that failure only on its transport binding.
   if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, ...capabilities };
@@ -260,17 +267,28 @@ export function recordCapitalControl(records: Record<string, JsonObject>, connec
   }
   const binding = transportBindingKey(connection);
   const saved = next.capabilitiesByBinding?.[binding];
-  // A repeated read through A retains A's first receipt even if B was the
-  // latest transport to read the same physical account.
+  const observedAtNs = fresh.capabilitiesReceivedAtNs ?? nowNs();
+  const newerPermission = !saved || BigInt(observedAtNs) >= BigInt(saved.lastObservedAtNs ?? saved.receivedAtNs);
   next.capabilitiesByBinding ??= {};
-  next.capabilitiesByBinding[binding] = { document: json(fresh.capabilities), receivedAtNs: saved && canonical(saved.document) === canonical(fresh.capabilities) ? saved.receivedAtNs : nowNs() };
-  if (fresh.status.accountSourceId) { if (next.refreshFailuresByBinding) delete next.refreshFailuresByBinding[binding]; }
-  else {
+  if (newerPermission) {
+    next.capabilitiesByBinding[binding] = { document: json(fresh.capabilities),
+      receivedAtNs: saved && canonical(saved.document) === canonical(fresh.capabilities) ? saved.receivedAtNs : observedAtNs,
+      lastObservedAtNs: observedAtNs };
+  }
+  // A slow status response cannot resurrect an older capability or erase a later read failure.
+  const failure = next.refreshFailuresByBinding?.[binding];
+  if (fresh.status.accountSourceId) {
+    if (newerPermission && (!failure || BigInt(observedAtNs) >= BigInt(failure.receivedAtNs)) && next.refreshFailuresByBinding) delete next.refreshFailuresByBinding[binding];
+  } else if (newerPermission && (!failure || BigInt(observedAtNs) >= BigInt(failure.receivedAtNs))) {
     const code = fresh.status.reason ?? 'downstream_capital_exit_unsupported';
     next.refreshFailuresByBinding ??= {};
-    if (next.refreshFailuresByBinding[binding]?.code !== code) next.refreshFailuresByBinding[binding] = { code, receivedAtNs: nowNs() };
+    next.refreshFailuresByBinding[binding] = { code, receivedAtNs: observedAtNs };
   }
   next.bindings = [...new Set([...(prior.bindings ?? []), ...(next.bindings ?? []), key, connectionKey(connection)])];
+  // A successfully verified alias can keep the same read-only account watcher alive after credential rotation.
+  if (fresh.status.accountSourceId && (!next.monitorConnectionReceivedAtNs || BigInt(observedAtNs) >= BigInt(next.monitorConnectionReceivedAtNs))) {
+    next.monitorConnection = structuredClone(connection); next.monitorConnectionReceivedAtNs = observedAtNs;
+  }
   records[key] = json(next);
   if (key !== original) delete records[original];
   return key;

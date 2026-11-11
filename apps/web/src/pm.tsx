@@ -105,6 +105,7 @@ function MandateDetail({ id }: { id: string }) {
   return <div className="pm-page"><a className="text-link back-link" href={href('/pm')}><ArrowLeftIcon size={14} />投资决策</a>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : view && <>
       <header className="pm-heading"><div><RecordTitle name={view.mandate.ownerGoal} fallback="投资目标" /><span className="quiet">{authorityNames[view.mandate.operatingAuthority]} · {view.mandate.baseCurrency}</span></div><PmActions view={view} path={path} /></header>
+      {view.mandate.capitalSource.kind === 'ACCOUNT' && <a className="text-link" href={href(`/observations/${encodeURIComponent(view.mandate.capitalSource.accountBindingId)}?section=capital`)}>管理账户退出资金</a>}
       <section className="pm-current"><h2>{currentContext === 'FORWARD_MODEL_ESTIMATE' ? '当前模型配置' : view.currentDecision?.validUntilNs ? '当前投资判断' : '当前研究结论'}</h2><h3>{view.currentDecision ? decisionLabel(view.currentDecision, currentContext) : '等待可比较的研究证据'}</h3>
         {view.lastCycle && <p className="quiet">最近依据 {pmTime(view.lastCycle.asOfNs)} · <Status plain value={view.lastCycle.state} /></p>}
         {view.currentDecision && <><DecisionSummary decision={view.currentDecision} /><ReasonList codes={view.currentDecision.reasonCodes} /></>}

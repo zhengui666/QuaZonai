@@ -8,11 +8,14 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { JsonReader, jsonChunks, canonicalJsonDigest } from '../../research/src/native-json.ts';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
+import { createCapitalAccount } from './capital-account.ts';
+import type { AccountOptions } from './account-runtime.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
 type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: string };
 
-// No runtime, broker, order, installation or arbitrary shell command is exposed.
+// The science /v1/executions allowlist exposes no broker, order or shell commands.
+// Explicitly configured /accounts owners use the separate closed account API.
 export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
@@ -35,6 +38,9 @@ export interface WorkerOptions {
   maximumConcurrentTickExecutions?: number;
   /** Maximum threads per independent ensemble-calibration call; native code also checks cores and scratch size. */
   calibrationThreads?: number;
+  /** Explicit Paper/LIVE account modes in this same native worker process. */
+  accounts?: AccountOptions[];
+  accountBinary?: string;
 }
 
 function positiveLimit(value: number | undefined, fallback: number, code: string): number {
@@ -119,6 +125,18 @@ export async function createNautilusWorker(options: WorkerOptions) {
   const receipts = join(root, 'executions'); const scratch = join(root, 'scratch');
   await mkdir(receipts, { recursive: true }); await mkdir(scratch, { recursive: true });
   const roots = await Promise.all(options.catalogRoots.map(path => realpath(path)));
+  const accounts = new Map<string, Awaited<ReturnType<typeof createCapitalAccount>>>();
+  const physicalAccounts = new Set<string>();
+  for (const account of options.accounts ?? []) {
+    const physical = JSON.stringify(account.mode === 'live' ? ['live', account.network ?? 'mainnet', account.accountAddress?.toLowerCase(), 'SPOT_CASH', 'USDC']
+      : ['paper', account.network ?? 'mainnet', account.accountId, 'SPOT_CASH', 'USDC']);
+    if (physicalAccounts.has(physical)) fail('account_physical_owner_already_configured');
+    physicalAccounts.add(physical);
+  }
+  for (const account of options.accounts ?? []) {
+    if (accounts.has(account.id)) fail('account_configuration_duplicate');
+    accounts.set(account.id, await createCapitalAccount(account, join(root, 'accounts', account.id), options.accountBinary ?? join(dirname(binary), 'account-runtime')));
+  }
   const active = new Map<string, Active>();
   const launching = new Map<string, Promise<Active>>();
   // Admission reservations only, not a queue. Existing receipts never consume
@@ -292,6 +310,14 @@ export async function createNautilusWorker(options: WorkerOptions) {
     try {
       if (request.method === 'GET' && request.url === '/health') return await send(response, closing ? 503 : 200, { ready: !closing });
       if (!authorized(request, options.token)) return await send(response, 401, { error: 'nautilus_authentication_required' });
+      const accountPath = /^\/accounts\/([^/?]+)(\/[^?]*)?(?:\?.*)?$/.exec(request.url ?? '');
+      if (accountPath) {
+        const account = accounts.get(decodeURIComponent(accountPath[1]!));
+        if (!account) return await send(response, 404, { error: 'account_not_configured' });
+        if (closing && request.method !== 'GET') return await send(response, 503, { error: 'nautilus_worker_closing' });
+        const result = await account.handle(accountPath[2] ?? '/', request, () => body(request, options.maximumRequestBytes ?? 1_048_576));
+        return await send(response, result.status, result.value);
+      }
       if (request.method === 'GET' && request.url === '/v1/capabilities') return await send(response, 200, { schemaVersion: 1, implementationDigest, commands, ...(buildIdentity ? { buildIdentity } : {}) });
       const match = /^\/v1\/executions\/([a-f0-9]{64})$/.exec(request.url ?? '');
       if (match && ['GET', 'DELETE'].includes(request.method ?? '')) {
@@ -325,8 +351,11 @@ export async function createNautilusWorker(options: WorkerOptions) {
     closing = true;
     const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     for (const execution of active.values()) execution.cancel();
+    const accountStops = await Promise.allSettled([...accounts.values()].map(account => account.close()));
     await Promise.allSettled([...active.values()].map(execution => execution.promise));
     server.closeIdleConnections();
     await closed;
+    const failedAccount = accountStops.find(result => result.status === 'rejected');
+    if (failedAccount?.status === 'rejected') throw failedAccount.reason;
   } };
 }

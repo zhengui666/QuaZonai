@@ -1,3 +1,4 @@
+import { CapitalExitWatch } from './capital-watch.ts';
 import { ScientificStage } from './scientific-stages.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -257,4 +258,4 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
     }, context);
   },
 });
-export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand, ScientificStage] });
+export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand, CapitalExitWatch, ScientificStage] });

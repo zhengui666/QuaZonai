@@ -12,6 +12,10 @@ pub fn build_identity() -> serde_json::Value {
 }
 pub mod account_observation_cli;
 pub mod account_observer;
+#[cfg(feature = "account-runtime")]
+pub mod account_runtime;
+#[cfg(feature = "account-runtime")]
+mod account_runtime_cache;
 pub mod bounded;
 pub mod capacity;
 pub mod capital_curve;
