@@ -3981,6 +3981,7 @@ dependencies = [
  "nautilus-risk",
  "nautilus-sandbox",
  "nautilus-serialization",
+ "nautilus-system",
  "nautilus-trading",
  "ndarray 0.17.1",
  "ndarray-stats",

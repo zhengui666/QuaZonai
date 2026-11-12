@@ -12,6 +12,9 @@ pub struct NativeStrategyBacktestRequestV1 {
     /// Half-open source event window; availability is independently bounded.
     pub event_start_ns: DbCounter,
     pub event_end_ns: DbCounter,
+    /// Inclusive availability lower bound, independently of the source event window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_start_ns: Option<DbCounter>,
     pub available_end_ns: DbCounter,
     pub venue: NativeStrategyVenueV1,
     pub strategy: NativeCompiledStrategyV1,

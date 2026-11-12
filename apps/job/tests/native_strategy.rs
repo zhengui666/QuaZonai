@@ -332,3 +332,81 @@ fn upstream_ema_uses_real_quotes_and_respects_future_availability() {
             .is_empty()
     );
 }
+
+#[path = "support/command.rs"]
+mod native_cli;
+#[test]
+fn actual_l2_cli_reserves_stdout_for_one_json_result() {
+    let books = snapshot(SECOND, 2 * SECOND, "10.000000", "0.100000");
+    let dir = catalog(&books, &[]);
+    let request = request(5 * SECOND);
+    let output = native_cli::command(
+        &[
+            "native-strategy-backtest".as_ref(),
+            "--catalog".as_ref(),
+            dir.path().as_os_str(),
+        ],
+        &request,
+    );
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("summary:"),
+        "upstream output must remain available on stderr"
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "invalid CLI JSON: {error}; stdout={}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        });
+    assert_eq!(result["request"], serde_json::to_value(request).unwrap());
+    assert!(!result["canonical_result"]["fills"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn sparse_funding_and_close_streams_are_legal_with_actual_market_events() {
+    let books = snapshot(SECOND, 2 * SECOND, "10.000000", "0.100000");
+    let dir = catalog(&books, &[]);
+    let mut request = request(5 * SECOND);
+    for kind in ["FundingRateUpdate", "InstrumentClose"] {
+        request.selectors.push(
+            serde_json::from_value(json!({"data_type":kind,"identifier":id().to_string()}))
+                .unwrap(),
+        );
+    }
+    let result = job::native_strategy::run(dir.path(), request).unwrap();
+    assert_eq!(result.data_rows_by_type["FundingRateUpdate"].get(), 0);
+    assert_eq!(result.data_rows_by_type["InstrumentClose"].get(), 0);
+    assert!(!result.canonical_result["fills"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn actual_l2_walk_forward_cli_keeps_every_native_summary_on_stderr() {
+    let books = (1..=8).flat_map(|n| snapshot(n * SECOND, n * SECOND, "10.000000", "0.100000")).collect::<Vec<_>>();
+    let dir = catalog(&books, &[]);
+    let request = json!({
+        "schema_version":1, "candidates":[request(8 * SECOND)],
+        "split":{"n_splits":2,"test_size":2,"gap":0,"max_train_size":null},
+        "objective":{"native_key":"PnL (total)","currency":"USDT","direction":"MAXIMIZE"}
+    });
+    let output = native_cli::command(&["native-walk-forward".as_ref(), "--catalog".as_ref(), dir.path().as_os_str()], &request);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("all upstream summaries must stay outside JSON stdout");
+    assert_eq!(result["folds"].as_array().unwrap().len(), 2);
+    assert!(result["folds"].as_array().unwrap().iter().all(|fold| fold["trials"][0]["result"].is_object()));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("summary:"));
+}
+
+#[test]
+fn a_completely_empty_replay_is_not_a_computed_backtest() {
+    let dir = catalog(&snapshot(3 * SECOND, 3 * SECOND, "10.000000", "0.100000"), &[]);
+    let error = job::native_strategy::run(dir.path(), request(2 * SECOND)).unwrap_err();
+    assert!(error.to_string().contains("NATIVE_STRATEGY_EMPTY_DATA"));
+}

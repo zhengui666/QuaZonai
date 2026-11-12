@@ -114,8 +114,8 @@ test('bound upstream research exposes only its native tool and never translates 
       data: { catalog: '/registered/catalog', native_strategy_backtest_request: {}, indicator_strategy_request: {} }, policy: {} });
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
     const agent = await (await host.harness.conversation(admission.conversationId, context))!.agent(context);
-    assert.deepEqual(agent.extensions.map(extension => extension.name), ['qz.native-strategy-backtest', 'qz.research-assessment']);
-    assert.deepEqual(agent.tools.map(tool => tool.name), ['native_strategy_backtest', 'native_strategy_logic_review', 'native_strategy_assessment_report']);
+    assert.deepEqual(agent.extensions.map(extension => extension.name), ['qz.native-strategy-backtest', 'qz.native-walk-forward', 'qz.research-assessment']);
+    assert.deepEqual(agent.tools.map(tool => tool.name), ['native_strategy_backtest', 'native_strategy_walk_forward', 'native_strategy_logic_review', 'native_strategy_assessment_report']);
     const study = (await host.harness.snapshot(Study, admission.conversationId, context))!;
     assert.equal(study.final, null); assert.equal(study.trials.length, 0);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }

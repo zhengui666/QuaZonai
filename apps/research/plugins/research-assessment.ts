@@ -1,3 +1,5 @@
+import { NativeWalkForward } from './native-walk-forward.ts';
+import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
@@ -5,11 +7,14 @@ import { canonical, Study, type ResearchInput } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { IndicatorConfiguration } from './indicator-strategy.ts';
 
-async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject) {
+async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject, includeValidation = false) {
   let cursor; let found: TaskRecord<JsonValue, JsonValue, JsonValue> | undefined;
   do {
     const page = await tx.scanTasks({ conversationId, kind: 'qz.native-strategy.backtest' }, 100, cursor);
-    for (const task of page.items) if (canonical(object(task.input, 'native_input').request ?? null) === canonical(request) && (!found || task.id > found.id)) found = task;
+    for (const task of page.items) {
+      const input = object(task.input, 'native_input');
+      if (canonical((includeValidation ? input.sourceRequest : undefined) ?? input.request ?? null) === canonical(request) && (!found || task.id > found.id)) found = task;
+    }
     cursor = page.next;
   } while (cursor);
   return found;
@@ -50,7 +55,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const synthesis = task.input.mode === 'SYNTHESIS';
     const answer = await runtime.models.completeSimple(model, {
       systemPrompt: `${rubric}\n${synthesis
-        ? 'Synthesize logic and data evidence separately, never average their stars. This implementation has no independent OOS validation yet. Overall stars MUST be null. Explain which real tests remain missing. Historical simulation and exploratory parameter scans are not OOS validation.'
+        ? 'Synthesize logic and data evidence separately, never average their stars. Actual chronological walk-forward evidence may be present, but a complete data validation lane is not yet available. Overall stars MUST be null. Explicitly distinguish completed window tests from missing leakage, neighbourhood, cost and trial-history checks. Explain which real tests remain missing. Native canonical statistic values are IEEE754 hex strings, not decimal strings; preserve their official metric names and do not pretend position-return statistics are daily account-equity returns. Historical simulation and exploratory parameter scans are not OOS validation.'
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
       messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
     }, { signal: runtime.signal });
@@ -76,7 +81,7 @@ export const logicReviewTool = defineTool({
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
       const current = await tx.doc(IndicatorConfiguration, api.conversationId);
-      if (current.evaluationTaskId || input.data.native_strategy_backtest_request !== undefined && await upstreamExecution(tx, api.conversationId, request) || (await tx.doc(Study, api.conversationId)).final) throw new Error('research_assessment_pre_execution_required');
+      if (current.evaluationTaskId || input.data.native_strategy_backtest_request !== undefined && await upstreamExecution(tx, api.conversationId, request, true) || (await tx.doc(Study, api.conversationId)).final) throw new Error('research_assessment_pre_execution_required');
       if (canonical(boundRequest(input, current.request)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
         configurationTaskId: current.configuredByTaskId ?? null,
@@ -93,7 +98,7 @@ export const logicReviewTool = defineTool({
 
 export const assessmentReportTool = defineTool({
   name: 'native_strategy_assessment_report',
-  description: 'Read the real stored logic-review and native execution Tasks and ask a separate Pi child Agent to synthesize the evidence. Current data validation is NOT_RUN: historical native performance is not OOS. Overall stars remain null until both actual evidence lanes exist. Does not execute a backtest, create trading permission, or replace existing results. Can be requested in a subsequent submission in the same research conversation.',
+  description: 'Read the real stored logic-review and native execution Tasks and ask a separate Pi child Agent to synthesize the evidence. Read actual native walk-forward Task results when present; ordinary historical native performance is not OOS. Incomplete validation remains ungraded. Overall stars remain null until both actual evidence lanes exist. Does not execute a backtest, create trading permission, or replace existing results. Can be requested in a subsequent submission in the same research conversation.',
   parameters: obj({}), replay: 'safe', executionMode: 'sequential',
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
@@ -109,10 +114,30 @@ export const assessmentReportTool = defineTool({
         && canonical(object(logic.input, 'logic_input').request ?? null) === canonical(request) && object(logic.input, 'logic_input').configurationTaskId === (current.configuredByTaskId ?? null);
       const native = input.data.native_strategy_backtest_request !== undefined ? await upstreamExecution(tx, api.conversationId, request) : current.evaluationTaskId ? await tx.task(current.evaluationTaskId) : undefined;
       const nativeMatches = native && ['qz.indicator-strategy.evaluate', 'qz.native-strategy.backtest'].includes(native.kind) && canonical(object(native.input, 'native_input').request ?? null) === canonical(request);
+      const validation = await tx.doc(NativeWalkForward, api.conversationId);
+      let dataValidation: JsonObject = { status: 'NOT_RUN', stars: null, missing: ['INDEPENDENT_OUT_OF_SAMPLE', 'TIME_LEAKAGE_AUDIT', 'PARAMETER_NEIGHBOURHOOD', 'COST_SENSITIVITY', 'COMPLETE_TRIAL_HISTORY'] };
+      for (const id of [...validation.taskIds].reverse()) {
+        const task = await tx.task(id);
+        if (!task || task.kind !== 'qz.native-strategy.backtest') continue;
+        const invocation = object(task.input, 'native_walk_forward_input');
+        if (invocation.walkForward !== true || canonical(invocation.sourceRequest ?? null) !== canonical(request)) continue;
+        dataValidation = { taskId: id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status, stars: null, missing: ['TIME_LEAKAGE_AUDIT', 'PARAMETER_NEIGHBOURHOOD', 'COST_SENSITIVITY', 'COMPLETE_TRIAL_HISTORY'] };
+        if (task.state.status === 'terminal' && task.state.outcome.status === 'completed') {
+          const result = nativeWalkForwardResult(task.state.outcome.result, object(invocation.request, 'native_walk_forward_request'));
+          const completedTests = (result.folds as JsonObject[]).filter(fold => fold.status === 'COMPLETED').length;
+          dataValidation = { ...dataValidation, status: completedTests ? 'PARTIAL_WALK_FORWARD_EVIDENCE' : 'WALK_FORWARD_NO_COMPLETED_TESTS', completedTests, totalFolds: (result.folds as JsonObject[]).length,
+            missing: [...(dataValidation.missing as string[]), ...(completedTests ? [] : ['INDEPENDENT_OUT_OF_SAMPLE'])], request: result.request!, nativeVersion: result.native_version!, performanceScope: result.performance_scope!, notes: result.notes!,
+            folds: (result.folds as JsonObject[]).map(fold => ({ index: fold.index!, trainStartNs: fold.train_start_ns!, trainEndNs: fold.train_end_ns!, testStartNs: fold.test_start_ns!, testEndNs: fold.test_end_ns!, status: fold.status!, reason: fold.reason!, selectedCandidateIndex: fold.selected_candidate_index!,
+              trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error! })),
+              nativeTestStatistics: fold.test_result === null ? null : object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics! })),
+            logicCoverage: 'LOGIC_REVIEW_COVERS_BOUND_SOURCE_NOT_ALL_CANDIDATE_VARIATIONS' };
+        }
+        break;
+      }
       const evidence: JsonObject = {
         logic: matchingLogic ? { taskId: logic!.id, result: logic!.state.outcome!.status === 'completed' ? logic!.state.outcome!.result : null } : { status: 'MISSING_OR_DIFFERENT_CONFIGURATION', stars: null },
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
-        dataValidation: { status: 'NOT_RUN', stars: null, missing: ['INDEPENDENT_OUT_OF_SAMPLE', 'TIME_LEAKAGE_AUDIT', 'PARAMETER_NEIGHBOURHOOD', 'COST_SENSITIVITY', 'COMPLETE_TRIAL_HISTORY'] },
+        dataValidation,
       };
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: current.configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
       assessment.reportTaskIds.push(child.taskId);
@@ -126,4 +151,4 @@ export const assessmentReportTool = defineTool({
 
 
 export default defineExtension({ name: 'qz.research-assessment', tasks: [ResearchAssessmentTask], tools: [logicReviewTool, assessmentReportTool],
-  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review before showing this configuration any backtest result. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });
+  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });

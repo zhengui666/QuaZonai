@@ -1,3 +1,4 @@
+import nativeWalkForward from '../plugins/native-walk-forward.ts';
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
 import { configure, defineTask, ProviderDoc } from '@earendil-works/pi-durable';
@@ -29,7 +30,7 @@ export const ResearchIntakeTask = defineTask<IntakeInput, IntakeCheckpoint, Rese
         const nativeBinding = input.data.indicator_strategy_request !== undefined || input.data.indicator_strategy_batch_request !== undefined;
         await configure(tx, conversation.id, { model: input.model, thinkingLevel: task.input.thinkingLevel, instructions: upstreamBinding ? `${researchInstructions(input)}\nUse native_strategy_backtest for the exact bound historical upstream strategy. Do not infer paper/live deployment or trading permission.` : nativeBinding
           ? `${researchInstructions(input)}\nUse native_indicator_strategy_evaluate for the exact bound historical strategy. Do not call legacy factor, review, fitting or optimization tools. A backtest is not trading permission.` : researchInstructions(input),
-          extensions: upstreamBinding ? [nativeStrategyBacktest, researchAssessment] : nativeBinding ? [indicatorStrategy, researchAssessment] : [nativeResearchExtension(), indicatorStrategy, researchAssessment], tools: null,
+          extensions: upstreamBinding ? [nativeStrategyBacktest, nativeWalkForward, researchAssessment] : nativeBinding ? [indicatorStrategy, researchAssessment] : [nativeResearchExtension(), indicatorStrategy, researchAssessment], tools: null,
         });
         if (input.serviceTier) (await tx.doc(ModelTiers)).tiers[(await tx.doc(ProviderDoc, conversation.id)).sessionId] = input.serviceTier;
         (await tx.doc(Study, conversation.id)).toolPolicy = 'NAUTILUS_ONLY';

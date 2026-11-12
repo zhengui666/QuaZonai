@@ -20,6 +20,7 @@ pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
 pub mod indicator_strategy;
+pub mod native_walk_forward;
 pub mod lifecycle;
 pub mod observed_spot;
 pub mod portfolio;
@@ -76,6 +77,8 @@ use utoipa::OpenApi;
     observed_spot::NativeObservedSpotValuationResultV1,
     observed_spot::NativeObservedSpotBuildRequestV1,
     observed_spot::NativeObservedSpotBuildResultV1,
+    native_walk_forward::NativeStrategyWalkForwardRequestV1,
+    native_walk_forward::NativeStrategyWalkForwardResultV1,
     native_strategy::NativeStrategyBacktestRequestV1,
     native_strategy::NativeStrategyBacktestResultV1,
     science::NativeForecastRequestV1,

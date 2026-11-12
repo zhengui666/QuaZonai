@@ -13,7 +13,7 @@ publish = false
 native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
 native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
 # Persistent account execution inside the existing remote native process.
-account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "nautilus-hyperliquid/high-precision", "high-precision"]
+account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "dep:nautilus-system", "nautilus-hyperliquid/high-precision", "high-precision"]
 # Operator data preparation only; default scientific job images remain offline.
 catalog-prepare = ["dep:sha2"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
@@ -85,7 +85,7 @@ bigdecimal = "=0.4.8"
 num-bigint = "=0.4.8"
 num-rational = "=0.4.2"
 iso_currency = "=0.7.0"
-rustix = { version = "=1.1.4", features = ["fs", "process"] }
+rustix = { version = "=1.1.4", features = ["fs", "process", "stdio"] }
 nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
 ndarray = "=0.17.1"
 ndarray-stats = "=0.7.0"
@@ -112,3 +112,9 @@ required-features = ["native-sandbox-test"]
 [[test]]
 name = "native_capital_exit"
 required-features = ["native-sandbox-test"]
+
+[dependencies.nautilus-system]
+git = "https://github.com/nautechsystems/nautilus_trader.git"
+rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7"
+default-features = false
+optional = true

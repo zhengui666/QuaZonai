@@ -8,6 +8,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod native_stdout;
+
+/// Keep upstream native console messages out of the typed stdout transport.
+fn native_output<T: Serialize>(run: impl FnOnce() -> Result<T>) -> Result<()> {
+    output(&native_stdout::with_stderr_logs(run)?)
+}
+
 #[derive(Parser)]
 #[command(
     name = "job",
@@ -112,6 +119,10 @@ enum Operation {
         catalog: PathBuf,
     },
     /// Explicit same-data/settings native indicator batch using engine reset.
+    NativeWalkForward {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
     SimulateIndicatorStrategyBatch {
         #[arg(long)]
         catalog: PathBuf,
@@ -309,7 +320,12 @@ fn run(operation: Operation) -> Result<()> {
                 &model_bytes(&model)?,
             )?)
         }
-        Operation::NativeStrategyBacktest { catalog } => output(&job::native_strategy::run(&catalog, input()?)?),
+        Operation::NativeStrategyBacktest { catalog } => {
+            native_output(|| job::native_strategy::run(&catalog, input()?))
+        },
+        Operation::NativeWalkForward { catalog } => {
+            native_output(|| job::native_walk_forward::run(&catalog, input()?))
+        },
         Operation::SimulateIndicatorStrategyBatch { catalog } => output(
             &job::simulation::simulate_indicator_strategy_batch(&catalog, &input()?)?,
         ),

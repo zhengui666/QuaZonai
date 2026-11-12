@@ -1,3 +1,4 @@
+import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -8,14 +9,20 @@ import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
 import { executionVersions } from '../src/indicator-result.ts';
 
-/** Validate the exact bound request and upstream report, never substitute a score. */
-export function nativeStrategyResult(value: Parameters<typeof object>[0], request: JsonObject): JsonObject {
-  const result = object(value, 'native_strategy_result');
+export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject {
   const expected = structuredClone(request);
+  if (expected.available_start_ns === null) delete expected.available_start_ns;
   const venue = object(expected.venue, 'native_strategy_venue');
   if (venue.base_currency === undefined) venue.base_currency = null;
   const strategy = object(expected.strategy, 'native_strategy_config');
   if (strategy.base === null) delete strategy.base;
+  return expected;
+}
+
+/** Validate the exact bound request and upstream report, never substitute a score. */
+export function nativeStrategyResult(value: Parameters<typeof object>[0], request: JsonObject): JsonObject {
+  const result = object(value, 'native_strategy_result');
+  const expected = normalizedNativeStrategyRequest(request);
   if (canonical(result.request ?? null) !== canonical(expected)) throw new Error('native_strategy_request_mismatch');
   if (result.schema_version !== 1 || typeof result.native_version !== 'string' || !executionVersions.has(result.native_version)) throw new Error('native_strategy_version_mismatch');
   const report = object(result.canonical_result, 'native_strategy_canonical_result');
@@ -69,15 +76,15 @@ export const nativeStrategyBacktestTool = defineTool({
   },
 });
 
-export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget }, NativeScanCheckpoint, JsonObject>({
+export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; walkForward?: boolean; sourceRequest?: JsonObject }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-strategy-'));
     try {
       const raw = await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(
-        task.input.target, 'native-strategy-backtest', task.input.request,
+        task.input.target, task.input.walkForward ? 'native-walk-forward' : 'native-strategy-backtest', task.input.request,
         ['--catalog', task.input.catalog], directory, context));
-      const result = nativeStrategyResult(raw, task.input.request);
+      const result = task.input.walkForward ? nativeWalkForwardResult(raw, task.input.request) : nativeStrategyResult(raw, task.input.request);
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);

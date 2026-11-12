@@ -23,6 +23,7 @@ pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
+pub mod native_walk_forward;
 pub mod catalog_prefix;
 pub mod experiment;
 pub mod feature_model;

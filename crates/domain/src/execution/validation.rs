@@ -1,5 +1,5 @@
 //! Shared checked adapter to the pinned native splitters. No model execution or qualification.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use contracts::research::{SplitKind, SplitPolicyV1};
 use solow_cv::{CombinatorialPurgedKFold, Split, Splitter, TimeSeriesSplit};
 
@@ -210,4 +210,47 @@ mod representation_tests {
         assert!(checked_fold_count(17, 0).is_err());
         assert_eq!(MAX_VALIDATION_FOLDS, 65_536);
     }
+}
+
+/// Original solow-cv rolling/expanding splits for native strategy availability batches.
+/// No label-based horizon or proprietary policy is inferred for trading strategies.
+pub fn native_walk_forward_folds(
+    policy: &contracts::native_walk_forward::NativeWalkForwardSplitV1,
+    rows: usize,
+) -> Result<Vec<Split>> {
+    ensure!(
+        policy.n_splits >= 2 && policy.n_splits < rows,
+        "WALK_FORWARD_SPLIT_COUNT"
+    );
+    let denominator = policy
+        .n_splits
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("WALK_FORWARD_COUNT_OVERFLOW"))?;
+    let test = policy.test_size.unwrap_or(rows / denominator);
+    ensure!(
+        test > 0 && policy.max_train_size != Some(0),
+        "WALK_FORWARD_EMPTY_WINDOW"
+    );
+    let required = test
+        .checked_add(policy.gap)
+        .and_then(|n| n.checked_mul(policy.n_splits))
+        .and_then(|n| n.checked_add(1))
+        .ok_or_else(|| anyhow::anyhow!("WALK_FORWARD_COUNT_OVERFLOW"))?;
+    ensure!(required <= rows, "WALK_FORWARD_INSUFFICIENT_BATCHES");
+    let mut splitter = TimeSeriesSplit::new(policy.n_splits)?
+        .test_size(test)
+        .gap(policy.gap);
+    if let Some(max) = policy.max_train_size {
+        splitter = splitter.max_train_size(max);
+    }
+    let folds = splitter.split(rows)?;
+    for fold in &folds {
+        ensure!(
+            !fold.train.is_empty()
+                && !fold.test.is_empty()
+                && fold.train.last() < fold.test.first(),
+            "WALK_FORWARD_INVALID_NATIVE_SPLIT"
+        );
+    }
+    Ok(folds)
 }

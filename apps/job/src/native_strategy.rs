@@ -40,6 +40,15 @@ pub fn run(
         !request.selectors.is_empty(),
         "NATIVE_STRATEGY_DATA_REQUIRED"
     );
+    let available_start = request
+        .available_start_ns
+        .unwrap_or(request.event_start_ns)
+        .get();
+    ensure!(
+        available_start >= request.event_start_ns.get()
+            && available_start <= request.available_end_ns.get(),
+        "NATIVE_STRATEGY_AVAILABILITY_START"
+    );
     let id: InstrumentId = request.instrument_id.parse()?;
     let catalog = crate::catalog::open_catalog(root)?;
     let definitions = catalog.query_instruments_filtered(
@@ -49,7 +58,7 @@ pub fn run(
     )?;
     let instrument = definitions
         .iter()
-        .filter(|x| x.id() == id && x.ts_init().as_u64() <= request.event_start_ns.get())
+        .filter(|x| x.id() == id && x.ts_init().as_u64() <= available_start)
         .cloned()
         .max_by_key(|x| x.ts_init())
         .ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_INSTRUMENT_UNAVAILABLE_AT_START"))?;
@@ -96,7 +105,7 @@ pub fn run(
         engine.add_instrument(&instrument)?;
         let updates = definitions
             .into_iter()
-            .filter(|x| x.id() == id && x.ts_init().as_u64() > request.event_start_ns.get())
+            .filter(|x| x.id() == id && x.ts_init().as_u64() > available_start)
             .collect::<Vec<_>>();
         if !updates.is_empty() {
             engine.add_data_batch(DataBatch::Instrument(updates.into()), None, true, true)?;
@@ -143,7 +152,7 @@ pub fn run(
             let query = CatalogQuery::new(kind.clone())
                 .with_identifiers(Some(vec![selector.identifier.clone()]))
                 .with_range(
-                    Some(UnixNanos::from(request.event_start_ns.get())),
+                    Some(UnixNanos::from(available_start)),
                     Some(UnixNanos::from(request.available_end_ns.get())),
                 );
             let mut session = crate::catalog::file_batch_session(
@@ -175,14 +184,17 @@ pub fn run(
                 }
             }
             ensure!(pending.is_empty(), "NATIVE_BOOK_INCOMPLETE_EVENT_BATCH");
-            ensure!(rows > 0, "NATIVE_STRATEGY_EMPTY_SELECTOR");
             counts.insert(
                 kind.to_string(),
                 DbCounter::new(rows).map_err(anyhow::Error::msg)?,
             );
         }
+        ensure!(
+            counts.values().any(|rows| rows.get() > 0),
+            "NATIVE_STRATEGY_EMPTY_DATA"
+        );
         engine.run(
-            None,
+            request.available_start_ns.map(|v| v.get().into()),
             Some(request.available_end_ns.get().into()),
             None,
             false,

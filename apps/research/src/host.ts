@@ -1,3 +1,4 @@
+import nativeWalkForward from '../plugins/native-walk-forward.ts';
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
 import indicatorStrategy, { assertIndicatorRunSettled, IndicatorConfiguration } from '../plugins/indicator-strategy.ts';
@@ -76,6 +77,7 @@ export async function openResearch(options: {
     }
     registry.install(indicatorStrategy);
     registry.install(researchAssessment);
+    registry.install(nativeWalkForward);
     registry.install(nativeStrategyBacktest);
     registry.install(nativeResearchExtension(registry.snapshot().installed().find(extension => extension.name === 'qz.research') ?? researchTools));
     registry.install(defineExtension({ name: 'qz.research-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, ReviewSourceValidationTask] }));
