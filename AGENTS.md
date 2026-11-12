@@ -188,3 +188,5 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 原生请求的 `instrument_definition` 缺省为严格目录时点定义；只有显式 `STATIC_SCENARIO` 并给出真实目录定义的精确 `ts_init_ns`/`ts_event_ns` 才表示“假设这一规格整个窗口不变”。不改目录、行情或定义时间，不将未来定义偷偷重标历史。每个原生结果必须保存定义依据，严格模式仅证明目录定义在窗口开始已可用，不是独立源准确性审计。
 
 STATIC_SCENARIO 原样贯穿配置、回测、walk-forward 与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和探索扫描保留定义原时间与scope，不能混用严格历史与情景依据。
+
+参数扫描的原生 Task 完成不等于执行窗口完整：`canonical_result.run.outcome=stopped` 保留原报告、统计和原因，但标为 STOPPED，不参与完整窗口排名或热图有效值；重启/投影不重新运行候选。探索扫描使用上游原统计，不把默认 Sharpe 视为已核实日权益收益或年化回报证据。

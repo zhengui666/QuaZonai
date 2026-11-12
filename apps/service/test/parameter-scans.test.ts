@@ -10,14 +10,14 @@ import type { ParameterScanPlan, ParameterScanView } from '../../../packages/con
 import { setup, context } from './support.ts';
 
 // HTTP/Pi protocol only: controlled responses are NOT performance evidence.
-async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' | 'scenario' = 'complete') {
+async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' | 'scenario' | 'stopped' = 'complete') {
   const state = await setup(); const requests: NativeExecutionRequest[] = []; let deletes = 0; let settle = false;
   const version = '0.69.0';
   const result = (request: JsonObject): JsonObject => {
     if (mode === 'invalid') return { request, simulation: {}, observations: [] };
     const bytes = Buffer.alloc(8); bytes.writeDoubleBE(Number((request.strategy as JsonObject).fast_period));
     return { schema_version: 1, request, native_version: version,
-      instrument_definition: request.instrument_definition ? { ...(request.instrument_definition as JsonObject), scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': mode === 'rank' ? bytes.toString('hex') : null }, pnls: {} } },
+      instrument_definition: request.instrument_definition ? { ...(request.instrument_definition as JsonObject), scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: mode === 'stopped' && Number((request.strategy as JsonObject).fast_period) === 5 ? 'stopped' : 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': ['rank', 'stopped'].includes(mode) ? bytes.toString('hex') : null }, pnls: {} } },
       data_rows_by_type: { QuoteTick: '20' }, notes: [] };
   };
   const server = createServer(async (incoming, response) => {
@@ -156,5 +156,28 @@ test('exploratory native scan retains static instrument assumptions rather than 
     assert.equal(trial.status, 'COMPLETED'); assert.equal(trial.details.instrumentDefinition.mode, 'STATIC_SCENARIO');
     assert.equal(trial.details.instrumentDefinition.ts_init_ns, '9999999999999999');
     assert.deepEqual(trial.details.nativeResult.request.instrument_definition, p.request.instrument_definition);
+  } finally { await p.close(); }
+});
+
+
+test('an upstream stopped result preserves its raw statistics but cannot win a complete-window scan', async () => {
+  const p = await protocol('stopped'); try {
+    const response = await p.state.service.app.inject({ method: 'POST', url: '/api/v3/parameter-scans', headers: p.state.headers, payload: { ...p.plan, requestId: 'stopped-native', objective: { ...p.plan.objective, direction: 'maximize' } } });
+    assert.equal(response.statusCode, 202, response.body); const id = response.json().id;
+    await p.state.service.research.harness.waitForTask(response.json().taskId as TaskId, context);
+    for (const restart of [false, true]) {
+      if (restart) await p.state.restart();
+      const detail = (await p.state.service.app.inject({ method: 'GET', url: `/api/v3/parameter-scans/${id}`, headers: p.state.headers })).json();
+      assert.equal(detail.best.metric.value, 4); assert.equal(detail.counts.stopped, '1');
+      const trials = (await p.state.service.app.inject({ method: 'GET', url: `/api/v3/parameter-scans/${id}/trials?sort=metric`, headers: p.state.headers })).json();
+      assert.equal(trials.items[0].metric.value, 4);
+      const stopped = trials.items.find((trial: any) => trial.status === 'STOPPED'); assert.ok(stopped);
+      assert.equal(stopped.metric.value, null); assert.equal(stopped.metric.reason, 'native_run_stopped_before_completion');
+      assert.equal(stopped.metrics[0].value, 5, 'raw original partial-window statistic is retained separately');
+      const original = (await p.state.service.app.inject({ method: 'GET', url: `/api/v3/parameter-scans/${id}/trials/${stopped.ordinal}`, headers: p.state.headers })).json();
+      assert.equal(original.details.nativeResult.canonical_result.run.outcome, 'stopped');
+      assert.equal(original.details.nativeRun.outcome, 'stopped'); assert.equal(original.details.dataRowsByType.QuoteTick, '20');
+    }
+    assert.equal(p.requests.length, 4, 'projection and restart do not execute replacement candidates');
   } finally { await p.close(); }
 });

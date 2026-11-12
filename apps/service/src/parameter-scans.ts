@@ -105,7 +105,7 @@ function sourceFromStudy(source: ParameterScanSource, _mode: ParameterScanMode, 
   const name = study.input.specification?.name ?? study.input.goal;
   const view: ParameterScanSourceView = { source, label: name, researchId: ref.researchId, datasetId: null, datasetName: null,
     modality: 'NATIVE', currency: typeof venue.base_currency === 'string' ? venue.base_currency : null,
-    interval: { startNs: String(request.event_start_ns), endExclusiveNs: String(request.event_end_ns) }, assumptions: [...(request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO' ? ['HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED'] : ['CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT']), 'UNCHANGED_UPSTREAM_STRATEGY', 'INDEPENDENT_ACCOUNT_PER_CANDIDATE', 'UNQUALIFIED_EXPLORATORY'] };
+    interval: { startNs: String(request.event_start_ns), endExclusiveNs: String(request.event_end_ns) }, assumptions: [...(request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO' ? ['HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED'] : ['CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT']), 'UNCHANGED_UPSTREAM_STRATEGY', 'INDEPENDENT_ACCOUNT_PER_CANDIDATE', 'UNQUALIFIED_EXPLORATORY', 'UPSTREAM_RETURN_BASIS_NOT_ASSUMED_DAILY_EQUITY', 'MAXIMIZED_SHORT_SAMPLE_SHARPE_IS_NOT_ESTABLISHED_ANNUAL_RETURN'] };
   return { researchId: ref.researchId, name, data, request, target, defaults: numericLeaves(request), view };
 }
 function effectivePoint(source: RetainedSource, parameters: ParameterValues) {
@@ -174,7 +174,14 @@ function resultTrial(trial: ScanTrial, child: TaskRecord<unknown, unknown, unkno
     const value = object(outcome.result, 'parameter_scan_result');
     const summary = value;
     const metrics = trialMetrics(summary);
-    return { ...trial, status: 'COMPLETED', metrics, metric: selectedMetric(metrics, objective), sampleCounts: sampleCounts(summary), details: { ...(trial.details ?? {}), instrumentDefinition: value.instrument_definition ?? null }, error: null };
+    const report = object(value.canonical_result, 'native_strategy_report');
+    const nativeOutcome = object(report.run, 'native_strategy_run').outcome;
+    const complete = nativeOutcome === 'completed';
+    return { ...trial, status: complete ? 'COMPLETED' : 'STOPPED', metrics,
+      metric: complete ? selectedMetric(metrics, objective) : unavailable('native_run_stopped_before_completion', objective),
+      sampleCounts: sampleCounts(summary), details: { ...(trial.details ?? {}), instrumentDefinition: value.instrument_definition ?? null,
+        nativeRun: report.run!, notes: value.notes ?? null, dataRowsByType: value.data_rows_by_type ?? null },
+      error: complete ? null : 'native_run_stopped_before_completion' };
   }
   const detail = 'error' in outcome ? classifyExecutionError(outcome.error?.message, 'scientific_execution_failed', outcome.error?.detail && typeof outcome.error.detail === 'object' && !Array.isArray(outcome.error.detail) ? outcome.error.detail : undefined) : null;
   return { ...trial, status: outcome.status === 'aborted' ? 'STOPPED' : 'FAILED', error: detail?.code ?? (outcome.status === 'aborted' ? null : 'parameter_scan_trial_failed'), ...(detail ? { details: json({ error: detail }) } : {}) };
@@ -485,7 +492,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
       const ordinal = fact.grid.axes.reduce((result, axis) => result * BigInt(axis.count) + indices.get(axis.key)!, 0n).toString();
       const point = parameterScanPoint(fact.grid, ordinal); const trial = byOrdinal.get(ordinal);
       cells.push({ ordinal, x: xv, y: yv, status: point.skipReason ? 'SKIPPED' : trial?.status ?? (task.state.status === 'terminal' ? 'STOPPED' : 'PENDING'),
-        metric: trial ? selectedMetric(trial.metrics, chosenMetric) : null, reason: point.skipReason ?? trial?.error ?? null });
+        metric: trial ? trial.status === 'COMPLETED' ? selectedMetric(trial.metrics, chosenMetric) : unavailable(trial.error ?? 'native_run_incomplete', chosenMetric) : null, reason: point.skipReason ?? trial?.error ?? null });
     }
     return { x: { key: x.key, values: xs, offset: xOffset.toString(), total: x.count }, y: { key: y.key, values: ys, offset: yOffset.toString(), total: y.count }, fixed, metricId: chosenMetric, cells };
   }
