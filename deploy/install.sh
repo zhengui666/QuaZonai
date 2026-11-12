@@ -22,7 +22,7 @@ updates the Docker stack; macOS installs only the CLI. The source bootstrap
 selects the newest complete published dev release; release installers are pinned.
 --version latest selects the newest complete dev release explicitly.
 --no-backup skips only an update recovery point, never task-idle checks.
---skill-dir PATH links the same-release bundled skill; existing unmanaged paths are refused.
+--skill-dir PATH links the same-release bundled skill; unmanaged paths are refused; a matching QuaZonai skills-lock directory is updated in place.
 --cli-only skips the Linux stack. Existing installations retain their settings.
 Requires Bash 4.4+ for the Linux stack, Bash 3.2+ for CLI-only, curl, tar
 and standard Unix tools; no Python, Node.js or jq.
@@ -49,13 +49,7 @@ expand_home() {
 }
 directory=$(expand_home "$directory")
 bin_directory=$(expand_home "$bin_directory")
-if [ -n "$skill_directory" ]; then
-  skill_directory=$(expand_home "$skill_directory")
-  if [ -e "$skill_directory" ] || [ -L "$skill_directory" ]; then
-    [ -L "$skill_directory" ] || fail 'Skill path is unmanaged; choose a new --skill-dir without replacing existing files.'
-    case "$(readlink "$skill_directory")" in "$HOME/.local/share/quazonai-cli/releases/"*/skill) ;; *) fail 'Refusing to replace an unmanaged skill link.' ;; esac
-  fi
-fi
+skill_directory=$(expand_home "$skill_directory")
 valid_version() {
   [[ ${#1} -le 128 && "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || return 1
   if [[ "$1" == *-* ]]; then
@@ -77,7 +71,7 @@ if "$cli_only" && "$no_backup"; then fail '--no-backup applies only to a Docker 
 if ! "$cli_only"; then
   [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; } || fail 'The Linux Docker stack requires Bash 4.4 or newer. Upgrade Bash explicitly or use --cli-only.'
 fi
-for tool in curl tar awk sort cmp mktemp readlink ln rmdir; do
+for tool in curl tar awk sort cmp mktemp readlink ln rmdir find; do
   command -v "$tool" >/dev/null || fail "$tool is required."
 done
 work=$(mktemp -d)
@@ -189,6 +183,13 @@ json_read() {
   END {
     if(failed) exit 2
     p=1; root=parse(); ws(); if(p<=length(s)) bad()
+    if(mode=="skill-owner") {
+      if(kind[root]!="object") bad()
+      skills=prop(root,"skills"); entry=prop(skills,"quazonai")
+      if(kind[skills]!="object" || kind[entry]!="object") bad()
+      if(value[prop(entry,"source")]!="zhengui666/QuaZonai" || value[prop(entry,"sourceUrl")]!="https://github.com/zhengui666/QuaZonai.git" || value[prop(entry,"skillPath")]!=".agents/skills/quazonai/SKILL.md") bad()
+      printf "skills-lock"; exit
+    }
     if(mode=="field") {
       if(kind[root]!="object") bad(); node=prop(root,field)
       if(kind[node]!="string" || value[node] ~ /[[:cntrl:]]/) bad(); printf "%s",value[node]; exit
@@ -214,10 +215,62 @@ json_read() {
     printf "%s %s",count[root]+0,latest
   }' "$2"
 }
+# Recognize only the verified global skills-manager entry at its explicit
+# QuaZonai install paths. A lock is ownership evidence, not release identity.
+skill_target_mode() {
+  local target=$1
+  if [ ! -e "$target" ] && [ ! -L "$target" ]; then printf link; return; fi
+  if [ -L "$target" ]; then
+    case "$(readlink "$target")" in "$HOME/.local/share/quazonai-cli/releases/"*/skill) printf link; return;; esac
+    fail 'Refusing to replace an unmanaged skill link.'
+  fi
+  case "$target" in "$HOME/.codex/skills/quazonai"|"$HOME/.agents/skills/quazonai")
+    if [ -d "$target" ] && [ -f "$HOME/.agents/.skill-lock.json" ] && json_read skill-owner "$HOME/.agents/.skill-lock.json" >/dev/null; then
+      printf directory; return
+    fi;;
+  esac
+  fail 'Skill path is unmanaged; choose a new --skill-dir without replacing existing files.'
+}
+install_skill() {
+  local source=$1 target=$2 mode relative destination component parent temporary source_file
+  mode=$(skill_target_mode "$target")
+  if [ "$mode" = directory ]; then
+    # Preflight all destinations before changing a file; never follow a nested
+    # link outside the explicitly owned skill or erase owner-added files.
+    while IFS= read -r source_file; do
+      relative=${source_file#"$source/"}; destination=$target
+      local components=(); IFS=/ read -r -a components <<< "$relative"
+      for component in "${components[@]}"; do
+        destination="$destination/$component"
+        [ ! -L "$destination" ] || fail 'Managed skill contains a symlink at an updated path; preserve it for inspection.'
+        if [ "$destination" != "$target/$relative" ] && [ -e "$destination" ]; then
+          [ -d "$destination" ] || fail 'Managed skill parent path is not a directory.'
+        fi
+      done
+      [ ! -e "$destination" ] || [ -f "$destination" ] || fail 'Managed skill file path is occupied by a directory.'
+    done < <(find "$source" -type f)
+    while IFS= read -r source_file; do
+      relative=${source_file#"$source/"}; [ "$relative" != release.json ] || continue
+      destination="$target/$relative"; parent=$(dirname -- "$destination")
+      mkdir -p -- "$parent"; temporary=$(mktemp "$parent/.quazonai-skill.XXXXXX")
+      cp -- "$source_file" "$temporary"; mv -f -- "$temporary" "$destination"
+    done < <(find "$source" -type f)
+    # Publish release identity only after all shipped content was replaced.
+    temporary=$(mktemp "$target/.quazonai-skill.XXXXXX")
+    cp -- "$source/release.json" "$temporary"; mv -f -- "$temporary" "$target/release.json"
+  else
+    mkdir -p -- "$(dirname -- "$target")"
+    temporary=$(mktemp -d "$(dirname -- "$target")/.quazonai-skill.XXXXXX")
+    ln -s "$source" "$temporary/link"
+    if [ -L "$target" ]; then rm -- "$target"; fi
+    mv -- "$temporary/link" "$target"; rmdir "$temporary"
+  fi
+}
 fetch() {
   curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
     --retry 3 --connect-timeout 15 --max-time 600 --output "$2" "$1"
 }
+if [ -n "$skill_directory" ]; then skill_target_mode "$skill_directory" >/dev/null; fi
 unresolved='@QUAZONAI_''VERSION@'
 if [ "$version" = "$unresolved" ] || [ "$version" = latest ]; then
   page=1
@@ -313,12 +366,7 @@ chmod 755 "$staged"
 mv -f -- "$staged" "$bin_directory/quazonai"
 staged=''
 if [ -n "$skill_directory" ]; then
-  mkdir -p -- "$(dirname -- "$skill_directory")"
-  skill_link=$(mktemp -d "$(dirname -- "$skill_directory")/.quazonai-skill.XXXXXX")
-  ln -s "$cli_root/skill" "$skill_link/link"
-  # Remove only the previously verified managed symlink, never its target.
-  if [ -L "$skill_directory" ]; then rm -- "$skill_directory"; fi
-  mv -- "$skill_link/link" "$skill_directory"; rmdir "$skill_link"
+  install_skill "$cli_root/skill" "$skill_directory"
   printf 'Installed same-release skill from %s: %s\n' "$version" "$skill_directory"
 fi
 printf 'Installed bundled Node CLI from %s: %s/quazonai\n' "$version" "$bin_directory"

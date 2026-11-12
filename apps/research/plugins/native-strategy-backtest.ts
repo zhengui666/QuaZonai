@@ -1,6 +1,6 @@
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
-import { obj } from '@earendil-works/pi-schema';
+import { bool, obj, opt } from '@earendil-works/pi-schema';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -45,9 +45,9 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
 
 export const nativeStrategyBacktestTool = defineTool({
   name: 'native_strategy_backtest',
-  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS consumes QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy.',
-  parameters: obj({}), replay: 'safe', executionMode: 'sequential',
-  async execute(_args, api, context) {
+  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS consumes QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
+  parameters: obj({ finishResearch: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
+  async execute(args, api, context) {
     const input = await studyInput(api, context);
     const request = registeredNativeStrategyRequest(input);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
@@ -77,7 +77,7 @@ export const nativeStrategyBacktestTool = defineTool({
       study.final = { taskId: api.taskId, trialId: null, comparedTrials: [], status: 'COMPUTED',
         reason: 'explicit_native_strategy_backtest_completed', scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result };
     }, context);
-    return { output: [{ type: 'text', text: JSON.stringify(result) }], control: { terminate: true } };
+    return { output: [{ type: 'text', text: JSON.stringify(result) }], ...(args.finishResearch === true ? { control: { terminate: true } } : {}) };
   },
 });
 
@@ -114,4 +114,17 @@ export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; cata
 });
 
 
-export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask], tools: [nativeStrategyBacktestTool] });
+export const nativeStrategyBriefTool = defineTool({
+  name: 'native_strategy_brief',
+  description: 'Read the unchanged registered upstream strategy request, data binding and original research mandate before any backtest. This reads configuration only, no market data or performance. Use it to plan official parameter candidates, explicit fees, chronological validation and logic review. Source event/availability windows are not proof of complete observed coverage; use actual native data row counts and notes later. No currency conversion or inferred balance.',
+  parameters: obj({}), replay: 'safe',
+  async execute(_args, api, context) {
+    const input = await studyInput(api, context);
+    const request = registeredNativeStrategyRequest(input);
+    return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, specification: input.specification ?? null,
+      request, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
+      scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
+      limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
+  },
+});
+export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask], tools: [nativeStrategyBriefTool, nativeStrategyBacktestTool] });

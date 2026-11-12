@@ -14,9 +14,9 @@ import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
 // Exercise official Durable/HTTP ownership and receipts, not numerical backtest results.
-for (const behavior of ['recover', 'stop', 'mismatch', 'tool'] as const) test(`native upstream strategy ${behavior} retains a single original task and invocation`, { timeout: 20_000 }, async () => {
+for (const behavior of ['recover', 'stop', 'mismatch', 'tool', 'tool-finish'] as const) test(`native upstream strategy ${behavior} retains a single original task and invocation`, { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-indicator-batch-'));
-  const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let completed = behavior === 'mismatch' || behavior === 'tool';
+  const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let completed = behavior === 'mismatch' || behavior === 'tool' || behavior === 'tool-finish';
   const request: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM',
     selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }],
     event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000101', available_end_ns: '1790000000000000101',
@@ -45,11 +45,11 @@ for (const behavior of ['recover', 'stop', 'mismatch', 'tool'] as const) test(`n
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const models = createModels(); const faux = fauxProvider(); models.setProvider(faux.provider);
   const options = { database: join(directory, 'research.sqlite'), models };
-  if (behavior === 'tool') faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' })]);
+  if (behavior === 'tool' || behavior === 'tool-finish') faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', behavior === 'tool-finish' ? { finishResearch: true } : {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Historical result saved; no independent validation was requested.')]);
   let host = await openResearch(options);
   try {
     const root = await host.harness.root(context);
-    if (behavior === 'tool') {
+    if (behavior === 'tool' || behavior === 'tool-finish') {
       const { Study } = await import('../src/documents.ts');
       const admission = await host.start('exact-upstream', { goal: 'Evaluate this bound upstream strategy', model: { provider: faux.provider.id, modelId: faux.getModel().id },
         data: { catalog: directory, native_strategy_backtest_request: request, nautilusTarget: { id: 'strategy-protocol', url: `http://127.0.0.1:${address.port}` } }, policy: {} });
@@ -58,6 +58,7 @@ for (const behavior of ['recover', 'stop', 'mismatch', 'tool'] as const) test(`n
       assert.equal(study.final?.status, 'COMPUTED');
       assert.equal(study.final?.scientificClaim, 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
       assert.equal(study.trials.length, 0);
+      assert.equal(faux.state.callCount, behavior === 'tool-finish' ? 1 : 2, 'default continues the official loop; explicit standalone finish terminates');
       assert.equal(posts.length, 1); assert.deepEqual(posts[0]!.input, request);
       const originalPosts = structuredClone(posts); await host.close(); host = await openResearch(options);
       assert.deepEqual(await host.start('exact-upstream', study.input!), admission);

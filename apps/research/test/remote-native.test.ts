@@ -35,6 +35,7 @@ async function worker(handler: (request: IncomingMessage, response: ServerRespon
   return { target, host, execute: (command: string, input: NativeJson, args: string[], directory: string, context: Parameters<typeof executeNativeValue>[5]) => host.withNativeHost(() => executeNativeValue(target, command, input, args, directory, context)), close: async () => { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
+// Transport-only peer: attachment bytes are not an executable strategy or scientific result.
 test('remote science uploads original artifacts, keeps shared catalog paths and gives every invocation its own receipt', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-native-')); const requests: NativeExecutionRequest[] = [];
   const objectId = '00000000-0000-4000-8000-000000000001';
@@ -56,7 +57,7 @@ test('remote science uploads original artifacts, keeps shared catalog paths and 
     const input = { amount: '9007199254740993123', rows: Array.from({ length: 2048 }, (_, index) => ({
       clock: '1790000000000000001', index, label: '原生🐋',
     })) };
-    for (let i = 0; i < 2; i++) assert.deepEqual(await source.execute('study-portfolio', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
+    for (let i = 0; i < 2; i++) assert.deepEqual(await source.execute('simulate', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
     assert.notEqual(requests[0]!.requestId, requests[1]!.requestId, 'changed bytes at an owner-managed catalog path cannot be replaced by an old invocation');
     assert.deepEqual(requests[0]!.args, ['--catalog', '/shared/catalog', '--model', '@file:model-0', '--scope', '@file:scope-1', '--objects', '@objects:objects-2']);
     assert.deepEqual(Object.keys(requests[0]!.files), ['model-0', 'scope-1', `objects-2/${objectId}`]);

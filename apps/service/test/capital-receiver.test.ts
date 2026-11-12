@@ -10,13 +10,7 @@ import { capitalDecimalUnits, validateCapitalDocument } from '../../../packages/
 import type { CapitalExitView } from '../../../packages/contracts/src/capital-exit.ts';
 import type { ConnectionConfig } from '../src/config.ts';
 import { accountKey, capitalStatus, control } from '../src/capital-exit.ts';
-import { Application, json, nowNs, object, observation, nsTime } from '../src/facts.ts';
-import { captureAccount } from '../src/pm-account.ts';
-import { pmTargetAllocation, pmTargetPayload } from '../src/pm-target.ts';
-import { digest } from '../src/pm-facts.ts';
-import type { PmRecord } from '../src/pm-facts.ts';
-import type * as Pm from '../../../packages/contracts/src/pm.ts';
-import { downstreamRequest } from '../src/downstream.ts';
+import { Application, json, nowNs, object, observation } from '../src/facts.ts';
 import type { PortfolioFact } from '../src/facts.ts';
 import { context, setup } from './support.ts';
 
@@ -98,12 +92,9 @@ test('the real receiver and service share command receipts, account reservations
     }, context);
     const initial = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
       payload: { requestId: 'ordinary-initial-signal', portfolioId: sourceId, mode: 'paper', connectionId: connection.id } });
-    assert.equal(initial.statusCode, 202, initial.body);
-    await state.service.research.harness.waitForTask((await state.service.work.getObservation(initial.json().id)).taskId as TaskId, context);
-    assert.equal((await state.service.work.getObservation(initial.json().id)).view.receipt!.status, 'ACKNOWLEDGED');
-    const firstTarget = responses.find(row => row.method === 'POST' && row.path === '/targets')!;
-    assert.equal(object(firstTarget.body).allocation, undefined, 'An ordinary initial signal has no allocation envelope.');
-    assert.equal(calls.find(row => row.operation === 'TARGET')!.payload.capital, '900');
+    assert.equal(initial.statusCode, 410, initial.body);
+    assert.equal(initial.json().error, 'native_strategy_only');
+    assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
     const path = '/api/v3/observations/' + binding.json().id + '/capital-exits';
     const planning = await state.service.app.inject({ url: path + '/planning-context', headers: state.headers });
     assert.equal(planning.statusCode, 200, planning.body); assert.equal(planning.json().funds.free_cash.amount, '1000');
@@ -132,32 +123,10 @@ test('the real receiver and service share command receipts, account reservations
     assert.equal(capitalDecimalUnits(capitalStatus(reconciled).reserved), capitalDecimalUnits('200'), 'Native aggregate and a local START reservation are counted once after native status includes the command.');
     assert.equal(reconciled.status!.exits.length, 1);
 
-    // The PM target is an explicitly retained protocol sample, not a new scientific
-    // qualification. Its NAV weight must keep denominator E despite buffer and R.
+    // Retired signal delivery never interferes with the account-owned capital lifecycle.
     const refreshed = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations/' + binding.json().id + '/refresh', headers: state.headers });
     assert.equal(refreshed.statusCode, 200, refreshed.body);
-    const app = (await state.service.research.harness.snapshot(Application, context))!;
-    const source = observation(app.observations[binding.json().id]); const basis = captureAccount(app, binding.json().id).basis;
-    const expiry = String(BigInt(nowNs()) + 60_000_000_000n);
-    const signal = { schema_version: 1, asof_ns: nowNs(), valid_until_ns: expiry, cash_weight: '0.5',
-      targets: [{ instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', currency: 'USDC', weight: '0.5' }] };
-    const decision = { id: 'retained-pm-decision', basisRevision: 'retained-pm-basis', policyRevisionId: 'retained-pm-policy', validUntilNs: expiry,
-      accountBasis: basis, explanationFacts: { nativeTargetEvidenceRef: 'retained-pm-target' },
-      assetTargets: [{ instrumentId: 'HYPE-USDC-SPOT.HYPERLIQUID', targetNotional: { amount: '500', currency: 'USDC' }, navWeight: '0.5' }],
-      capital: { equity: { amount: '1000', currency: 'USDC' }, deployableBudget: { amount: '900', currency: 'USDC' },
-        committedCapital: { amount: '500', currency: 'USDC' }, ownerLiquidityReserve: { amount: '100', currency: 'USDC' } } } as unknown as Pm.PortfolioDecision;
-    const record = { evidence: { 'retained-pm-target': { sourceKind: 'NATIVE_RESULT', contentDigest: digest(signal), sourceRevision: decision.basisRevision, objectKey: 'retained-pm-target', availableAtNs: '1' } },
-      artifacts: { 'retained-pm-target': signal } } as unknown as PmRecord;
-    const allocation = pmTargetAllocation(record, decision, source, app.accountControls);
-    assert.equal(capitalDecimalUnits(allocation.budget), capitalDecimalUnits('700')); assert.equal(capitalDecimalUnits(allocation.capital), capitalDecimalUnits('500'));
-    assert.equal(object(allocation.capitalExit).signalCapital, '1000'); assert.deepEqual(object(allocation.capitalExit).signalTarget, signal);
-    const pmReceipt = await downstreamRequest(connection, 'targets', 'POST', { id: 'retained-pm-target-receipt', clientId: options.clientId, accountId: options.accountId,
-      expiresAt: nsTime(expiry), target: pmTargetPayload(record, decision), allocation });
-    assert.equal(pmReceipt.status, 'ACKNOWLEDGED');
-    const nativeTarget = calls.filter(row => row.operation === 'TARGET').at(-1)!;
-    assert.equal(nativeTarget.payload.signal_capital, '1000'); assert.equal(nativeTarget.payload.capital, '500');
-    assert.equal(capitalDecimalUnits(object((nativeTarget.payload.weights as unknown[])[0]).weight) * capitalDecimalUnits(nativeTarget.payload.signal_capital) / (10n ** 18n), capitalDecimalUnits('500'));
-
+    assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
 
     const ready = await until(async () => {
       const response = await state.service.app.inject({ url: path, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);
@@ -200,12 +169,12 @@ test('the real receiver and service share command receipts, account reservations
     // A historical closed exit may retain its last fence fact. It does not remain an active obligation.
     const nextSignal = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
       payload: { requestId: 'ordinary-signal-after-close', portfolioId: sourceId, mode: 'paper', connectionId: connection.id } });
-    assert.equal(nextSignal.statusCode, 202, nextSignal.body);
-    await state.service.research.harness.waitForTask((await state.service.work.getObservation(nextSignal.json().id)).taskId as TaskId, context);
-    assert.equal((await state.service.work.getObservation(nextSignal.json().id)).view.receipt!.status, 'ACKNOWLEDGED');
-    assert.equal(calls.filter(row => row.operation === 'TARGET').at(-1)!.payload.capital, '900');
+    assert.equal(nextSignal.statusCode, 410, nextSignal.body);
+    assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
+    const retained = (await state.service.research.harness.snapshot(Application, context))!;
+    assert.ok(retained.portfolios[sourceId], 'Retiring execution preserves historical source facts.');
     assert.ok(calls.some(row => row.operation === 'CONTROL')); assert.ok(calls.some(row => row.operation === 'CANCEL_EXIT'));
-    assert.ok(calls.every(row => ['SNAPSHOT', 'CONTROL', 'CANCEL_EXIT', 'TARGET'].includes(row.operation)));
+    assert.ok(calls.every(row => ['SNAPSHOT', 'CONTROL', 'CANCEL_EXIT'].includes(row.operation)));
     assert.equal(responses.filter(row => row.method === 'POST' && row.path === '/capital-exits').length, 1);
   } finally { await remote.close(); await receiver.close(); await state.cleanup(); }
 });

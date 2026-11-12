@@ -197,8 +197,11 @@ remain available as release assets. Every CLI archive includes `skill/` from the
 same release source revision, with `skill/release.json` recording its identity.
 To install that skill at an explicitly chosen path, pass
 `--skill-dir "$HOME/.agents/skills/quazonai"` to the installer. Existing unmanaged
-skill directories are refused rather than replaced; choose an unused path or
-manage your existing skill explicitly.
+skill directories are refused rather than replaced. A QuaZonai directory at
+`~/.codex/skills/quazonai` or `~/.agents/skills/quazonai` with matching repository
+ownership in `~/.agents/.skill-lock.json` is updated in place: shipped files are
+replaced, owner-added files and the global lock remain untouched. The installed
+`release.json`, not the older skills-manager ref, records the actual release.
 
 For updates, use the target release installer with the same installation owner
 and original `--directory`. Preserve the installation root, configuration,

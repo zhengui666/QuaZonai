@@ -21,7 +21,7 @@ test('an interrupted native parent reuses its original sleeping execution and im
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
     if (request.url === '/v1/capabilities') {
-      response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: ['allocate'] })); return;
+      response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: ['validate-capital-exit'] })); return;
     }
     if (request.method === 'POST') {
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -41,11 +41,11 @@ test('an interrupted native parent reuses its original sleeping execution and im
     name: 'qz.test.native-parent', version: 1, initial: () => ({ phase: 'compute' }),
     phases: { async compute(task, runtime, ctx) {
       if (await runtime.memo('preparation', ctx) !== true) {
-        await withNativeRemoteTracking(task.id, runtime, ctx, () => Promise.all([0, 1].map(() => executeNativeValue(target, 'allocate', { mode: 'warmup' }, [], directory, ctx))));
+        await withNativeRemoteTracking(task.id, runtime, ctx, () => Promise.all([0, 1].map(() => executeNativeValue(target, 'validate-capital-exit', { mode: 'warmup' }, [], directory, ctx))));
         await runtime.memo('preparation', true, ctx);
       }
       await withNativeRemoteTracking(task.id, runtime, ctx, async () => {
-        const result = await executeNativeValue(target, 'allocate', { capital: '10' }, [], directory, ctx);
+        const result = await executeNativeValue(target, 'validate-capital-exit', { capital: '10' }, [], directory, ctx);
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: result as JsonObject } }), ctx);
       });
     } },
@@ -78,7 +78,7 @@ test('an interrupted native parent reuses its original sleeping execution and im
     assert.equal(refs!.requests.length, 2, 'concurrent callers retain only sent invocation references');
     const after = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
     assert.deepEqual(after.items.map(item => item.id), before.items.map(item => item.id));
-    const large = await host.withNativeHost(() => executeNativeValue(target, 'allocate', { mode: 'large' }, [], directory, context)) as JsonObject;
+    const large = await host.withNativeHost(() => executeNativeValue(target, 'validate-capital-exit', { mode: 'large' }, [], directory, context)) as JsonObject;
     assert.equal((large.blob as string).length, 2 * 1024 * 1024);
     const retained = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution', order: 'descending' }, 10), context);
     assert.equal(retained.items.length, 3);
@@ -94,7 +94,7 @@ test('parallel explicit service scopes keep two Harnesses isolated and reject an
   let posts = 0;
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: ['allocate'] })); return; }
+    if (request.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: ['validate-capital-exit'] })); return; }
     posts++; const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const value = JSON.parse(Buffer.concat(chunks).toString()) as NativeExecutionRequest;
     response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, status: 'COMPLETED', result: value.input }));
@@ -108,7 +108,7 @@ test('parallel explicit service scopes keep two Harnesses isolated and reject an
   try {
     const values = await Promise.all([first, second].map((host, index) => host.withNativeHost(async () => {
       await Promise.resolve();
-      return executeNativeValue(target, 'allocate', { owner: index }, [], '/unused', context);
+      return executeNativeValue(target, 'validate-capital-exit', { owner: index }, [], '/unused', context);
     })));
     assert.deepEqual(values, [{ owner: 0 }, { owner: 1 }]);
     for (const [index, host] of [first, second].entries()) {
@@ -117,10 +117,10 @@ test('parallel explicit service scopes keep two Harnesses isolated and reject an
       const input = tasks.items[0]!.input as JsonObject;
       assert.equal(((((input.request as JsonObject).request as JsonObject).input as JsonObject).owner), index);
     }
-    await assert.rejects(executeNativeValue(target, 'allocate', {}, [], '/unused', context), /native_harness_required/);
+    await assert.rejects(executeNativeValue(target, 'validate-capital-exit', {}, [], '/unused', context), /native_harness_required/);
     assert.equal(posts, 2);
     const large = { payload: 'r'.repeat(2 * 1024 * 1024) };
-    assert.deepEqual(await first.withNativeHost(() => executeNativeValue(target, 'allocate', large, [], '/unused', context)), large);
+    assert.deepEqual(await first.withNativeHost(() => executeNativeValue(target, 'validate-capital-exit', large, [], '/unused', context)), large);
     const records = await first.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution', order: 'descending' }, 10), context);
     assert.ok(JSON.stringify(records.items[0]!.input).length < 1000, 'large native requests remain complete immutable references in the task');
   } finally {

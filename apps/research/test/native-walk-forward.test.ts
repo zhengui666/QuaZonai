@@ -43,8 +43,8 @@ test('walk-forward evidence binds original strategies, chronology, availability 
   }
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
-  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped'].includes(behavior);
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain'].includes(behavior);
   const neighbourStrategies = [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }];
   const costs = [{ maker_fee: '0', taker_fee: behavior === 'same-cost' ? '0.0010' : '0.002' }];
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-walk-forward-'));
@@ -77,7 +77,9 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       }
       const review = behavior === 'reviewed' || behavior === 'changed' || withSensitivity;
       faux.setResponses([
+        ...(behavior === 'full-chain' ? [fauxAssistantMessage(fauxToolCall('native_strategy_brief', {}), { stopReason: 'toolUse' })] : []),
         ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' ? strategies : [source.strategy], ...(withSensitivity ? { validationMethod: { split: request.split, objective: request.objective, neighbourStrategies, costs: behavior === 'changed-method' ? [{ maker_fee: '0', taker_fee: '0.003' }] : costs } } : {}) }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
+        ...(behavior === 'full-chain' ? [fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' })] : []),
         ...(behavior === 'repeat' ? [fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective: request.objective }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective: request.objective }), { stopReason: 'toolUse' }),
         ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs }), { stopReason: 'toolUse' })] : []),
@@ -97,8 +99,8 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const task = await host.harness.getTask(assessment!.reportTaskIds[0]!, context);
       assert.equal(task?.state.outcome?.status, 'completed');
       if (task?.state.outcome?.status !== 'completed') assert.fail('report did not complete');
-      assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' ? 4 : null);
-      assert.equal(task.state.outcome.result.ratingStatus, behavior === 'rated' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
+      assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' || behavior === 'full-chain' ? 4 : null);
+      assert.equal(task.state.outcome.result.ratingStatus, behavior === 'rated' || behavior === 'full-chain' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
       assert.equal(evidence.trialHistory.scope, 'THIS_CONVERSATION_ONLY'); assert.equal(evidence.trialHistory.crossConversationCoverage, 'NOT_CHECKED');
@@ -112,7 +114,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         assert.equal(evidence.sensitivity.cases[0].nativeObjectiveValue, 1);
         assert.equal(evidence.ratingReadiness.notTradingPermission, true);
         assert.ok(evidence.ratingReadiness.limitations.includes('CPCV_NOT_RUN'));
-        assert.equal(evidence.ratingReadiness.eligible, behavior === 'rated' || behavior === 'insufficient');
+        assert.equal(evidence.ratingReadiness.eligible, behavior === 'rated' || behavior === 'insufficient' || behavior === 'full-chain');
         if (behavior === 'same-cost') assert.ok(evidence.ratingReadiness.reasons.includes('COST_VARIATION_EVIDENCE_MISSING'));
         if (behavior === 'changed-method') assert.ok(evidence.ratingReadiness.reasons.includes('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW'));
         if (behavior === 'failed-cost') { assert.equal(evidence.sensitivity.cases[2].status, 'failed'); assert.equal(evidence.sensitivity.cases[2].error, 'actual_cost_case_failed'); }
@@ -145,6 +147,14 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
 
       }
       if (review) assert.equal(evidence.dataValidation.logicCoverage, behavior === 'reviewed' || withSensitivity ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW');
+      if (behavior === 'full-chain') {
+        const study = await host.harness.snapshot(Study, receipt.conversationId, context);
+        assert.equal(study!.final!.scientificClaim, 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
+        assert.deepEqual((study!.final!.result as any).request, source);
+        assert.equal(evidence.historicalNativeExecution.status, 'completed');
+        const logic = await host.harness.getTask(assessment!.logicTaskId!, context);
+        assert.ok(logic!.id < evidence.historicalNativeExecution.taskId);
+      }
       if (behavior === 'history') assert.equal((task.state.outcome.result.evidence as any).historicalNativeExecution.status, 'completed', 'newer walk-forward does not hide a real ordinary backtest');
     } else {
       const root = await host.harness.root(context);
@@ -163,7 +173,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         const result = await host.harness.waitForTask(id, context); assert.equal(result.state.outcome.status, 'completed');
       }
     }
-    assert.equal(posts.length, withSensitivity ? 4 : behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.find(post => post.command === 'native-walk-forward')!.input, planned);
+    assert.equal(posts.length, behavior === 'full-chain' ? 5 : withSensitivity ? 4 : behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.find(post => post.command === 'native-walk-forward')!.input, planned);
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 

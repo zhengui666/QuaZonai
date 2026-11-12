@@ -91,7 +91,7 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     await assert.rejects(run(['research', 'start', '--file', file]), (error: unknown) => { assert.equal((error as { code: string }).code, 'request_id_conflict'); assert.equal(String(error).includes(fakeToken), false); return true; });
     await assert.rejects(run(['research', 'start', '--file', file, '--request-id', 'new-key']), /request_id_conflict/);
     assert.equal(sent.length, 3);
-    const observation = join(config.directory, 'observation.json'); await writeFile(observation, '{"requestId":"o-original","portfolioId":"p-1","connectionId":"binding","mode":"paper"}');
+    const observation = join(config.directory, 'observation.json'); await writeFile(observation, '{"requestId":"o-original","purpose":"ACCOUNT_ONLY","connectionId":"binding","mode":"paper"}');
     const settings = join(config.directory, 'settings.json'); await writeFile(settings, '{"defaultModel":{"provider":"faux","modelId":"x"},"thinkingLevel":null}');
     for (const args of [['research', 'models'], ['research', 'list', '--cursor', '{"id":4}'], ['research', 'stop', '42'], ['observation', 'start', '--file', observation], ['observation', 'get', 'o-1'], ['settings', 'set', '--file', settings], ['extensions', 'disable', 'qz.research-native']]) await run(args, (value) => { output.push(value); });
     assert.deepEqual(sent.slice(3).map(({ method, url }) => [method, url]), [
@@ -104,7 +104,7 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     }
     for (const cores of ['0', '1.2', '-1']) await assert.rejects(run(['settings', 'set', `--tick-book-cores=${cores}`]), /tick_book_cores_invalid/);
     assert.ok((await schemas() as { names: string[] }).names.includes('ResearchStart'));
-    assert.ok((await schemas('NativeIndicatorStrategyRequestV1', true) as { schema: unknown }).schema);
+    assert.ok((await schemas('NativeStrategyBacktestRequestV1', true) as { schema: unknown }).schema);
   } finally { await config.close(); await api.close(); }
 });
 
@@ -229,11 +229,11 @@ test('native research and account-control commands preserve original file bytes 
     await assert.rejects(run(['capital', 'get', 'o-original', 'exit-original', 'extra'], () => {}), /unexpected_argument/);
     await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
     const command = '{"requestId":"command-original","action":"START","previewId":"native-original"}\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
-    const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); await run(['observation', 'automatic', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, policy);
+    const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); const sentBeforeRetired = sent.length; await assert.rejects(run(['observation', 'automatic', 'o-original', '--file', file], () => {}), /unknown_observation_command/); assert.equal(sent.length, sentBeforeRetired);
     assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
       ['GET', '/api/v3/observations/o-original/capital-exits'],
       ['GET', '/api/v3/observations/o-original/capital-exits/planning-context'], ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
-      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'], ['POST', '/api/v3/observations/o-original/automatic'],
+      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'],
     ]);
   } finally { await config.close(); await api.close(); }
 });
@@ -347,7 +347,7 @@ test('research goal flags reject retired execution quota options before admissio
   } finally { await config.close(); await api.close(); }
 });
 
-test('observation CLI preserves explicit native brackets and exposes cancellation', async () => {
+test('observation CLI rejects retired portfolio admission but preserves account binding and protection cancellation', async () => {
   const sent: { method: string; url: string; bytes: string }[] = [];
   const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { settled: false }); });
   const config = await configuration(api.origin); const file = join(config.directory, 'bracket.json');
@@ -357,8 +357,12 @@ test('observation CLI preserves explicit native brackets and exposes cancellatio
     } });
     await writeFile(file, bytes);
     assert.match(JSON.stringify(await schemas('NativeTargetBrackets')), /NativeTargetBrackets/);
+    await assert.rejects(run(['observation', 'start', '--file', file], () => {}), /native_strategy_only_account_binding_required/);
+    assert.equal(sent.length, 0);
+    const account = '{ "requestId":"account-original", "purpose":"ACCOUNT_ONLY", "connectionId":"paper", "mode":"paper" }\n';
+    await writeFile(file, account);
     await run(['observation', 'start', '--file', file], () => {});
-    assert.equal(sent[0]!.bytes, bytes);
+    assert.equal(sent[0]!.bytes, account);
     await run(['observation', 'cancel-protection', 'original/observation'], () => {});
     assert.equal(sent[1]!.method, 'POST');
     assert.equal(sent[1]!.url, '/api/v3/observations/original%2Fobservation/cancel-protection');

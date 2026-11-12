@@ -13,7 +13,8 @@ ${literatureInstructions}`;
 export function researchExtension(search?: Parameters<typeof literatureTools>[0]) {
   return defineExtension({ name: 'qz.research', sections: [section('research', () => instructions)],
     hooks: [hook(ToolTask, { async afterTool(_call, result, api, context) {
-      if ((await api.snapshot(Study, api.conversationId, context))?.final) return { ...result, control: { ...result.control, terminate: true } };
+      const final = (await api.snapshot(Study, api.conversationId, context))?.final;
+      if (final && final.scientificClaim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION') return { ...result, control: { ...result.control, terminate: true } };
     } })], tools: [
     ...literatureTools(search),
     defineTool({
