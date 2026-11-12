@@ -216,7 +216,7 @@ impl NativeCapitalExitOwner {
             stable_volume,
             &binding.managed_account_key,
             &binding.owner_binding_ref,
-            &account_id.to_string(),
+            account_id.as_ref(),
         )?;
         let check_runtime = Box::new(move || {
             let trader = trader

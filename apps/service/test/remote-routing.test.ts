@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
 import type { ConnectionConfig } from '../src/config.ts';
-import { built, settledObservation, setup } from './support.ts';
+import { retainTarget } from './retained-target.ts';
+import { built, setup } from './support.ts';
 
 // These independent HTTP peers exercise routing and retained receipts only.
 // Neither peer owns a broker account or submits financial orders.
@@ -23,7 +24,7 @@ async function peer(mode: 'paper' | 'live', suffix: string) {
   const url = await app.listen({ host: '127.0.0.1', port: 0 });
   const connection: ConnectionConfig = { id: `instance-${mode}`, name: `${mode} controlled peer`, mode, url,
     clientId: identity.clientId, accountId: identity.accountId };
-  return { app, requests, connection };
+  return { app, requests, connection, retain(value: Record<string, unknown>) { offered = value; } };
 }
 
 test('paper and live retain distinct remote instances across configuration changes and restart', { timeout: 30_000 }, async () => {
@@ -36,14 +37,15 @@ test('paper and live retain distinct remote instances across configuration chang
     const { view } = await built(state); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     const wrongMode = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
       payload: { requestId: 'wrong-instance-purpose', portfolioId: view.id, mode: 'live', connectionId: paper.connection.id } });
-    assert.equal(wrongMode.statusCode, 422); assert.equal(wrongMode.json().error, 'connection_not_configured');
+    assert.equal(wrongMode.statusCode, 410); assert.equal(wrongMode.json().error, 'native_strategy_only');
     assert.deepEqual(paper.requests, []); assert.deepEqual(live.requests, []);
     const ids: string[] = [];
     for (const remote of [paper, live]) {
-      const started = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
-        payload: { requestId: `original-${remote.connection.mode}`, portfolioId: view.id, mode: remote.connection.mode, connectionId: remote.connection.id } });
-      assert.equal(started.statusCode, 202, started.body);
-      const observed = await settledObservation(state.service, started.json().id); ids.push(observed.id);
+      const retained = await retainTarget(state, remote.connection, view.id);
+      remote.retain(retained);
+      const response = await state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${retained.observationId}/refresh`, headers: state.headers });
+      assert.equal(response.statusCode, 200, response.body);
+      const observed = response.json(); ids.push(observed.id);
       assert.equal(observed.status, 'OBSERVING', observed.error ?? '');
       assert.equal(observed.receipt?.externalId, `${remote.connection.mode}-original-receipt`);
       assert.equal(observed.equity, remote === paper ? '1000' : '2000');

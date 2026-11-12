@@ -82,6 +82,11 @@ export async function requireIdle(configPath) {
           throw new Error(`Unresolved downstream allocation ${fact.view?.id ?? 'unknown'} in ${path}; reconcile its original external receipt first.`);
         }
       }
+      for (const [id, command] of Object.entries(application.strategyCommands ?? {})) {
+        if (['PENDING', 'UNCERTAIN'].includes(command.status) || command.receipt?.persisted === false || ['PENDING', 'UNCERTAIN'].includes(command.receipt?.status)) {
+          throw new Error(`Unresolved native strategy command ${id} in ${path}; reconcile its original command receipt, not the current strategy status.`);
+        }
+      }
       for (const [id, account] of Object.entries(application.accountControls ?? {})) {
         for (const [requestId, command] of Object.entries(account.commands ?? {})) if (['PENDING', 'UNCERTAIN'].includes(command.state)) {
           throw new Error(`Unresolved capital command ${id}:${requestId} in ${path}; reconcile its original external receipt first.`);

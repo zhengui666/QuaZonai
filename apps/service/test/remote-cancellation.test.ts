@@ -1,4 +1,3 @@
-import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -6,13 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask, defineTool, MemoryStorage } from '@earendil-works/pi-durable';
+import { createModels, fauxProvider } from '@earendil-works/pi-ai';
+import { defineExtension, defineTask, MemoryStorage } from '@earendil-works/pi-durable';
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
-import { openResearch } from '../../research/src/host.ts';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
-import { implementationIdentity } from '../src/pm-science.ts';
+import { remoteNativeCapabilities, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { openRetainedResearch as openResearch } from '../../research/test/frozen-input.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 
 const digest = `sha256:${'c'.repeat(64)}`;
 function signal() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
@@ -42,7 +40,7 @@ async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T>
   })]); } finally { if (timer) clearTimeout(timer); }
 }
 
-test('PM implementation identity and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
+test('Native capabilities and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-helper-capabilities-abort-'));
   const host = await explicitHost(directory);
   try {
@@ -53,7 +51,7 @@ test('PM implementation identity and scientific execution interrupt a connected 
         // Connected, but no headers/body: a connect timeout cannot end this wait.
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
-      const operation = host.withNativeHost(() => helper === 'implementation' ? implementationIdentity(source.target, context)
+      const operation = host.withNativeHost(() => helper === 'implementation' ? remoteNativeCapabilities(source.target, context.abortSignal)
         : executeNative(source.target, 'size-account', {}, [], directory, context));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {
@@ -95,7 +93,7 @@ test('scientific execution forwards task abort and cancels only the accepted ori
   } finally { await host.close(); await source.close(); await settled; await rm(directory, { recursive: true, force: true }); }
 });
 
-test('unanswered scientific cancellation retains the original reference through Durable stop and reopen', { timeout: 15_000 }, async t => {
+test('unanswered scientific cancellation retains the original reference through Durable task abort and reopen', { timeout: 15_000 }, async t => {
   const actualTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
   // Leave time for the real loopback DELETE to reach the peer under concurrent CI work.
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 100 : milliseconds); });
@@ -121,20 +119,20 @@ test('unanswered scientific cancellation retains the original reference through 
     } },
     async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
   });
-  const extension = defineExtension({ name: 'test.capital-remote-stop', tasks: [validation], tools: [defineTool({
-    name: 'validate_capital', description: 'Controlled capital validation transport', parameters: obj({}), replay: 'safe',
-    async execute(_args, api, context) {
-      const id = await api.commit(tx => tx.createTask(validation, { target: source.target }, { ownership: { kind: 'task', taskId: api.taskId } }), context);
-      await api.waitForTask(id, context); return {};
-    },
-  })] });
-  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('validate_capital', {}), { stopReason: 'toolUse' })]);
+  // Exercise the real Durable task directly, without depending on an unrelated
+  // model tool allowlist or inventing a scientific result.
+  const extension = defineExtension({ name: 'test.capital-remote-stop', tasks: [validation] });
+  const models = createModels(); models.setProvider(fauxProvider().provider);
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [extension] };
   let host = await openResearch(options);
   try {
-    const started = await host.start('original-capital-remote-stop', { goal: 'Keep original remote validation reference', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });
-    await bounded(accepted.promise); await bounded(host.stop(started.conversationId));
+    const taskId = await host.harness.commit(async tx => {
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      return tx.createTask(validation, { target: source.target }, { conversationId: conversation.id, ownership: { kind: 'conversation' } });
+    }, BACKGROUND_CONTEXT);
+    await bounded(accepted.promise);
+    await bounded(host.harness.abortTask(taskId, BACKGROUND_CONTEXT));
+    await bounded(host.harness.waitForTask(taskId, BACKGROUND_CONTEXT));
     const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'test.capital-remote-validation' }, 10), BACKGROUND_CONTEXT);
     assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
     assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1); assert.ok(deadlines.includes(15_000));

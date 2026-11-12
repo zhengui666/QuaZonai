@@ -14,6 +14,7 @@ pub fn count(value: u64) -> DbCounter {
 }
 pub fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: None,
         schema_version: SchemaV1,
         base_currency: "USD".into(),
@@ -184,7 +185,7 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
             total_fuel: Some(count(100_000)),
         },
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.68.0".into()),
+            ("nautilus-backtest".into(), "0.69.0".into()),
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),

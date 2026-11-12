@@ -2,8 +2,10 @@
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
 #[cfg(feature = "market-history")]
 pub mod aggregation;
+pub mod coverage;
 pub mod currencies;
 mod file_batches;
+pub mod inspect;
 pub mod publish;
 pub use file_batches::{file_batch_session, FileBatchSession};
 
@@ -221,7 +223,7 @@ pub fn measure_catalog(
 pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
     Ok(NativeDataQualityReportV1 {
         schema_version: SchemaV1,
-        native_version: "nautilus-persistence/0.68.0".into(),
+        native_version: "nautilus-persistence/0.69.0".into(),
         checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
             .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
         datasets,
@@ -425,47 +427,6 @@ fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> 
     Ok(bars)
 }
 
-/// Factor statistics need observed prices/volume, not invented trading definitions.
-/// Simulation and calibrated forecasts continue to use load_catalog.
-pub(crate) fn load_price_bars(
-    root: &Path,
-    selection: &NativeBarSelectionV1,
-) -> Result<Vec<(BarType, Vec<Bar>)>> {
-    let types = selected_types(selection)?;
-    let catalog = open_catalog(root)?;
-    let mut series = types
-        .into_iter()
-        .map(|kind| (kind, Vec::<Bar>::new()))
-        .collect::<Vec<_>>();
-    let indices = series
-        .iter()
-        .enumerate()
-        .map(|(index, (kind, _))| (kind.to_string(), index))
-        .collect::<BTreeMap<_, _>>();
-    for bar in read_bars(&catalog, selection)? {
-        let index = indices
-            .get(&bar.bar_type.to_string())
-            .ok_or_else(|| anyhow::anyhow!("CATALOG_UNREQUESTED_BAR_TYPE"))?;
-        let event = bar.ts_event.as_u64();
-        let available = bar.ts_init.as_u64();
-        ensure!(
-            event <= available && available <= selection.decision_cutoff_ns.get(),
-            "CATALOG_TIME_INVALID"
-        );
-        if event < selection.event_start_ns.get() || event >= selection.event_end_ns.get() {
-            continue;
-        }
-        let bars = &mut series[*index].1;
-        validate_price_bar(&bar, bars.last())?;
-        bars.push(bar);
-    }
-    ensure!(
-        series.iter().all(|(_, bars)| !bars.is_empty()),
-        "CATALOG_EMPTY_SELECTION"
-    );
-    Ok(series)
-}
-
 pub(crate) fn validate_price_bar(bar: &Bar, previous: Option<&Bar>) -> Result<()> {
     if bar.bar_type.is_internally_aggregated() {
         ensure!(
@@ -590,3 +551,22 @@ fn validate_native_mode(
         fee_selection: None,
     })
 }
+
+/// Validate supplied owner metadata without scientific scoring.
+pub fn validate_source(
+    request: &contracts::review_science::NativeReviewSourceRequestV1,
+) -> Result<contracts::review_science::NativeReviewSourceResultV1> {
+    let metadata: contracts::catalogs::RuntimeCatalogMetadataV1 =
+        serde_json::from_value(request.metadata.clone())?;
+    domain::catalogs::metadata(&metadata, request.observed_at)?;
+    domain::execution::native_quality(&metadata.quality)?;
+    Ok(contracts::review_science::NativeReviewSourceResultV1 {
+        schema_version: contracts::SchemaV1,
+        method_version: "qz.review-source.v1".into(),
+        validated: true,
+        metadata: request.metadata.clone(),
+    })
+}
+
+mod scope;
+pub use scope::catalog_factor_scope;

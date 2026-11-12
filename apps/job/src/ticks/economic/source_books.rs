@@ -536,15 +536,13 @@ impl Hour {
                         name == "transaction_time" && matches!(value, parquet::record::Field::Null)
                     })
                 };
-                if index == 0 {
-                    if source.observed && received == self.at && transaction_null(&row) {
-                        self.checkpoint = Some(CarryCheckpoint {
-                            event,
-                            received,
-                            rows: 0,
-                            all_transaction_null: true,
-                        });
-                    }
+                if index == 0 && source.observed && received == self.at && transaction_null(&row) {
+                    self.checkpoint = Some(CarryCheckpoint {
+                        event,
+                        received,
+                        rows: 0,
+                        all_transaction_null: true,
+                    });
                 }
                 if let Some(checkpoint) = &mut self.checkpoint {
                     if (checkpoint.event, checkpoint.received) == (event, received) {
@@ -593,6 +591,7 @@ pub(super) struct RawBooks {
     carry_rows: u64,
 }
 impl RawBooks {
+    #[cfg(test)]
     pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
         Self::open_indexed(source(root)?, id, start, end)
     }
@@ -695,6 +694,115 @@ impl RawBooks {
             });
         }
     }
+}
+
+/// Convert the existing published-hour source to an ordinary native catalog.
+/// Source files are read only; carry checkpoints remain validation-only, not new events.
+pub fn export_catalog(
+    root: &Path,
+    output: &Path,
+    start: u64,
+    end: u64,
+) -> Result<serde_json::Value> {
+    export_catalog_selected(root, output, start, end, &[])
+}
+
+pub fn export_catalog_selected(
+    root: &Path,
+    output: &Path,
+    start: u64,
+    end: u64,
+    selected: &[InstrumentId],
+) -> Result<serde_json::Value> {
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+    let header: Header = serde_json::from_reader(BufReader::new(File::open(
+        root.join("book-snapshots.source.json"),
+    )?))?;
+    let instruments = crate::catalog::currencies::instruments_from_value(header.instrument_source)?;
+    let indexed = source(root)?;
+    let requested = selected.iter().copied().collect::<BTreeSet<_>>();
+    for id in &requested {
+        ensure!(
+            instruments.iter().any(|instrument| instrument.id() == *id),
+            "PUBLISHED_BOOK_INSTRUMENT_UNKNOWN: {id}"
+        );
+        ensure!(
+            indexed.instruments.contains(id),
+            "PUBLISHED_BOOK_INSTRUMENT_UNSUPPORTED: {id}"
+        );
+    }
+    let instruments = instruments
+        .into_iter()
+        .filter(|instrument| requested.is_empty() || requested.contains(&instrument.id()))
+        .collect::<Vec<_>>();
+    let exported_ids = instruments
+        .iter()
+        .map(|instrument| instrument.id().to_string())
+        .collect::<Vec<_>>();
+    // Publish only after all source reads and native writes succeeded. Existing data is never replaced.
+    ensure!(!output.exists(), "OUTPUT_MUST_BE_NEW");
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let staging = tempfile::tempdir_in(parent)?;
+    let catalog_root = staging.path().join("catalog");
+    std::fs::create_dir(&catalog_root)?;
+    crate::catalog::currencies::write(&catalog_root, &instruments)?;
+    let catalog = ParquetDataCatalog::new(&catalog_root, None, None, None, None);
+    catalog.write_instruments(instruments.clone())?;
+    let mut rows = 0u64;
+    let mut frames = 0u64;
+    let mut checkpoints = (0u64, 0u64);
+    for instrument in instruments {
+        if !indexed.instruments.contains(&instrument.id()) {
+            continue;
+        }
+        let before_frames = frames;
+        let mut books = RawBooks::open_indexed(indexed.clone(), instrument.id(), start, end)?;
+        // Native engines require the declared instrument precision. Existing parsing checks
+        // exact Decimal equality and refuses any value that would be rounded.
+        books.encoding = Encoding::new(instrument.id(), Some(&instrument), false)?;
+        let mut pending = Vec::new();
+        while let Some(snapshot) = books.next()? {
+            frames += 1;
+            rows += snapshot.deltas.deltas.len() as u64;
+            pending.extend(snapshot.deltas.deltas);
+            // Flush only complete F_LAST batches, preserving the original pair of clocks.
+            if pending.len() >= 100_000 {
+                catalog.write_to_parquet(&pending, None, None, None)?;
+                pending.clear();
+            }
+        }
+        if !pending.is_empty() {
+            catalog.write_to_parquet(&pending, None, None, None)?;
+        }
+        if !requested.is_empty() {
+            ensure!(
+                frames > before_frames,
+                "PUBLISHED_BOOK_SELECTED_INSTRUMENT_EMPTY: {}",
+                instrument.id()
+            );
+        }
+        let counts = books.checkpoint_counts();
+        checkpoints.0 += counts.0;
+        checkpoints.1 += counts.1;
+    }
+    ensure!(frames > 0, "PUBLISHED_BOOK_SELECTION_EMPTY");
+    let report = serde_json::json!({
+        "native_catalog":"catalog", "instrument_ids":exported_ids, "available_start_ns":start.to_string(),
+        "available_end_ns":end.to_string(), "frames":frames,"rows":rows,
+        "validated_carry_snapshots":checkpoints.0,"validated_carry_rows":checkpoints.1,
+        "clock_semantics":"ORIGINAL_TS_EVENT_AND_PROVIDER_RECEIPT_TS_INIT",
+        "scope":"L2_ONLY_NO_SYNTHETIC_TRADES_QUOTES_OR_FUNDING"
+    });
+    std::fs::write(
+        staging.path().join("import.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    ensure!(!output.exists(), "OUTPUT_MUST_BE_NEW");
+    std::fs::rename(staging.path(), output)?;
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -933,6 +1041,17 @@ mod tests {
                 assert!(books.next().unwrap().is_none());
             }
             assert_eq!(books.checkpoint_counts(), (1, 2));
+            let output = root.path().join("exported");
+            let export = export_catalog(root.path(), &output, START, START + HOUR);
+            if only_checkpoint {
+                assert!(export.is_err());
+                assert!(!output.exists());
+            } else {
+                let report = export.unwrap();
+                assert_eq!(report["frames"], 1);
+                assert_eq!(report["validated_carry_snapshots"], 1);
+                assert_eq!(report["validated_carry_rows"], 2);
+            }
         }
     }
 
@@ -984,393 +1103,175 @@ mod tests {
     }
 
     #[test]
-    fn economic_book_predictions_use_research_root_with_independent_execution_books() {
-        use crate::ticks::cohort_cache;
-        use contracts::ticks::{
-            NativeTickAvailabilityV1, NativeTickFeatureProfileV1, NativeTickRepresentationV1,
-            NativeTickSamplingKindV1,
-        };
-        use nautilus_model::{
-            data::TradeTick,
-            enums::{AggressorSide, CurrencyType},
-            identifiers::{Symbol, TradeId},
-            instruments::CurrencyPair,
-            types::{Currency, Price, Quantity},
-        };
-        let (research_books, id) = source(false);
-        let (execution, _) = source(false);
-        replace_first_hour(
-            execution.path(),
-            &[
-                (START / 1_000_000 - 1, START + 123, "bid", "10.12", "1"),
-                (START / 1_000_000 - 1, START + 123, "ask", "10.13", "10"),
-            ],
-            "BTC_USDT",
-            None,
-            true,
-        );
-        let usdt0 = Currency::try_from_str("USDT0").unwrap_or_else(|| {
-            let currency = Currency::new("USDT0", 8, 0, "USDT0", CurrencyType::Crypto);
-            Currency::register(currency, false).unwrap();
-            currency
-        });
-        let bridge = InstrumentAny::CurrencyPair(
-            CurrencyPair::builder()
-                .instrument_id(InstrumentId::from("USDT0-USDC-SPOT.HYPERLIQUID"))
-                .raw_symbol(Symbol::new("BOOK-ROOT-TEST"))
-                .base_currency(usdt0)
-                .quote_currency(Currency::USDC())
-                .price_precision(3)
-                .size_precision(4)
-                .price_increment(Price::from("0.001"))
-                .size_increment(Quantity::from("0.0001"))
-                .ts_event(0_u64.into())
-                .ts_init(0_u64.into())
-                .build()
-                .unwrap(),
-        );
-        let path = research_books.path().join("book-snapshots.source.json");
-        let mut research_manifest: serde_json::Value =
-            serde_json::from_reader(File::open(&path).unwrap()).unwrap();
-        research_manifest["end_date"] = serde_json::json!("2026-01-04");
-        let mut instruments: Vec<InstrumentAny> =
-            crate::catalog::currencies::instruments_from_value(
-                research_manifest["instrument_source"].clone(),
-            )
-            .unwrap();
-        instruments.push(bridge.clone());
-        let execution_path = execution.path().join("book-snapshots.source.json");
-        let mut execution_manifest: serde_json::Value =
-            serde_json::from_reader(File::open(&execution_path).unwrap()).unwrap();
-        execution_manifest["end_date"] = serde_json::json!("2026-01-04");
-        execution_manifest["instrument_source"]["instruments"] =
-            serde_json::to_value(&instruments).unwrap();
-        execution_manifest["instrument_source"]["currencies"] =
-            serde_json::to_value(crate::catalog::currencies::definitions(&instruments)).unwrap();
-        std::fs::write(
-            &execution_path,
-            serde_json::to_vec(&execution_manifest).unwrap(),
-        )
-        .unwrap();
-        let output = research_books.path().join("ticks");
-        let mut builder = cohort_cache::Builder::new_received(&output, 100, 0, 0, true, 0).unwrap();
-        for at in [START + 120, START + 123, START + 400] {
-            for (index, instrument) in [id, bridge.id()].into_iter().enumerate() {
-                builder
-                    .push(TradeTick::new(
-                        instrument,
-                        Price::from("10.12"),
-                        Quantity::from("1.0000"),
-                        AggressorSide::Buy,
-                        TradeId::from(format!("{index}-{at}").as_str()),
-                        at.into(),
-                        at.into(),
-                    ))
-                    .unwrap();
-            }
-        }
-        let end = START + 3 * super::super::DAY;
-        let empty_id = InstrumentId::from("EMPTY.SIM");
-        builder
-            .push(TradeTick::new(
-                empty_id,
-                Price::from("10.12"),
-                Quantity::from("1.0000"),
-                AggressorSide::Buy,
-                TradeId::from("after-primary"),
-                (end - 1).into(),
-                (end - 1).into(),
-            ))
-            .unwrap();
-        let manifest = builder.seal("fixed-source", START, end).unwrap();
-        builder.publish(manifest, serde_json::json!({
-            "status":"IMPORTED","availability":"RECEIVED_TIME_OBSERVED","source_revision":"fixed-source",
-            "event_start_ns":START.to_string(),"event_end_ns":end.to_string(),
-            "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
-            "instrument_source":{"currencies":crate::catalog::currencies::definitions(&instruments),"instruments":instruments}
-        })).unwrap();
-        let root = output.join("catalog");
-        std::fs::write(
-            root.join("book-snapshots.source.json"),
-            serde_json::to_vec(&research_manifest).unwrap(),
-        )
-        .unwrap();
-        let mut request = super::super::tests::request();
-        request.research.input.instrument_ids = vec![id.to_string()];
-        request.research.input.event_start_ns = super::super::counter(START).unwrap();
-        request.research.input.event_end_ns = super::super::counter(end).unwrap();
-        request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
-        request.research.input.availability = NativeTickAvailabilityV1::ReceivedTimeObserved;
-        request.research.input.representation =
-            Some(NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1);
-        request.research.input.maximum_receive_delay_ns = Some(super::super::counter(0).unwrap());
-        request.research.sampling.kind = NativeTickSamplingKindV1::ReceivedTimeCohortV1;
-        request.research.parameters.feature_profile =
-            Some(NativeTickFeatureProfileV1::ReceivedFlowBookV1);
-        request.research.train_end_ns = super::super::counter(START + super::super::DAY).unwrap();
-        request.research.validation_end_ns =
-            super::super::counter(START + 2 * super::super::DAY).unwrap();
-        request.fx_instrument_ids = vec![bridge.id().to_string()];
-        let wasm = wat::parse_str(format!(
-            r#"(module
-            (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
-                local.get 0 i32.const 8 i32.eq if
-                    local.get 1 f64.const 0.6172835 f64.ne if unreachable end
-                    local.get 2 i32.eqz i32.eqz if unreachable end
-                    local.get 3 i64.const {} i64.ne if unreachable end
-                    local.get 4 i64.const {} i64.ne if unreachable end end)
-            (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
-                local.get 4 i32.const 12 i32.ne if unreachable end f64.const 0))"#,
-            START - 1_000_000,
-            START + 123
-        ))
-        .unwrap();
-        crate::ticks::evaluate(&root, &request.research, &wasm, true).unwrap();
-        for model in [
-            None,
-            Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV1),
-        ] {
-            request.scenario.execution_model = model;
-            let result =
-                super::super::replay_with_funding(&root, execution.path(), &request, &wasm)
-                    .unwrap();
-            assert_eq!(
-                result
-                    .assets
-                    .iter()
-                    .find(|a| a.instrument_id == id.to_string())
-                    .unwrap()
-                    .cohorts
-                    .get(),
-                3
-            );
-        }
-        // Identical source through a separate root retains the original two-reader path.
-        research_manifest["repository"] = serde_json::json!("CryptoHFTData");
-        research_manifest["source_reference"] =
-            serde_json::json!("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data");
-        research_manifest["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
-        research_manifest["instrument_source"]["instruments"] =
-            serde_json::to_value(&instruments).unwrap();
-        research_manifest["instrument_source"]["currencies"] =
-            serde_json::to_value(crate::catalog::currencies::definitions(&instruments)).unwrap();
-        let same_source = tempfile::tempdir().unwrap();
-        for directory in [&root, &same_source.path().to_path_buf()] {
-            std::fs::write(
-                directory.join("book-snapshots.source.json"),
-                serde_json::to_vec(&research_manifest).unwrap(),
-            )
-            .unwrap();
-        }
-        for model in [
-            contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV1,
-            contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV2,
-        ] {
-            request.scenario.execution_model = Some(model);
-            let original =
-                super::super::replay_with_funding(&root, same_source.path(), &request, &wasm)
-                    .unwrap();
-            let shared = super::super::replay_models_with_funding_and_cores(
-                &root,
-                &root,
-                &request,
-                &[wasm.clone()],
-                3,
-            )
-            .unwrap();
-            let mut shared = serde_json::to_value(shared).unwrap();
-            let mut original = serde_json::to_value(original).unwrap();
-            for result in [&mut shared, &mut original] {
-                let evidence = &mut result["methods"]["initial_conversion_native_evidence"];
-                let mut native: serde_json::Value =
-                    serde_json::from_str(evidence.as_str().unwrap()).unwrap();
-                native.as_object_mut().unwrap().remove("native_session_id");
-                *evidence = serde_json::to_value(native.to_string()).unwrap();
-            }
-            for (key, value) in shared.as_object().unwrap() {
-                assert_eq!(value, &original[key], "{key}");
-            }
-        }
-        let mut clipped = request.research.clone();
-        clipped.input.instrument_ids.push(empty_id.to_string());
-        let prepared = research_books.path().join("clipped");
-        let metadata = cohort_cache::prepare_views(&root, &clipped, &prepared, 1_000_000).unwrap();
-        clipped = serde_json::from_value(metadata["research_request"].clone()).unwrap();
-        let result =
-            crate::ticks::evaluate(&prepared.join("research/catalog"), &clipped, &wasm, true)
-                .unwrap();
-        let empty = result
-            .coverage
-            .instrument_coverage
-            .iter()
-            .find(|asset| asset.instrument_id == empty_id.to_string())
-            .unwrap();
-        assert_eq!(empty.trade_count.get(), 0);
-        assert_eq!(empty.cohort_count.get(), 0);
-        assert_eq!(empty.first_event_ns, None);
-        assert_eq!(empty.last_event_ns, None);
-        assert!(result.partitions.iter().all(|partition| partition
-            .assets
-            .iter()
-            .find(|asset| asset.instrument_id == empty_id.to_string())
-            .unwrap()
-            .metric
-            .counts
-            .observations
-            .get()
-            == 0));
-    }
-
-    #[test]
-    fn skipped_feature_snapshot_still_validates_source_event_counter() {
-        use super::super::books::FeatureBooks;
-        let (root, id) = source(false);
+    fn published_export_rejects_precision_loss_without_publishing_or_changing_source() {
+        let (root, _) = source(false);
         replace_first_hour(
             root.path(),
             &[
-                (
-                    i64::MAX as u64 / 1_000_000 + 1,
-                    START + 123,
-                    "bid",
-                    "10.12",
-                    "1",
-                ),
-                (
-                    i64::MAX as u64 / 1_000_000 + 1,
-                    START + 123,
-                    "ask",
-                    "10.13",
-                    "1",
-                ),
-                (START / 1_000_000 + 1, START + 1_000_123, "noop", "0", "0"),
+                (START / 1_000_000, START + 123, "bid", "10.123", "1"),
+                (START / 1_000_000, START + 123, "ask", "10.13", "2"),
             ],
             "BTC_USDT",
             None,
             true,
         );
-        let mut reader = FeatureBooks::open(root.path(), id, START, START + HOUR).unwrap();
-        let expected = reader.advance(START + 1_000_123).err().unwrap().to_string();
-        let mut raw =
-            super::super::books::Books::open(root.path(), id, START, START + HOUR).unwrap();
-        let mut shared = FeatureBooks::shared();
-        while let Some(frame) = raw.next().unwrap() {
-            shared.observe(&frame);
-        }
+        let before = std::fs::read(root.path().join("book-snapshots.source.json")).unwrap();
+        let output = root.path().join("unrepresentable");
+        assert!(export_catalog(root.path(), &output, START, START + HOUR)
+            .unwrap_err()
+            .to_string()
+            .contains("PRICE_PRECISION_LOSS"));
+        assert!(!output.exists());
         assert_eq!(
-            shared.advance(START + 1_000_123).err().unwrap().to_string(),
-            expected
+            before,
+            std::fs::read(root.path().join("book-snapshots.source.json")).unwrap()
         );
     }
 
     #[test]
-    fn received_book_features_match_research_and_economic_prediction() {
-        use super::super::{
-            books::{BookFeatures, Books, FeatureBooks},
-            models::EconomicModels,
-        };
-        use crate::{feature_model::FeatureModel, signals::SignalModule};
-        use contracts::science::{FeatureMissingReasonV1, FeatureValueV1};
-        let (root, id) = source(false);
-        let mut research = FeatureBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
-        let mut economic = Books::open(root.path(), id, START, START + 2 * HOUR).unwrap();
-        let mut head = economic.next().unwrap();
-        let mut shared = FeatureBooks::shared();
-        let mut latest = None;
-        let prefix = vec![
-            FeatureValueV1 {
-                value: Some(17.0),
-                missing_reason: None,
-                event_ns: None,
-                observed_available_ns: None,
-                effective_available_ns: None,
-                sequence: None,
-            };
-            8
-        ];
-        let times = [
-            START + 122,
-            START + 123,
-            START + 124,
-            START + 1_000_123,
-            START + HOUR + 123,
-        ];
-        for at in times {
-            while head.as_ref().is_some_and(|frame| frame.received() <= at) {
-                let frame = head.take().unwrap();
-                shared.observe(&frame);
-                latest = Some(BookFeatures::from_snapshot(&frame).unwrap());
-                // Execution normalization must never replace the observed feature frame.
-                frame
-                    .floor_sizes(nautilus_model::types::Quantity::from("1"))
+    fn published_books_select_exact_native_instruments_without_touching_other_data() {
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let (root, btc) = source(false);
+        let eth = InstrumentAny::CurrencyPair(
+            nautilus_model::instruments::stubs::currency_pair_ethusdt(),
+        );
+        let eth_id = eth.id();
+        let relative = "hyperliquid_spot/2026-01-01/00/ETH_USDT_orderbook.parquet";
+        let file = root.path().join("archive").join(relative);
+        write_hour_transactions_with_symbol(
+            &file,
+            &[
+                (START / 1_000_000, START + 456, "bid", "20.12", "1"),
+                (START / 1_000_000, START + 456, "ask", "20.13", "2"),
+            ],
+            "ETH_USDT",
+            None,
+        );
+        let path = root.path().join("book-snapshots.source.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest["instrument_source"]["instruments"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(&eth).unwrap());
+        manifest["instrument_source"]["symbol_ids"]["ETH_USDT"] = eth_id.to_string().into();
+        manifest["instrument_source"]["currencies"] =
+            serde_json::to_value(crate::catalog::currencies::definitions(&[
+                InstrumentAny::CurrencyPair(
+                    nautilus_model::instruments::stubs::currency_pair_btcusdt(),
+                ),
+                eth,
+            ]))
+            .unwrap();
+        let metadata = file.metadata().unwrap();
+        manifest["files"].as_array_mut().unwrap().push(serde_json::json!({"path":relative,"size":metadata.len(),"stream":"books","file_identity":FileIdentity::metadata(&metadata).unwrap().to_string()}));
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let original_manifest = std::fs::read(&path).unwrap();
+        let original_eth = std::fs::read(&file).unwrap();
+        for id in [btc, eth_id] {
+            let output = root.path().join(id.symbol.to_string());
+            let report =
+                export_catalog_selected(root.path(), &output, START, START + 2 * HOUR, &[id])
                     .unwrap();
-                head = economic.next().unwrap();
+            assert_eq!(
+                report["instrument_ids"],
+                serde_json::json!([id.to_string()])
+            );
+            let mut native =
+                ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
+            let definitions = native.query_instruments(None).unwrap();
+            assert_eq!(definitions.len(), 1);
+            assert_eq!(definitions[0].id(), id);
+            let actual = native
+                .query::<nautilus_model::data::OrderBookDelta>(None, None, None, None, None, false)
+                .unwrap();
+            let mut original = RawBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+            let mut expected = Vec::new();
+            while let Some(frame) = original.next().unwrap() {
+                expected.extend(frame.deltas.deltas);
             }
-            let mut research_features = prefix.clone();
-            BookFeatures::append(&mut research_features, research.advance(at).unwrap(), at);
-            let mut economic_features = prefix.clone();
-            BookFeatures::append(&mut economic_features, latest.as_ref(), at);
-            assert_eq!(research_features, economic_features);
-            let mut shared_features = prefix.clone();
-            BookFeatures::append(&mut shared_features, shared.advance(at).unwrap(), at);
-            assert_eq!(shared_features, research_features);
-            assert_eq!(&research_features[..8], &prefix);
-            if at == START + 122 {
-                assert_eq!(
-                    research_features[8].missing_reason,
-                    Some(FeatureMissingReasonV1::NotYetAvailable)
-                );
-            } else if at == START + 1_000_123 {
-                assert!(research_features[8..].iter().all(|f| f.value.is_none()
-                    && f.missing_reason == Some(FeatureMissingReasonV1::SourceMissing)));
-            } else {
-                assert!(research_features[8..].iter().all(|f| f.value.is_some()));
-                if at <= START + 124 {
-                    assert_eq!(
-                        research_features[8].event_ns.unwrap().get(),
-                        START - 1_000_000
-                    );
-                    assert_eq!(
-                        research_features[8].effective_available_ns.unwrap().get(),
-                        START + 123
-                    );
-                }
-            }
-            for slot in 8..12 {
-                let wasm = crate::ticks::tests::model(slot);
-                let module = SignalModule::new(&wasm, false).unwrap();
-                let mut model = FeatureModel::new(&module, Some(1), None).unwrap();
-                let (mut models, _) = EconomicModels::new(&[(1.0, module)], 1, None).unwrap();
-                assert_eq!(
-                    model.predict(at, at, 0, &research_features).unwrap(),
-                    models
-                        .predict(at, at, 0, &economic_features, None)
-                        .unwrap()
-                        .0
-                );
-            }
+            assert_eq!(actual, expected);
         }
-        // A single cohort can pass complete and empty intermediate snapshots.
-        for at in [START + 1_000_123, START + HOUR + 123] {
-            let mut jumped = FeatureBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
-            let mut expected = Books::open(root.path(), id, START, START + 2 * HOUR).unwrap();
-            let mut selected = None;
-            while let Some(frame) = expected.next().unwrap() {
-                if frame.received() > at {
-                    break;
-                }
-                selected = Some(BookFeatures::from_snapshot(&frame).unwrap());
-            }
-            let mut actual_features = prefix.clone();
-            BookFeatures::append(&mut actual_features, jumped.advance(at).unwrap(), at);
-            let mut expected_features = prefix.clone();
-            BookFeatures::append(&mut expected_features, selected.as_ref(), at);
-            assert_eq!(actual_features, expected_features);
-            let mut unchanged = prefix.clone();
-            BookFeatures::append(&mut unchanged, jumped.advance(at).unwrap(), at);
-            assert_eq!(unchanged, actual_features);
+        let unknown = root.path().join("unknown");
+        assert!(export_catalog_selected(
+            root.path(),
+            &unknown,
+            START,
+            START + HOUR,
+            &["UNKNOWN.SIM".parse().unwrap()]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("INSTRUMENT_UNKNOWN"));
+        assert!(!unknown.exists());
+        let empty = root.path().join("empty-selected");
+        assert!(export_catalog_selected(
+            root.path(),
+            &empty,
+            START + HOUR,
+            START + 2 * HOUR,
+            &[btc, eth_id]
+        )
+        .is_err());
+        assert!(!empty.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), original_manifest);
+        assert_eq!(std::fs::read(&file).unwrap(), original_eth);
+    }
+
+    #[test]
+    fn exported_published_books_preserve_clocks_and_run_native_strategy() {
+        use nautilus_model::data::OrderBookDelta;
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let (root, id) = source(false);
+        let output = root.path().join("native-output");
+        let report = export_catalog(root.path(), &output, START, START + 2 * HOUR).unwrap();
+        assert_eq!(report["frames"], 3);
+        let mut native = ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
+        let rows = native
+            .query::<OrderBookDelta>(Some(vec![id.to_string()]), None, None, None, None, false)
+            .unwrap();
+        let mut original = RawBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+        let mut expected = Vec::new();
+        while let Some(frame) = original.next().unwrap() {
+            expected.extend(frame.deltas.deltas);
         }
-        let missing = tempfile::tempdir().unwrap();
-        assert!(FeatureBooks::open(missing.path(), id, START, START + HOUR).is_err());
+        assert_eq!(rows.len(), expected.len());
+        for (actual, original) in rows.iter().zip(&expected) {
+            assert_eq!(actual.ts_event, original.ts_event);
+            assert_eq!(actual.ts_init, original.ts_init);
+            assert_eq!(actual.action, original.action);
+            assert_eq!(actual.flags, original.flags);
+            assert_eq!(
+                actual.order.price.as_decimal(),
+                original.order.price.as_decimal()
+            );
+            assert_eq!(
+                actual.order.size.as_decimal(),
+                original.order.size.as_decimal()
+            );
+        }
+        assert_eq!(rows[0].ts_event.as_u64(), START - 1_000_000);
+        assert_eq!(rows[0].ts_init.as_u64(), START + 123);
+        assert_eq!(rows[3].action, BookAction::Clear);
+        let request = serde_json::from_value(serde_json::json!({
+          "schema_version":1,"instrument_id":id.to_string(),
+          "selectors":[{"data_type":"OrderBookDelta","identifier":id.to_string()}],
+          "event_start_ns":(START-1_000_000).to_string(),"event_end_ns":(START+2*HOUR).to_string(),
+          "available_start_ns":START.to_string(),"available_end_ns":(START+2*HOUR).to_string(),
+          "venue":{"account_type":"CASH","oms_type":"NETTING","book_type":"L2_MBP","starting_balances":["100000 USDT","1 BTC"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
+          "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"0.010000","trigger_min_size":"0.1","trigger_imbalance_ratio":"0.9","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false}
+        })).unwrap();
+        let result = crate::native_strategy::run(&output.join("catalog"), request).unwrap();
+        assert_eq!(
+            result.data_rows_by_type["OrderBookDelta"].get(),
+            rows.len() as u64
+        );
+        assert!(!result.canonical_result["fills"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(export_catalog(root.path(), &output, START, START + 2 * HOUR).is_err());
+        assert!(root.path().join("book-snapshots.source.json").exists());
     }
 
     #[test]

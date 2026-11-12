@@ -1,5 +1,5 @@
 name: Verify production container
-description: Assemble the application and separate remote Nautilus image from one native build, then run HTTP science and stopped-state acceptance.
+description: Assemble application and remote Nautilus images from tested native artifacts; validate deployment contracts and run account tests for source-built artifacts.
 inputs:
   source:
     description: Source checkout directory
@@ -18,7 +18,7 @@ inputs:
     default: ''
 outputs:
   runtime-image:
-    description: Tested remote Nautilus image
+    description: Remote Nautilus image assembled from tested native artifacts
     value: ${{ steps.native.outputs.image }}
 runs:
   using: composite
@@ -44,7 +44,7 @@ runs:
         npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
         npm ci --prefix apps/cli --ignore-scripts --no-audit --no-fund
         make check-deploy
-        rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+        rustup toolchain install 1.99.1 --profile minimal
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       if: inputs.native-artifact-directory == ''
       with:
@@ -71,15 +71,6 @@ runs:
         echo "directory=$NATIVE_DIRECTORY" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       id: builder
-    - id: assembly
-      shell: bash
-      working-directory: ${{ inputs.source }}
-      env:
-        JOB_BINARY: ${{ steps.artifacts.outputs.directory }}/job
-      run: |
-        node runtimes/native/build-native-image.mjs --job-binary "$JOB_BINARY" --profile release \
-          --prepare-only --output-dir "$RUNNER_TEMP/scientific-image"
-        echo "compiler=$RUNNER_TEMP/scientific-image/context/native-root" >> "$GITHUB_OUTPUT"
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
       with:
         builder: ${{ steps.builder.outputs.name }}
@@ -88,7 +79,6 @@ runs:
         target: nautilus
         build-contexts: |
           native=${{ steps.artifacts.outputs.directory }}
-          compiler=${{ steps.assembly.outputs.compiler }}
         platforms: linux/amd64
         load: true
         tags: quazonai-nautilus:${{ inputs.revision }}

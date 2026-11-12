@@ -118,6 +118,7 @@ fn metadata_fees_and_slippage_share_one_chain_without_promoting_evidence() {
         contracts::research::PitStatus::Unverified
     );
     let settings = NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: None,
         schema_version: SchemaV1,
         base_currency: "USD".into(),

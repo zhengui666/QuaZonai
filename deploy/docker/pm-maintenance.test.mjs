@@ -223,3 +223,24 @@ ${body}`, 'qz-pm-restore', fileURLToPath(new URL('./manage.sh', import.meta.url)
   assert.equal(await readFile(artifact, 'utf8'), originalArtifact);
   await requireIdle(state.config);
 });
+
+test('stopped-writer inspection preserves and blocks unresolved native strategy receipts after local tasks end', async t => {
+  const state = await quiescedFixture(t, 0); const original = await state.readQuiesced();
+  for (const record of [
+    { status: 'PENDING', receipt: null },
+    { status: 'UNCERTAIN', receipt: null },
+    { status: 'UNCERTAIN', receipt: { status: 'UNCERTAIN', persisted: false, result: { state: 'STOPPED' } } },
+  ]) {
+    const value = structuredClone(original);
+    value.application.strategyCommands = { original: { ...record, original: { requestId: 'original-stop', action: 'STOP' }, taskId: 998 } };
+    await state.updateQuiesced(value.application, value.gate, value.tasks);
+    await assert.rejects(requireIdle(state.config), /Unresolved native strategy command/);
+    assert.deepEqual(await state.readQuiesced(), value, 'No receipt is rewritten or inferred from current strategy status.');
+  }
+  for (const status of ['COMPLETED', 'REJECTED']) {
+    const value = structuredClone(original);
+    value.application.strategyCommands = { original: { status, receipt: { status, persisted: true } } };
+    await state.updateQuiesced(value.application, value.gate, value.tasks);
+    await requireIdle(state.config);
+  }
+});

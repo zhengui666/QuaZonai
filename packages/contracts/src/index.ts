@@ -59,7 +59,7 @@ export type ResearchStart = { requestId: string; input: ResearchInput; reviewedF
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
-export interface ResearchResume { submissionId: number }
+export interface ResearchResume { submissionId: number; instruction?: string }
 export interface ResearchResumeReceipt extends ResearchReceipt { previousSubmissionId: number }
 export interface ResearchSubmissionView { id: number; status: string; requestId?: string; reason?: string | null }
 export interface ResearchDiagnostics {
@@ -81,15 +81,27 @@ export interface DatasetPreparation {
   scientificQualification: 'UNVERIFIED' | 'NOT_ASSESSED';
 }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
+export interface ResearchMessage { entryId: number; text: string }
+export interface ResearchAssessmentView {
+  taskId: number; mode: 'LOGIC' | 'SYNTHESIS'; status: string;
+  configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
+  evidenceLinks: { taskId: number; href: string }[];
+}
 export interface ResearchDetail extends ResearchSummary {
+  /** Original official Pi assessment outcomes, never reconstructed from assistant prose. */
+  assessments?: ResearchAssessmentView[];
+  /** Visible assistant text from the original Pi conversation, not model reasoning or tool payloads. */
+  messages?: ResearchMessage[];
   reviews?: ReviewReport[];
+  toolPolicy?: 'NAUTILUS_ONLY';
+  previousNativeResults?: { previousSubmissionId: number; final: JsonObject }[];
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   literature?: LiteratureView;
   dataset?: RecordedDataset | null; datasetId?: string | null;
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   criterion?: CriterionView; factors?: string[];
-  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
+  final: { nativeStrategyResult?: JsonObject; status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;
@@ -152,7 +164,7 @@ export interface PortfolioView {
 }
 export type ObservationMode = 'paper' | 'live';
 export interface PositionView { instrumentId: string; quantity: string; value: string | null; pnl: string | null }
-export interface TargetReceipt { id: string; status: string; externalId: string | null; expiresAt: string; acknowledgedAt: string | null }
+export interface TargetReceipt { id: string; status: string; externalId: string | null; expiresAt: string; acknowledgedAt: string | null; nativeProtection?: JsonObject }
 export interface AutomaticPolicy { enabled: boolean; cashBuffer: string; maximumSnapshotAgeSeconds: number }
 export interface AutomaticAllocation {
   status: string; reason: string | null; updatedAt: string | null; sequence: string | null; nativeClockNs: string | null;
@@ -161,7 +173,7 @@ export interface AutomaticAllocation {
   targets: TargetWeight[]; receipt: TargetReceipt | null; epoch: string;
 }
 export interface AccountObservationStart { requestId: string; purpose: 'ACCOUNT_ONLY'; mode: ObservationMode; connectionId: string; portfolioId?: never; automatic?: never }
-export interface ObservationStart { requestId: string; portfolioId: string; mode: ObservationMode; connectionId: string; automatic?: AutomaticPolicy }
+export interface ObservationStart { requestId: string; portfolioId: string; mode: ObservationMode; connectionId: string; automatic?: AutomaticPolicy; nativeBrackets?: import('./native-order-preview.ts').NativeTargetBrackets }
 export interface ObservationView {
   purpose?: 'ACCOUNT_ONLY';
   id: string; name: string; portfolioId: string | null; mode: ObservationMode; status: string;

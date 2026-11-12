@@ -5,13 +5,13 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Money } from '../../../packages/contracts/src/pm.ts';
 import { addDecimal, compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, decimal, json, nowNs, object, Problem, text } from './facts.ts';
 import type { CapturedAccount } from './pm-account.ts';
 
 export interface NativeObservedSpotStart extends JsonObject {
-  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.68.0'; snapshot: JsonObject; available_ns: string;
+  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.69.0'; snapshot: JsonObject; available_ns: string;
   open_orders_evidence_ref: string; open_orders_account_id: string; open_orders_asof_ns: string; open_orders_available_ns: string; open_orders_count: 0;
 }
 const refuse = (code: string): never => { throw new Problem(`pm_account_${code}`, 409); };
@@ -36,7 +36,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   if (counter(original.dropped_events, 'dropped_events') !== '0') refuse('native_observation_has_gap');
   const binding = object(original.binding, 'native_binding');
   exactKeys(binding, ['schema_version', 'project_id', 'environment', 'native_trader_id', 'native_session_id', 'native_account_id', 'native_version'], 'native_binding');
-  if (binding.schema_version !== 1 || binding.native_version !== '0.68.0') refuse('native_version_unsupported');
+  if (binding.schema_version !== 1 || binding.native_version !== '0.69.0') refuse('native_version_unsupported');
   for (const field of ['project_id', 'native_trader_id', 'native_session_id', 'native_account_id']) text(binding[field], field);
   const mode = object(capture.artifact.observation).mode;
   if (binding.environment !== (mode === 'paper' ? 'PAPER' : mode === 'live' ? 'LIVE' : null)) refuse('native_environment_mismatch');
@@ -93,7 +93,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   const orderClock = counter(orders.asof_ns, 'open_orders_clock'); const orderAvailable = counter(orders.available_ns, 'open_orders_available');
   if (orders.account_id !== native.account_id || orderClock !== nativeClock) refuse('open_orders_basis_mismatch');
   if (BigInt(orderAvailable) < BigInt(orderClock) || BigInt(orderAvailable) > BigInt(received)) refuse('open_orders_clock_invalid');
-  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: '0.68.0', snapshot: json(native), available_ns: available,
+  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: binding.native_version as '0.69.0', snapshot: json(native), available_ns: available,
     open_orders_evidence_ref: capture.evidence.id, open_orders_account_id: String(orders.account_id), open_orders_asof_ns: orderClock,
     open_orders_available_ns: received, open_orders_count: 0 };
 }
@@ -118,7 +118,7 @@ export function retirementAccountFlat(capture: CapturedAccount): { flat: boolean
 
 export interface ObservedSpotComparisonInput {
   capture: CapturedAccount; nativeDatasetRevisionId: string; datasetRevision: { id: string; contentRef: string }; catalog: string; binary: NativeTarget; dataDir: string;
-  operation: { kind: 'SIMULATION'; simulation: JsonObject } | { kind: 'STUDY'; study: JsonObject; objectsDirectory: string };
+  operation: { kind: 'SIMULATION'; simulation: JsonObject };
 }
 export interface ObservedSpotLeg { status: 'COMPLETED' | 'FAILED'; result: JsonObject | null; reason: string | null }
 export interface ObservedSpotComparisonResult {
@@ -174,45 +174,44 @@ export async function valueObservedSpotAccount(input: ObservedSpotValuationInput
 
 /** Run both candidates from one original observed balance state. The wrapper
  * validates its own output binding; no failed leg becomes an economic loser.
- * Study members/objects and the caller's original trial identities are admitted upstream.
  */
 export async function compareObservedSpotAccount(input: ObservedSpotComparisonInput, context: Context): Promise<ObservedSpotComparisonResult> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.nativeDatasetRevisionId)) refuse('native_dataset_revision_uuid_required');
   const datasetBinding = { datasetRevisionId: text(input.datasetRevision.id, 'pm_dataset_revision'),
     datasetContentRef: text(input.datasetRevision.contentRef, 'pm_dataset_content_ref'), nativeDatasetRevisionId: input.nativeDatasetRevisionId };
-  const study = input.operation.kind === 'STUDY';
-  const operation = json(input.operation.kind === 'STUDY' ? input.operation.study : input.operation.simulation);
+  if (input.operation.kind !== 'SIMULATION') refuse('study_retired');
+  const operation = json(input.operation.simulation);
   // Earlier saved requests may include this retired optional field as an empty
   // array. Omit only that empty value on the wire, retaining the stored input.
   if (Object.hasOwn(operation, 'settlements')) {
     if (!Array.isArray(operation.settlements) || operation.settlements.length !== 0) refuse('legacy_settlements_unsupported');
     delete operation.settlements;
   }
-  const selection = object(study ? operation.source_selection : operation.selection, 'native_selection');
-  const settings = object(study ? operation.execution_settings : operation.settings, 'native_execution_settings');
+  const selection = object(operation.selection, 'native_selection');
+  const settings = object(operation.settings, 'native_execution_settings');
   const policy = object(settings.multi_currency_spot_cash, 'explicit_multi_currency_spot_policy');
   if (policy.schema_version !== 1 || policy.mode !== 'MULTI_CURRENCY_CASH' || settings.account_kind !== 'CASH'
     || policy.report_currency !== input.capture.basis.currency || settings.base_currency !== input.capture.basis.currency) refuse('report_currency_or_cash_policy_mismatch');
-  const start = counter(study ? operation.evaluation_start_ns : selection.event_start_ns, 'native_replay_start');
+  const start = counter(selection.event_start_ns, 'native_replay_start');
   const end = counter(selection.event_end_ns, 'native_replay_end'); if (BigInt(start) >= BigInt(end)) refuse('replay_interval_invalid');
   const initial = toNativeObservedSpotStart(input.capture, { selectionStartNs: start });
-  const request = json({ schema_version: 1, dataset_revision_id: input.nativeDatasetRevisionId, initial_state: initial, [study ? 'study' : 'simulation']: operation });
+  const request = json({ schema_version: 1, dataset_revision_id: input.nativeDatasetRevisionId, initial_state: initial, simulation: operation });
   const root = join(input.dataDir, 'scratch'); await mkdir(root, { recursive: true }); const directory = await mkdtemp(join(root, 'pm-observed-spot-'));
   try {
-    const args = ['--catalog', input.catalog]; if (input.operation.kind === 'STUDY') args.push('--objects', input.operation.objectsDirectory);
-    const original = await executeNative(input.binary, study ? 'study-observed-spot' : 'compare-observed-spot', request, args, directory, context);
-    if (original.schema_version !== 1 || original.kind !== (study ? 'OBSERVED_SPOT_STUDY_COMPARISON' : 'OBSERVED_SPOT_ACCOUNT_COMPARISON')
+    const args = ['--catalog', input.catalog];
+    const original = await executeNative(input.binary, 'compare-observed-spot', request, args, directory, context);
+    if (original.schema_version !== 1 || original.kind !== 'OBSERVED_SPOT_ACCOUNT_COMPARISON'
       || original.basis !== 'HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES' || canonical((original.request!)) !== canonical((request))) refuse('native_comparison_basis_mismatch');
-    const leg = (value: unknown, allowStudyDiagnostics = false): ObservedSpotLeg => {
+    const leg = (value: unknown): ObservedSpotLeg => {
       const item = object(value, 'native_comparison_leg');
       if (item.status === 'COMPLETED' && item.reason === null) return { status: 'COMPLETED', result: object(item.result, 'native_comparison_result'), reason: null };
       if (item.status === 'FAILED' && typeof item.reason === 'string' && item.reason.trim()
-        && (item.result === null || allowStudyDiagnostics && typeof item.result === 'object' && !Array.isArray(item.result))) {
+        && item.result === null) {
         return { status: 'FAILED', result: item.result === null ? null : object(item.result), reason: item.reason };
       }
       return refuse('native_comparison_leg_invalid');
     };
-    return { request, original, datasetBinding, hold: leg(original.hold), rebalance: leg(original.rebalance, study), accountEvidenceRef: input.capture.evidence.id,
+    return { request, original, datasetBinding, hold: leg(original.hold), rebalance: leg(original.rebalance), accountEvidenceRef: input.capture.evidence.id,
       limitations: ['historical_replay_from_observed_balances_is_not_forecast_or_realized_account_pnl', 'native_fee_acceptance_and_source_limitations_remain_authoritative',
         'new_snapshot_or_open_orders_invalidates_current_account_delivery_basis'] };
   } finally { await rm(directory, { recursive: true, force: true }); }

@@ -7,8 +7,6 @@ use nautilus_model::instruments::{Instrument, InstrumentAny};
 use std::{collections::BTreeSet, path::Path};
 
 const BASIS: &str = "HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES";
-mod forward;
-pub use forward::build;
 
 /// Exact valuation of original balances, distinct from an account observation
 /// and from either leg's subsequent simulated performance.
@@ -17,22 +15,7 @@ pub fn value_with_closed_rows(
     request: &NativeObservedSpotValuationRequestV1,
     rows: &[ClosedBarSourceRow],
 ) -> Result<NativeObservedSpotValuationResultV1> {
-    value_with_closed_rows_at(
-        catalog,
-        request,
-        rows,
-        request.initial_state.snapshot.ts_event,
-    )
-}
-
-// Forward builds may revalue the unchanged observed quantities at a later
-// cutoff. The raw snapshot stays untouched and is never a newly observed NAV.
-fn value_with_closed_rows_at(
-    catalog: &Path,
-    request: &NativeObservedSpotValuationRequestV1,
-    rows: &[ClosedBarSourceRow],
-    asof: contracts::DbCounter,
-) -> Result<NativeObservedSpotValuationResultV1> {
+    let asof = request.initial_state.snapshot.ts_event;
     use nautilus_model::types::Money;
     let initial = &request.initial_state;
     let mut available = initial.available_ns.max(initial.open_orders_available_ns);
@@ -262,10 +245,7 @@ fn replay(
     dataset: Id,
     rows: Vec<ClosedBarSourceRow>,
 ) -> Result<NativeSimulationResultV1> {
-    let result =
-        crate::simulation::run_observed_spot(catalog, request, dataset, rows, initial, Vec::new())?
-            .0
-            .ok_or_else(|| anyhow!("OBSERVED_SPOT_RESULT_MISSING"))?;
+    let result = crate::simulation::run_observed_spot(catalog, request, dataset, rows, initial)?;
     domain::execution::check_observed_spot_simulation(request, &result, initial)?;
     Ok(result)
 }
@@ -300,86 +280,19 @@ pub fn compare_with_closed_rows(
         request.dataset_revision_id,
         rows.clone(),
     ));
-    let rebalance = simulation_leg(replay(
+    let mut rebalance = simulation_leg(replay(
         catalog,
         &request.simulation,
         &request.initial_state,
         request.dataset_revision_id,
         rows,
     ));
+    if let (Some(hold), Some(rebalance)) = (&hold.result, &mut rebalance.result) {
+        add_hold_statistics(hold, rebalance);
+    }
     Ok(NativeObservedSpotComparisonResultV1 {
         schema_version: SchemaV1,
         kind: "OBSERVED_SPOT_ACCOUNT_COMPARISON".into(),
-        basis: BASIS.into(),
-        request: request.clone(),
-        hold,
-        rebalance,
-    })
-}
-
-pub fn study_with_closed_rows(
-    catalog: &Path,
-    request: &NativeObservedSpotStudyRequestV1,
-    rows: Vec<ClosedBarSourceRow>,
-    read: impl FnMut(Id) -> Result<Vec<u8>>,
-) -> Result<NativeObservedSpotStudyResultV1> {
-    domain::observed_spot::starting_balances(
-        &request.initial_state,
-        &request.study.execution_settings,
-        request.study.evaluation_start_ns,
-    )?;
-    domain::execution::observed_spot_study_cutoffs(&request.study)?;
-    let mut selection = request.study.source_selection.clone();
-    selection.event_start_ns = request.study.evaluation_start_ns;
-    validate_initial_market(
-        &request.initial_state,
-        &crate::catalog::load_catalog(catalog, &selection)?,
-        &request.study.execution_settings,
-    )?;
-    let hold_request = NativeSimulationRequestV1 {
-        schema_version: SchemaV1,
-        selection,
-        settings: request.study.execution_settings.clone(),
-        target_points: vec![],
-    };
-    let hold = simulation_leg(replay(
-        catalog,
-        &hold_request,
-        &request.initial_state,
-        request.dataset_revision_id,
-        rows.clone(),
-    ));
-    let rebalance = match crate::study::evaluate_observed_spot(
-        catalog,
-        &request.study,
-        read,
-        crate::spot_cash_runtime::SpotReplayInputs {
-            dataset_revision_id: request.dataset_revision_id,
-            closed_rows: rows,
-            observed_start: Some(request.initial_state.clone()),
-        },
-    ) {
-        Ok(result) => {
-            let completed = result.simulation.is_some();
-            NativeObservedSpotStudyLegV1 {
-                status: if completed {
-                    NativeObservedSpotLegStatusV1::Completed
-                } else {
-                    NativeObservedSpotLegStatusV1::Failed
-                },
-                reason: (!completed).then(|| "OBSERVED_SPOT_STUDY_INFEASIBLE".into()),
-                result: Some(result),
-            }
-        }
-        Err(error) => NativeObservedSpotStudyLegV1 {
-            status: NativeObservedSpotLegStatusV1::Failed,
-            result: None,
-            reason: Some(format!("{error:#}")),
-        },
-    };
-    Ok(NativeObservedSpotStudyResultV1 {
-        schema_version: SchemaV1,
-        kind: "OBSERVED_SPOT_STUDY_COMPARISON".into(),
         basis: BASIS.into(),
         request: request.clone(),
         hold,
@@ -416,40 +329,18 @@ pub fn compare(
     }
 }
 
-pub fn study(
-    catalog: &Path,
-    request: &NativeObservedSpotStudyRequestV1,
-    read: impl FnMut(Id) -> Result<Vec<u8>>,
-) -> Result<NativeObservedSpotStudyResultV1> {
-    #[cfg(feature = "hyperliquid-offline")]
+fn add_hold_statistics(
+    hold: &contracts::science::NativeSimulationResultV1,
+    rebalance: &mut contracts::science::NativeSimulationResultV1,
+) {
+    if let (Some(hold), Some(rebalance)) = (&hold.spot_cash_report, &mut rebalance.spot_cash_report)
     {
-        let mut selection = request.study.source_selection.clone();
-        selection.event_start_ns = request.study.evaluation_start_ns;
-        let source = crate::spot_cash_source::load_closed_rows(catalog, &selection)?;
-        let mut result = study_with_closed_rows(catalog, request, source.rows, read)?;
-        if let Some(replay) = &mut result.hold.result {
-            replay
-                .spot_cash_report
-                .as_mut()
-                .ok_or_else(|| anyhow!("OBSERVED_SPOT_REPORT_MISSING"))?
-                .source_evidence = Some(source.evidence.clone());
-        }
-        if let Some(study) = &mut result.rebalance.result {
-            if let Some(replay) = &mut study.simulation {
-                replay
-                    .spot_cash_report
-                    .as_mut()
-                    .ok_or_else(|| anyhow!("OBSERVED_SPOT_REPORT_MISSING"))?
-                    .source_evidence = Some(source.evidence);
-            }
-        }
-        Ok(result)
-    }
-    #[cfg(not(feature = "hyperliquid-offline"))]
-    {
-        let _ = (catalog, request, read);
-        Err(anyhow!(
-            "SPOT_SOURCE_CAPABILITY_NOT_BUILT: hyperliquid-offline"
-        ))
+        rebalance.statistics.extend(crate::performance::versus_hold(
+            &rebalance.daily_returns,
+            &hold.daily_returns,
+        ));
+        rebalance
+            .statistics
+            .sort_by(|a, b| a.native_key.cmp(&b.native_key));
     }
 }

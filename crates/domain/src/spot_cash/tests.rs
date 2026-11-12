@@ -1,7 +1,11 @@
 use super::*;
+use crate::test_execution_models as models;
 use contracts::{science::NativeFeeRateV1, Id};
-#[path = "../../../../tests/support/execution_models.rs"]
-mod models;
+
+type ValuationFailureCase = (
+    fn(&mut NativeSpotValuationFrameV1),
+    ReportValuationFailureV1,
+);
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
@@ -17,6 +21,7 @@ fn native_id(value: u64) -> NativeSpotRuntimeIdV1 {
 }
 fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: Some(NativeSpotCashPolicyV1 {
             schema_version: SchemaV1,
             mode: NativeSpotCashModeV1::MultiCurrencyCash,
@@ -256,10 +261,7 @@ fn missing_price_never_returns_a_partial_total() {
 #[test]
 fn asof_clocks_order_and_frozen_price_source_are_required() {
     let ctx = context();
-    let cases: [(
-        fn(&mut NativeSpotValuationFrameV1),
-        ReportValuationFailureV1,
-    ); 9] = [
+    let cases: [ValuationFailureCase; 9] = [
         (
             |f| f.prices[0].event_ns = count(DAY_NS + 1),
             ReportValuationFailureV1::FuturePrice,
@@ -307,10 +309,7 @@ fn asof_clocks_order_and_frozen_price_source_are_required() {
 #[test]
 fn snapshot_balance_and_identity_failures_are_unavailable() {
     let ctx = context();
-    let cases: [(
-        fn(&mut NativeSpotValuationFrameV1),
-        ReportValuationFailureV1,
-    ); 9] = [
+    let cases: [ValuationFailureCase; 9] = [
         (
             |f| f.snapshot.binding.session_id = Id::new(),
             ReportValuationFailureV1::InvalidSnapshotBinding,

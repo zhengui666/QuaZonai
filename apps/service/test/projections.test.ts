@@ -8,7 +8,6 @@ import { awaitWithContext } from '@earendil-works/chord/context';
 import { Study } from '../../research/src/documents.ts';
 import { built, context, setup, studied } from './support.ts';
 import { Application } from '../src/facts.ts';
-import { BuildPortfolio } from '../src/science.ts';
 import { metrics, researchTaskViews, tickEconomicMetrics } from '../src/projections.ts';
 import { researchCriterion, researchSpecification } from '../../../packages/contracts/src/research.ts';
 
@@ -46,7 +45,7 @@ test('list and usage do not load historical task results; list retains its exist
     const { receipt } = await studied(state);
     const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
     const detail = (await get(`research/${receipt.conversationId}`)).json();
-    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, ...expected } = detail;
+    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
     const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
     const list = await get('research'); const usage = await get('usage');
@@ -64,7 +63,7 @@ test('detail reads live task state from the official graph and caches immutable 
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { if (args[0].conversationId === receipt.conversationId && args[0].status === 'terminal') scans++; return scan(...args); });
     const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
     const [first, concurrent] = await Promise.all([get(), get()]);
-    assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 1);
+    assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 0, 'studied already read detail and populated terminal metadata');
     let finishFailure!: () => void; const failure = new Promise<void>(resolve => { finishFailure = resolve; });
     const task = defineTask<{ fail: boolean; result: string | null }, { phase: 'compute' }, string | null>({ name: 'test.metadata-only', version: 1, initial: () => ({ phase: 'compute' }),
       phases: { async compute(task, runtime, ctx) { if (task.input.fail) await awaitWithContext(failure, ctx); await runtime.commit(() => ({ status: 'terminal', outcome: task.input.fail ? { status: 'failed', error: { message: 'test_failure' } } : { status: 'completed', result: task.input.result } }), ctx); } },
@@ -84,8 +83,8 @@ test('detail reads live task state from the official graph and caches immutable 
     const usage = await state.service.app.inject({ url: '/api/v3/usage', headers: state.headers }); assert.ok(usage.json().activeTasks > 0);
     finishFailure(); await host.harness.waitForTask(pending, context);
     const final = (await get()).json(); const failed = final.tasks[0]; assert.equal(failed.id, pending); assert.equal(failed.status, 'terminal'); assert.equal(failed.outcome, 'failed'); assert.equal(failed.error, 'task_failed');
-    assert.equal(scans, 1, 'committed changes must update metadata without reloading evidence');
-    const cold = await researchTaskViews(host)(receipt.conversationId); assert.deepEqual(cold, final.tasks); assert.equal(scans, 11, 'cold history is read in ten small pages, not one huge allocation');
+    assert.equal(scans, 0, 'committed changes must update metadata without reloading evidence');
+    const cold = await researchTaskViews(host)(receipt.conversationId); assert.deepEqual(cold, final.tasks); assert.equal(scans, 10, 'cold history is read in ten small pages, not one huge allocation');
     assert.equal((await storage.task(ids[0]!, context))!.state.outcome!.status, 'completed');
   } finally { await state.cleanup(); }
 });
@@ -186,56 +185,7 @@ test('historical native codes and WAT failures keep specific safe public causes'
   } finally { await state.cleanup(); }
 });
 
-test('portfolio reads and original admission replay share public failure projection', { timeout: 20_000 }, async () => {
-  const state = await setup();
-  try {
-    const { input, view } = await built(state);
-    for (const [diagnostic, code] of [
-      ['Native backtest failed at /private/test-only/catalog', 'backtest_failed'],
-      ['custom_evaluator_failed', 'custom_evaluator_failed'],
-      ['QZ_NATIVE_JOB_MEMORY_LIMIT\n/private/test-only/catalog token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT'],
-      ['parseWat failed:\nselected-factor.wat:1:2: error: private-source-marker', 'wasm_compile_failed'],
-    ]) {
-      await state.service.research.harness.commit(async tx => {
-        const facts = await tx.doc(Application); const fact = facts.portfolios[view.id]!;
-        const stored = fact.view as Record<string, unknown>; stored.error = diagnostic;
-        stored.errorDetail = { code: 'synthetic-secret', message: 'private-source-marker', action: 'synthetic-secret' };
-      }, context);
-      const get = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
-      assert.equal(get.json().error, code); assert.equal(get.json().errorDetail.code, code);
-      assert.doesNotMatch(get.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
-      const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input });
-      assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().taskId, view.taskId);
-      assert.equal(replay.json().error, code); assert.equal((await state.service.work.getPortfolio(view.id)).view.error, diagnostic);
-      assert.doesNotMatch(replay.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
-    }
-  } finally { await state.cleanup(); }
-});
 
-test('pre-kernel filesystem failure is retained privately rather than laundered to operation_failed', { timeout: 20_000 }, async () => {
-  const state = await setup();
-  try {
-    const missing = join(state.directory, 'missing-private-scratch');
-    const { receipt } = await studied(state, 'missing-environment'); const id = 'missing-scratch';
-    const taskId = await state.service.research.harness.commit(async tx => {
-      const taskId = await tx.createTask(BuildPortfolio, { id, dataDir: missing, catalog: state.directory, binary: state.options.config.jobBinary,
-        evidence: {}, policy: state.options.config.datasets[0]!.strategy!, capital: '1000', currency: 'USD' },
-        { conversationId: receipt.conversationId as ConversationId, ownership: { kind: 'conversation' } });
-      (await tx.doc(Application)).portfolios[id] = { input: { requestId: id }, evidence: [], policy: {}, native: null, target: null,
-        view: { id, name: id, researchIds: [receipt.conversationId], datasetId: 'controlled', status: 'QUEUED', capital: '1000', currency: 'USD',
-          createdAt: '2026-10-19T00:00:00.000Z', taskId, metrics: [], curve: [], targets: [], error: null } };
-      return taskId;
-    }, context);
-    const task = await state.service.research.harness.waitForTask(taskId, context);
-    const { view } = await state.service.work.getPortfolio(id);
-    assert.equal(view.status, 'FAILED'); assert.match(view.error!, /ENOENT/); assert.ok(view.error!.includes(missing));
-    assert.equal(task.state.outcome.status, 'failed');
-    if (task.state.outcome.status === 'failed') assert.equal(task.state.outcome.error.message, view.error);
-    const response = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
-    assert.equal(response.json().error, 'ENOENT'); assert.equal(response.json().errorDetail.category, 'runtime');
-    assert.doesNotMatch(response.body, /missing-private-scratch/);
-  } finally { await state.cleanup(); }
-});
 
 test('captured dataset identity survives registry changes and identical inputs in different studies', { timeout: 20_000 }, async () => {
   const state = await setup();
@@ -283,4 +233,33 @@ for (const endpoint of ['usage', 'research']) test(`${endpoint} summary does not
     assert.deepEqual(response.json(), expected.json(), 'original summary fields and nullable values remain unchanged');
     assert.equal(historicalReads, 0);
   } finally { harness.commit = commit; await state.cleanup(); }
+});
+
+test('canonical upstream reports do not flatten executions or hexadecimal statistics into decimal metrics', () => {
+  assert.deepEqual(metrics({ request: {}, canonical_result: { schema: 'nautilus-backtest-result/v1',
+    statistics: { returns: { 'Sharpe Ratio': '0000000000000000', unavailable: null } },
+    fills: [{ price: '123.456789012345678901', quantity: '0.000000000000000001' }], orders: [{ count: 1 }] }, data_rows_by_type: { QuoteTick: '9007199254740995' } }), []);
+});
+
+test('native result and prior submissions retain separate original reports and unavailable values', async () => {
+  const state = await setup();
+  try {
+    const { receipt } = await studied(state);
+    const original = { schema_version: 1, native_version: '0.69.0', request: { instrument_id: 'TEST.SIM', event_start_ns: '1790000000000000001' },
+      canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000', missing: null } }, fills: [{ price: '123.456789012345678901' }] },
+      data_rows_by_type: { QuoteTick: '9007199254740995' }, notes: ['Protocol projection only, not measured performance.'] };
+    const previous = { ...original, canonical_result: { ...original.canonical_result, statistics: { returns: { 'Sharpe Ratio': '0000000000000000', missing: null } } } };
+    const history = [{ previousSubmissionId: receipt.submissionId, final: { status: 'COMPUTED', result: previous } }];
+    await state.service.research.harness.commit(async tx => {
+      const study = await tx.doc(Study, receipt.conversationId); study.previousNativeResults = history;
+      study.final = { status: 'COMPUTED', taskId: 123, trialId: null, comparedTrials: [], scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result: original };
+    }, context);
+    const response = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+    assert.equal(response.statusCode, 200, response.body); const detail = response.json();
+    assert.deepEqual(detail.final.metrics, []);
+    assert.deepEqual(detail.final.nativeStrategyResult.canonicalResult, original.canonical_result);
+    assert.deepEqual(detail.final.nativeStrategyResult.dataRowsByType, original.data_rows_by_type);
+    assert.deepEqual(detail.previousNativeResults, history);
+    assert.equal(detail.final.nativeStrategyResult.canonicalResult.statistics.returns.missing, null);
+  } finally { await state.cleanup(); }
 });

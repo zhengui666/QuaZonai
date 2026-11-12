@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 import { object } from '../src/facts.ts';
 import { verifyOriginalPrefix } from '../src/pm-science.ts';
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { executeNative } from '../plugins/native-portfolio.ts';
+import { executeNative } from '../src/native-execution.ts';
 
 // Transport-only process: no catalog, Wasm inference, market simulation or owner trial.
 async function transportProcess(directory: string) {
@@ -63,7 +63,7 @@ test('native transport reads complete JSON output beyond one V8 string and retai
     const binary = await transportProcess(directory);
     const row = JSON.stringify({ marker: 'x'.repeat(16384), clock: '1791849600000000000' });
     const count = Math.ceil(constants.MAX_STRING_LENGTH / (row.length + 1)) + 2;
-    const result = await executeNative(binary, 'forecast-factor', {}, [String(count)], directory, BACKGROUND_CONTEXT);
+    const result = await executeNative(binary, 'catalog-prefix-digest', {}, [String(count)], directory, BACKGROUND_CONTEXT);
     const points = result.points as JsonObject[];
     assert.equal(points.length, count);
     assert.deepEqual(points[0], { marker: 'x'.repeat(16384), clock: '1791849600000000000' });

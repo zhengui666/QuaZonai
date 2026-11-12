@@ -3,6 +3,7 @@ use super::super::{
     equity_curve::portfolio_equity_curve, experiment_summary::native_simulation_summary,
 };
 use super::*;
+use crate::test_execution_models as models;
 use contracts::{
     equity_curve::EquityCurveQuery,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
@@ -11,8 +12,6 @@ use contracts::{
     DbCounter, Id, SchemaV1,
 };
 use serde_json::json;
-#[path = "../../../../../../tests/support/execution_models.rs"]
-mod models;
 const DAY: u64 = 86_400_000_000_000;
 const INSTRUMENT: &str = "BTC-USDC.HYPERLIQUID";
 const BAR: &str = "BTC-USDC.HYPERLIQUID-1-MINUTE-LAST-EXTERNAL";
@@ -32,8 +31,7 @@ fn snapshot(
     context: &SpotCashContext,
     sequence: u64,
     clock: u64,
-    usdc: &str,
-    btc: Option<&str>,
+    (usdc, btc): (&str, Option<&str>),
     prices: &[NativeSpotPriceV1],
     origin: NativeSpotSnapshotOriginV1,
 ) -> NativeSpotCashObservationV1 {
@@ -137,6 +135,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
             .collect(),
     };
     let settings = NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: Some(NativeSpotCashPolicyV1 {
             schema_version: SchemaV1,
             mode: NativeSpotCashModeV1::MultiCurrencyCash,
@@ -154,7 +153,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         leverage: amount("1"),
         fee_model: NativeModelRefV1::FrozenSpotFeeScenario {
             schema_version: SchemaV1,
-            native_version: "0.68.0".into(),
+            native_version: "0.69.0".into(),
             parameters: FrozenSpotFeeScenarioParametersV1 {
                 acceptance: SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability,
                 schedule: fee_schedule.clone(),
@@ -180,14 +179,18 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         has_expiration: false,
         multiplier: amount("1"),
     };
-    let context = SpotCashContext::new(&settings, session.clone(), &[instrument.clone()]).unwrap();
+    let context = SpotCashContext::new(
+        &settings,
+        session.clone(),
+        std::slice::from_ref(&instrument),
+    )
+    .unwrap();
     let mut observations = vec![snapshot(
         &session,
         &context,
         1,
         DAY,
-        "1000",
-        None,
+        ("1000", None),
         &[],
         NativeSpotSnapshotOriginV1::NativePublication,
     )];
@@ -232,8 +235,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
             &context,
             seq + 1,
             clock,
-            "100",
-            Some("9"),
+            ("100", Some("9")),
             &prices,
             if publication {
                 NativeSpotSnapshotOriginV1::NativePublication
@@ -325,7 +327,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         settled_replay_ns: None,
         spot_cash_report: Some(report),
         schema_version: SchemaV1,
-        native_version: "0.68.0".into(),
+        native_version: "0.69.0".into(),
         iterations: count(3),
         events: count(0),
         orders: count(0),
@@ -769,8 +771,7 @@ fn same_clock_display_selects_last_real_sequence_but_daily_boundary_keeps_first_
         &context,
         777,
         2 * DAY,
-        "100",
-        Some("8.99"),
+        ("100", Some("8.99")),
         &frame.prices,
         NativeSpotSnapshotOriginV1::DecisionBuild,
     );
@@ -895,4 +896,32 @@ fn legacy_metrics_keep_the_original_native_observation_count_and_missingness() {
             .all(|metric| metric.observation_count.get() == 2
                 && metric.status == MetricStatus::Failed)
     );
+}
+
+#[test]
+fn benchmark_unavailability_round_trips_without_zero_or_currency_override() {
+    let (request, mut result) = fixture(false);
+    let statistic = NativeStatisticV1 {
+        group: NativeStatisticGroup::Returns,
+        native_key: "Beta vs BTC/USDC.TEST price return (fees/funding excluded; risk-free 0%)"
+            .into(),
+        currency: None,
+        value: None,
+        reason_code: Some("BENCHMARK_WINDOW_MISMATCH".into()),
+    };
+    report_mut(&mut result).statistics.push(statistic);
+    binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).unwrap();
+    report_mut(&mut result)
+        .statistics
+        .last_mut()
+        .unwrap()
+        .reason_code = Some("UNKNOWN_REASON".into());
+    assert!(binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).is_err());
+    report_mut(&mut result)
+        .statistics
+        .last_mut()
+        .unwrap()
+        .reason_code = Some("BENCHMARK_WINDOW_MISMATCH".into());
+    report_mut(&mut result).statistics.last_mut().unwrap().value = Some(0.0);
+    assert!(binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).is_err());
 }

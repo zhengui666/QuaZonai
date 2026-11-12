@@ -3,23 +3,7 @@ import type { ResearchInput } from './documents.ts';
 import { publicLiteratureQueries, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { researchCampaignBinding } from './pm-campaign.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
-import { clipTickRegimeEvaluation, nativeResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
-import { validateNativeTickEconomicRequest } from '../../../packages/contracts/src/economic-tick.ts';
-
-export function isTickEconomicResearch(input: { specification?: { search: { scope: string }; evaluation: { metric: string } } }): boolean {
-  return input.specification?.search.scope === 'single-factor' && input.specification.evaluation.metric === 'Sharpe Ratio (365 days)';
-}
-
-export function tickEconomicPolicy(data: ResearchInput['data'], policy: ResearchInput['policy'], heldout = false) {
-  const { bookCores = 1, ...economic } = record(policy.tickEconomic, 'tick_economic_policy');
-  if (!Number.isSafeInteger(bookCores) || (bookCores as number) < 1) throw new Error('tick_book_cores_invalid');
-  if ('research' in economic || 'schema_version' in economic) throw new Error('tick_economic_policy_fields_invalid');
-  const tagged = nativeResearchInput(data);
-  if (tagged?.modality !== 'TRADE_TICK') throw new Error('tick_economic_tick_input_required');
-  const research = heldout ? tagged.request : clipTickRegimeEvaluation(tagged.request, tagged.request.validation_end_ns);
-  if (!heldout) research.input.decision_cutoff_ns = research.validation_end_ns;
-  return { request: validateNativeTickEconomicRequest({ ...economic, schema_version: 1, research }), bookCores: bookCores as number };
-}
+import { nativeResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 export function record(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
@@ -48,6 +32,7 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  if (policy.tickEconomic !== undefined) throw new Error('custom_tick_factor_research_retired');
   if (['max_trials', 'maxTrials', 'maximumScientificCalls', 'maximumTrials', 'maximumModelTurns', 'nativeComputeSeconds', 'modelSpend', 'dataBytes'].some(key => Object.hasOwn(policy, key))) throw new Error('research_policy_fields_unsupported');
   if (policy.reviewPolicy !== undefined) validateReviewPolicy(policy.reviewPolicy);
   if (policy.reviewPolicies !== undefined) {
@@ -59,10 +44,6 @@ export function researchInput(value: unknown): ResearchInput {
   if ((tagged || sealed) && tagged?.modality !== sealed?.modality && data.sealed !== undefined) throw new Error('native_research_modality_mismatch');
   if (tagged?.modality === 'TRADE_TICK') {
     if (policy.strategy !== undefined && policy.strategy !== null || input.specification !== undefined && researchSpecification(input.specification).search.scope !== 'single-factor') throw new Error('tick_factor_only_required');
-  }
-  if (isTickEconomicResearch(input as unknown as ResearchInput)) {
-    tickEconomicPolicy(data as ResearchInput['data'], policy as ResearchInput['policy']);
-    if (data.sealed !== undefined) tickEconomicPolicy(record(data.sealed, 'heldout_data') as ResearchInput['data'], policy as ResearchInput['policy'], true);
   }
   if (input.campaign !== undefined) {
     const campaign = researchCampaignBinding(input.campaign);

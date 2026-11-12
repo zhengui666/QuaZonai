@@ -19,14 +19,14 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 #[path = "../../../../tests/support/execution_models.rs"]
 mod models;
-#[path = "../../tests/support/native_portfolio.rs"]
-mod native_portfolio;
+use crate::native_test_portfolio as native_portfolio;
 
 fn money(value: &str) -> contracts::DecimalValue {
     value.parse().unwrap()
 }
 fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: Some(NativeSpotCashPolicyV1 {
             schema_version: SchemaV1,
             mode: NativeSpotCashModeV1::MultiCurrencyCash,

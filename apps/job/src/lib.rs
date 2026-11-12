@@ -13,6 +13,8 @@ pub fn build_identity() -> serde_json::Value {
 pub mod account_observation_cli;
 pub mod account_observer;
 #[cfg(feature = "account-runtime")]
+mod account_order_preview;
+#[cfg(feature = "account-runtime")]
 pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
@@ -22,12 +24,7 @@ pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod catalog_prefix;
-pub mod ensemble_fit;
-pub mod experiment;
-pub mod factors;
-pub mod feature_model;
 mod fee_models;
-pub mod forecast;
 pub mod forward;
 mod live_progress;
 pub mod managed;
@@ -35,17 +32,13 @@ pub mod managed;
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
+pub mod native_walk_forward;
 pub mod observed_spot;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;
-mod optimization;
-pub mod portfolio;
-pub mod review_allocate;
-pub mod review_science;
-pub use optimization::allocate;
+mod performance;
 mod report;
 pub use report::write_probe_report;
-pub mod signals;
 pub mod simulation;
 pub mod source_market;
 pub mod spot_cash_capture;
@@ -53,7 +46,11 @@ mod spot_cash_runtime;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
 pub mod spot_fees;
-pub mod strategy;
-pub mod study;
 pub mod ticks;
 pub mod validation;
+
+pub mod native_strategy;
+
+#[cfg(test)]
+#[path = "../tests/support/native_portfolio.rs"]
+mod native_test_portfolio;

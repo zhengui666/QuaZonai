@@ -1,4 +1,3 @@
-import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -8,21 +7,20 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { canonical, Study, Requests } from '../../research/src/documents.ts';
-import { ReviewSourceEvidence, sourceReviewEvidence } from '../../research/src/review-source.ts';
+import { canonical, Requests } from '../../research/src/documents.ts';
+import { ReviewSourceEvidence, ReviewSourceValidationTask, trustedSourceChecks } from '../../research/src/review-source.ts';
 import { Application, json } from '../src/facts.ts';
 import { assertCurrentReviewSource } from '../src/review-source.ts';
-import { downstream, isPreTransportRejection } from '../src/downstream.ts';
+import { downstream } from '../src/downstream.ts';
 import type { ObservationTaskInput } from '../src/downstream.ts';
 import type { CapturedReviewSource } from '../../research/src/review-source.ts';
-import { context, setup, fauxAssistantMessage, fauxToolCall } from './support.ts';
+import { context, setup, fauxAssistantMessage } from './support.ts';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 // Actual service/owner HTTP, official Durable, and a controlled subprocess wire
 // protocol. This does not establish market PIT or a real Rust validation result.
-test('source evidence crosses original admission and repair with exact bytes and one native receipt', { timeout: 30_000 }, async () => {
+test('source evidence retains admission bytes and original receipt reads after delivery retirement', { timeout: 30_000 }, async () => {
   const state = await setup(); const previous = process.env.QZ_JOB_BINARY; let receiver: Server | undefined;
   try {
     const dataset = state.options.config.datasets[0]!;
@@ -46,23 +44,26 @@ test('source evidence crosses original admission and repair with exact bytes and
     const sourceBinary = join(state.directory, 'source-job.mjs');
     await writeFile(sourceBinary, `#!${process.execPath}\nlet raw='';for await(const chunk of process.stdin)raw+=chunk;const input=JSON.parse(raw);if(process.argv[2]!=='review-source')throw new Error('unexpected_native_command');console.log(JSON.stringify({schema_version:1,method_version:'qz.review-source.v1',validated:true,metadata:input.metadata}));\n`, { mode: 0o700 });
     process.env.QZ_JOB_BINARY = sourceBinary;
-    state.options.extensions = [defineExtension({ name: 'test.source-admission', tools: [defineTool({ name: 'source_probe', description: 'Controlled source receipt consumer, no scientific claim.', parameters: obj({}), replay: 'safe',
-      async execute(_args, api, ctx) {
-        const data = (await api.snapshot(Study, api.conversationId, ctx))!.input!.data;
-        const evidence = await sourceReviewEvidence(api, ctx, data);
-        assert.equal(evidence.checks.find(check => check.id === 'provenance')!.status, 'PASS');
-        return { output: [{ type: 'text', text: JSON.stringify(evidence) }], control: { terminate: true } };
-      },
-    })] })];
     await state.restart();
     const body = { requestId: 'source-admission-original', goal: 'Source receipt protocol only.', model: state.model, datasetId: dataset.id };
     const admit = (payload: object) => state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload });
-    const answer = () => fauxAssistantMessage(fauxToolCall('source_probe', {}), { stopReason: 'toolUse' });
+    const answer = () => fauxAssistantMessage('Source capture protocol; native validation is explicitly invoked by this test.');
     state.faux.setResponses([answer()]);
     const [response, concurrent] = await Promise.all([admit(body), admit(body)]);
     assert.equal(response.statusCode, 202, response.body); assert.equal(concurrent.statusCode, 202, concurrent.body);
     const receipt = response.json(); assert.deepEqual(concurrent.json(), receipt);
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const capturedSource = (await state.service.research.harness.snapshot(ReviewSourceEvidence, receipt.conversationId, context))!.captured as unknown as CapturedReviewSource;
+    const taskId = await state.service.research.harness.commit(tx => tx.createTask(ReviewSourceValidationTask,
+      { metadata: capturedSource.metadata, observedAt: capturedSource.receivedAt, target: sourceBinary },
+      { conversationId: receipt.conversationId, ownership: { kind: 'conversation' } }), context);
+    const settled = await state.service.research.harness.waitForTask(taskId, context);
+    assert.equal(settled.state.outcome.status, 'completed');
+    const native = settled.state.outcome.status === 'completed' ? settled.state.outcome.result : null;
+    assert.equal(trustedSourceChecks(capturedSource, native, dataset.data, (BigInt(Date.now()) * 1_000_000n).toString()).find(check => check.id === 'provenance')!.status, 'PASS');
+    await state.service.research.harness.commit(async tx => {
+      const doc = await tx.doc(ReviewSourceEvidence, receipt.conversationId); doc.taskId = taskId; doc.native = native;
+    }, context);
     const original = await state.service.research.harness.snapshot(ReviewSourceEvidence, receipt.conversationId, context);
     assert.ok(original!.captured); assert.equal(original!.native!.validated, true); assert.ok(original!.taskId);
     assert.equal(original!.captured!.metadataDigest, dataset.reviewSourceEvidence.metadata.sha256);
@@ -94,7 +95,7 @@ test('source evidence crosses original admission and repair with exact bytes and
       target: { schema_version: 1, valid_until_ns: (BigInt(Date.now()) * 1_000_000n + 60_000_000_000n).toString(), targets: [], cash_weight: '1' },
       reviewSources: [{ configured: structuredClone(dataset), captured }] };
     const signal = new AbortController().signal;
-    assert.equal((await downstream(delivery, 'deliver', signal)).status, 'ACKNOWLEDGED'); assert.equal(posts, 1);
+    await assert.rejects(downstream(delivery, 'deliver', signal), { message: 'native_strategy_only', statusCode: 410 }); assert.equal(posts, 0);
     const revokedBody = JSON.stringify({ ...license, status: 'REVOKED' });
     await writeFile(join(state.directory, 'license.json'), revokedBody);
     const revokedFiles = files.map(file => file.path === 'license.json' ? { ...file, sha256: hash(revokedBody), bytes: String(Buffer.byteLength(revokedBody)) } : file);
@@ -102,14 +103,12 @@ test('source evidence crosses original admission and repair with exact bytes and
     await writeFile(join(state.directory, 'revision.json'), JSON.stringify({ ...revokedManifest, contentDigest: hash(canonical(revokedManifest)) }));
     dataset.reviewSourceEvidence.license.sha256 = hash(revokedBody);
     await assert.rejects(assertCurrentReviewSource(dataset, captured), /review_current_source_authorization_inactive/);
-    await assert.rejects(downstream(delivery, 'deliver', signal), error => {
-      assert.equal((error as Error).message, 'review_source_delivery_authorization_unavailable');
-      assert.equal(isPreTransportRejection(error), true); return true;
-    });
-    assert.equal(posts, 1, 'revoked original source cannot produce another POST');
+    // Delivery stays retired regardless of the source's authorization status.
+    await assert.rejects(downstream(delivery, 'deliver', signal), { message: 'native_strategy_only', statusCode: 410 });
+    assert.equal(posts, 0, 'neither active nor revoked source can admit a new target');
     assert.equal((await downstream(delivery, 'receipt', signal)).id, 'retained-receipt');
     assert.equal((await downstream(delivery, 'account', signal)).status, 'ACKNOWLEDGED');
-    assert.deepEqual(reads, ['/targets/retained-receipt', '/account']); assert.equal(posts, 1);
+    assert.deepEqual(reads, ['/targets/retained-receipt', '/account']); assert.equal(posts, 0);
     assert.equal(captured.license.status, 'ACTIVE');
     assert.deepEqual((await admit(body)).json(), receipt);
     // A fresh source revision must not get past admission merely because its

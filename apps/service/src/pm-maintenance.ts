@@ -80,6 +80,10 @@ export function externalMaintenanceBlockers(application: JsonObject, pm: JsonObj
     if (['PENDING', 'STARTING', 'UNCERTAIN', 'DELIVERING', 'RUNNING'].includes(String(view.status)) || ['PENDING', 'UNCERTAIN'].includes(String(receipt?.status))) blockers.push({ kind: 'OBSERVATION', id, reason: 'original_receipt_unsettled' });
     if (['PENDING', 'UNCERTAIN'].includes(String(allocated?.status)) || ['PENDING', 'UNCERTAIN'].includes(String(allocation?.status))) blockers.push({ kind: 'ALLOCATION', id, reason: 'allocation_receipt_unsettled' });
   }
+  for (const [id, value] of rows(application.strategyCommands)) {
+    const command = object(value); const receipt = command.receipt ? object(command.receipt) : null;
+    if (['PENDING', 'UNCERTAIN'].includes(String(command.status)) || receipt?.persisted === false || ['PENDING', 'UNCERTAIN'].includes(String(receipt?.status))) blockers.push({ kind: 'STRATEGY_COMMAND', id, reason: 'strategy_command_unsettled' });
+  }
   for (const [id, value] of rows(application.accountControls)) for (const [requestId, command] of rows(object(value).commands)) if (['PENDING', 'UNCERTAIN'].includes(String(object(command).state))) blockers.push({ kind: 'CAPITAL_COMMAND', id: `${id}:${requestId}`, reason: 'capital_command_unsettled' });
   for (const mandate of Object.values(pmState(pm).mandates)) {
     for (const command of Object.values(mandate.commands)) if (['PENDING', 'UNCERTAIN'].includes(command.state)) blockers.push({ kind: 'PM_TARGET', id: command.id, reason: 'target_receipt_unsettled' });

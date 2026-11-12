@@ -2,11 +2,14 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
-};
+use std::{io::Write, path::PathBuf};
+
+mod native_stdout;
+
+/// Keep upstream native console messages out of the typed stdout transport.
+fn native_output<T: Serialize>(run: impl FnOnce() -> Result<T>) -> Result<()> {
+    output(&native_stdout::with_stderr_logs(run)?)
+}
 
 #[derive(Parser)]
 #[command(
@@ -34,20 +37,18 @@ enum Operation {
         #[arg(long, default_value = "/output")]
         output_root: PathBuf,
     },
-    /// Solve one frozen allocation request read from stdin.
-    Allocate,
-    /// Deterministic evidence diagnostics; no qualification or delivery authority.
-    ReviewScience,
+    /// Discover stored native instruments and market-data file intervals without modifying them.
+    CatalogInspect {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Read native catalog file coverage; inclusive ts_init bounds, not event completeness.
+    CatalogCoverage {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
     /// Validate original source-owner metadata; no inferred permission or PIT status.
     ReviewSource,
-    /// Quality-adjusted constrained allocation from frozen review evidence.
-    ReviewAllocate,
-    /// Fit causal fold-local score calibrations and nonnegative simplex weights.
-    FitEnsemble,
-    /// Apply an immutable fitted signal ensemble to later original forecasts.
-    ApplyEnsemble,
-    /// Verify original fit evidence and emit frozen native study calibrations.
-    FreezeEnsembleCalibrations,
     /// Plan capital points; the durable owner runs each as an independent native task.
     CapitalCurve {
         #[arg(long)]
@@ -66,101 +67,20 @@ enum Operation {
     SizeAccount,
     /// Validate an original capital-exit V1 document; does not control an owner.
     ValidateCapitalExit,
-    /// Predict using one immutable native catalog and a bounded Wasm artifact.
-    Forecast {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
-    /// Predict research scores from observed price/volume BARs, without trading definitions.
-    ForecastFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
-    /// Evaluate arbitrary factor scores with shared time cuts; no targets or accounts.
-    /// Catalog/model paths are trusted local CLI configuration only.
-    EvaluateFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Omit per-observation rows; emit the same native metrics and provenance.
-        #[arg(long)]
-        summary_only: bool,
-    },
-    /// Explicit native TradeTick cohort factor research, without BARs or accounts.
-    EvaluateTickFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Omit to use the existing native stdin request protocol.
-        #[arg(long)]
-        request: Option<PathBuf>,
-        #[arg(long)]
-        summary_only: bool,
-    },
-    /// Explicit segregated-cash/margin economic estimate over derived cohorts.
-    ReplayTickEconomic {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        funding_catalog: Option<PathBuf>,
-        #[arg(long, required = true)]
-        model: Vec<PathBuf>,
-        #[arg(long, default_value_t = 1)]
-        book_cores: usize,
-    },
     /// Exact native BAR identities for private exposure tracking; no observations.
     CatalogFactorScope {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Scan every registered BAR series for pooled factor IC, without a market shortlist.
-    /// No targets, account simulation or qualification are produced.
-    ScanFactorCatalog {
+    /// Run a compiled upstream strategy on original native market events.
+    NativeStrategyBacktest {
         #[arg(long)]
         catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Machine-private JSON array of the identities recorded before execution.
-        #[arg(long)]
-        scope: Option<PathBuf>,
     },
-
-    /// Execute every independent native fold; stdout remains restricted evidence.
-    ValidateAlpha {
+    /// Replay explicit historical walk-forward windows with upstream strategies.
+    NativeWalkForward {
         #[arg(long)]
         catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
-    /// Independently replay a frozen feature-aware target policy in native folds.
-    EvaluateExperiment {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        #[arg(long, value_parser = parse_id)]
-        dataset_revision_id: contracts::Id,
-        #[arg(long, value_parser = parse_id)]
-        model_artifact_id: contracts::Id,
-        #[arg(long, required = true)]
-        features: Vec<PathBuf>,
-        #[arg(long, required = true, value_parser = parse_id)]
-        feature_artifact_id: Vec<contracts::Id>,
-    },
-    /// Apply a frozen model without fitting; stdout is restricted held-out evidence.
-    EvaluateSealedAlpha {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        #[arg(long)]
-        calibration: Option<PathBuf>,
     },
     /// Replay frozen target weights in one native simulated account.
     Simulate {
@@ -169,13 +89,6 @@ enum Operation {
         /// Existing DatasetRevision ID; required only by the explicit spot CASH mode.
         #[arg(long, value_parser = parse_id)]
         dataset_revision_id: Option<contracts::Id>,
-    },
-    /// Recompute rolling portfolio targets inside one native simulated account.
-    StudyPortfolio {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
     },
     /// Matched no-trade HOLD and target replay from original observed spot balances.
     CompareObservedSpot {
@@ -191,20 +104,6 @@ enum Operation {
     CatalogPrefixDigest {
         #[arg(long)]
         catalog: PathBuf,
-    },
-    /// Optimize inside the observed spot inventory at every causal decision cutoff.
-    StudyObservedSpot {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
-    },
-    /// One as-of model allocation from observed spot balances, without replay or delivery.
-    BuildObservedSpot {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
     },
 }
 
@@ -222,35 +121,6 @@ fn output<T: Serialize>(value: &T) -> Result<()> {
     writeln!(stream)?;
     stream.flush()?;
     Ok(())
-}
-
-fn model_bytes(path: &Path) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() {
-        anyhow::bail!("native model file limit");
-    }
-    // Only the runtime's registered read-only model mount is passed here. These
-    // local CLI arguments are not exposed as arbitrary HTTP/MCP filesystem reads.
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(
-            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
-        );
-    }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        anyhow::bail!("native model is not a file");
-    }
-    let mut bytes = Vec::new();
-    file.take(metadata.len().saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != metadata.len() {
-        anyhow::bail!("native model file changed");
-    }
-    Ok(bytes)
 }
 
 fn run(operation: Operation) -> Result<()> {
@@ -275,13 +145,7 @@ fn run(operation: Operation) -> Result<()> {
             job::managed::execute(&input_root, &output_root)?;
             Ok(())
         }
-        Operation::Allocate => output(&job::allocate(&input()?)?),
-        Operation::ReviewScience => output(&job::review_science::analyze(&input()?)?),
-        Operation::ReviewSource => output(&job::review_science::validate_source(&input()?)?),
-        Operation::ReviewAllocate => output(&job::review_allocate::allocate(&input()?)?),
-        Operation::FitEnsemble => output(&job::ensemble_fit::fit(&input()?)?),
-        Operation::ApplyEnsemble => output(&job::ensemble_fit::apply(&input()?)?),
-        Operation::FreezeEnsembleCalibrations => output(&job::ensemble_fit::freeze(&input()?)?),
+        Operation::ReviewSource => output(&job::catalog::validate_source(&input()?)?),
         Operation::CapitalCurve {
             catalog,
             dataset_revision_id,
@@ -301,126 +165,20 @@ fn run(operation: Operation) -> Result<()> {
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
-        Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
-        Operation::ForecastFactor { catalog, model } => output(&job::forecast::forecast_factor(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
-        Operation::EvaluateFactor {
-            catalog,
-            model,
-            summary_only,
-        } => {
-            let result = job::factors::evaluate_factor(&catalog, &input()?, &model_bytes(&model)?)?;
-            if summary_only {
-                output(&contracts::factors::NativeFactorEvaluationSummaryV1::from(
-                    result,
-                ))
-            } else {
-                output(&result)
-            }
+        Operation::CatalogInspect { catalog } => {
+            output(&job::catalog::inspect::query(&catalog, input()?)?)
         }
-        Operation::ReplayTickEconomic {
-            catalog,
-            funding_catalog,
-            model,
-            book_cores,
-        } => output(&job::ticks::economic::replay_models_with_funding_and_cores(
-            &catalog,
-            funding_catalog.as_deref().unwrap_or(&catalog),
-            &input()?,
-            &model
-                .iter()
-                .map(|path| model_bytes(path))
-                .collect::<Result<Vec<_>>>()?,
-            book_cores,
-        )?),
+        Operation::CatalogCoverage { catalog } => {
+            output(&job::catalog::coverage::query(&catalog, input()?)?)
+        }
         Operation::CatalogFactorScope { catalog } => {
-            output(&job::factors::catalog_factor_scope(&catalog)?)
+            output(&job::catalog::catalog_factor_scope(&catalog)?)
         }
-        Operation::EvaluateTickFactor {
-            catalog,
-            model,
-            request,
-            summary_only,
-        } => {
-            let request = match request {
-                Some(path) => serde_json::from_slice(&model_bytes(&path)?)?,
-                None => input()?,
-            };
-            output(&job::ticks::evaluate(
-                &catalog,
-                &request,
-                &model_bytes(&model)?,
-                summary_only,
-            )?)
+        Operation::NativeStrategyBacktest { catalog } => {
+            native_output(|| job::native_strategy::run(&catalog, input()?))
         }
-        Operation::ScanFactorCatalog {
-            catalog,
-            model,
-            scope,
-        } => {
-            let scope: Option<Vec<String>> = scope
-                .map(|path| Ok::<_, anyhow::Error>(serde_json::from_reader(fs::File::open(path)?)?))
-                .transpose()?;
-            output(&job::factors::scan_factor_catalog_with_scope(
-                &catalog,
-                &input()?,
-                &model_bytes(&model)?,
-                scope.as_deref(),
-            )?)
-        }
-        Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
-        Operation::EvaluateExperiment {
-            catalog,
-            model,
-            dataset_revision_id,
-            model_artifact_id,
-            features,
-            feature_artifact_id,
-        } => {
-            let request = input()?;
-            let parts = features
-                .into_iter()
-                .map(|path| -> Result<_> { Ok(serde_json::from_slice(&model_bytes(&path)?)?) })
-                .collect::<Result<Vec<_>>>()?;
-            output(&job::experiment::evaluate(
-                &catalog,
-                &request,
-                dataset_revision_id,
-                model_artifact_id,
-                &feature_artifact_id,
-                &parts,
-                &model_bytes(&model)?,
-            )?)
-        }
-        Operation::EvaluateSealedAlpha {
-            catalog,
-            model,
-            calibration,
-        } => {
-            let calibration = calibration
-                .map(
-                    |p| -> Result<contracts::science::NativeFrozenCalibrationV1> {
-                        Ok(serde_json::from_slice(&model_bytes(&p)?)?)
-                    },
-                )
-                .transpose()?;
-            output(&job::validation::evaluate_sealed_alpha(
-                &catalog,
-                &input()?,
-                &model_bytes(&model)?,
-                calibration.as_ref(),
-            )?)
+        Operation::NativeWalkForward { catalog } => {
+            native_output(|| job::native_walk_forward::run(&catalog, input()?))
         }
         Operation::Simulate {
             catalog,
@@ -430,11 +188,6 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             dataset_revision_id,
         )?),
-        Operation::StudyPortfolio { catalog, objects } => {
-            output(&job::study::evaluate(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
-        }
         Operation::CompareObservedSpot { catalog } => {
             output(&job::observed_spot::compare(&catalog, &input()?)?)
         }
@@ -444,23 +197,10 @@ fn run(operation: Operation) -> Result<()> {
         Operation::CatalogPrefixDigest { catalog } => {
             output(&job::catalog_prefix::digest(&catalog, &input()?)?)
         }
-        Operation::StudyObservedSpot { catalog, objects } => {
-            output(&job::observed_spot::study(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
-        }
-        Operation::BuildObservedSpot { catalog, objects } => {
-            output(&job::observed_spot::build(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
-        }
     }
 }
 
 fn public_error_code(error: &anyhow::Error) -> &'static str {
-    if error.is::<job::managed::CompilerMemoryLimit>() {
-        return "QZ_NATIVE_JOB_MEMORY_LIMIT";
-    }
     match error.to_string().as_str() {
         "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
             "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
@@ -484,12 +224,8 @@ fn public_failure(error: &anyhow::Error) -> String {
     format!("{}\n{detail}", public_error_code(error))
 }
 
-fn failure_exit_code(error: &anyhow::Error) -> i32 {
-    if error.is::<job::managed::CompilerMemoryLimit>() {
-        domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE
-    } else {
-        1
-    }
+fn failure_exit_code(_error: &anyhow::Error) -> i32 {
+    1
 }
 
 fn main() {
@@ -504,7 +240,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{public_error_code, public_failure, Arguments, Operation};
+    use super::{public_error_code, public_failure, Arguments};
     use clap::Parser;
 
     #[test]
@@ -518,17 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn only_typed_compiler_memory_evidence_selects_the_resource_exit() {
-        for error in [
-            anyhow::Error::new(job::managed::CompilerMemoryLimit),
-            anyhow::Error::new(job::managed::CompilerMemoryLimit).context("native compiler"),
-        ] {
-            assert_eq!(public_error_code(&error), "QZ_NATIVE_JOB_MEMORY_LIMIT");
-            assert_eq!(
-                super::failure_exit_code(&error),
-                domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE
-            );
-        }
+    fn retired_compiler_messages_cannot_select_the_resource_exit() {
         for message in ["NATIVE_COMPILER_MEMORY_LIMIT", "NATIVE_COMPILATION_FAILED"] {
             let error = anyhow::anyhow!(message);
             assert_eq!(public_error_code(&error), "QZ_NATIVE_JOB_FAILED");
@@ -592,9 +318,10 @@ mod tests {
 
     #[test]
     fn executable_commands_exclude_the_removed_compatibility_probe() {
-        for command in ["allocate", "run-bounded", "execute"] {
+        for command in ["run-bounded", "execute"] {
             assert!(Arguments::try_parse_from(["job", command]).is_ok());
         }
+        assert!(Arguments::try_parse_from(["job", "allocate"]).is_err());
         assert!(Arguments::try_parse_from([
             "job",
             "verify-native",
@@ -612,88 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_evaluation_cli_preserves_each_typed_artifact_identity() {
-        let dataset = contracts::Id::new().to_string();
-        let model = contracts::Id::new().to_string();
-        let first = contracts::Id::new().to_string();
-        let second = contracts::Id::new().to_string();
-        let arguments = [
-            "job",
-            "evaluate-experiment",
-            "--catalog",
-            "catalog",
-            "--model",
-            "model.wasm",
-            "--dataset-revision-id",
-            &dataset,
-            "--model-artifact-id",
-            &model,
-            "--features",
-            "first.json",
-            "--feature-artifact-id",
-            &first,
-            "--features",
-            "second.json",
-            "--feature-artifact-id",
-            &second,
-        ];
-        let Operation::EvaluateExperiment {
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_id,
-            features,
-            ..
-        } = Arguments::try_parse_from(arguments).unwrap().command
-        else {
-            panic!("expected feature evaluation operation");
-        };
-        assert_eq!(dataset_revision_id.to_string(), dataset);
-        assert_eq!(model_artifact_id.to_string(), model);
-        assert_eq!(
-            feature_artifact_id
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-            [first, second]
-        );
-        assert_eq!(
-            features,
-            [
-                std::path::PathBuf::from("first.json"),
-                std::path::PathBuf::from("second.json")
-            ]
-        );
-    }
-
-    #[test]
-    fn feature_evaluation_cli_rejects_invalid_ids_before_reading_any_inputs() {
-        let valid = contracts::Id::new().to_string();
-        let arguments = vec![
-            "job",
-            "evaluate-experiment",
-            "--catalog",
-            "missing-catalog",
-            "--model",
-            "missing-model.wasm",
-            "--dataset-revision-id",
-            &valid,
-            "--model-artifact-id",
-            &valid,
-            "--features",
-            "missing-features.json",
-            "--feature-artifact-id",
-            &valid,
-        ];
-        for position in [7, 9, 13] {
-            for invalid in ["not-a-uuid", "550e8400-e29b-41d4-a716-446655440000"] {
-                let mut candidate = arguments.clone();
-                candidate[position] = invalid;
-                let error = Arguments::try_parse_from(candidate)
-                    .err()
-                    .expect("invalid ID");
-                assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
-                assert!(error.to_string().contains("canonical UUIDv7"));
-            }
-        }
+    fn retired_wasm_evaluation_is_not_a_cli_operation() {
+        assert!(Arguments::try_parse_from(["job", "evaluate-experiment"]).is_err());
     }
 }

@@ -16,14 +16,12 @@ type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: st
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
-export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate',
-  'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
-  'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
-  'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
-const flags = new Set(['--summary-only', '--plan-only']);
-const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
-const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
-const catalogOptions = new Set(['--catalog', '--funding-catalog']);
+export const commands = ['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
+  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
+  'capital-curve', 'compare-observed-spot', 'value-observed-spot',
+  'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
+const scalarOptions = new Set(['--dataset-revision-id']);
+const catalogOptions = new Set(['--catalog']);
 
 export interface WorkerOptions {
   binary: string;
@@ -36,8 +34,6 @@ export interface WorkerOptions {
   maximumRequestBytes?: number;
   /** Concurrent worker capacity, separate from cumulative research execution. */
   maximumConcurrentTickExecutions?: number;
-  /** Maximum threads per independent ensemble-calibration call; native code also checks cores and scratch size. */
-  calibrationThreads?: number;
   /** Explicit Paper/LIVE account modes in this same native worker process. */
   accounts?: AccountOptions[];
   accountBinary?: string;
@@ -103,8 +99,6 @@ function validateRequest(value: unknown, digest: string): Request {
 
 export async function createNautilusWorker(options: WorkerOptions) {
   const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
-  const calibrationThreads = options.calibrationThreads === undefined ? undefined
-    : positiveLimit(options.calibrationThreads, 1, 'nautilus_calibration_threads_invalid');
   const binary = await realpath(options.binary);
   const tickBinary = options.tickBinary === undefined ? binary : await realpath(options.tickBinary);
   async function implementationIdentity() {
@@ -177,16 +171,11 @@ export async function createNautilusWorker(options: WorkerOptions) {
       return receipt;
     } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
   }
-  async function argumentsFor(request: Request, directory: string): Promise<string[]> {
-    const attachments = join(directory, 'attachments'); await mkdir(attachments);
-    for (const [name, encoded] of Object.entries(request.files)) {
-      const path = join(attachments, name); await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, Buffer.from(encoded, 'base64'), { mode: 0o600 });
-    }
+  async function argumentsFor(request: Request): Promise<string[]> {
+    if (Object.keys(request.files).length) fail('nautilus_attachments_unsupported');
     const args: string[] = [];
     for (let index = 0; index < request.args.length; index++) {
       const option = request.args[index]!;
-      if (flags.has(option)) { args.push(option); continue; }
       const value = request.args[++index];
       if (value === undefined) fail('nautilus_argument_missing');
       if (catalogOptions.has(option)) {
@@ -194,15 +183,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
         const path = await realpath(value);
         if (!roots.some(root => below(root, path))) fail('nautilus_catalog_outside_configured_roots');
         args.push(option, path);
-      } else if (fileOptions.has(option)) {
-        const name = value.startsWith('@file:') ? value.slice(6) : '';
-        if (!validName(name) || !(name in request.files)) fail('nautilus_attachment_required');
-        args.push(option, join(attachments, name));
-      } else if (option === '--objects') {
-        const name = value.startsWith('@objects:') ? value.slice(9) : '';
-        if (!validName(name)) fail('nautilus_object_directory_invalid');
-        const objects = join(attachments, name); await mkdir(objects, { recursive: true });
-        args.push(option, objects);
       } else if (scalarOptions.has(option) && !value.startsWith('-')) args.push(option, value);
       else fail('nautilus_argument_unsupported');
     }
@@ -238,7 +218,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
       let receipt: Receipt;
       try {
         directory = await mkdtemp(join(scratch, 'run-'));
-        const args = await argumentsFor(request, directory);
+        const args = await argumentsFor(request);
         if (await implementationIdentity() !== implementationDigest) fail('nautilus_implementation_changed', 409);
         if (cancelRequested) receipt = { ...running, status: 'CANCELLED' };
         else {
@@ -250,7 +230,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
           if (request.command === 'simulate') execution.progressPath = join(directory, 'progress.ndjson');
           child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory,
-              ...(calibrationThreads === undefined ? {} : { QZ_CALIBRATION_THREADS: String(calibrationThreads) }),
               ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
           const parser = new JsonReader(); let parseError: unknown; let stderr = '';
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');

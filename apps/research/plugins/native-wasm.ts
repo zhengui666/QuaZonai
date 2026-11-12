@@ -1,28 +1,7 @@
-import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { nativeTargetForData, executeNativeValue } from '../src/native-execution.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import type { Context } from '@earendil-works/chord';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import wabtFactory from 'wabt';
 import { object } from '../src/trials.ts';
-import { canonical } from '../src/documents.ts';
 import { partitionBoundaries } from './native-exposure.ts';
-import { ExecutionFailure } from '../src/execution-errors.ts';
-import { jsonChunks } from '../src/native-json.ts';
 import { clipTickRegimeEvaluation, isTickResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
-
-const wabt = await wabtFactory();
-
-export function compileWasm(model: string, filename = 'factor.wat', operation = 'evaluate-factor'): Uint8Array {
-  let module: ReturnType<typeof wabt.parseWat> | undefined;
-  try {
-    module = wabt.parseWat(filename, model);
-    module.validate();
-    return module.toBinary({}).buffer;
-  } catch (error) { throw new ExecutionFailure(error, { operation, stage: 'compile' }); }
-  finally { module?.destroy(); }
-}
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
@@ -51,33 +30,4 @@ export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): 
   selection.event_end_ns = request.validation_end_ns!;
   if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;
   return request;
-}
-
-export async function evaluateWasm(model: string, data: JsonObject, context: Context, scope?: JsonObject, binary: NativeTarget = nativeTargetForData(data)): Promise<JsonObject> {
-  if (typeof data.catalog !== 'string') throw new Error('catalog_required');
-  const request = normalizedRequest(data);
-  const catalog = data.catalog_scan_request !== undefined;
-  const operation = isTickResearchInput(data) ? 'evaluate-tick-factor' : catalog ? 'scan-factor-catalog' : 'evaluate-factor';
-  if (catalog && (!Array.isArray(scope?.barTypes) || !scope.barTypes.every((type) => typeof type === 'string'))) throw new Error('catalog_scope_required');
-  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
-  let stage: 'execute' | 'decode' | 'validate' = 'execute';
-  try {
-    await writeFile(join(directory, 'model.wasm'), compileWasm(model, 'factor.wat', operation));
-    await writeFile(join(directory, 'request.json'), JSON.stringify(request));
-    if (catalog) await writeFile(join(directory, 'scope.json'), jsonChunks(scope!.barTypes!));
-    const args = ['--catalog', data.catalog, '--model', join(directory, 'model.wasm')];
-    if (catalog) args.push('--scope', join(directory, 'scope.json')); else args.push('--summary-only');
-    const value = await executeNativeValue(binary, operation, request, args, directory, context);
-    stage = 'decode';
-    const output = object(value, 'native_result');
-    stage = 'validate';
-    if (canonical((output.request!)) !== canonical((request))) throw new Error('native_result_request_mismatch');
-    if ('points' in output) throw new Error('native_summary_required');
-    return output;
-  } catch (error) {
-    if (error instanceof ExecutionFailure) throw error;
-    throw new ExecutionFailure(error, { operation, stage });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 }

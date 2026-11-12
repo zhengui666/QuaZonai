@@ -27,7 +27,7 @@ test('request hashing preserves original canonical identities across buffered Un
   assert.equal(executionId({ ...large, files: { ...large.files }, input: [...large.input] }), executionId(large));
 });
 
-async function fixture(calibrationThreads?: number) {
+async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-worker-'));
   const catalog = join(directory, 'catalog'); await mkdir(catalog);
   const count = join(directory, 'calls'); const binary = join(directory, 'job');
@@ -42,16 +42,16 @@ else if(input.fail) { console.error('NATIVE_CONTROLLED_FAILURE'); process.exitCo
 else if(input.invalid) { console.log('invalid'); }
 else { const contents={}; for(let i=0;i<args.length;i++) if(['--model','--scope'].includes(args[i])) contents[args[i]]=fs.readFileSync(args[++i],'utf8');
 const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.readdirSync(args[objects+1]).sort();
-console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN,calibrationThreads:process.env.QZ_CALIBRATION_THREADS??null})); }
+console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN})); }
 `);
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token', calibrationThreads };
+  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token' };
   let worker = await createNautilusWorker(options);
   async function listen() { worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening'); return `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`; }
   let url = await listen();
   const headers = { authorization: `Bearer ${options.token}`, 'content-type': 'application/json' };
   function request(input: NativeExecutionRequest['input'], args: string[] = [], files: Record<string, string> = {}): NativeExecutionRequest {
-    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command: 'allocate', input, args, files };
+    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command: 'review-source', input, args, files };
     return { ...body, requestId: executionId(body) };
   }
   return { directory, catalog, count, options, headers, request, get worker() { return worker; }, get url() { return url; },
@@ -69,24 +69,41 @@ console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUT
   };
 }
 
-test('calibration capacity reaches the native process without widening the environment', async () => {
-  for (const threads of [undefined, 1, 4]) {
-    const f = await fixture(threads);
-    try {
-      const request = f.request({});
-      request.command = 'fit-ensemble';
-      const { requestId: _previousId, ...input } = request;
-      request.requestId = executionId(input);
-      const receipt = await (await f.post(request)).json();
-      assert.equal(receipt.status, 'COMPLETED');
-      assert.equal(receipt.result.calibrationThreads, threads === undefined ? null : String(threads));
-      assert.equal(receipt.result.authLeaked, false);
-    } finally { await f.cleanup(); }
-  }
-  for (const calibrationThreads of [0, -1, 1.5, NaN, Infinity]) {
-    await assert.rejects(createNautilusWorker({ binary: '/unused', dataDir: '/unused', catalogRoots: [], calibrationThreads }),
-      /nautilus_calibration_threads_invalid/);
-  }
+test('removed scientific commands are absent from capabilities and rejected before native execution', async () => {
+  const f = await fixture();
+  try {
+    const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
+    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot', 'study-observed-spot', 'evaluate-experiment', 'replay-tick-economic']) {
+      assert.equal(capabilities.commands.includes(command), false);
+      const body = f.request({}); body.command = command;
+      const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+      const response = await f.post(body);
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: 'nautilus_request_invalid' });
+      assert.equal((await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers })).status, 404);
+    }
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+    assert.equal(capabilities.commands.includes('review-source'), true);
+    const body = f.request({}); body.command = 'review-source';
+    const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+    assert.equal((await (await f.post(body)).json()).status, 'COMPLETED');
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('retired artifact and solver arguments cannot launch native execution', async () => {
+  const f = await fixture();
+  try {
+    for (const option of ['--model', '--scope', '--features', '--calibration', '--objects', '--funding-catalog', '--model-artifact-id', '--feature-artifact-id', '--book-cores', '--summary-only', '--plan-only']) {
+      const result = await (await f.post(f.request({}, [option, 'retired']))).json();
+      assert.equal(result.status, 'FAILED');
+      assert.equal(result.error, 'nautilus_argument_unsupported');
+    }
+    const attached = await (await f.post(f.request({}, [], { model: 'eA==' }))).json();
+    assert.equal(attached.status, 'FAILED');
+    assert.equal(attached.error, 'nautilus_attachments_unsupported');
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
 });
 
 test('capabilities expose the verified build manifest of the actual executable', async () => {
@@ -105,7 +122,7 @@ test('capabilities expose the verified build manifest of the actual executable',
   } finally { await f.cleanup(); }
 });
 
-test('remote worker retains actual execution, attachments and original receipt across retries and restart', async () => {
+test('remote worker retains actual execution and original receipt across retries and restart', async () => {
   const f = await fixture();
   try {
     assert.equal((await fetch(`${f.url}/v1/capabilities`)).status, 401);
@@ -113,13 +130,12 @@ test('remote worker retains actual execution, attachments and original receipt a
     assert.match(caps.implementationDigest, /^sha256:[a-f0-9]{64}$/);
     assert.ok(caps.commands.includes('simulate')); assert.ok(!caps.commands.includes('paper'));
     const body = f.request({ decimal: '1.000000000000000001', ns: '1790000000000000000' },
-      ['--catalog', f.catalog, '--model', '@file:model-0', '--scope', '@file:scope-0', '--objects', '@objects:objects-0'],
-      { 'model-0': Buffer.from('wasm-bytes').toString('base64'), 'scope-0': Buffer.from('["instrument"]').toString('base64'), 'objects-0/uuid': Buffer.from('calibration').toString('base64') });
+      ['--catalog', f.catalog]);
     const responses = await Promise.all([f.post(body), f.post(body)]);
     const [first, duplicate] = await Promise.all(responses.map(response => response.json()));
     assert.equal(first.status, 'COMPLETED'); assert.deepEqual(duplicate, first);
     assert.deepEqual(first.result.input, body.input);
-    assert.deepEqual(first.result.contents, { '--model': 'wasm-bytes', '--scope': '["instrument"]', objects: ['uuid'] });
+    assert.deepEqual(first.result.contents, {});
     assert.equal(first.result.authLeaked, false);
     assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
     await f.restart();
@@ -139,7 +155,7 @@ test('worker rejects arbitrary commands and unregistered paths; failures remain 
     const outside = await (await f.post(f.request({}, ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const missing = await (await f.post(f.request({}, ['--model', '/etc/passwd']))).json();
-    assert.equal(missing.status, 'FAILED'); assert.equal(missing.error, 'nautilus_attachment_required');
+    assert.equal(missing.status, 'FAILED'); assert.equal(missing.error, 'nautilus_argument_unsupported');
     const traversal = f.request({}, [], { '../escape': 'eA==' });
     assert.equal((await f.post(traversal)).status, 400);
     const failure = f.request({ fail: true });
@@ -248,5 +264,82 @@ test('running receipt exposes original snapshot previews without waiting for or 
     const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
     assert.equal(cancelled.status, 'CANCELLED'); await pending;
     assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('catalog coverage uses the existing read-only catalog execution route without rounding nanoseconds', async () => {
+  const f = await fixture();
+  try {
+    for (const selector of [{ bar_types: ['BTC/USDT.BINANCE-1-MINUTE-LAST-EXTERNAL'] },
+      { selectors: [{ data_type: 'TradeTick', identifier: 'BTC/USDT.BINANCE' }, { data_type: 'QuoteTick', identifier: 'BTC/USDT.BINANCE' }] }] as Record<string, NativeExecutionRequest['input']>[]) {
+    const request = f.request({ ...selector,
+      start_ns: '1790000000000000001', end_ns: '1790000000000000002' }, ['--catalog', f.catalog]);
+    request.command = 'catalog-coverage';
+    const { requestId: _old, ...input } = request;
+    request.requestId = executionId(input);
+    const response = await f.post(request);
+    const receipt = await response.json();
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual(receipt.result.input, request.input);
+    assert.deepEqual(receipt.result.args, ['--catalog', f.catalog]);
+    }
+  } finally { await f.cleanup(); }
+});
+
+test('stopping an active upstream strategy cancels its one process and never publishes a result', async () => {
+  const f = await fixture();
+  try {
+    const body = f.request({ wait: true, requests: [{ ordinal: '0' }, { ordinal: '1' }] });
+    body.command = 'native-strategy-backtest';
+    const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+    const response = await f.post(body); assert.equal(response.status, 202); await response.body?.cancel();
+    for (let attempt = 0; ; attempt++) {
+      try { await readFile(f.count, 'utf8'); break; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || attempt === 100) throw error; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const stopped = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
+    assert.equal(stopped.status, 'CANCELLED'); assert.equal('result' in stopped, false);
+    const readback = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers })).json();
+    assert.equal(readback.status, 'CANCELLED'); assert.equal('result' in readback, false);
+    const replay = await (await f.post(body)).json(); assert.equal(replay.status, 'CANCELLED');
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('upstream native strategy command preserves exact clocks and only registered catalog paths', async () => {
+  const f = await fixture();
+  try {
+    const input = { event_start_ns: '1790000000000000001', strategy: { kind: 'EMA_CROSS', trade_size: '0.000000000000000001' } };
+    const body = f.request(input, ['--catalog', f.catalog]); body.command = 'native-strategy-backtest';
+    const { requestId: _old, ...wire } = body; body.requestId = executionId(wire);
+    const receipt = await (await f.post(body)).json() as NativeExecutionReceipt;
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual((receipt.result as { input: unknown }).input, input);
+    const outside = f.request(input, ['--catalog', f.directory]); outside.command = 'native-strategy-backtest'; const { requestId: _outsideOld, ...outsideWire } = outside; outside.requestId = executionId(outsideWire);
+    const rejected = await (await f.post(outside)).json();
+    assert.equal(rejected.status, 'FAILED'); assert.equal(rejected.error, 'nautilus_catalog_outside_configured_roots');
+  } finally { await f.cleanup(); }
+});
+
+test('catalog inspection forwards an empty read-only request only within the configured root', async () => {
+  const f = await fixture();
+  try {
+    const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
+    assert.equal(capabilities.commands.includes('catalog-inspect'), true);
+    const request = f.request({}, ['--catalog', f.catalog]);
+    request.command = 'catalog-inspect';
+    const { requestId: _old, ...input } = request;
+    request.requestId = executionId(input);
+    const receipt = await (await f.post(request)).json();
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual(receipt.result.input, {});
+    assert.deepEqual(receipt.result.args, ['--catalog', f.catalog]);
+    const outside = { ...input, args: ['--catalog', tmpdir()] };
+    const denied = await f.post({ ...outside, requestId: executionId(outside) });
+    const failure = await denied.json();
+    assert.equal(failure.status, "FAILED");
+    assert.match(failure.error, /nautilus_catalog_outside_configured_roots/);
+    assert.equal((await readFile(f.count, "utf8")).trim().split("\n").length, 1);
   } finally { await f.cleanup(); }
 });

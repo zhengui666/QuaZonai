@@ -91,14 +91,12 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     await assert.rejects(run(['research', 'start', '--file', file]), (error: unknown) => { assert.equal((error as { code: string }).code, 'request_id_conflict'); assert.equal(String(error).includes(fakeToken), false); return true; });
     await assert.rejects(run(['research', 'start', '--file', file, '--request-id', 'new-key']), /request_id_conflict/);
     assert.equal(sent.length, 3);
-    const portfolio = join(config.directory, 'portfolio.json'); await writeFile(portfolio, '{"requestId":"p-original","capital":"100.123456789123456789"}');
-    const observation = join(config.directory, 'observation.json'); await writeFile(observation, '{"requestId":"o-original","portfolioId":"p-1","connectionId":"binding","mode":"paper"}');
+    const observation = join(config.directory, 'observation.json'); await writeFile(observation, '{"requestId":"o-original","purpose":"ACCOUNT_ONLY","connectionId":"binding","mode":"paper"}');
     const settings = join(config.directory, 'settings.json'); await writeFile(settings, '{"defaultModel":{"provider":"faux","modelId":"x"},"thinkingLevel":null}');
-    for (const args of [['research', 'models'], ['research', 'list', '--cursor', '{"id":4}'], ['research', 'stop', '42'], ['portfolio', 'build', '--file', portfolio], ['observation', 'start', '--file', observation], ['observation', 'get', 'o-1'], ['settings', 'set', '--file', settings], ['extensions', 'disable', 'qz.factor-wasm']]) await run(args, (value) => { output.push(value); });
+    for (const args of [['research', 'models'], ['research', 'list', '--cursor', '{"id":4}'], ['research', 'stop', '42'], ['observation', 'start', '--file', observation], ['observation', 'get', 'o-1'], ['settings', 'set', '--file', settings], ['extensions', 'disable', 'qz.research-native']]) await run(args, (value) => { output.push(value); });
     assert.deepEqual(sent.slice(3).map(({ method, url }) => [method, url]), [
-      ['GET', '/api/v3/research/models'], ['GET', '/api/v3/research?cursor=%7B%22id%22%3A4%7D'], ['POST', '/api/v3/research/42/stop'], ['POST', '/api/v3/portfolios'], ['POST', '/api/v3/observations'], ['GET', '/api/v3/observations'], ['PATCH', '/api/v3/settings'], ['PATCH', '/api/v3/extensions/qz.factor-wasm'],
+      ['GET', '/api/v3/research/models'], ['GET', '/api/v3/research?cursor=%7B%22id%22%3A4%7D'], ['POST', '/api/v3/research/42/stop'], ['POST', '/api/v3/observations'], ['GET', '/api/v3/observations'], ['PATCH', '/api/v3/settings'], ['PATCH', '/api/v3/extensions/qz.research-native'],
     ]);
-    assert.equal(sent[6]!.bytes.includes('100.123456789123456789'), true);
     assert.deepEqual(output.at(-3), { id: 'o-1', cash: null });
     for (const cores of ['4', '12']) {
       await run(['settings', 'set', '--tick-book-cores', cores], () => {});
@@ -106,7 +104,7 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     }
     for (const cores of ['0', '1.2', '-1']) await assert.rejects(run(['settings', 'set', `--tick-book-cores=${cores}`]), /tick_book_cores_invalid/);
     assert.ok((await schemas() as { names: string[] }).names.includes('ResearchStart'));
-    assert.ok((await schemas('NativeFactorEvaluationRequestV1', true) as { schema: unknown }).schema);
+    assert.ok((await schemas('NativeStrategyBacktestRequestV1', true) as { schema: unknown }).schema);
   } finally { await config.close(); await api.close(); }
 });
 
@@ -199,60 +197,30 @@ test('diagnostics and resume use the original numeric identities without implici
   } finally { await config.close(); await api.close(); }
 });
 
-test('portfolio capacity posts exact assumptions to the original ID without a new request key', async () => {
-  const sent: { method: string; url: string; bytes: string }[] = [];
-  const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { status: 'UNAVAILABLE', reason: 'TEST_ONLY_PROTOCOL' }); });
-  const config = await configuration(api.origin); const file = join(config.directory, 'portfolio-capital.json');
-  try {
-    await assert.rejects(run(['portfolio', 'capacity', 'p-original']), /file_required/);
-    await writeFile(file, JSON.stringify({ scenarios: ['0.0000000000000000001'], participation: '0.01', maximumAgeSeconds: 60 }));
-    await assert.rejects(run(['portfolio', 'capacity', 'p-original', '--file', file]), /research_capital_scenarios_invalid/);
-    assert.equal(sent.length, 0);
-    const bytes = '{\n "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60\n}\n';
-    await writeFile(file, bytes); const output: unknown[] = [];
-    await run(['portfolio', 'capacity', 'p/original', '--file', file], value => { output.push(value); });
-    assert.deepEqual(sent, [{ method: 'POST', url: '/api/v3/portfolios/p%2Foriginal/capacity', bytes }]);
-    assert.deepEqual(output, [{ status: 'UNAVAILABLE', reason: 'TEST_ONLY_PROTOCOL' }]);
-    assert.equal((await schemas('CapitalAssumptions') as { entry: string }).entry, 'CapitalAssumptions');
-    const capitalSchema = await schemas('CapitalExitPreviewInput') as { entry: string; source: string };
-    assert.equal(capitalSchema.entry, 'CapitalExitPreviewInput');
-    assert.match(capitalSchema.source, /RECONCILE_EXTERNAL_TRANSFER/);
-    assert.match(capitalSchema.source, /NATURAL_RELEASE/);
-    const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
-    assert.equal(code, 0); assert.match(help, /portfolio capacity ID --file ASSUMPTIONS.json/);
-  } finally { await config.close(); await api.close(); }
+test('account capital exit schemas retain safety actions after research capacity retirement', async () => {
+  const schema = await schemas('CapitalExitPreviewInput');
+  assert.equal(schema.entry, 'CapitalExitPreviewInput');
+  assert.match(schema.source!, /RECONCILE_EXTERNAL_TRANSFER/);
+  assert.match(schema.source!, /NATURAL_RELEASE/);
 });
 
-test('factor capacity validates native decimal limits locally and preserves accepted exact file bytes', async () => {
+test('retired factor and portfolio creation commands fail locally without issuing writes', async () => {
   const sent: string[] = [];
   const api = await server((_request, response, bytes) => { sent.push(bytes); json(response, { received: true }); });
-  const config = await configuration(api.origin); const file = join(config.directory, 'capital.json');
+  const config = await configuration(api.origin);
   try {
-    for (const scenario of ['100000000000000000000', '0'.repeat(64) + '1', '0.0000000000000000001', '1\n']) {
-      await writeFile(file, JSON.stringify({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }));
-      await assert.rejects(run(['factor', 'capacity', 'r2.t3.m0', '--file', file]), /research_capital_scenarios_invalid/); assert.equal(sent.length, 0);
-    }
-    for (const scenario of ['99999999999999999999.999999999999999999', '0.000000000000000001', '0'.repeat(63) + '1', '1.' + '0'.repeat(62)]) {
-      const bytes = JSON.stringify({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }, null, 2) + '\n'; await writeFile(file, bytes);
-      await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1), bytes);
-    }
+    for (const args of [['factor', 'capacity', 'r2.t3.m0'], ['factor','list'], ['factor','delete','id'], ['portfolio','build'], ['portfolio','capacity','p']]) await assert.rejects(run(args), /unknown_/);
+    assert.deepEqual(sent, []);
   } finally { await config.close(); await api.close(); }
 });
 
-test('structured validation and factor/account-control commands preserve original file bytes and concrete routes', async () => {
+test('native research and account-control commands preserve original file bytes and concrete routes', async () => {
   const sent: { method: string; url: string; bytes: string }[] = [];
   const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { received: true }); });
   const config = await configuration(api.origin); const file = join(config.directory, 'original.json');
-  const specification = { version: 1, name: 'Original structured study', question: 'Original economic question', rationale: 'Explicit falsifiable mechanism', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } };
   try {
-    await writeFile(file, JSON.stringify({ requestId: 'unsupported', specification: { ...specification, horizon: 9 } }));
-    await assert.rejects(run(['research', 'start', '--file', file]), /research_override_unsupported/); assert.equal(sent.length, 0);
-    const bytes = JSON.stringify({ requestId: 'original-structured', goal: specification.question, specification, model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered' }, null, 2) + '\n'; await writeFile(file, bytes);
+    const bytes = JSON.stringify({ requestId: 'original-native', goal: 'Run native indicators', model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered' }, null, 2) + '\n'; await writeFile(file, bytes);
     await run(['research', 'start', '--file', file], () => {}); assert.equal(sent[0]!.bytes, bytes);
-    await run(['factor', 'list'], () => {}); await run(['factor', 'get', 'r2.t3.m0'], () => {}); await run(['factor', 'capacity', 'r2.t3.m0'], () => {});
-    const assumptions = '{ "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60 }\n'; await writeFile(file, assumptions); await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, assumptions);
-    await writeFile(file, '{"scenarios":["1000"],"participation":"2","maximumAgeSeconds":60}'); await assert.rejects(run(['factor', 'capacity', 'r2.t3.m0', '--file', file]), /research_participation_invalid/);
     const preview = '{ "requestId":"preview-original", "amount":"100.000000000000000001", "currency":"USD" }\n'; await writeFile(file, preview);
     await run(['capital', 'status', 'o-original'], () => {});
     await run(['capital', 'context', 'o-original'], () => {});
@@ -261,11 +229,11 @@ test('structured validation and factor/account-control commands preserve origina
     await assert.rejects(run(['capital', 'get', 'o-original', 'exit-original', 'extra'], () => {}), /unexpected_argument/);
     await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
     const command = '{"requestId":"command-original","action":"START","previewId":"native-original"}\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
-    const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); await run(['observation', 'automatic', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, policy);
+    const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); const sentBeforeRetired = sent.length; await assert.rejects(run(['observation', 'automatic', 'o-original', '--file', file], () => {}), /unknown_observation_command/); assert.equal(sent.length, sentBeforeRetired);
     assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
-      ['GET', '/api/v3/factors'], ['GET', '/api/v3/factors/r2.t3.m0'], ['GET', '/api/v3/factors/r2.t3.m0/capacity'], ['POST', '/api/v3/factors/r2.t3.m0/capacity'], ['GET', '/api/v3/observations/o-original/capital-exits'],
+      ['GET', '/api/v3/observations/o-original/capital-exits'],
       ['GET', '/api/v3/observations/o-original/capital-exits/planning-context'], ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
-      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'], ['POST', '/api/v3/observations/o-original/automatic'],
+      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'],
     ]);
   } finally { await config.close(); await api.close(); }
 });
@@ -281,14 +249,14 @@ test('delete commands retain exact original identities, send once without bodies
   });
   const config = await configuration(api.origin); const output: unknown[] = [];
   try {
-    for (const command of [['pm', 'delete'], ['research', 'delete'], ['factor', 'delete'], ['portfolio', 'delete']]) await assert.rejects(run(command), /resource_id_required|native_numeric_research_id_required/);
+    for (const command of [['pm', 'delete'], ['research', 'delete'], ['portfolio', 'delete']]) await assert.rejects(run(command), /resource_id_required|native_numeric_research_id_required/);
     await assert.rejects(run(['research', 'delete', '9007199254740993']), /native_numeric_research_id_required/);
     assert.equal(sent.length, 0);
     await assert.rejects(run(['research', 'delete', '508'], value => { output.push(value); }), /write_outcome_unknown_retain_original_request/);
     assert.equal(sent.length, 1); assert.equal(output.length, 0);
     await run(['research', 'delete', '508'], value => { output.push(value); });
     assert.deepEqual(output, [receipt]);
-    for (const args of [['pm', 'delete', 'mandate:one/two'], ['factor', 'delete', 'r2.t3.m0'], ['portfolio', 'delete', 'p/original'], ['backtest', 'delete', 'p:alias']]) await run(args, () => {});
+    for (const args of [['pm', 'delete', 'mandate:one/two'], ['portfolio', 'delete', 'p/original'], ['backtest', 'delete', 'p:alias']]) await run(args, () => {});
     await assert.rejects(run(['portfolio', 'delete', 'blocked']), error => {
       assert.equal((error as { code: string }).code, 'portfolio_in_use'); assert.equal((error as { status: number }).status, 409); return true;
     });
@@ -296,7 +264,6 @@ test('delete commands retain exact original identities, send once without bodies
       { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
       { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
       { method: 'DELETE', url: '/api/v3/mandates/mandate%3Aone%2Ftwo', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/factors/r2.t3.m0', bytes: '' },
       { method: 'DELETE', url: '/api/v3/portfolios/p%2Foriginal', bytes: '' },
       { method: 'DELETE', url: '/api/v3/portfolios/p%3Aalias', bytes: '' },
       { method: 'DELETE', url: '/api/v3/portfolios/blocked', bytes: '' },
@@ -304,29 +271,26 @@ test('delete commands retain exact original identities, send once without bodies
     const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
     assert.equal(code, 0);
-    for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /factor list \| get ID \| delete ID/, /portfolio build.*delete ID/]) assert.match(help, line);
+    for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /portfolio list.*delete ID/]) assert.match(help, line);
+    assert.doesNotMatch(help, /replay-ticks|tick-replay/);
+    assert.match(help, /Equity metric IDs retain source and 252\/365 frequency/);
   } finally { await config.close(); await api.close(); }
 });
 
 
-test('economic tick CLI submits original bytes and reads the opaque replay through existing device auth', async () => {
-  const requests: { method: string; path: string; body: string }[] = [];
-  const api = await server((request, response, body) => {
-    assert.equal(request.headers.authorization, `Bearer ${fakeToken}`);
-    assert.equal(request.headers['x-quazonai-cli'], '1');
-    requests.push({ method: request.method!, path: request.url!, body });
-    json(response, { id: 'replay:original', status: 'QUEUED' });
+test('retired economic replay commands are refused without reading payloads or sending HTTP', async () => {
+  const requests: string[] = [];
+  const api = await server((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    json(response, { error: 'unexpected_request' }, 500);
   });
   const config = await configuration(api.origin);
   try {
-    const body = '{\n "requestId":"original-economic", "datasetId":"ticks", "factorId":"r1.t2.m0", "request":{"scenario":{"initial_usdt":"3000.000000000000000001"}}\n}\n';
-    const file = join(config.directory, 'economic.json'); await writeFile(file, body);
-    await run(['portfolio', 'replay-ticks', '--file', file], () => {});
-    await run(['portfolio', 'tick-replay', 'replay:original'], () => {});
-    assert.deepEqual(requests, [
-      { method: 'POST', path: '/api/v3/tick-economic-replays', body },
-      { method: 'GET', path: '/api/v3/tick-economic-replays/replay%3Aoriginal', body: '' },
-    ]);
+    for (const group of ['portfolio', 'backtest']) {
+      await assert.rejects(run([group, 'replay-ticks', '--file', join(config.directory, 'must-not-be-read.json')]), { code: 'unknown_portfolio_command' });
+      await assert.rejects(run([group, 'tick-replay', 'original-id']), { code: 'unknown_portfolio_command' });
+    }
+    assert.deepEqual(requests, []);
   } finally { await config.close(); await api.close(); }
 });
 
@@ -378,4 +342,37 @@ test('research goal flags reject retired execution quota options before admissio
     assert.deepEqual(sent[0], { requestId: 'uncapped-original', goal: 'Uncapped original question', datasetId: 'registered', model: { provider: 'faux', modelId: 'original' } });
     assert.equal(sent.length, 1);
   } finally { await config.close(); await api.close(); }
+});
+
+test('observation CLI rejects retired portfolio admission but preserves account binding and protection cancellation', async () => {
+  const sent: { method: string; url: string; bytes: string }[] = [];
+  const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { settled: false }); });
+  const config = await configuration(api.origin); const file = join(config.directory, 'bracket.json');
+  try {
+    const bytes = JSON.stringify({ requestId: 'explicit-bracket', portfolioId: 'original', connectionId: 'paper', mode: 'paper', nativeBrackets: {
+      'BTC-USDC-SPOT.HYPERLIQUID': { enabled: true, stop_loss: '90.000000000000000001', take_profit: '110.000000000000000001' },
+    } });
+    await writeFile(file, bytes);
+    assert.match(JSON.stringify(await schemas('NativeTargetBrackets')), /NativeTargetBrackets/);
+    await assert.rejects(run(['observation', 'start', '--file', file], () => {}), /native_strategy_only_account_binding_required/);
+    assert.equal(sent.length, 0);
+    const account = '{ "requestId":"account-original", "purpose":"ACCOUNT_ONLY", "connectionId":"paper", "mode":"paper" }\n';
+    await writeFile(file, account);
+    await run(['observation', 'start', '--file', file], () => {});
+    assert.equal(sent[0]!.bytes, account);
+    await run(['observation', 'cancel-protection', 'original/observation'], () => {});
+    assert.equal(sent[1]!.method, 'POST');
+    assert.equal(sent[1]!.url, '/api/v3/observations/original%2Fobservation/cancel-protection');
+    await assert.rejects(run(['observation', 'cancel-protection'], () => {}), /resource_id_required/);
+  } finally { await config.close(); await api.close(); }
+});
+
+test('research get retains original advisory reports and evidence links without deriving stars', async () => {
+  const detail = { id: 42, assessments: [{ taskId: 61, mode: 'SYNTHESIS', configuration: 'HISTORICAL', status: 'completed', error: null,
+    result: { judgment: { stars: null, rationale: 'Actual validation is missing' }, dataJudgment: { stars: null }, evidence: { requestWindowNs: '1790000000000000001' } },
+    evidenceLinks: [{ taskId: 61, href: '/api/v3/research/42/evidence/61' }] }] };
+  const api = await server((request, response) => { assert.equal(request.url, '/api/v3/research/42'); json(response, detail); });
+  const config = await configuration(api.origin);
+  try { let output: unknown; assert.equal(await run(['research', 'get', '42'], value => { output = value; }), 0); assert.deepEqual(output, detail); }
+  finally { await config.close(); await api.close(); }
 });

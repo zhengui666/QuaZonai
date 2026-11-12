@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { studyInput } from '../src/trials.ts';
 import { checkExposure, Exposures, footprint } from '../plugins/native-exposure.ts';
 import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
@@ -265,7 +265,7 @@ test('received iteration reuses exposed history while final reservation preserve
     assert.equal(ledger.windows.length, 4);
 
     const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-    const reservation = defineExtension({ name: 'test.rolling-received-recovery', tools: [defineTool({
+    const reservation = defineExtension({ name: 'qz.research', tools: [defineTool({
       name: 'reserve_prefix', description: 'Record the original primary source exposure', parameters: obj({}), replay: 'safe',
       async execute(_args, runtime, ctx) {
         const input = await studyInput(runtime, ctx);
@@ -310,7 +310,7 @@ test('cross-modality exposure includes completed BAR source intervals while BAR 
   await mkdir(catalog); await mkdir(copied);
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const failures: string[] = [];
-  const reservation = defineExtension({ name: 'test.exposure-reservation', tools: [defineTool({
+  const reservation = defineExtension({ name: 'qz.research', tools: [defineTool({
     name: 'reserve_original_input', description: 'Protocol-only original final window reservation; no calculation.',
     parameters: obj({}), replay: 'safe', executionMode: 'sequential',
     async execute(_args, api, ctx) {

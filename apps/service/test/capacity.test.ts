@@ -4,7 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { assessCapacity, factorCapacity, unavailableCapacity } from '../src/capacity.ts';
+import { assessCapacity, unavailableCapacity } from '../src/capacity.ts';
+import { Application } from '../src/facts.ts';
 import { built, setup } from './support.ts';
 
 const policy = { participation: '0.01', maximumAgeSeconds: 120, scenarios: ['1000.000000000000000001'] };
@@ -39,14 +40,16 @@ test('unknown capacity exceptions retain their original diagnostic instead of a 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('factor and stored-portfolio capacity expose known data and executable failures through HTTP', async () => {
+test('stored-portfolio capacity expose known data and executable failures through HTTP', async () => {
   const state = await setup();
   try {
     const { view } = await built(state);
-    const factor = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json()[0];
-    assert.equal(factor.combinable, true);
-    const resources = [{ url: `/api/v3/factors/${factor.id}/capacity`, scope: factor.id, operation: 'forecast' },
-      { url: `/api/v3/portfolios/${view.id}/capacity`, scope: view.id, operation: 'assess-capacity' }];
+    // Transport-only saved native request, not numerical evidence or a newly built strategy.
+    await state.service.research.harness.commit(async tx => {
+      (await tx.doc(Application)).portfolios[view.id]!.native = { protocolOnly: true, catalog: state.directory,
+        simulationRequest: { settings: { base_currency: 'USD' } } };
+    }, BACKGROUND_CONTEXT);
+    const resources = [{ url: `/api/v3/portfolios/${view.id}/capacity`, scope: view.id, operation: 'assess-capacity' }];
     const before = await state.service.work.snapshot();
     await writeFile(state.options.config.jobBinary, '#!/bin/sh\nprintf "%s\\n" QZ_NATIVE_JOB_FAILED FORECAST_INSUFFICIENT_WARMUP "private-context-not-for-response" >&2\nexit 1\n', { mode: 0o700 });
     for (const failure of [
@@ -72,27 +75,31 @@ test('factor and stored-portfolio capacity expose known data and executable fail
     }
     const normal = unavailableCapacity('USD', 'liquidity_stale', 'portfolio', policy);
     await writeFile(state.options.config.jobBinary, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(normal)}'\n`, { mode: 0o700 });
-    const unchanged = await state.service.app.inject({ method: 'POST', url: resources[1]!.url, headers: state.headers, payload: policy });
+    const unchanged = await state.service.app.inject({ method: 'POST', url: resources[0]!.url, headers: state.headers, payload: policy });
     assert.equal(unchanged.statusCode, 200); assert.deepEqual(unchanged.json(), { ...normal, scope: view.id }, 'normal native unavailable reasons are not classification envelopes');
     assert.deepEqual(await state.service.work.snapshot(), before, 'read-only diagnosis cannot change original facts or old reports');
   } finally { await state.cleanup(); }
 });
 
-test('unknown and cancelled capacity failures remain HTTP errors and factor cancellation still propagates', async () => {
+test('unknown and cancelled capacity failures remain HTTP errors and cancellation still propagates', async () => {
   const state = await setup();
   try {
     const { view } = await built(state);
-    const factor = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json()[0];
+    // Transport-only saved native request, not numerical evidence or a newly built strategy.
+    await state.service.research.harness.commit(async tx => {
+      (await tx.doc(Application)).portfolios[view.id]!.native = { protocolOnly: true, catalog: state.directory,
+        simulationRequest: { settings: { base_currency: 'USD' } } };
+    }, BACKGROUND_CONTEXT);
     const before = await state.service.work.snapshot();
     for (const [diagnostic, code] of [['private original capacity failure', 'internal_error'], ['custom_capacity_failure', 'custom_capacity_failure'], ['aborted', 'aborted']]) {
       await writeFile(state.options.config.jobBinary, `#!/bin/sh\nprintf '%s\\n' '${diagnostic}' >&2\nexit 1\n`, { mode: 0o700 });
-      for (const url of [`/api/v3/factors/${factor.id}/capacity`, `/api/v3/portfolios/${view.id}/capacity`]) {
+      for (const url of [`/api/v3/portfolios/${view.id}/capacity`]) {
         const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: policy });
         assert.equal(response.statusCode, 500, response.body); assert.deepEqual(response.json(), { error: code });
       }
     }
     const controller = new AbortController(); controller.abort();
-    await assert.rejects(factorCapacity(state.service.research, state.options.config, factor.id, withAbortSignal(controller.signal, BACKGROUND_CONTEXT), policy));
+    await assert.rejects(assessCapacity(state.options.config.jobBinary, state.directory, { settings: { base_currency: 'USD' } }, policy, state.directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
     assert.deepEqual(await state.service.work.snapshot(), before);
   } finally { await state.cleanup(); }
 });
@@ -110,4 +117,13 @@ test('an unavailable report does not invent liquidity or economic capacity', () 
   assert.deepEqual(assumed.requestedAssumptions, policy);
   assert.deepEqual(assumed.volumeStress?.map(row => row.volumeMultiplier), ['1', '0.5']);
   assert.ok(assumed.volumeStress?.every(row => row.maximumCapital === null && row.scenarios[0]!.capital === policy.scenarios[0] && row.scenarios[0]!.usableCapital === null));
+});
+
+test('retired factor capacity endpoints cannot invoke custom forecasts', async () => {
+  const state = await setup(); try {
+    for (const method of ['GET', 'POST'] as const) {
+      const response = await state.service.app.inject({ method, url: '/api/v3/factors/old-factor/capacity', headers: state.headers, ...(method === 'POST' ? { payload: policy } : {}) });
+      assert.equal(response.statusCode, 404, response.body);
+    }
+  } finally { await state.cleanup(); }
 });

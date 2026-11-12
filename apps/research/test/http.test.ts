@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { researchServer } from '../src/http.ts';
 
 test('real HTTP preserves native identity and truthful admitted/conflict/invalid/not-found states', async () => {
@@ -67,7 +67,7 @@ test('maintenance closes new admissions, drains an admitted request and keeps na
   let toolEntered!: () => void; let releaseTool!: () => void;
   const toolEntering = new Promise<void>((done) => { toolEntered = done; });
   const toolReleased = new Promise<void>((done) => { releaseTool = done; });
-  const extension = defineExtension({ name: 'maintenance-probe', tools: [defineTool({
+  const extension = defineExtension({ name: 'qz.research', tools: [defineTool({
     name: 'maintenance_probe', description: 'Protocol-only active native task.', parameters: obj({}), replay: 'unsafe',
     async execute() { toolEntered(); await toolReleased; return {}; },
   })] });

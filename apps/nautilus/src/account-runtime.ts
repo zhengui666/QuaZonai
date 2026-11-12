@@ -1,12 +1,19 @@
+import type { NativeAccountStrategyConfig } from '../../../packages/contracts/src/account-strategy.ts';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../../packages/contracts/src/nautilus.ts';
 
 /** One configured physical account in the existing remote native worker. */
 export interface AccountOptions {
   id: string; clientId: string; accountId: string; mode: 'paper' | 'live';
+  nativeStrategy: NativeAccountStrategyConfig;
   instruments: string[]; accountAddress?: string; network?: 'mainnet' | 'testnet';
+  /** Omit to retain all products during recovery. Narrow only after resolving out-of-scope orders. */
+  executionProductTypes?: ('SPOT' | 'PERP' | 'OUTCOME')[];
   startingBalance?: string; cashBuffer?: string; paperFeeRate?: string;
+  risk?: NativeAccountRiskConfig;
+  paperExecution?: NativePaperExecutionConfig;
 }
 export interface NativeInstrument {
   instrument_id: string; base_currency: string; quote_currency: string;
@@ -17,6 +24,8 @@ export interface NativeInstrument {
 export interface NativeOrder {
   client_order_id: string; venue_order_id: string | null; instrument_id: string; side: string;
   quantity: string; filled_quantity: string; leaves_quantity: string; status: string;
+  order_type?: string; trigger_price?: string | null; order_list_id?: string | null;
+  parent_order_id?: string | null; contingency_type?: string | null; protection_target_id?: string | null;
   limit_price: string | null; reduce_only: boolean; exit_id: string | null;
 }
 export interface NativeFill {
@@ -91,7 +100,10 @@ export class AccountRuntime implements NativeAccountRuntime {
       try {
         await this.send('BOOT', { config: { client_id: this.options.clientId, account_id: this.options.accountId,
           mode: this.options.mode, account_address: this.options.accountAddress ?? null, testnet: this.options.network === 'testnet',
+          execution_product_types: this.options.executionProductTypes ?? null,
+          native_strategy: this.options.nativeStrategy,
           instruments: this.options.instruments, starting_balance: this.options.startingBalance ?? '0', paper_fee_rate: this.options.paperFeeRate ?? null,
+          risk: this.options.risk ?? {}, paper_execution: this.options.paperExecution ?? null,
           source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
       } catch (error) {
         failed(); child.stdin.end(); child.kill('SIGTERM'); throw error;
@@ -105,7 +117,7 @@ export class AccountRuntime implements NativeAccountRuntime {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(requestId); reject(new Error('account_runtime_outcome_uncertain')); }, timeout); timer.unref();
       this.pending.set(requestId, { resolve, reject, timer });
-      child.stdin.write(JSON.stringify({ requestId, operation, ...payload }) + '\n', error => {
+      child.stdin.write(JSON.stringify({ ...payload, requestId, operation }) + '\n', error => {
         if (!error) return; clearTimeout(timer); this.pending.delete(requestId); reject(new Error('account_runtime_outcome_uncertain'));
       });
     });

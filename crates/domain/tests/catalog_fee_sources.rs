@@ -27,6 +27,7 @@ fn source() -> FrozenMakerTakerFeesV1 {
 
 fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        price_benchmark: None,
         schema_version: SchemaV1,
         multi_currency_spot_cash: None,
         base_currency: "USD".into(),

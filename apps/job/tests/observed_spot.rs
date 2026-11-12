@@ -2,8 +2,6 @@
 #![cfg(feature = "hyperliquid-offline")]
 #[path = "support/command.rs"]
 mod native;
-#[path = "../../../tests/support/portfolio.rs"]
-mod portfolio_config;
 #[path = "support/spot_cash.rs"]
 mod spot;
 use contracts::{
@@ -11,12 +9,6 @@ use contracts::{
 };
 use nautilus_model::events::PortfolioSnapshot;
 use spot::{count, money, MINUTE, START};
-use std::collections::BTreeMap;
-#[path = "support/observed_spot_forward.rs"]
-mod forward_tests;
-#[cfg(feature = "catalog-prepare")]
-#[path = "support/observed_spot_pm.rs"]
-mod multi_day;
 
 fn fixture(
     rows: u32,
@@ -78,10 +70,10 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
         .unwrap();
     let raw: PortfolioSnapshot = serde_json::from_value(raw).unwrap();
     let snapshot = job::account_observer::project_snapshot(&raw).unwrap();
-    let initial_state = NativeObservedSpotStartV1 {
+    NativeObservedSpotStartV1 {
         schema_version: SchemaV1,
         snapshot_evidence_ref: "CONTROLLED_ORIGINAL_NATIVE_PUBLICATION".into(),
-        source_native_version: "0.68.0".into(),
+        source_native_version: "0.69.0".into(),
         available_ns: count(snapshot.ts_init.get() + 1),
         open_orders_evidence_ref: "CONTROLLED_SAME_RUN_CANONICAL_OPEN_ORDER_COUNT".into(),
         open_orders_account_id: snapshot.account_id.clone(),
@@ -89,8 +81,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
         open_orders_available_ns: count(snapshot.ts_init.get() + 2),
         open_orders_count: produced.summary["orders.open"].parse().unwrap(),
         snapshot,
-    };
-    initial_state
+    }
 }
 
 fn completed(leg: &NativeObservedSpotSimulationLegV1) -> &NativeSimulationResultV1 {
@@ -252,6 +243,14 @@ fn matched_hold_keeps_original_inventory_and_rebalance_pays_real_exit_fee() {
     assert!(rebalance_account["commissions"]
         .to_string()
         .contains("USDC"));
+    let mut unsupported = rebalance.clone();
+    unsupported.native_version = "0.68.0".into();
+    assert!(domain::execution::check_observed_spot_simulation(
+        &request.simulation,
+        &unsupported,
+        &request.initial_state
+    )
+    .is_err());
     let mut altered = hold.clone();
     altered.orders = count(1);
     let mut hold_request = request.simulation.clone();
@@ -343,240 +342,6 @@ fn unknown_locked_wrong_account_and_future_state_cannot_be_replayed() {
     }
 }
 
-fn study_request(
-    comparison: &NativeObservedSpotComparisonRequestV1,
-) -> (NativeObservedSpotStudyRequestV1, BTreeMap<Id, Vec<u8>>) {
-    let input = serde_json::from_str(r###"{"schema_version":1,"forecasts":{"schema_version":1,"decision_asof_ns":"20000000000","forecast_asof_ns":"10000000000","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","max_input_age_seconds":10,"instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"members":[{"alpha_id":"01990000-0000-7000-8000-000000000011","alpha_version_id":"01990000-0000-7000-8000-000000000012","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]},{"alpha_id":"01990000-0000-7000-8000-000000000021","alpha_version_id":"01990000-0000-7000-8000-000000000022","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]}]},"objective":"MIN_RISK","risk":"VARIANCE","base_currency":"USD","capital_assumption":"1000000","current_cash_weight":"0","exposure_tolerance":"0.000001","constraints":{"schema_version":1,"long_only":true,"min_cash_weight":"0","max_cash_weight":"0","min_asset_weight":"0","max_asset_weight":"1","max_gross_exposure":"1","min_net_exposure":"1","max_net_exposure":"1","max_turnover_per_rebalance":"2","max_participation":null,"max_ex_ante_risk":null,"group_bounds":[],"asset_overrides":[],"transaction_costs_ref":"01990000-0000-7000-8000-000000000001","liquidity_ref":null},"optimizer":{"schema_version":1,"adapter_kind":"CLARABEL_QP","upstream_class":"clarabel::solver::DefaultSolver","upstream_version":"0.11.1","parameters":{"schema_version":1,"risk_aversion":"1","max_iterations":200,"solver_tolerance":"0.0000000001","accept_inaccurate":false}},"alpha_ensemble":{"schema_version":1,"adapter_kind":"FIXED_WEIGHTED_FORECAST","upstream_class":"ndarray::ArrayBase::dot","upstream_version":"0.17.1","parameters":{}},"assets":[{"instrument_id":"ALPHA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-a"]},{"instrument_id":"BETA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-b"]}],"covariance_estimator":{"schema_version":1,"adapter_kind":"SAMPLE_COVARIANCE","upstream_class":"ndarray_stats::CorrelationExt::cov","upstream_version":"0.7.0","parameters":{"ddof":1}},"return_history":{"schema_version":1,"base_currency":"USD","horizon_kind":"FIXED_BARS","horizon_value":"4","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"end_ns":["100","200","300","400","500"],"available_ns":["100","200","300","400","500"],"asset_returns":[[0.0,2.0,0.0,2.0,1.0],[0.0,0.0,4.0,4.0,2.0]]}}"###)
-    .unwrap();
-    let mut template = portfolio_config::request(&input);
-    template.assets.truncate(1);
-    template.assets[0].instrument_id = "BTC-SPOT.HYPERLIQUID".into();
-    template.assets[0].currency = "USDC".into();
-    template.assets[0].groups.clear();
-    template.assets[0].current_weight = money("0"); // Schedule placeholder; actual state must replace it.
-    template.assets[0].transaction_cost_rate = money("0.0007");
-    template.mandate.base_currency = "USDC".into();
-    template.mandate.capital_assumption = money("1000");
-    template.mandate.exposure_tolerance = comparison.simulation.settings.exposure_tolerance.clone();
-    template.mandate.objective = contracts::portfolio::AllocationObjective::MaxUtility;
-    template.mandate.constraints.min_cash_weight = money("0.4");
-    template.mandate.constraints.max_cash_weight = money("0.4");
-    template.mandate.constraints.min_net_exposure = money("0.6");
-    template.mandate.constraints.max_net_exposure = money("0.6");
-    // Source BAR event is its open; a fresh account receives its first fully
-    // closed BAR after the replay start. The registered fixture permits this
-    // observable execution delay while retaining original prediction clocks.
-    template.mandate.rebalance_schedule.max_input_age_seconds = 300;
-    template.mandate.rebalance_schedule.target_ttl_seconds = 600;
-    let mut objects = BTreeMap::new();
-    objects.insert(
-        template.mandate.constraints.transaction_costs_ref,
-        serde_json::to_vec(&comparison.simulation.settings).unwrap(),
-    );
-    for member in &template.members {
-        objects.insert(member.model_artifact_id, wat::parse_str("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0.01))").unwrap());
-    }
-    let mut source_selection = comparison.simulation.selection.clone();
-    source_selection.event_start_ns = count(START);
-    source_selection.event_end_ns = count(START + 22 * MINUTE + 500_000_000);
-    source_selection.decision_cutoff_ns = source_selection.event_end_ns;
-    let study = NativePortfolioStudyRequestV1 {
-        schema_version: SchemaV1,
-
-        source_selection,
-        evaluation_start_ns: count(START + 7 * MINUTE + 500_000_000),
-        manual_cutoffs_ns: Some(vec![
-            count(START + 7 * MINUTE + 500_000_000),
-            count(START + 12 * MINUTE + 500_000_000),
-        ]),
-        calendar: None,
-        research_available_through_ns: count(START),
-        mandate: template.mandate,
-        execution_settings: comparison.simulation.settings.clone(),
-        rolling_liquidity: None,
-        assets: template.assets,
-        members: template.members,
-    };
-    (
-        NativeObservedSpotStudyRequestV1 {
-            schema_version: SchemaV1,
-            dataset_revision_id: comparison.dataset_revision_id,
-            initial_state: comparison.initial_state.clone(),
-            study,
-        },
-        objects,
-    )
-}
-
-#[test]
-fn study_solves_from_actual_inventory_and_preserves_native_state_witness() {
-    let (root, comparison, _) = fixture(30, true);
-    let (request, objects) = study_request(&comparison);
-    let result =
-        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
-    completed(&result.hold);
-    assert!(
-        matches!(
-            result.rebalance.status,
-            NativeObservedSpotLegStatusV1::Completed
-        ),
-        "{:?}",
-        result.rebalance.reason
-    );
-    let study = result.rebalance.result.as_ref().unwrap();
-    assert_eq!(study.frames.len(), 2);
-    assert!(study.frames[0].input.assets[0].current_weight.is_positive());
-    assert_ne!(study.frames[0].input.current_cash_weight, money("1"));
-    assert_ne!(study.frames[0].input.capital_assumption, money("1000"));
-    assert!(study
-        .frames
-        .iter()
-        .all(|frame| frame.input.assets[0].transaction_cost_rate == money("0.0007")));
-    let mut forged = study.clone();
-    forged.frames[0].input.assets[0].current_weight = money("0");
-    assert!(domain::execution::check_observed_spot_study(
-        &request.study,
-        &forged,
-        &request.initial_state
-    )
-    .is_err());
-    // Legacy fresh-account study still refuses this opt-in mode.
-    assert!(
-        job::study::evaluate(root.path(), &request.study, |id| Ok(objects[&id].clone())).is_err()
-    );
-}
-
-#[test]
-fn observed_study_cash_funding_reoptimizes_real_cash_and_pays_native_fees() {
-    use contracts::portfolio::NativeCashFundingPolicyV1;
-    let (root, mut source) = spot::source_fixture_with_rows(30, true);
-    let dataset = Id::new();
-    let mut origin = source.clone();
-    origin.selection.event_end_ns = count(START + 5 * MINUTE);
-    origin.selection.decision_cutoff_ns = count(START + 5 * MINUTE + 500_000_000);
-    origin.target_points.truncate(1);
-    origin.target_points[0].targets[0].weight = money("0");
-    origin.target_points[0].cash_weight = money("1");
-    let actual_cash =
-        job::simulation::simulate_explicit(root.path(), &origin, Some(dataset)).unwrap();
-    assert_eq!(actual_cash.orders.get(), 0);
-    source.selection.event_start_ns = count(START + 6 * MINUTE);
-    let comparison = NativeObservedSpotComparisonRequestV1 {
-        schema_version: SchemaV1,
-        dataset_revision_id: dataset,
-        initial_state: projected_initial_state(&actual_cash),
-        simulation: source,
-    };
-    let (mut request, objects) = study_request(&comparison);
-    let constraints = &mut request.study.mandate.constraints;
-    constraints.cash_funding =
-        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
-    constraints.min_cash_weight = money("0");
-    constraints.max_cash_weight = money("1");
-    constraints.min_net_exposure = money("0");
-    constraints.max_net_exposure = money("1");
-    let result =
-        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
-    assert_eq!(completed(&result.hold).orders.get(), 0);
-    assert_eq!(
-        result.rebalance.status,
-        NativeObservedSpotLegStatusV1::Completed,
-        "{:?}",
-        result.rebalance.reason
-    );
-    let study = result.rebalance.result.as_ref().unwrap();
-    assert_eq!(study.frames[0].input.current_cash_weight, money("1"));
-    assert_eq!(study.frames[0].input.assets[0].current_weight, money("0"));
-    assert!(study.frames[1].input.assets[0].current_weight.is_positive());
-    for frame in &study.frames {
-        assert_eq!(
-            frame.input.constraints.cash_funding,
-            request.study.mandate.constraints.cash_funding
-        );
-        domain::portfolio::allocation_result(&frame.input, &frame.allocation).unwrap();
-        let actual_fee: bigdecimal::BigDecimal = frame
-            .allocation
-            .targets
-            .as_ref()
-            .unwrap()
-            .iter()
-            .zip(&frame.input.assets)
-            .map(|(target, asset)| {
-                (target.weight.as_decimal() - asset.current_weight.as_decimal()).abs()
-                    * asset.transaction_cost_rate.as_decimal()
-            })
-            .sum();
-        assert!(
-            frame.allocation.cash_weight.as_ref().unwrap().as_decimal()
-                + frame.input.exposure_tolerance.as_decimal()
-                >= actual_fee
-        );
-    }
-    let simulation = study.simulation.as_ref().unwrap();
-    assert!(simulation.orders.get() > 0);
-    let account = &simulation.canonical_result["accounts"][0]["Cash"]["base"];
-    assert_eq!(
-        account["balances_starting"],
-        completed(&result.hold).canonical_result["accounts"][0]["Cash"]["base"]
-            ["balances_starting"]
-    );
-    assert!(!account["commissions"].as_object().unwrap().is_empty());
-    assert!(account["commissions"].to_string().contains("BTC"));
-    // The source type, not a leverage number, enables the new funding method.
-    assert!(domain::execution::portfolio_study_cutoffs(&request.study).is_err());
-}
-
-#[test]
-fn observed_study_cash_funding_sells_pay_native_quote_fees() {
-    use contracts::portfolio::NativeCashFundingPolicyV1;
-    let (root, comparison, _) = fixture(30, true);
-    let (mut request, objects) = study_request(&comparison);
-    let constraints = &mut request.study.mandate.constraints;
-    constraints.cash_funding =
-        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
-    constraints.min_cash_weight = money("0.8");
-    constraints.max_cash_weight = money("1");
-    constraints.min_net_exposure = money("0");
-    constraints.max_net_exposure = money("1");
-    let result =
-        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
-    assert_eq!(completed(&result.hold).orders.get(), 0);
-    assert_eq!(
-        result.rebalance.status,
-        NativeObservedSpotLegStatusV1::Completed,
-        "{:?}",
-        result.rebalance.reason
-    );
-    let study = result.rebalance.result.as_ref().unwrap();
-    for frame in &study.frames {
-        domain::portfolio::allocation_result(&frame.input, &frame.allocation).unwrap();
-        let target = &frame.allocation.targets.as_ref().unwrap()[0];
-        let asset = &frame.input.assets[0];
-        let cost = (target.weight.as_decimal() - asset.current_weight.as_decimal()).abs()
-            * asset.transaction_cost_rate.as_decimal();
-        let cash_after = frame.allocation.cash_weight.as_ref().unwrap().as_decimal() - cost;
-        assert!(
-            cash_after + frame.input.exposure_tolerance.as_decimal() >= *money("0.8").as_decimal()
-        );
-    }
-    let first = &study.frames[0];
-    assert!(
-        first.allocation.targets.as_ref().unwrap()[0]
-            .weight
-            .as_decimal()
-            < first.input.assets[0].current_weight.as_decimal()
-    );
-    let simulation = study.simulation.as_ref().unwrap();
-    assert!(simulation.canonical_result["orders"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|order| order.to_string().contains("SELL")));
-    let commissions = &simulation.canonical_result["accounts"][0]["Cash"]["base"]["commissions"];
-    assert!(!commissions.as_object().unwrap().is_empty());
-    assert!(commissions.to_string().contains("USDC"));
-}
-
 #[test]
 fn actual_cli_uses_the_explicit_observed_contract() {
     let (root, request, _) = fixture(20, false);
@@ -600,155 +365,44 @@ fn actual_cli_uses_the_explicit_observed_contract() {
 }
 
 #[test]
-fn infeasible_rebalance_retains_solver_frames_and_the_matching_hold() {
-    let (root, comparison, _) = fixture(30, true);
-    let (mut request, objects) = study_request(&comparison);
-    request.study.mandate.constraints.max_turnover_per_rebalance = money("0");
-    let result =
-        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
-    completed(&result.hold);
-    assert_eq!(
-        result.rebalance.status,
-        NativeObservedSpotLegStatusV1::Failed
-    );
-    assert!(result.rebalance.reason.is_some());
-    let diagnostic = result
-        .rebalance
-        .result
-        .as_ref()
-        .expect("Keep actual infeasible solver frames");
-    assert!(!diagnostic.frames.is_empty());
-    assert!(diagnostic.simulation.is_none());
-    assert!(diagnostic.frames[0].allocation.targets.is_none());
-    assert!(diagnostic.frames[0].input.assets[0]
-        .current_weight
-        .is_positive());
-}
-
-/// Export only original native evidence for cross-language protocol regression.
-/// These controlled historical rows do not certify exchange applicability or PIT.
-#[test]
-#[cfg(feature = "catalog-prepare")]
-fn export_observed_native_fixture_when_requested() {
-    use sha2::{Digest, Sha256};
-    use std::path::Path;
-    let Some(directory) = std::env::var_os("QZ_PM_OBSERVED_FIXTURE_DIR") else {
-        return;
-    };
-    let destination = std::path::PathBuf::from(directory);
-    std::fs::create_dir_all(&destination).unwrap();
-    let destination = std::fs::canonicalize(destination).unwrap();
-    let (source, comparison, origin) = fixture(30, true);
-    fn copy_tree(source: &Path, destination: &Path) {
-        std::fs::create_dir_all(destination).unwrap();
-        for entry in std::fs::read_dir(source).unwrap() {
-            let entry = entry.unwrap();
-            let target = destination.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                copy_tree(&entry.path(), &target);
-            } else {
-                std::fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
-    let catalog = destination.join(format!(
-        "controlled-catalog-{}",
-        comparison.dataset_revision_id
-    ));
-    copy_tree(source.path(), &catalog);
-    fn manifest(root: &Path, path: &Path, entries: &mut Vec<serde_json::Value>) {
-        let mut files = std::fs::read_dir(path)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect::<Vec<_>>();
-        files.sort();
-        for file in files {
-            if file.is_dir() {
-                manifest(root, &file, entries);
-            } else {
-                let bytes = std::fs::read(&file).unwrap();
-                entries.push(serde_json::json!({"path":file.strip_prefix(root).unwrap(),"size":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}));
-            }
-        }
-    }
-    let mut entries = Vec::new();
-    manifest(&catalog, &catalog, &mut entries);
-    let manifest_bytes = serde_json::to_vec(&entries).unwrap();
-    let content_ref = format!("sha256:{:x}", Sha256::digest(&manifest_bytes));
-    std::fs::write(destination.join("catalog-manifest.json"), manifest_bytes).unwrap();
-    let (study, objects) = study_request(&comparison);
-    let objects_directory = destination.join(format!("objects-{}", comparison.dataset_revision_id));
-    std::fs::create_dir_all(&objects_directory).unwrap();
-    for (id, bytes) in &objects {
-        std::fs::write(objects_directory.join(id.to_string()), bytes).unwrap();
-    }
-    let mut infeasible = study.clone();
-    infeasible
-        .study
-        .mandate
-        .constraints
-        .max_turnover_per_rebalance = money("0");
-    let mut selection = comparison.simulation.selection.clone();
-    selection.event_start_ns = count(START);
-    selection.event_end_ns = comparison.initial_state.snapshot.ts_event;
-    selection.decision_cutoff_ns = comparison.initial_state.snapshot.ts_event;
-    let valuation_request = NativeObservedSpotValuationRequestV1 {
+fn observed_cash_fixed_buy_preserves_starting_balances_and_pays_native_base_fee() {
+    let (root, mut source) = spot::source_fixture_with_rows(30, true);
+    let dataset = Id::new();
+    let mut origin = source.clone();
+    origin.selection.event_end_ns = count(START + 5 * MINUTE);
+    origin.selection.decision_cutoff_ns = count(START + 5 * MINUTE + 500_000_000);
+    origin.target_points.truncate(1);
+    origin.target_points[0].targets[0].weight = money("0");
+    origin.target_points[0].cash_weight = money("1");
+    let cash = job::simulation::simulate_explicit(root.path(), &origin, Some(dataset)).unwrap();
+    assert_eq!(cash.orders.get(), 0);
+    source.selection.event_start_ns = count(START + 6 * MINUTE);
+    source.target_points.truncate(1);
+    source.target_points[0].asof_ns = count(START + 7 * MINUTE + 500_000_000);
+    source.target_points[0].valid_until_ns = count(START + 9 * MINUTE);
+    source.target_points[0].targets[0].weight = money("0.5");
+    source.target_points[0].cash_weight = money("0.5");
+    let request = NativeObservedSpotComparisonRequestV1 {
         schema_version: SchemaV1,
-        dataset_revision_id: comparison.dataset_revision_id,
-        initial_state: comparison.initial_state.clone(),
-        selection: selection.clone(),
-        settings: comparison.simulation.settings.clone(),
+        dataset_revision_id: dataset,
+        initial_state: projected_initial_state(&cash),
+        simulation: source,
     };
-    let valuation = job::observed_spot::value(&catalog, &valuation_request).unwrap();
-    let compared = job::observed_spot::compare(&catalog, &comparison).unwrap();
-    completed(&compared.hold);
-    completed(&compared.rebalance);
-    let studied =
-        job::observed_spot::study(&catalog, &study, |id| Ok(objects[&id].clone())).unwrap();
-    completed(&studied.hold);
+    let comparison = job::observed_spot::compare(root.path(), &request).unwrap();
+    let hold = completed(&comparison.hold);
+    let bought = completed(&comparison.rebalance);
+    assert_eq!(hold.orders.get(), 0);
+    assert!(bought.orders.get() > 0);
+    let account = &bought.canonical_result["accounts"][0]["Cash"]["base"];
     assert_eq!(
-        studied.rebalance.status,
-        NativeObservedSpotLegStatusV1::Completed,
-        "{:?}",
-        studied.rebalance.reason
+        account["balances_starting"],
+        hold.canonical_result["accounts"][0]["Cash"]["base"]["balances_starting"]
     );
-    let failed =
-        job::observed_spot::study(&catalog, &infeasible, |id| Ok(objects[&id].clone())).unwrap();
-    completed(&failed.hold);
-    assert_eq!(
-        failed.rebalance.status,
-        NativeObservedSpotLegStatusV1::Failed
-    );
-    assert!(!failed.rebalance.result.as_ref().unwrap().frames.is_empty());
-    for (name, value) in [
-        ("origin.json", serde_json::to_value(&origin).unwrap()),
-        ("value.json", serde_json::to_value(&valuation).unwrap()),
-        ("comparison.json", serde_json::to_value(&compared).unwrap()),
-        ("study.json", serde_json::to_value(&studied).unwrap()),
-        (
-            "infeasible-study.json",
-            serde_json::to_value(&failed).unwrap(),
-        ),
-    ] {
-        std::fs::write(destination.join(name), serde_json::to_vec(&value).unwrap()).unwrap();
-    }
-    let document = serde_json::json!({
-        "evidenceKind":"CONTROLLED_NATIVE_TEST_NOT_MARKET_OR_ACCOUNT_QUALIFICATION",
-        "catalog":catalog,"nativeDatasetRevisionId":comparison.dataset_revision_id,
-        "pmDatasetRevisionId":format!("controlled-pm-dataset-{}",comparison.dataset_revision_id),
-        "contentRef":content_ref,"initial_state":comparison.initial_state,
-        "settings":comparison.simulation.settings,"simulation":comparison.simulation,
-        "valuationSelection":selection,"study":study.study,"infeasibleStudy":infeasible.study,
-        "objectsDirectory":objects_directory
-    });
-    std::fs::write(
-        destination.join("source.pending.json"),
-        serde_json::to_vec(&document).unwrap(),
-    )
-    .unwrap();
-    std::fs::rename(
-        destination.join("source.pending.json"),
-        destination.join("source.json"),
-    )
-    .unwrap();
+    assert!(!account["commissions"].as_object().unwrap().is_empty());
+    assert!(account["commissions"].to_string().contains("BTC"));
+    assert!(bought.canonical_result["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|order| order.to_string().contains("BUY")));
 }

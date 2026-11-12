@@ -14,3 +14,5 @@ await copyFile(new URL('packages/contracts/src/economic-tick.ts', root), new URL
 await copyFile(new URL('packages/contracts/src/parameter-scans.ts', root), new URL('schemas/parameter-scans.ts.txt', local));
 await copyFile(new URL('packages/contracts/src/capital-exit.ts', root), new URL('schemas/capital-exit.ts.txt', local));
 await copyFile(new URL('contracts/generated/domain-v1.openapi.json', root), new URL('schemas/domain-v1.openapi.json', local));
+
+await copyFile(new URL('packages/contracts/src/native-order-preview.ts', root), new URL('schemas/native-order-preview.ts.txt', local));

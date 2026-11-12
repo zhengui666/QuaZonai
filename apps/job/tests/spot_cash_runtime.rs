@@ -1,9 +1,8 @@
 //! Controlled native CASH/fee/replay closure, never real market/account evidence.
-#[path = "../../../tests/support/execution_models.rs"]
-mod models;
 use contracts::{
     portfolio::NativeModelRefV1, science::*, spot_cash::*, spot_fees::*, DbCounter, Id, SchemaV1,
 };
+use spot_fixture::models;
 const MINUTE: u64 = 60_000_000_000;
 const START: u64 = 86_400_000_000_000;
 fn count(n: u64) -> DbCounter {
@@ -88,13 +87,12 @@ fn real_native_buy_base_fee_then_sell_quote_fee_uses_actual_inventory() {
         .statistics
         .iter()
         .all(|row| row.native_key.starts_with("Calendar ")));
-    let geometric = report
+    let coverage = report
         .statistics
         .iter()
-        .find(|row| row.native_key == "Calendar Geometric Daily Return")
+        .find(|row| row.native_key == "Calendar Complete Priced Coverage")
         .unwrap();
-    assert!(geometric.value.is_none());
-    assert!(geometric.reason_code.is_some());
+    assert_eq!(coverage.value, Some(0.0));
     assert_eq!(result.orders.get(), 2);
     preserve_controlled_result("native-buy-sell.json", &request, &result);
     // Real producer evidence must pass consumer binding, not just DTO deserialization.
@@ -167,10 +165,7 @@ fn complete_utc_day_from_real_publications_feeds_official_report_statistics() {
             .value
     };
     assert_eq!(calendar("Calendar Coverage Ratio"), Some(1.0));
-    assert_eq!(calendar("Calendar Negative Days"), Some(1.0));
-    assert!(
-        (calendar("Calendar Geometric Daily Return").unwrap() - day.value.unwrap()).abs() < 1e-14
-    );
+    assert_eq!(calendar("Calendar Complete Priced Coverage"), Some(1.0));
     assert!(result.returns.is_empty());
     assert!(result
         .statistics
@@ -186,23 +181,28 @@ fn complete_utc_day_from_real_publications_feeds_official_report_statistics() {
     assert_eq!(average.status, contracts::evidence::MetricStatus::Ok);
     assert!((average.value.unwrap() - (-0.000699755)).abs() < 1e-12);
     assert_eq!(average.scope, "portfolio.report_currency_daily");
-    let mut falsified = result.clone();
-    falsified
-        .spot_cash_report
-        .as_mut()
-        .unwrap()
-        .statistics
-        .iter_mut()
-        .find(|row| row.native_key == "Calendar Coverage Ratio")
-        .unwrap()
-        .value = Some(0.5);
-    assert!(domain::execution::portfolio_simulation_metrics(
-        Id::new(),
-        Id::new(),
-        &request,
-        &falsified
-    )
-    .is_err());
+    for key in [
+        "Calendar Coverage Ratio",
+        "Calendar Complete Priced Coverage",
+    ] {
+        let mut falsified = result.clone();
+        falsified
+            .spot_cash_report
+            .as_mut()
+            .unwrap()
+            .statistics
+            .iter_mut()
+            .find(|row| row.native_key == key)
+            .unwrap()
+            .value = Some(0.5);
+        assert!(domain::execution::portfolio_simulation_metrics(
+            Id::new(),
+            Id::new(),
+            &request,
+            &falsified
+        )
+        .is_err());
+    }
     preserve_controlled_result("native-complete-utc-day.json", &request, &result);
 }
 

@@ -14,6 +14,7 @@ export const Application = defineDoc<{
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
   accountControls?: Record<string, JsonObject>;
+  strategyCommands?: Record<string, JsonObject>;
   /** Service maintenance intent; execution checkpoints remain official Tasks. */
   maintenance?: JsonObject;
 }>({

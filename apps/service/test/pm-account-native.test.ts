@@ -5,7 +5,6 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { compareObservedSpotAccount, valueObservedSpotAccount } from '../src/pm-account-native.ts';
 import { object } from '../src/facts.ts';
 import { observedSpotFixture } from './pm-observed-fixture.ts';
-import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 
 const fixtureDirectory = process.env.QZ_PM_OBSERVED_FIXTURE_DIR;
 const binary = process.env.QZ_JOB_BINARY;
@@ -55,26 +54,8 @@ test('PM observed native: HOLD preserves original inventory with zero active ord
   } finally { await f.cleanup(); }
 });
 
-test('PM observed native: original solver frames use actual current inventory and an infeasible study retains both diagnostics and HOLD', nativeOptions, async () => {
-  const f = await observedSpotFixture();
-  try {
-    const objectsDirectory = String(f.source.objectsDirectory);
-    assert.ok(f.source.objectsDirectory && f.source.study && f.source.infeasibleStudy, 'Export the actual native study, objects and proven infeasible variant.');
-    const study = { ...structuredClone(object(f.source.study)), settlements: [] };
-    const originalStudy = structuredClone(study);
-    const result = await compareObservedSpotAccount({ ...f.common, operation: { kind: 'STUDY', study, objectsDirectory } }, BACKGROUND_CONTEXT);
-    const { settlements: _legacy, ...wireStudy } = originalStudy;
-    assert.deepEqual(result.request.study, wireStudy);
-    assert.equal(Object.hasOwn(object(result.request.study), 'settlements'), false);
-    assert.deepEqual(study.settlements, []);
-    assert.deepEqual(study, originalStudy);
-    assert.equal(result.hold.status, 'COMPLETED', result.hold.reason ?? ''); assert.equal(result.rebalance.status, 'COMPLETED', result.rebalance.reason ?? '');
-    const frames = result.rebalance.result!.frames as JsonObject[]; assert.ok(frames.length >= 2);
-    const first = object(frames[0]!.input); const firstAsset = (first.assets as JsonObject[])[0]!;
-    assert.ok(compareDecimal(String(firstAsset.current_weight), '0') > 0); assert.notEqual(first.current_cash_weight, '1');
-    const failed = await compareObservedSpotAccount({ ...f.common, operation: { kind: 'STUDY', study: object(f.source.infeasibleStudy), objectsDirectory } }, BACKGROUND_CONTEXT);
-    assert.equal(failed.hold.status, 'COMPLETED'); assert.equal(failed.rebalance.status, 'FAILED');
-    assert.ok(failed.rebalance.reason); assert.ok(Array.isArray(failed.rebalance.result?.frames) && failed.rebalance.result.frames.length > 0,
-      'Original infeasible solver evidence cannot be discarded or changed into a successful replay.');
-  } finally { await f.cleanup(); }
+test('retired portfolio STUDY is rejected before native execution', async () => {
+  await assert.rejects(compareObservedSpotAccount({ nativeDatasetRevisionId: '00000000-0000-0000-0000-000000000000',
+    datasetRevision: { id: 'retired-study', contentRef: 'original' }, operation: { kind: 'STUDY', study: {} },
+  } as never, BACKGROUND_CONTEXT), /study_retired/);
 });

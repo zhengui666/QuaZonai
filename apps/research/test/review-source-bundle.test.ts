@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import type { ConversationId, JsonObject } from '@earendil-works/pi-durable';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { bindReviewSourceEvidence, ReviewIndependentSourceEvidence, ReviewSourceEvidence, reviewSourceDataDigest } from '../src/review-source.ts';
 import type { CapturedReviewSource } from '../src/review-source.ts';
 

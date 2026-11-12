@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -14,7 +16,7 @@ import type { CapitalExitNativeAction, CapitalExitPlanningContext, CapitalExitPo
 
 const instrumentId = 'HYPE-USDC-SPOT.HYPERLIQUID';
 const paperOptions: AccountOptions = { id: 'spot', clientId: 'client', accountId: 'HYPERLIQUID-001', mode: 'paper',
-  startingBalance: '1000', paperFeeRate: '0.001', instruments: [instrumentId] };
+  startingBalance: '1000', paperFeeRate: '0.001', nativeStrategy: { instrument_id: instrumentId, strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: [instrumentId] };
 type Json = Record<string, unknown>;
 
 // These controlled NDJSON responses exercise receiver recovery and contracts.
@@ -52,6 +54,7 @@ class ControlledProtocol implements NativeAccountRuntime {
         quantity: String(payload.quantity), filled_quantity: '0', leaves_quantity: String(payload.quantity), status: 'ACCEPTED', limit_price: String(payload.minimum_price), reduce_only: false, exit_id: String(payload.exit_id) });
       return { admission: 'SUBMITTED', submitted: true, client_order_id: payload.client_order_id, epoch: payload.epoch };
     }
+    if (operation === 'STRATEGY_START' || operation === 'STRATEGY_STOP') return { strategy_id: 'EMACross-001', state: operation === 'STRATEGY_START' ? 'RUNNING' : 'STOPPED', native_version: '0.69.0' };
     if (operation === 'TARGET') return { acknowledged: true, target_id: payload.id, epoch: payload.epoch };
     throw new Error(`unexpected_controlled_operation:${operation}`);
   }
@@ -74,8 +77,8 @@ async function openAccount(native: ControlledProtocol, options = paperOptions, r
   const account = await createCapitalAccount(options, directory, '/unused-controlled-protocol', native, reader);
   let serial = 0;
   const call = async (method: string, path: string, body: unknown = {}) => {
-    const value = (await account.handle(path, request(method), async () => body)).value as Json;
-    if (value.result != null) validateCapitalDocument('VIEW', value.result);
+    const value = (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Json;
+    if (path.startsWith('/capital-exits') && value.result != null) validateCapitalDocument('VIEW', value.result);
     if (value.exit != null) validateCapitalDocument('VIEW', value.exit);
     for (const exit of value.exits as CapitalExitView[] ?? []) validateCapitalDocument('VIEW', exit);
     return value;
@@ -254,12 +257,8 @@ test('a delayed reverse-transfer refresh publishes new spot cash only behind its
     const newCashControls = native.requests.slice(phase).filter(value => value.operation === 'CONTROL' && value.payload.spot_free_cash === '1000');
     assert.ok(newCashControls.length > 0);
     for (const control of newCashControls) { assert.equal(control.payload.mode, 'PAUSED'); assert.ok(BigInt(String(control.payload.epoch)) > BigInt(pausedEpoch)); }
-    const expiresAt = new Date(Date.now() + 30_000).toISOString();
-    const rejected = await account.call('POST', '/targets', { id: 'target-after-unreconciled-reverse', clientId: options.clientId, accountId: options.accountId, expiresAt,
-      target: { valid_until_ns: String(BigInt(Date.parse(expiresAt)) * 1_000_000n), targets: [] },
-      allocation: { accountSourceId: observed.accountSourceId, observationId: observed.observationId, snapshotSequence: observed.sequence,
-        nativeClockNs: observed.nativeClockNs, controlRevision: published.controlRevision, reserved: '0', cashBuffer: '0', capital: '1000' } });
-    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'capital_external_reverse_transfer_requires_reconciliation');
+    await assert.rejects(account.call('POST', '/strategy/commands', { requestId: 'start-after-unreconciled-reverse', action: 'START', clientId: options.clientId, accountId: options.accountId }), /capital_external_reverse_transfer_requires_reconciliation/);
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 0);
     assert.equal(native.requests.filter(value => value.operation === 'TARGET').length, 0);
     const reconciled = await account.action(await account.exit(prepared.id), { action: 'RECONCILE_EXTERNAL_TRANSFER', user_reported_amount: '100', currency: 'USDC', external_transfer_ref: 'reverse-source' });
     assert.equal(reconciled.status, 'ACCEPTED', String(reconciled.error));
@@ -269,48 +268,150 @@ test('a delayed reverse-transfer refresh publishes new spot cash only behind its
   } finally { if (releaseRead) (releaseRead as () => void)(); await account.close(); }
 });
 
-test('reserved trading forwards the original signal budget and pause stops slices while ordinary targets continue', { timeout: 10_000 }, async () => {
+test('reserved capital prevents native strategy restart and pause stops reduction slices without releasing the reservation', { timeout: 10_000 }, async () => {
   const native = new ControlledProtocol('200'); Object.assign(native.snapshot.positions[0]!, { quantity: '8', free_quantity: '8', value: '800' });
   const account = await openAccount(native);
-  const ordinaryTarget = (id: string) => {
-    const expiresAt = new Date(Date.now() + 30_000).toISOString();
-    return { id, clientId: paperOptions.clientId, accountId: paperOptions.accountId, expiresAt,
-      target: { valid_until_ns: String(BigInt(Date.parse(expiresAt)) * 1_000_000n), targets: [{ instrument_id: instrumentId, weight: '0.2' }] } };
-  };
-  const withReservation = async (id: string, exitId: string, raw = true) => {
-    const observed = await account.call('GET', '/account'), body = ordinaryTarget(id);
-    return { ...body, allocation: { accountSourceId: observed.accountSourceId, observationId: observed.observationId, snapshotSequence: observed.sequence,
-      nativeClockNs: observed.nativeClockNs, controlRevision: observed.controlRevision, reserved: '600', cashBuffer: '0', capital: '400',
-      capitalExit: { mode: 'BOUNDED_LIMIT', transition: true, controlRevision: observed.controlRevision, exitIds: [exitId], signalCapital: '1000',
-        ...(raw ? { signalTarget: { ...body.target, targets: [{ instrument_id: instrumentId, weight: '0.8' }] } } : {}) } } };
-  };
+  const command = (requestId: string, action: 'START' | 'STOP') => ({ requestId, action, clientId: paperOptions.clientId, accountId: paperOptions.accountId });
   try {
-    const initial = await account.call('POST', '/targets', ordinaryTarget('ordinary-without-capital-obligation'));
-    assert.equal(initial.status, 'ACKNOWLEDGED', 'Ordinary initial delivery remains supported without an allocation when there is no capital obligation.');
+    assert.equal((await account.call('POST', '/strategy/commands', command('initial-native-start', 'START'))).status, 'COMPLETED');
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 1);
     const created = await account.start('600', context => bounded(context, '6'));
-    const missing = await withReservation('reserved-target-without-original-signal', created.id, false);
-    const rejected = await account.call('POST', '/targets', missing);
-    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'capital_original_signal_budget_required');
-    assert.deepEqual(await account.call('GET', `/targets/${missing.id}`), rejected);
-    const persisted = (await account.saved()).targets[missing.id]!;
-    assert.equal(persisted.receipt.status, 'REJECTED'); assert.deepEqual(persisted.original, missing);
-    assert.equal(native.requests.filter(value => value.operation === 'TARGET').length, 1, 'Missing raw signal cannot enter the native target execution path.');
-    const delivered = await account.call('POST', '/targets', await withReservation('reserved-target-original-signal', created.id));
-    assert.equal(delivered.status, 'ACKNOWLEDGED');
-    const target = native.requests.filter(value => value.operation === 'TARGET').at(-1)!;
-    assert.deepEqual(target.payload.weights, [{ instrument_id: instrumentId, weight: '0.8' }]);
-    assert.equal(target.payload.signal_capital, '1000'); assert.equal(target.payload.capital, '400'); assert.equal(target.payload.reserved_amount, '600');
+    assert.equal(created.funds.requested_amount.amount, '600'); assert.equal(created.funds.reserved_amount.amount, '600');
+    const observed = await account.call('GET', '/account'); assert.equal(observed.equity, '1000'); assert.equal(observed.cash, '200');
+    await assert.rejects(account.call('POST', '/strategy/commands', command('reserved-native-start', 'START')), /strategy_account_exit_unsettled/);
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 1, 'An unsettled exit cannot be bypassed by starting an upstream strategy.');
     const paused = await account.pause(await account.exit(created.id));
     const control = native.requests.filter(value => value.operation === 'CONTROL').at(-1)!;
-    assert.equal(control.payload.mode, 'CASH_ONLY', 'Pausing discretionary reduction preserves normal strategy activity under the spot cash reservation.');
-    assert.equal(control.payload.reserved_amount, '600');
-    const continued = await account.call('POST', '/targets', await withReservation('ordinary-target-during-capital-pause', created.id));
-    assert.equal(continued.status, 'ACKNOWLEDGED');
-    const pausedTarget = native.requests.filter(value => value.operation === 'TARGET').at(-1)!;
-    assert.deepEqual(pausedTarget.payload.weights, [{ instrument_id: instrumentId, weight: '0.8' }]); assert.equal(pausedTarget.payload.signal_capital, '1000');
+    assert.equal(control.payload.mode, 'CASH_ONLY', 'Pausing discretionary reduction keeps the original spot cash reservation.');
+    assert.equal(control.payload.reserved_amount, '600'); assert.equal(control.payload.spot_free_cash, '200');
+    await assert.rejects(account.call('POST', '/strategy/commands', command('paused-native-start', 'START')), /strategy_account_exit_unsettled/);
+    assert.equal((await account.call('POST', '/strategy/commands', command('owner-native-stop', 'STOP'))).status, 'COMPLETED');
     native.tick(); await delay(30);
     const after = await account.exit(paused.id);
-    assert.equal(after.state, 'PAUSED'); assert.equal(after.funds.reserved_amount.amount, '600'); assert.equal(after.remaining_trading, 'BUDGET_AWARE');
-    assert.equal(native.slices().length, 0, 'A paused exit never turns an ordinary target or owner tick into another forced reduction.');
+    assert.equal(after.state, 'PAUSED'); assert.equal(after.funds.reserved_amount.amount, '600');
+    assert.equal(after.funds.staged_for_withdrawal_amount.amount, '0'); assert.equal(after.funds.reconciled_withdrawal_amount.amount, '0');
+    assert.equal(after.remaining_trading, 'FENCED_PENDING_TARGET', 'No retired target ACK may be fabricated to claim budget-aware strategy execution.');
+    assert.equal(native.slices().length, 0, 'A paused exit never turns an owner tick into another forced reduction.');
+    assert.equal(native.requests.some(value => value.operation === 'TARGET'), false);
+    assert.deepEqual((await account.saved()).targets, {});
   } finally { await account.close(); }
+});
+
+test('strategy admission rejection remains distinct from lost transport and is never replayed', async () => {
+  const native = new ControlledProtocol();
+  const original = native.request.bind(native);
+  let calls = 0, loseReply = false;
+  native.request = async (operation, payload = {}) => {
+    if (operation === 'STRATEGY_START') {
+      calls++;
+      if (loseReply) throw new Error('account_runtime_outcome_uncertain');
+      return { admission: 'REJECTED', started: false, reason: 'account_native_strategy_capital_reserved' };
+    }
+    return original(operation, payload);
+  };
+  const account = await openAccount(native);
+  try {
+    const body = (requestId: string) => ({ requestId, action: 'START', clientId: paperOptions.clientId, accountId: paperOptions.accountId });
+    const rejected = await account.call('POST', '/strategy/commands', body('rejected'));
+    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'account_native_strategy_capital_reserved');
+    assert.deepEqual(await account.call('POST', '/strategy/commands', body('rejected')), rejected); assert.equal(calls, 1);
+    loseReply = true;
+    const uncertain = await account.call('POST', '/strategy/commands', body('lost'));
+    assert.equal(uncertain.status, 'UNCERTAIN');
+    assert.deepEqual(await account.call('GET', '/strategy/commands/lost'), uncertain); assert.equal(calls, 2);
+  } finally { await account.close(); }
+});
+
+test('native account capabilities do not advertise replay-only order-book strategy', async () => {
+  const native = new ControlledProtocol();
+  const account = await openAccount(native, { ...paperOptions, nativeStrategy: { instrument_id: instrumentId, strategy: {
+    kind: 'ORDER_BOOK_IMBALANCE', max_trade_size: '1', trigger_min_size: '1', trigger_imbalance_ratio: '0.2',
+    min_seconds_between_triggers: 1, time_in_force: 'IOC', dry_run: false,
+  } } });
+  try {
+    const capabilities = await account.call('GET', '/capabilities');
+    assert.equal((capabilities.nativeStrategy as Json).supported, false);
+    assert.deepEqual((capabilities.nativeStrategy as Json).supportedKinds, ['EMA_CROSS']);
+    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance');
+  } finally { await account.close(); }
+});
+
+test('explicit STOP crosses receipt disk failure without claiming a durable result or retrying', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-stop-disk-failure-'));
+  const native = new ControlledProtocol();
+  const account = await createCapitalAccount(paperOptions, directory, '/unused-controlled-protocol', native);
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Json;
+  const body = (requestId: string, action: string) => ({ requestId, action, clientId: paperOptions.clientId, accountId: paperOptions.accountId });
+  try {
+    assert.equal((await call('POST', '/strategy/commands', body('before-failure', 'START'))).status, 'COMPLETED');
+    // Real atomic-write failure on an isolated test directory, not a mocked save.
+    await (await import('node:fs/promises')).mkdir(join(directory, 'capital-receipts.json.next'));
+    const receipt = await call('POST', '/strategy/commands', body('emergency-stop', 'STOP'));
+    assert.equal(receipt.status, 'UNCERTAIN'); assert.equal(receipt.persisted, false);
+    assert.equal(receipt.persistenceError, 'account_receipts_write_failed');
+    assert.equal((receipt.result as Json).state, 'STOPPED', 'Preserve the actual runtime reply separately from durable receipt status.');
+    const disk = JSON.parse(await readFile(join(directory, 'capital-receipts.json'), 'utf8')) as Json;
+    assert.equal((disk.strategyCommands as Json)['emergency-stop'], undefined);
+    assert.deepEqual(await call('POST', '/strategy/commands', body('emergency-stop', 'STOP')), receipt);
+    assert.deepEqual(await call('GET', '/strategy/commands/emergency-stop'), receipt);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_STOP').length, 1);
+    await assert.rejects(call('POST', '/strategy/commands', body('unsafe-restart', 'START')), /account_receipts_write_failed/);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_START').length, 1);
+    const original = native.request.bind(native);
+    native.request = async (operation, payload) => {
+      const response = await original(operation, payload);
+      if (operation === 'STRATEGY_STOP') throw new Error('account_runtime_outcome_uncertain');
+      return response;
+    };
+    const lost = await call('POST', '/strategy/commands', body('emergency-stop-lost', 'STOP'));
+    assert.equal(lost.status, 'UNCERTAIN'); assert.equal(lost.persisted, false);
+    assert.equal(lost.result, null); assert.equal(lost.error, 'account_runtime_outcome_uncertain');
+    assert.deepEqual(await call('POST', '/strategy/commands', body('emergency-stop-lost', 'STOP')), lost);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_STOP').length, 2);
+  } finally {
+    await account.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('worker durable CAS rejects a delayed older START after STOP, across restart and replay', async () => {
+  const { createServer } = await import('node:http');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-strategy-cas-'));
+  const native = new ControlledProtocol();
+  let account = await createCapitalAccount(paperOptions, directory, '/unused-controlled-protocol', native);
+  let release!: () => void, received!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { received = resolve; });
+  let hold = true;
+  const server = createServer(async (request_, response) => {
+    let bytes = ''; for await (const chunk of request_) bytes += chunk;
+    const body = bytes ? JSON.parse(bytes) as Json : null;
+    if (hold && body?.requestId === 'delayed-start') { hold = false; received(); await held; }
+    try { const result = await account.handle(request_.url!, request_, async () => body); response.writeHead(result.status, { 'content-type': 'application/json' }); response.end(JSON.stringify(result.value)); }
+    catch (error) { response.writeHead(409, { 'content-type': 'application/json' }); response.end(JSON.stringify({error:String(error)})); }
+  });
+  server.listen(0,'127.0.0.1'); await once(server,'listening');
+  const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+  const get = async (path: string) => (await (await fetch(base+path,{headers:{'x-qz-client-id':paperOptions.clientId}})).json()) as Json;
+  const post = async (body: Json) => (await (await fetch(base+'/strategy/commands',{method:'POST',headers:{'content-type':'application/json','x-qz-client-id':paperOptions.clientId},body:JSON.stringify(body)})).json()) as Json;
+  const command = (requestId:string,action:string) => ({requestId,action,clientId:paperOptions.clientId,accountId:paperOptions.accountId});
+  try {
+    const first = await get('/strategy/fence');
+    const original = {...command('delayed-start','START'),expectedAccountSourceId:first.accountSourceId,expectedStrategyRevision:first.strategyRevision};
+    const pending = post(original); await entered;
+    const stopped = await post(command('later-stop','STOP')); assert.equal(stopped.status,'COMPLETED');
+    release(); const stale = await pending;
+    assert.equal(stale.status,'REJECTED'); assert.equal(stale.error,'strategy_start_fence_changed');
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_START').length,0);
+    await account.close(); account = await createCapitalAccount(paperOptions,directory,'/unused-controlled-protocol',native);
+    assert.deepEqual(await post(original),stale);
+    assert.deepEqual(await post(command('later-stop','STOP')),stopped);
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_STOP').length,1);
+    const current=await get('/strategy/fence');assert.equal(current.accountSourceId,first.accountSourceId);assert.notEqual(current.strategyRevision,first.strategyRevision);
+    const newStart={...command('fresh-start','START'),expectedAccountSourceId:current.accountSourceId,expectedStrategyRevision:current.strategyRevision};
+    assert.equal((await post(newStart)).status,'COMPLETED');assert.equal((await post(newStart)).status,'COMPLETED');
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_START').length,1);
+    const replaced=await post({...command('other-worker','START'),expectedAccountSourceId:'wrong-source',expectedStrategyRevision:(await get('/strategy/fence')).strategyRevision});
+    assert.equal(replaced.status,'REJECTED');
+  } finally {release();server.close();await once(server,'close');await account.close();await rm(directory,{recursive:true,force:true});}
 });

@@ -163,7 +163,7 @@ fn explicit_original_fee_file_binds_new_catalog_and_enables_actual_native_replay
         String::from_utf8_lossy(&replay.stderr)
     );
     let result: NativeSimulationResultV1 = serde_json::from_slice(&replay.stdout).unwrap();
-    assert_eq!(result.native_version, "0.68.0");
+    assert_eq!(result.native_version, "0.69.0");
     assert!(result.orders.get() >= 4);
     assert_eq!(
         result.summary.get("orders.open").map(String::as_str),

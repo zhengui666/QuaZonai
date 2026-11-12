@@ -8,8 +8,6 @@ import { exportDataset } from '../src/dataset-export.ts';
 import { factorViews } from '../src/factors.ts';
 import { datasetResearchSettings, researchCriterion, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { context, fauxAssistantMessage, setup, wat } from './support.ts';
-import factorWasm from '../../research/plugins/factor-wasm.ts';
-import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 
 const request: NativeTickFactorRequest = { schema_version: 1,
   input: { modality: 'TRADE_TICK', instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '900719925474099300', event_end_ns: '900719925474099900', decision_cutoff_ns: '900719925474100000', source_revision: 'pinned-test-source-not-market-evidence', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
@@ -82,7 +80,6 @@ test('tick export rejects duplicated original keys, qualification relabeling, mi
 test('HTTP registration and replay retain one explicit tick contract and prevent mixed inputs or portfolio admission', async () => {
   const state = await setup();
   try {
-    state.options.extensions.push(factorWasm, heldoutWasm);
     const data = { catalog: join(state.directory, 'catalog'), nativeInput: { modality: 'TRADE_TICK', request: research }, sealed: { catalog: join(state.directory, 'catalog'), nativeInput: { modality: 'TRADE_TICK', request } } };
     state.options.config.datasets = [{ id: 'ticks', name: 'Ticks', assetClass: 'CRYPTO', currency: 'MULTI', source: 'Controlled protocol only', start: null, end: null, ready: true, nativeModality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' }, data }];
     await state.restart(); state.faux.setResponses([fauxAssistantMessage('Input accepted; no scientific calculation claimed.')]);
@@ -97,7 +94,7 @@ test('HTTP registration and replay retain one explicit tick contract and prevent
     const list = await state.service.app.inject({ url: '/api/v3/datasets', headers: state.headers });
     assert.equal(list.json()[0].researchSettings.horizonUnit, 'TRADE_COHORTS'); assert.equal(list.json()[0].preparation.scientificQualification, 'UNVERIFIED');
     const portfolio = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: { requestId: 'unsupported-tick', name: 'No implicit simulation', datasetId: 'ticks', capital: '1', researchIds: [receipt.conversationId] } });
-    assert.equal(portfolio.statusCode, 422); assert.match(portfolio.body, /tick_portfolio_unsupported/);
+    assert.equal(portfolio.statusCode, 404); assert.match(portfolio.body, /not_found/);
     state.options.config.datasets[0]!.data.request = {};
     await state.restart();
     const mixed = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...payload, requestId: 'mixed' } });

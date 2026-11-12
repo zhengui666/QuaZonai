@@ -1,7 +1,7 @@
 //! Shared controlled native spot source; never production evidence.
 #![allow(dead_code)]
 #[path = "../../../../tests/support/execution_models.rs"]
-mod models;
+pub mod models;
 use contracts::{
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
@@ -149,6 +149,7 @@ pub fn fixture_with_delay(
         rules,
     };
     let settings = NativeSimulationSettingsV1 {
+        price_benchmark: None,
         schema_version: SchemaV1,
         base_currency: "USDC".into(),
         starting_capital: money("1000"),
@@ -166,7 +167,7 @@ pub fn fixture_with_delay(
         }),
         fee_model: NativeModelRefV1::FrozenSpotFeeScenario {
             schema_version: SchemaV1,
-            native_version: "0.68.0".into(),
+            native_version: "0.69.0".into(),
             parameters: FrozenSpotFeeScenarioParametersV1 {
                 acceptance: SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability,
                 schedule,
@@ -251,7 +252,7 @@ pub fn source_fixture_with_prices(
         capture_id: Id::new(),
         method: SpotCashSourceMethodV1::HyperliquidPublicRestCandleSnapshot,
         network: SpotCashSourceNetworkV1::Mainnet,
-        native_version: "0.68.0".into(),
+        native_version: "0.69.0".into(),
         historical_availability: SpotCashHistoricalAvailabilityV1::Unverified,
         instrument_definition: serde_json::to_value(&instrument).unwrap(),
         instrument_request_started_ns: count(1),

@@ -1,3 +1,5 @@
+import { accountStrategyCommand } from '../../../packages/contracts/src/account-strategy.ts';
+import { nativeFixedRiskSizing } from '../../../packages/contracts/src/nautilus.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,6 +27,8 @@ interface AccountState {
   previews: Record<string, { original: unknown; preview: CapitalExitPreview; context: CapitalExitPlanningContext }>;
   commands: Record<string, Command>; exits: Record<string, Exit>; targets: Record<string, { original: Json; receipt: Json; epoch: string; budget_basis?: Json }>;
   ledgerClaims: Record<string, { amount: string; original: unknown }>;
+  strategyRevision?: string;
+  strategyCommands?: Record<string, { original: Json; receipt: Json }>;
   reverseTransferPending: boolean;
 }
 const now = () => new Date().toISOString();
@@ -102,6 +106,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     state = { schema_version: 2, sourceId: id(), identity, revision: '1', epoch: '1', previews: {}, commands: {}, exits: {}, targets: {}, ledgerClaims: {}, reverseTransferPending: false };
   }
+  state.strategyRevision ??= '1';
+  if (!/^\d+$/.test(state.strategyRevision)) fail('strategy_revision_invalid');
   let writeFailed = false;
   async function save() {
     if (writeFailed) fail('account_receipts_write_failed');
@@ -625,59 +631,13 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     }
     if (exit.view.reason_codes[0] !== lastReason) { exit.view.reason_codes = [lastReason]; event(exit, 'WAITING_BOUND', '等待满足已授权价格、成本、持仓和批量界限。', lastReason); await save(); }
   }
-  async function target(body: Json) {
-    const targetId = text(body.id, 'target_id'), old = state.targets[targetId];
-    if (old) { if (canonical(old.original) !== canonical(body)) fail('target_request_id_conflict'); if (old.receipt.status === 'PENDING') await settleTarget(targetId); return structuredClone(old.receipt); }
-    if (reason()) fail(reason()!); const targetValue = record(body.target);
-    if (Object.values(state.targets).some(value => value.receipt.status === 'PENDING')) fail('target_previous_original_requires_reconciliation');
-    if (body.clientId !== options.clientId || body.accountId !== options.accountId) fail('account_identity_mismatch');
-    let allocation: Json;
-    if (body.allocation !== undefined) allocation = record(body.allocation);
-    else {
-      if (reserved() !== 0n || Object.values(state.exits).some(exit => obligation(exit) > 0n)
-        || Object.values(state.commands).some(command => ['PENDING', 'UNCERTAIN'].includes(command.state))) fail('capital_snapshot_bound_target_allocation_required');
-      const currentEquity = equity(); if (currentEquity === null) fail('capital_managed_equity_unavailable');
-      // The ordinary initial-delivery protocol is a weight signal. With no
-      // outstanding capital intent, derive its one-time native budget from the
-      // current trusted account facts and persist that exact admission basis.
-      allocation = { accountSourceId: state.sourceId, observationId: latest!.observation_id, snapshotSequence: latest!.sequence,
-        nativeClockNs: String(latest!.native_snapshot?.ts_event ?? latest!.observed_at_ns), controlRevision: state.revision,
-        reserved: '0', cashBuffer: decimal(cashBuffer()), capital: decimal(maximum(0n, units(currentEquity) - cashBuffer())), origin: 'CURRENT_NATIVE_ACCOUNT' };
-    }
-    for (const [key, expected] of Object.entries({ accountSourceId: state.sourceId, observationId: latest!.observation_id, snapshotSequence: latest!.sequence, nativeClockNs: String(latest!.native_snapshot?.ts_event ?? latest!.observed_at_ns), controlRevision: state.revision })) if (allocation[key] !== expected) fail('account_snapshot_changed');
-    if (units(allocation.reserved, 'target_reserved') !== reserved()) fail('account_reservation_changed');
-    const expires = text(targetValue.valid_until_ns, 'target_expiry'); if (BigInt(expires) <= BigInt(Date.now()) * 1_000_000n) fail('target_expired');
-    const capital = units(allocation.capital, 'target_capital'), accountEquity = equity();
-    if (accountEquity === null || capital > maximum(0n, units(accountEquity) - reserved() - units(allocation.cashBuffer ?? '0'))) fail('target_exceeds_unreserved_capital');
-    const control = allocation.capitalExit ? record(allocation.capitalExit) : null;
-    const exits = Object.values(state.exits).filter(exit => obligation(exit) > 0n);
-    if (exits.length && (!control || control.controlRevision !== state.revision || !Array.isArray(control.exitIds)
-      || canonical([...control.exitIds].sort()) !== canonical(exits.map(exit => exit.view.id).sort()))) fail('capital_target_control_scope_mismatch');
-    const reservationProtected = reserved() > 0n;
-    if (reservationProtected && (!control?.signalTarget || typeof control.signalCapital !== 'string')) fail('capital_original_signal_budget_required');
-    const signal = reservationProtected ? record(control!.signalTarget) : targetValue;
-    const signalCapital = reservationProtected ? units(control!.signalCapital, 'capital_original_signal_capital') : capital;
-    if (signalCapital < 0n || signalCapital > units(accountEquity)) fail('capital_original_signal_capital_exceeds_managed_capital');
-    if (signal.valid_until_ns !== targetValue.valid_until_ns) fail('capital_signal_target_expiry_mismatch');
-    const rows = Array.isArray(signal.targets) ? signal.targets : Array.isArray(signal.weights) ? signal.weights : null; if (!rows) fail('target_weights_required');
-    const receipt: Json = { id: targetId, clientId: options.clientId, accountId: options.accountId, expiresAt: body.expiresAt, externalId: `native:${targetId}`, status: 'PENDING', acknowledgedAt: null };
-    state.targets[targetId] = { original: body, receipt, epoch: state.epoch, budget_basis: structuredClone(allocation) }; await save();
-    try {
-      await applyControl();
-      const applied = await runtime.request('TARGET', { epoch: state.epoch, id: targetId, expires_at: expires, capital: decimal(capital), signal_capital: decimal(signalCapital), reserved_amount: decimal(reserved()),
-        weights: rows.map(value => { const row = record(value); return { instrument_id: row.instrument_id ?? row.instrumentId, weight: row.weight }; }) });
-      if (applied.acknowledged !== true || applied.target_id !== targetId || applied.epoch !== state.epoch) fail(typeof applied.reason === 'string' ? applied.reason : 'target_native_acceptance_unconfirmed');
-      receipt.status = 'ACKNOWLEDGED'; receipt.acknowledgedAt = now();
-      for (const exit of Object.values(state.exits)) if (obligation(exit) > 0n) exit.view.remaining_trading = 'BUDGET_AWARE';
-    } catch (error) { receipt.error = error instanceof Error ? error.message : 'target_outcome_uncertain'; }
-    await save(); return receipt;
-  }
   async function settleTarget(targetId: string) {
     const target = state.targets[targetId]; if (!target || target.receipt.status !== 'PENDING') return;
     try {
       const result = await runtime.request('TARGET_STATUS', { id: targetId, epoch: target.epoch, expires_at: record(target.original.target).valid_until_ns });
       if (result.acknowledged === true && result.target_id === targetId && result.epoch === target.epoch) {
         target.receipt.status = result.revoked === true ? 'REVOKED' : 'ACKNOWLEDGED'; target.receipt.acknowledgedAt ??= now(); delete target.receipt.error;
+        if (result.native_protection != null) target.receipt.nativeProtection = result.native_protection;
         if (state.epoch === target.epoch && result.revoked !== true) for (const exit of Object.values(state.exits)) if (obligation(exit) > 0n) exit.view.remaining_trading = 'BUDGET_AWARE';
         await save();
       } else if (result.acknowledged === false && result.target_id === targetId && result.admission === 'NOT_SUBMITTED'
@@ -692,17 +652,54 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       }
     } catch (error) { target.receipt.error = error instanceof Error ? error.message : 'target_original_receipt_unavailable'; }
   }
-  async function admitTarget(body: Json) {
-    try { return await target(body); }
-    catch (error) {
-      const targetId = text(body.id, 'target_id');
-      if (!state.targets[targetId] && !writeFailed) {
-        const receipt = { id: targetId, clientId: options.clientId, accountId: options.accountId, expiresAt: body.expiresAt,
-          externalId: null, acknowledgedAt: null, status: 'REJECTED', error: error instanceof Error ? error.message : 'target_admission_rejected' };
-        state.targets[targetId] = { original: body, receipt, epoch: state.epoch }; await save(); return receipt;
+  async function strategyCommand(body: Json) {
+    if (Object.keys(body).some(key => !['requestId', 'action', 'clientId', 'accountId', 'expectedAccountSourceId', 'expectedStrategyRevision'].includes(key))) fail('strategy_command_invalid', 422);
+    const command = accountStrategyCommand({ requestId: body.requestId, action: body.action, ...(body.action === 'START' ? { expectedAccountSourceId: body.expectedAccountSourceId, expectedStrategyRevision: body.expectedStrategyRevision } : {}) });
+    const commands = state.strategyCommands ??= {};
+    const prior = commands[command.requestId];
+    if (prior) { if (canonical(prior.original) !== canonical(body)) fail('strategy_request_id_conflict'); return structuredClone(prior.receipt); }
+    if (command.action === 'START') {
+      if (reason()) fail(reason()!);
+      if (reserved() !== 0n || Object.values(state.exits).some(exit => !['COMPLETED', 'CLOSED'].includes(exit.view.state))) fail('strategy_account_exit_unsettled');
+      if (Object.values(state.targets).some(target => target.receipt.status === 'PENDING')) fail('strategy_original_target_unsettled');
+      if (typeof body.expectedAccountSourceId !== 'string' || typeof body.expectedStrategyRevision !== 'string' || !/^\d+$/.test(body.expectedStrategyRevision)) fail('strategy_start_fence_required', 422);
+      if (body.expectedAccountSourceId !== state.sourceId || body.expectedStrategyRevision !== state.strategyRevision) {
+        const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'strategy_start_fence_changed' }, error: 'strategy_start_fence_changed' };
+        commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
       }
-      throw error;
+      await applyControl();
     }
+    // Worker-owned, persisted CAS fence; never infer order from Pi Task IDs.
+    state.strategyRevision = String(BigInt(state.strategyRevision!) + 1n);
+    const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'UNCERTAIN', result: null, error: null };
+    commands[command.requestId] = { original: structuredClone(body), receipt };
+    // START must have a durable intent. An explicitly requested STOP must remain
+    // available when receipt storage fails; it is never advertised as durable.
+    let persisted = true;
+    try { await save(); } catch (error) {
+      if (command.action !== 'STOP') throw error;
+      persisted = false;
+    }
+    const unrecorded = () => {
+      receipt.status = 'UNCERTAIN'; receipt.persisted = false;
+      receipt.persistenceError = 'account_receipts_write_failed';
+      receipt.error ??= 'strategy_outcome_not_durably_recorded';
+      return structuredClone(receipt);
+    };
+    try {
+      const result = await runtime.request(command.action === 'START' ? 'STRATEGY_START' : 'STRATEGY_STOP', { epoch: state.epoch });
+      if (result.admission === 'REJECTED' && result.started === false && command.action === 'START' && typeof result.reason === 'string') {
+        receipt.result = result; receipt.status = 'REJECTED'; receipt.error = result.reason;
+        try { await save(); } catch { return unrecorded(); }
+        return structuredClone(receipt);
+      }
+      if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') fail('strategy_native_result_invalid');
+      receipt.result = result;
+      receipt.status = 'COMPLETED';
+    } catch (error) { receipt.error = error instanceof Error ? error.message : 'strategy_native_outcome_uncertain'; }
+    if (!persisted) return unrecorded();
+    try { await save(); } catch { return unrecorded(); }
+    return structuredClone(receipt);
   }
   function status() {
     const blocked = reason(); for (const exit of Object.values(state.exits)) actions(exit);
@@ -739,11 +736,20 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       if (body && (body.clientId !== options.clientId || body.accountId !== options.accountId)) fail('account_identity_mismatch');
       const actionKind = body?.command ? record(body.command).action : null;
       if (request.method === 'GET' && ['/account', '/capital-exits/planning-context'].includes(path)
-        || request.method === 'POST' && (['/capital-exits/preview', '/capital-exits', '/targets'].includes(path) || actionKind === 'RESUME')) await refresh();
+        || request.method === 'POST' && (['/capital-exits/preview', '/capital-exits'].includes(path) || path === '/strategy/commands' && body?.action === 'START' || actionKind === 'RESUME')) await refresh();
       return serial(async () => {
         if (request.method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
           capitalExit: { version: 2, supported: !reason(), readable: true, reason: reason(), policies: ['CASH_ONLY', 'NATURAL_RELEASE', 'BOUNDED_LIMIT'], actions: ['START', 'PAUSE', 'CANCEL', 'RESUME', 'RELEASE_RESERVATION', 'RECONCILE_EXTERNAL_TRANSFER', 'RECONCILE_WITHDRAWAL'] },
-          automaticTargets: { version: 1, supported: !reason(), revisionBound: true, snapshotBound: true } } };
+          orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
+          nativeBrackets: { supported: false, reason: options.mode === 'paper' ? 'account_native_paper_bracket_recovery_unverified' : 'account_native_live_brackets_not_supported', defaultEnabled: false, scope: 'NEW_LONG_POSITION', cancellationPath: '/targets/<id>/cancel-protection', atomicOco: false },
+          nativeStrategy: { version: 1, supported: options.nativeStrategy.strategy.kind === 'EMA_CROSS' && !failure,
+            configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
+            reason: options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure, defaultStart: 'PAUSED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
+          automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
+        if (request.method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision } };
+        if (request.method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
+        const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);
+        if (request.method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
         if (request.method === 'GET' && path === '/account') return { status: 200, value: account() };
         if (request.method === 'GET' && path === '/capital-exits') return { status: 200, value: status() };
         if (request.method === 'GET' && path === '/capital-exits/planning-context') return { status: 200, value: { ...envelope(), context: planningContext() } };
@@ -751,14 +757,19 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         if (request.method === 'GET' && receipt) return { status: 200, value: commandReceipt(decodeURIComponent(receipt[1]!)) };
         const exitPath = /^\/capital-exits\/([^/]+)$/.exec(path);
         if (request.method === 'GET' && exitPath) { const exit = state.exits[decodeURIComponent(exitPath[1]!)]; if (!exit) fail('capital_exit_not_found', 404); actions(exit); return { status: 200, value: { ...envelope(), exit: exit.view } }; }
+        const protectionPath = /^\/targets\/([^/]+)\/cancel-protection$/.exec(path);
+        if (request.method === 'POST' && protectionPath) return { status: 200, value: await runtime.request('CANCEL_PROTECTION', { id: decodeURIComponent(protectionPath[1]!) }) };
         const targetPath = /^\/targets\/([^/]+)$/.exec(path);
         if (request.method === 'GET' && targetPath) { const targetId = decodeURIComponent(targetPath[1]!), stored = state.targets[targetId]; if (!stored) fail('target_receipt_not_found', 404); await settleTarget(targetId); return { status: 200, value: structuredClone(stored.receipt) }; }
         if (request.method !== 'POST') return { status: 404, value: { error: 'not_found' } };
+        if (path === '/sizing/fixed-risk') return { status: 200, value: { ...await runtime.request('FIXED_RISK_SIZE', { ...nativeFixedRiskSizing(body!.sizing) }), ...envelope() } };
+        if (path === '/orders/preview') return { status: 200, value: { ...await runtime.request('ORDER_PREVIEW', { instrument_id: body!.instrument_id, order: body!.order }), ...envelope() } };
         if (path === '/capital-exits/preview') return { status: 200, value: await preview(body!) };
         if (path === '/capital-exits') return { status: 202, value: await admitCommand(body!) };
         const action = /^\/capital-exits\/([^/]+)\/actions$/.exec(path);
         if (action) return { status: 202, value: await admitCommand(body!, decodeURIComponent(action[1]!)) };
-        if (path === '/targets') return { status: 202, value: await admitTarget(body!) };
+        if (path === '/targets') fail('native_strategy_only', 410);
+        if (path === '/strategy/commands') return { status: 202, value: await strategyCommand(body!) };
         return { status: 404, value: { error: 'not_found' } };
       });
     },

@@ -1,5 +1,7 @@
+import { readResearchAssessments } from './research-assessments.ts';
+import { AssistantEntry } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ConversationId, Cursor, TaskRecord } from '@earendil-works/pi-durable';
+import type { ConversationId, Cursor, EntryRecord, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { readResearchAdmissions } from './admissions.ts';
@@ -32,9 +34,20 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
     ...(typeof input?.event_start_ns === 'string' && typeof input?.event_end_ns === 'string' ? { event_start_ns: input.event_start_ns, event_end_ns: input.event_end_ns } : {}) } };
 }
 
+/** Preserve the official report verbatim; no project signal/metric projection. */
+function nativeStrategyDetails(value: Json | undefined, claim: Json | undefined): { nativeStrategyResult?: JsonObject } {
+  if (claim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION' || !value || typeof value !== 'object' || Array.isArray(value) || !value.canonical_result) return {};
+  return { nativeStrategyResult: { request: value.request ?? null, scientificClaim: claim, nativeVersion: value.native_version ?? null,
+    equityPerformance: value.equity_performance ?? null, instrumentDefinition: value.instrument_definition ?? null, canonicalResult: value.canonical_result, dataRowsByType: value.data_rows_by_type ?? null, notes: value.notes ?? null } };
+}
+
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
+  // Official canonical reports are exposed verbatim via nativeStrategyResult.
+  // Neither event rows nor IEEE754 hexadecimal encodings are decimal metrics.
+  if (!Array.isArray(value) && value.canonical_result && typeof value.canonical_result === 'object' && !Array.isArray(value.canonical_result)
+    && value.canonical_result.schema === 'nautilus-backtest-result/v1') return [];
   if (!Array.isArray(value) && value.economic) {
     const { economic, ...result } = value;
     return [...metrics(result, prefix), ...tickEconomicMetrics(economic)];
@@ -143,17 +156,39 @@ export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHos
   };
 }
 
+/** Only ordinary assistant text is an owner-facing message. Never expose thinking,
+ * internal instruction entries, tool arguments, results or provider metadata. */
+export function researchMessages(entries: readonly EntryRecord[]): NonNullable<ResearchDetail['messages']> {
+  return entries.flatMap(entry => {
+    if (!AssistantEntry.is(entry)) return [];
+    const text = (entry.model ?? []).flatMap(message => message.role === 'assistant'
+      ? message.content.flatMap(part => part.type === 'text' ? [part.text] : []) : []).join('\n');
+    return text.trim() ? [{ entryId: entry.id, text }] : [];
+  });
+}
+
 export async function researchDetail(host: ResearchHost, id: number, readTasks: ReturnType<typeof researchTaskViews>): Promise<ResearchDetail> {
   const view = await host.state(id); const study = view.research;
   if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const tasks = await readTasks(id); const final = study.final;
+  const assessments = await readResearchAssessments(host, id, study.input);
+  const conversation = await host.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+  if (!conversation) throw new Problem('research_not_found', 404);
+  const messages: NonNullable<ResearchDetail['messages']> = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await conversation.entries({ order: 'ascending' }, 100, cursor, BACKGROUND_CONTEXT);
+    messages.push(...researchMessages(page.items)); cursor = page.next;
+  } while (cursor);
   const admissions = await readResearchAdmissions(host);
   return {
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)
       ? [record.report as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport] : []),
-    input: study.input as ResearchInput, submission: submissionView(view.submission),
+    messages, ...(assessments.length ? { assessments } : {}), input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(view.literature ? { literature: view.literature } : {}),
+    ...(study.toolPolicy ? { toolPolicy: study.toolPolicy } : {}),
+    ...(study.previousNativeResults ? { previousNativeResults: study.previousNativeResults } : {}),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
@@ -166,7 +201,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
       reason: typeof final.reason === 'string' ? final.reason : null,
       ...publicExecutionError(final.error, 'scientific_execution_failed',
         Array.isArray((study.trials.find(trial => trial.taskId === final.trialId)?.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', final.errorDetail),
-      metrics: metrics(final.result), ...tickInputDetails(final.result) } : null,
+      metrics: metrics(final.result), ...tickInputDetails(final.result), ...nativeStrategyDetails(final.result, final.scientificClaim) } : null,
   };
 }
 

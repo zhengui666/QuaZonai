@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { configure, defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { openResearch } from '../src/host.ts';
-import { evaluateTrial } from '../src/trials.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { ResearchIntakeTask } from '../src/intake.ts';
 import { Requests, Study } from '../src/documents.ts';
 
@@ -16,19 +15,10 @@ const replay = process.argv[3] === 'unsafe' ? 'unsafe' : 'safe';
 const faux = fauxProvider({ models: [{ id: 'crash-probe' }], tokensPerSecond: 100_000 });
 const models = createModels(); models.setProvider(faux.provider);
 faux.setResponses([fauxAssistantMessage(fauxToolCall('crash_probe', {}, { id: 'original-call' }), { stopReason: 'toolUse' })]);
-const plugin = defineExtension({ name: 'crash-probe', tools: [defineTool({
+const plugin = defineExtension({ name: 'qz.research', tools: [defineTool({
   name: 'crash_probe', description: 'Protocol test only', parameters: obj({}), replay,
   async execute(_args, api, context) {
-    if (failed) {
-      try {
-        await evaluateTrial(api, context, { hypothesis: 'Original scientific failure' }, async () => {
-          await appendFile(join(directory, 'calls'), `${api.taskId}\n`);
-          throw new Error('original_native_failure');
-        });
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'original_native_failure') throw error;
-      }
-    } else await appendFile(join(directory, 'calls'), `${api.taskId}\n`);
+    await appendFile(join(directory, 'calls'), `${api.taskId}\n`);
     process.stdout.write(`${JSON.stringify({ entered: api.taskId })}\n`);
     await awaitWithContext(new Promise<void>(() => {}), context);
     return {};

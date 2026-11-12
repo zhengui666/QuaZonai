@@ -1,19 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { scanComparisonOrdinals, scanFixedParameters, scanValidationMetrics } from './parameter-scan-values';
+import { scanComparisonOrdinals, scanFixedParameters, scanNativeMetrics } from './parameter-scan-values';
 
 describe('parameter scan display bindings', () => {
-  it('never replaces validation measurements with stronger heldout or contradictory rows', () => {
+  it('only displays full-selection native statistics without borrowing validation or heldout values', () => {
     const metrics = [
-      { key: 'VALIDATION.pearson_ic', partition: 'VALIDATION', label: 'IC', value: null, status: 'INSUFFICIENT_SAMPLES' },
-      { key: 'HELDOUT.pearson_ic', partition: 'HELDOUT', label: 'IC', value: 0.99 },
-      { key: 'VALIDATION.pearson_ic', partition: 'HELDOUT', label: 'IC', value: 1 },
-      { key: 'HELDOUT.pearson_ic', partition: 'VALIDATION', label: 'IC', value: 1 },
-      { key: 'Sharpe Ratio (365 days)', partition: 'VALIDATION', label: 'Sharpe', value: 0 },
-      { key: 'unbound', label: 'Unknown', value: 99 },
+      { key: 'Custom Native Statistic', partition: 'FULL_SELECTION', label: 'Native', value: null },
+      { key: 'Sharpe Ratio (252 days)', partition: 'FULL_SELECTION', label: 'Sharpe', value: 0 },
+      { key: 'Sharpe Ratio (252 days)', partition: 'VALIDATION', label: 'Sharpe', value: 99 },
+      { key: 'Sharpe Ratio (252 days)', partition: 'HELDOUT', label: 'Sharpe', value: 99 },
     ];
-    expect(scanValidationMetrics(metrics)).toEqual([metrics[0], metrics[4]]);
-    expect(scanValidationMetrics(metrics)[0]?.value).toBeNull();
-    expect(scanValidationMetrics(metrics)[1]?.value).toBe(0);
+    expect(scanNativeMetrics(metrics)).toEqual(metrics.slice(0, 2));
+    expect(scanNativeMetrics(metrics)[0]?.value).toBeNull();
+    expect(scanNativeMetrics(metrics)[1]?.value).toBe(0);
   });
   it('keeps slice decimals and nanoseconds as strings instead of rounding URL values', () => {
     expect(scanFixedParameters('{"threshold":"0.123456789012345678","targetTtlNs":"9007199254740993"}')).toEqual({ threshold: '0.123456789012345678', targetTtlNs: '9007199254740993' });

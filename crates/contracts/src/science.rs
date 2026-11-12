@@ -125,6 +125,11 @@ pub struct NativeFeeRateV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationSettingsV1 {
+    /// Optional single catalog series used as a price-return benchmark. Quotes
+    /// must match report currency; exact UTC closing boundaries are required.
+    /// Fees and funding are excluded. No FX conversion or forward filling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_benchmark: Option<NativeBarSelectionV1>,
     /// Explicit opt-in; absent fields preserve legacy single-currency wire data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multi_currency_spot_cash: Option<crate::spot_cash::NativeSpotCashPolicyV1>,

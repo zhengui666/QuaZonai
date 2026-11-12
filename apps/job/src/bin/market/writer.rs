@@ -277,7 +277,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
         let mut writer = Writer::new(&root.path().join("output"), &[]).unwrap();
-        let mut aggregation = super::super::records::Aggregation::new(Some(60));
+        let mut aggregation =
+            super::super::records::Aggregation::with_milliseconds(Some(60), None).unwrap();
         let mut bars = Vec::new();
         for (event, available, price) in [
             (1_u64, 10_u64, "1.2345"),

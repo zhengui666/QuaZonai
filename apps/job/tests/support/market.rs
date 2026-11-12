@@ -29,8 +29,10 @@ pub fn micro_lot_market(
             execution_models::fee(),
             execution_models::latency(1_000_000),
         ],
-        4,
-        "0.0001",
+        market_catalog::InstrumentSize {
+            precision: 4,
+            increment: "0.0001",
+        },
     )
 }
 
@@ -232,35 +234,4 @@ pub fn portfolio_from_market(
         member.parameters.label_horizon_observations = 2;
     }
     (directory, request, module("f64.const 0.01"))
-}
-
-pub fn sealed() -> (
-    tempfile::TempDir,
-    NativeAlphaSealedRequestV1,
-    NativeFrozenCalibrationV1,
-    Vec<u8>,
-) {
-    let (directory, source) = market("0", 50);
-    let wasm = module("local.get 0");
-    let mut train = alpha_validation_request(&source);
-    train.forecast.selection.event_end_ns = count(26 * INTERVAL_NS);
-    train.forecast.selection.decision_cutoff_ns = train.forecast.selection.event_end_ns;
-    let report = job::validation::validate_alpha(directory.path(), &train, &wasm).unwrap();
-    let frozen = domain::execution::freeze_alpha_calibration(&train, &report, contracts::Id::new())
-        .unwrap()
-        .unwrap();
-    let frozen = serde_json::from_slice(&serde_json::to_vec(&frozen).unwrap()).unwrap();
-    let mut forecast = forecast_request(&source);
-    forecast.selection.event_start_ns = count(26 * INTERVAL_NS);
-    (
-        directory,
-        NativeAlphaSealedRequestV1 {
-            schema_version: SchemaV1,
-            forecast,
-            target_kind: contracts::brief::TargetKind::Score,
-            research_available_through_ns: instant(25),
-        },
-        frozen,
-        wasm,
-    )
 }

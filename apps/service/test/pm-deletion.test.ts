@@ -1,3 +1,4 @@
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:http';
@@ -23,9 +24,7 @@ async function fixture() {
   await state.restart();
   const input = { requestId: 'delete-original-pm', goal: 'Original controlled deletion boundary', datasetId: 'controlled', model: state.model,
     funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000.000000000000000001', currency: 'USD' } } };
-  const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', payload: input, headers: state.headers });
-  assert.equal(start.statusCode, 202, start.body);
-  const view = start.json<PmMandateView>();
+  const view = await retainPmControlRecord(state, input as import('../../../packages/contracts/src/pm.ts').PmMandateStart);
   return { state, input, view, id: view.mandate.id, path: `/api/v3/mandates/${encoded(view.mandate.id)}` };
 }
 async function retire(f: Awaited<ReturnType<typeof fixture>>) {
@@ -53,10 +52,6 @@ test('PM deletion preserves original facts and identities through SQLite restart
     assert.equal((await f.state.service.app.inject({ method: 'DELETE', url: f.path })).statusCode, 401);
     const unretired = await f.state.service.app.inject({ method: 'DELETE', url: f.path, headers: f.state.headers });
     assert.equal(unretired.statusCode, 409); assert.equal(unretired.json().error, 'pm_delete_requires_retirement');
-    const cycle = await f.state.service.app.inject({ method: 'POST', url: `${f.path}/recompute`, headers: f.state.headers,
-      payload: { requestId: 'original-before-delete', expectedRevision: f.view.mandate.revision } });
-    assert.equal(cycle.statusCode, 202, cycle.body);
-    await f.state.service.research.harness.waitForTask(cycle.json<PmMandateView>().lastCycle!.runtime.taskId as TaskId, context);
     await retire(f);
     const before = await record(f.state, f.id);
     const deleted = await remove(f); assert.equal(deleted.statusCode, 200, deleted.body);
@@ -88,10 +83,13 @@ test('PM deletion preserves original facts and identities through SQLite restart
     ];
     for (const write of writes) {
       const response = await f.state.service.app.inject({ method: 'POST', url: write.path, headers: f.state.headers, payload: write.payload });
-      assert.equal(response.statusCode, 409, `${write.path}: ${response.body}`); assert.equal(response.json().error, 'mandate_deleted');
+      const retiredRoute = write.path.endsWith('/intent-clarifications') || write.path === '/api/v3/campaigns' || /\/campaigns\/.*\/(close|resume)$/.test(write.path);
+      const retiredTarget = write.path.endsWith('/targets');
+      assert.equal(response.statusCode, retiredRoute || retiredTarget ? 410 : write.path.endsWith('/recompute') ? 404 : 409, `${write.path}: ${response.body}`);
+      assert.equal(response.json().error, retiredTarget ? 'native_strategy_only' : retiredRoute ? 'pm_custom_research_removed' : write.path.endsWith('/recompute') ? 'mandate_not_found' : 'mandate_deleted');
     }
     const replay = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', payload: f.input, headers: f.state.headers });
-    assert.equal(replay.statusCode, 404, replay.body);
+    assert.equal(replay.statusCode, 410, replay.body);
     assert.deepEqual(await record(f.state, f.id), after, 'old admissions and new commands cannot restore or alter the removed workspace');
   } finally { await f.state.cleanup(); }
 });

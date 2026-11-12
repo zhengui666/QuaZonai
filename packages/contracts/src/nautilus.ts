@@ -42,7 +42,48 @@ export interface NativeExecutionRejection {
   error: 'nautilus_tick_capacity_exhausted' | 'nautilus_tick_resource_limits_unavailable';
 }
 
-/** Both tick research operations use the configured precision companion and worker limits. */
+/** Tick replay uses the configured precision companion and worker limits. */
 export function isTickNativeCommand(command: string): boolean {
-  return command === 'evaluate-tick-factor' || command === 'replay-tick-economic';
+  return command === 'native-strategy-backtest' || command === 'native-walk-forward';
+}
+
+/** Official LiveRiskEngine limits; omitted fields retain upstream defaults. */
+export interface NativeAccountRiskConfig {
+  max_order_submit_rate?: string;
+  max_order_modify_rate?: string;
+  max_notional_per_order?: Record<string, string>;
+}
+/** Official Sandbox scenario, rejected for live accounts. Seeds and nanoseconds are exact strings. */
+export interface NativePaperExecutionConfig {
+  prob_fill_on_limit: number; prob_slippage: number; random_seed: string;
+  base_latency_ns: string; insert_latency_ns: string; update_latency_ns: string; cancel_latency_ns: string;
+  queue_position?: boolean;
+}
+/** POST /accounts/<id>/sizing/fixed-risk. Inputs are hypothetical, not observed balances. */
+export interface NativeFixedRiskSizingRequest {
+  clientId: string; accountId: string;
+  sizing: {
+    instrument_id: string; entry: string; stop_loss: string; equity: string; currency: string;
+    /** Fraction of scenario equity, greater than zero and at most one. */
+    risk: string; commission_rate: string; exchange_rate: string; unit_batch_size: string; hard_limit?: string | null;
+  };
+}
+export interface NativeFixedRiskSizingResponse {
+  instrument_id: string; quantity: string; model: 'NAUTILUS_FIXED_RISK';
+  preview_only: true; input_source: 'REQUEST_SCENARIO'; account_balance_verified: false;
+}
+
+/** POST /api/v3/observations/<id>/sizing/fixed-risk. The service binds account identity. */
+export type ObservationFixedRiskSizingRequest = Pick<NativeFixedRiskSizingRequest, 'sizing'>;
+
+/** Closed native sizing payload. In particular, transport command fields are never scenario fields. */
+export function nativeFixedRiskSizing(value: unknown): NativeFixedRiskSizingRequest['sizing'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('native_sizing_object_required');
+  const input = value as Record<string, unknown>;
+  const required = ['instrument_id', 'entry', 'stop_loss', 'equity', 'currency', 'risk', 'commission_rate', 'exchange_rate', 'unit_batch_size'] as const;
+  if (Object.keys(input).some(key => !required.includes(key as typeof required[number]) && key !== 'hard_limit')) throw new Error('native_sizing_unknown_field');
+  if (required.some(key => typeof input[key] !== 'string' || input[key] === '')
+    || input.hard_limit != null && (typeof input.hard_limit !== 'string' || input.hard_limit === '')) throw new Error('native_sizing_string_required');
+  return Object.fromEntries([...required.map(key => [key, input[key]]),
+    ...(input.hard_limit == null ? [] : [['hard_limit', input.hard_limit]])]) as NativeFixedRiskSizingRequest['sizing'];
 }

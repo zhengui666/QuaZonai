@@ -5,7 +5,7 @@ use contracts::{
     DbCounter, Id, SchemaV1,
 };
 use domain::portfolio::sample_covariance;
-use job::validation::{validation_folds, ScoreCalibration};
+use job::validation::validation_folds;
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
@@ -170,33 +170,6 @@ fn covariance_does_not_hide_missing_or_nonfinite_observations() {
     ] {
         assert!(sample_covariance(&covariance_model(), &rows).is_err());
     }
-}
-
-#[test]
-fn native_ols_fits_training_only_and_predicts_new_observations() {
-    let model =
-        ScoreCalibration::fit(&[-2.0, -1.0, 0.0, 1.0, 2.0], &[-3.0, -1.0, 1.0, 3.0, 5.0]).unwrap();
-    assert_eq!(model.observations(), 5);
-    let [intercept, slope] = model.coefficients();
-    assert!((intercept - 1.0).abs() < 1e-12);
-    assert!((slope - 2.0).abs() < 1e-12);
-    let predicted = model.predict(&[3.0, 4.0]).unwrap();
-    assert!((predicted[0] - 7.0).abs() < 1e-12);
-    assert!((predicted[1] - 9.0).abs() < 1e-12);
-    // Prediction never receives validation labels and cannot refit the model.
-    assert_eq!(model.coefficients(), [intercept, slope]);
-}
-
-#[test]
-fn calibration_rejects_nonfinite_constant_and_insufficient_inputs() {
-    assert!(ScoreCalibration::fit(&[1.0, 1.0, 1.0], &[1.0, 2.0, 3.0]).is_err());
-    assert!(ScoreCalibration::fit(&[1.0, 2.0], &[1.0, 2.0]).is_err());
-    assert!(ScoreCalibration::fit(&[1.0, 2.0, 3.0], &[1.0, 2.0]).is_err());
-    assert!(ScoreCalibration::fit(&[1.0, 2.0, f64::NAN], &[1.0, 2.0, 3.0]).is_err());
-    assert!(ScoreCalibration::fit(&[1.0, 2.0, 3.0], &[1.0, 2.0, f64::INFINITY]).is_err());
-    let model = ScoreCalibration::fit(&[1.0, 2.0, 3.0, 4.0], &[2.0, 4.0, 6.0, 8.0]).unwrap();
-    assert!(model.predict(&[]).is_err());
-    assert!(model.predict(&[f64::NAN]).is_err());
 }
 
 #[test]

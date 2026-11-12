@@ -532,6 +532,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
             maximum_rows: 100,
         },
         settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USD".into(),
@@ -571,7 +572,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         settled_replay_ns: None,
         spot_cash_report: None,
         schema_version: SchemaV1,
-        native_version: "0.68.0".into(),
+        native_version: "0.69.0".into(),
         iterations: count(100),
         events: count(0),
         orders: count(0),
@@ -866,7 +867,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
     let result = NativeExperimentEvaluationResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.68.0".into()),
+            ("nautilus-backtest".into(), "0.69.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
         ]),

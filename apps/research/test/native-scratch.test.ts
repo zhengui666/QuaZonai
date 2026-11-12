@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { executeNative } from '../plugins/native-portfolio.ts';
+import { executeNative } from '../src/native-execution.ts';
 
 test('native subprocess temporary files stay inside the owned scientific directory', async () => {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-native-scratch-'));

@@ -290,38 +290,6 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 return Err(bad("experiment_inputs"));
             }
         }
-        NativeTaskParametersV1::ValidateAlpha {
-            dataset_revision_id,
-            model_artifact_id,
-            request,
-            ..
-        } => {
-            alpha_validation_request(request)?;
-            forecast_inputs(spec, *dataset_revision_id, *model_artifact_id, None)?;
-            if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset {revision_id, role: contracts::research::DataPartition::Validation, ..} if *revision_id == *dataset_revision_id)) {
-                return Err(bad("validation_partition"));
-            }
-        }
-        NativeTaskParametersV1::EvaluateSealedAlpha {
-            dataset_revision_id,
-            model_artifact_id,
-            calibration_artifact_id,
-            request,
-            ..
-        } => {
-            forecast_request(&request.forecast)?;
-            forecast_inputs(
-                spec,
-                *dataset_revision_id,
-                *model_artifact_id,
-                *calibration_artifact_id,
-            )?;
-            if (request.target_kind == contracts::brief::TargetKind::Score) != calibration_artifact_id.is_some()
-                || request.research_available_through_ns >= request.forecast.selection.decision_cutoff_ns
-                || !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Sealed, .. } if *revision_id == *dataset_revision_id)) {
-                return Err(bad("sealed_inputs"));
-            }
-        }
         NativeTaskParametersV1::StudyPortfolio {
             dataset_revision_id,
             request,

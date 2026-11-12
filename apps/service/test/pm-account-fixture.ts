@@ -20,7 +20,7 @@ export function accountSourceFixture() {
     accountSourceId: 'native-source', observationId: 'native-observation', controlRevision: '7', sequence: '9007199254740995', nativeClockNs: '99',
     equity: null, cash: null, positions: [],
     nativeObservation: { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-      native_trader_id: 'TRADER-001', native_session_id: 'SESSION-001', native_account_id: 'VENUE-001', native_version: '0.68.0' },
+      native_trader_id: 'TRADER-001', native_session_id: 'SESSION-001', native_account_id: 'VENUE-001', native_version: '0.69.0' },
       sequence: '9007199254740995', dropped_events: '0', observed_at_ns: '101', connection: 'CONNECTED', snapshot: native },
     openOrders: { schema_version: 1, account_id: 'VENUE-001', asof_ns: '99', available_ns: '101', count: 0 } };
   const observation: ObservationFact = { input: { requestId: 'source-original', portfolioId: 'portfolio-original', mode: 'paper', connectionId: connection.id },
@@ -32,4 +32,59 @@ export function accountSourceFixture() {
   } } };
   return { connection, application, native, snapshot, observation,
     capture: () => captureAccount(application, connection.id, '110') };
+}
+
+/** Initialize an explicitly retained control record in the real Durable store.
+ * This is test setup, not a replacement admission route or fitted-model result.
+ * Existing tests still exercise the real account guard, HTTP commands, Tasks
+ * and SQLite recovery; no performance, order fill or qualification is invented.
+ */
+export async function retainPmControlRecord(state: Awaited<ReturnType<typeof import('./support.ts').setup>>, input: import('../../../packages/contracts/src/pm.ts').PmMandateStart) {
+  const { PmDocument, fact, pmState } = await import('../src/pm-facts.ts');
+  const { Application, nowNs, observation } = await import('../src/facts.ts');
+  const { captureDataset } = await import('../src/pm-datasets.ts');
+  const { readSourceRevision } = await import('../src/pm-source.ts');
+  const { existingDataset } = await import('../src/config.ts');
+  const { assertAccountTargetControl } = await import('../src/account-target-control.ts');
+  const { freezeCampaignAccount } = await import('../src/pm-campaign-account.ts');
+  const { createPmPlatform } = await import('../src/pm-platform.ts');
+  const { BACKGROUND_CONTEXT: context } = await import('@earendil-works/chord/context');
+  const configured = existingDataset(state.service.config, input.datasetId)!;
+  const source = await readSourceRevision(configured);
+  const id = `test:retained:${input.requestId}`;
+  await state.service.research.harness.commit(async tx => {
+    const stored = pmState(await tx.doc(PmDocument)); const app = await tx.doc(Application);
+    const capture = input.funding.kind === 'ACCOUNT' ? captureAccount(app, input.funding.accountBindingId) : null;
+    if (input.funding.kind === 'ACCOUNT' && input.operatingAuthority === 'AUTHORIZED_TARGETS') {
+      assertAccountTargetControl(app, stored, observation(app.observations[input.funding.accountBindingId]).connection,
+        { kind: 'PM', mandateId: id, accountBindingId: input.funding.accountBindingId });
+    }
+    const dataset = captureDataset(configured, stored, nowNs(), source);
+    const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+    const strategyId = `${id}:strategy`, campaignId = `${id}:campaign`, policyId = `${id}:policy`;
+    const currency = capture?.basis.currency ?? (input.funding.kind === 'RESEARCH_SCENARIO' ? input.funding.capital.currency : configured.currency);
+    const record = {
+      input, conversationId: conversation.id,
+      mandate: { ...fact(id), ownerGoal: input.goal, interpretation: input.goal, baseCurrency: currency, capitalSource: input.funding,
+        ownerBoundaries: [], operatingAuthority: input.operatingAuthority ?? 'RESEARCH_ONLY', unresolvedIntent: [], allowedUniverseRef: `${id}:universe` },
+      policy: { ...fact(policyId), mandateRevisionId: id, methodFamily: 'TEST_ONLY_RETAINED_ACCOUNT_CONTROL', validDomain: {}, selectionRule: { mode: 'FRONTIER_ONLY', objectives: [] } },
+      definition: { ...fact(`${id}:definition`), name: input.goal },
+      budget: { ...fact(`${id}:budget`), maximumTrials: null, reservationForClosureRef: `${id}:reservation` },
+      datasets: [dataset.revision.id],
+      campaigns: { [campaignId]: { ...fact(campaignId), state: 'PAUSED', datasetRevisionIds: [dataset.revision.id], runtime: { conversationId: conversation.id, taskId: null } } },
+      strategies: { [strategyId]: { ...fact(strategyId), definitionId: `${id}:definition`, mandateRevisionId: id, policyRevisionId: policyId,
+        fittedEvidenceRefs: [], modelRefs: [], pipelineAssessmentId: `${id}:assessment` } },
+      assessments: {}, events: {}, cycles: {}, decisions: {}, comparisons: {}, capacities: {}, ensembles: {}, evidence: {}, artifacts: {},
+      outcomes: {}, attributions: {}, retirements: {}, commands: {}, gaps: {}, derivedTrials: {}, budgetMovements: {},
+      searchFamily: { ...fact(`${id}:search`), campaignIds: [campaignId], trialIds: [], countedAttempts: '0', failedAttempts: '0' },
+      latestStrategyId: strategyId, currentDecisionId: null, latestCycleId: null, basisRevision: 'existing-basis', monitorTaskId: null,
+    } as unknown as import('../src/pm-facts.ts').PmRecord;
+    if (capture) freezeCampaignAccount(record, record.campaigns[campaignId]!, capture);
+    stored.mandates[id] = record;
+    const monitorTaskId = await tx.createTask(createPmPlatform(state.service.config).extension.tasks!.find(task => task.definition.name === 'qz.pm.mandate-monitor')! as import('@earendil-works/pi-durable').Task<{ mandateId: string }, { phase: 'start' }, null, object>, { mandateId: id },
+      { conversationId: conversation.id, ownership: { kind: 'conversation' }, background: true });
+    stored.mandates[id]!.monitorTaskId = monitorTaskId;
+    stored.mandates[id]!.campaigns[campaignId]!.runtime.taskId = monitorTaskId;
+  }, context);
+  return state.service.pm.get(id);
 }

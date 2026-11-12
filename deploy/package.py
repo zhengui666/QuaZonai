@@ -36,7 +36,7 @@ def safe_name(name: str) -> bool:
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
 def cli_members(platform: str) -> set[str]:
-    return {'distribution.json', 'runtime/LICENSE',
+    return {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',
         'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
         'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
@@ -53,7 +53,7 @@ def check_cli_archive(path: Path, platform: str) -> None:
             if any(not item.isfile() for item in members):
                 raise ValueError('CLI archives contain only regular files.')
             names = [item.name for item in members]
-    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/'))
+    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'skill/'))
     if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
@@ -83,6 +83,8 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
         shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
         (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
+        shutil.copytree(ROOT / '.agents/skills/quazonai', directory / 'skill')
+        (directory / 'skill/release.json').write_text(json.dumps({'version': version, 'revision': revision}) + '\n')
         if windows:
             (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
         else:
@@ -102,62 +104,6 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
     check_cli_archive(output, platform)
     return output
 
-def smoke_cli(path: Path, platform: str, version: str) -> None:
-    check_cli_archive(path, platform)
-    with tempfile.TemporaryDirectory(prefix='quazonai-cli-check-', dir=os.environ.get('TMPDIR')) as temporary:
-        directory = Path(temporary)
-        if path.suffix == '.zip':
-            with zipfile.ZipFile(path) as archive:
-                archive.extractall(directory)
-        else:
-            with tarfile.open(path, 'r:gz') as archive:
-                archive.extractall(directory, filter='data')
-        node = directory / ('runtime/node.exe' if platform.startswith('windows-') else 'runtime/node')
-        command = [str(node), '--experimental-strip-types', str(directory / 'app/launch.mjs')]
-        env = {**os.environ, 'QUAZONAI_VERSION': version, 'QZ_CLI_VERSION': version}
-        def run(*args):
-            return subprocess.run([*command, *args], env=env, check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout.strip()
-        if run('--version') != f'quazonai {version}':
-            raise ValueError('Extracted CLI version differs from the release tag.')
-        help_text = run('--help')
-        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance', 'pm clarify-intent')):
-            raise ValueError('Extracted CLI lacks workbench commands.')
-        schemas = json.loads(run('schema', 'list'))
-        for name in ('PmIntentClarification', 'PmExecutionEvidence', 'PmExecutionQualification', 'AssetTarget'):
-            if name not in schemas.get('names', []):
-                raise ValueError(f'Extracted CLI lacks the {name} contract.')
-            contract = json.loads(run('schema', 'show', name))
-            if contract.get('entry') != name or f'interface {name}' not in contract.get('source', ''):
-                raise ValueError(f'Extracted CLI cannot read its original {name} contract.')
-            if name == 'AssetTarget' and not re.search(r'export interface AssetTarget\s*\{[^}]*\bexecutionEstimate\?:', contract.get('source', '')):
-                raise ValueError('Extracted CLI lacks the separate rounded execution estimate contract.')
-        if 'DecisionTrigger' not in schemas.get('names', []):
-            raise ValueError('Extracted CLI lacks the DecisionTrigger contract.')
-        trigger = json.loads(run('schema', 'show', 'DecisionTrigger'))
-        definition = re.search(r'export type DecisionTrigger\s*=([^;]+);', trigger.get('source', ''))
-        if trigger.get('entry') != 'DecisionTrigger' or not definition or "'SOURCE_RECOVERED'" not in definition.group(1):
-            raise ValueError('Extracted CLI lacks the source recovery decision trigger contract.')
-        domain = json.loads(run('schema', 'list', '--domain'))
-        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1', 'AllocatorSettingsV1', 'AllocationResultV1'):
-            if name not in domain.get('names', []):
-                raise ValueError(f'Extracted CLI lacks the native {name} contract.')
-            contract = json.loads(run('schema', 'show', name, '--domain'))
-            native = contract.get('components', {}).get('schemas', {})
-            if name not in native:
-                raise ValueError(f'Extracted CLI cannot resolve its native {name} contract.')
-            if name == 'AllocatorSettingsV1':
-                protocol = 'NativeCashNumericalOutputProtocolV1'
-                field = native[name].get('properties', {}).get('cash_numerical_output', {})
-                if f'#/components/schemas/{protocol}' not in json.dumps(field) or 'VALIDATED_FEASIBLE_SEGMENT_V1' not in native.get(protocol, {}).get('enum', []):
-                    raise ValueError('Extracted CLI lacks the registered CASH numerical output protocol.')
-            if name == 'AllocationResultV1':
-                trace = 'NativeCashNumericalOutputV1'
-                field = native[name].get('properties', {}).get('numerical_output', {})
-                exact = native.get(trace, {}).get('properties', {}).get('objective_delta_exact', {})
-                value_type = exact.get('type')
-                if f'#/components/schemas/{trace}' not in json.dumps(field) or not (value_type == 'string' or isinstance(value_type, list) and 'string' in value_type):
-                    raise ValueError('Extracted CLI lacks the exact numerical objective trace contract.')
-
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())
     identity(manifest['version'], manifest['revision'])
@@ -168,25 +114,77 @@ def read_manifest(destination: Path) -> dict:
 def readme(manifest: dict) -> str:
     version = manifest['version']
     base = f'https://github.com/{REPOSITORY}/releases/download/{version}'
-    return f'''# QuaZonai {version}
+    return f'''# QuaZonai {version} · Docker deployment
 
-Source revision: `{manifest['revision']}`. Prebuilt Node application, scientific
-image and four JS CLI archives with official Node {NODE_VERSION}; no host Node/npm.
+Source revision: `{manifest['revision']}`.
 
-Linux x86_64 (Docker Compose) or macOS (CLI): download `{base}/install.sh`,
-then run `bash install.sh`. Add `--cli-only` for a remote Linux client and
-`--directory PATH` for an existing non-default installation.
-Windows x86_64: download `{base}/install.ps1`, then run it with PowerShell.
+Deploy on Linux x86_64 with Docker Engine, the Docker Compose plugin, Bash 4.4+,
+curl, tar and standard Unix tools. The installer uses prebuilt release images;
+it does not build locally or require host Node.js/npm or Rust.
 
-`quazonai --version` prints `quazonai {version}`. Use `quazonai login --help`.
-The application listens at http://localhost:8081 by default; perform initial
-password setup in the browser. Configure original datasets and provider env;
-installation does not perform model inference or qualify evidence.
+Download `{base}/install.sh`, then run:
 
-Preserve the installation root, configuration, SQLite, keys, modules, journals
-and backups. This release requires a fresh schema-5 installation; earlier
-installation and database formats are not migrated.
-See the deployment bundle README for stopped backup/restore and update commands.
+```bash
+bash install.sh --directory "$HOME/.local/share/quazonai" --port 8081
+```
+
+The application listens at http://localhost:8081 by default, bound to the host
+loopback interface. Perform initial password setup in the browser. Configure
+model providers, a reachable Nautilus backtest instance and registered datasets
+before research. The application container alone is not a connected native
+execution service; installation does not run inference or place trades.
+
+The bundled `quazonai` CLI is a client of the deployed HTTP service, not a second
+server deployment method. `quazonai --version` prints `quazonai {version}`;
+use `quazonai login --help` to connect it to the deployed service. Client archives
+remain available as release assets. Every CLI archive includes `skill/` from the
+same release source revision, with `skill/release.json` recording its identity.
+To install that skill at an explicitly chosen path, pass
+`--skill-dir "$HOME/.agents/skills/quazonai"` to the installer. Existing unmanaged
+skill directories are refused rather than replaced. A QuaZonai directory at
+`~/.codex/skills/quazonai` or `~/.agents/skills/quazonai` with matching repository
+ownership in `~/.agents/.skill-lock.json` is updated in place: shipped files are
+replaced, owner-added files and the global lock remain untouched. The installed
+`release.json`, not the older skills-manager ref, records the actual release.
+
+For updates, use the target release installer with the same installation owner
+and original `--directory`. Preserve the installation root, configuration,
+SQLite, keys, journals, backups and the separate Nautilus data/account directory.
+Use the deployment bundle's `bash manage.sh --help` for status, stopped backup,
+restore and start commands. A backup leaves the application stopped; restart it
+explicitly when ready. Container restart does not imply remote work has ended.
+
+If you explicitly do not want a new backup, use this target release's installer:
+
+```bash
+bash install.sh --version {version} --directory "$HOME/.local/share/quazonai" --no-backup --skill-dir "$HOME/.agents/skills/quazonai"
+```
+
+For an existing local `nautilus` service in `compose.override.yaml`, add
+`--local-runtime` to enroll it for same-release runtime image updates. First
+finish and reconcile its tasks and safely stop that container. This automatic
+path is limited to standard science-only workers: both original and candidate
+account configurations must be empty. Account hosts require a separate explicit
+strategy/order/exit reconciliation plan; stopped does not prove financial safety.
+The installer refuses a running runtime rather than cancelling work, and cannot
+certify remote task settlement from an empty account configuration. It retains the owner's
+Compose environment, mounts, CPU settings and credentials, overriding only the
+image from the same release manifest. Enrollment persists for later updates.
+Independent remote servers are not changed. Runtime image revision/version and
+the running container image ID are verified; this is not a trading-readiness test.
+
+`--no-backup` skips only the recovery-point copy. The existing database, keys,
+configuration and account data remain in place; graceful stop and unresolved-task
+checks are unchanged. A refusal leaves the old application stopped for explicit
+reconciliation or restart. Retry a pending update with the same backup policy.
+Without a backup this update creates no recovery point; do not imply it can undo
+a data migration. CLI, skill and service artifacts are checked against the same
+explicit tag and source revision. An older installed manager may not understand
+this flag; use the target release installer or its downloaded deployment bundle.
+
+This release uses schema-5 installations; earlier installation/database formats
+and retired research workflows are not migrated or executed for compatibility.
+Do not delete stored data or unresolved account orders to bypass an upgrade error.
 '''
 
 def prepare(destination: Path) -> None:
@@ -220,15 +218,10 @@ def main() -> None:
     pack.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
     pack.add_argument('--version', required=True)
     pack.add_argument('--revision', required=True)
-    smoke = commands.add_parser('smoke-cli')
-    smoke.add_argument('--archive', type=Path, required=True)
-    smoke.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
-    smoke.add_argument('--version', required=True)
     for name in ('prepare', 'verify'):
         commands.add_parser(name).add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision))
-    elif args.command == 'smoke-cli': smoke_cli(args.archive, args.platform, args.version)
     elif args.command == 'prepare': prepare(args.output)
     else: verify(args.output)
 

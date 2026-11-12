@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai';
-import { setup, studied, built, settledObservation, context } from './support.ts';
-import type { TaskId } from '@earendil-works/pi-durable';
+import { setup, studied, built, context } from './support.ts';
 import { Application, json } from '../src/facts.ts';
 import { Requests } from '../../research/src/documents.ts';
+import { retainTarget } from './retained-target.ts';
 import { acceptSnapshot } from '../src/downstream.ts';
 
 const api = '/api/v3';
@@ -95,15 +95,12 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
   } finally { await state.cleanup(); }
 });
 
-async function connection(state: Awaited<ReturnType<typeof setup>>, uncertain = false, delay = 0) {
+async function connection(state: Awaited<ReturnType<typeof setup>>) {
   const downstream = Fastify(); let posts = 0; let saved: Record<string, unknown> = {};
-  let enter!: () => void; const entered = new Promise<void>((resolve) => { enter = resolve; });
   let externalId = 'original-external-identity';
   const receipt = () => ({ ...saved, status: 'ACKNOWLEDGED', externalId, acknowledgedAt: '2026-09-30T00:00:00.123456789Z' });
-  downstream.post('/targets', async (request, reply) => {
-    posts++; saved = request.body as Record<string, unknown>; enter();
-    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-    if (uncertain) return reply.code(503).send({ error: 'unknown_remote_result' }); return receipt();
+  downstream.post('/targets', async (_request, reply) => {
+    posts++; return reply.code(410).send({ error: 'unexpected_new_target' });
   });
   // TEST_ONLY readable native-owner facts; no capital-exit initiation capability.
   downstream.get('/capabilities', () => ({ clientId: 'client-original', accountId: 'account-original', mode: 'paper', currency: 'USD', capitalExit: { version: 2, supported: false, readable: true } }));
@@ -113,90 +110,63 @@ async function connection(state: Awaited<ReturnType<typeof setup>>, uncertain = 
   const url = await downstream.listen({ host: '127.0.0.1', port: 0 });
   state.options.config.connections = [{ id: 'protocol-paper', name: 'Protocol only', mode: 'paper', url, clientId: 'client-original', accountId: 'account-original' }];
   await state.restart();
-  return { downstream, entered, setExternalId(value: string) { externalId = value; }, get posts() { return posts; }, get saved() { return saved; } };
+  return { downstream, setExternalId(value: string) { externalId = value; }, retain(value: Record<string, unknown>) { saved = value; }, get posts() { return posts; }, get saved() { return saved; } };
 }
 
-test('connected controlled-model → explicit native protocol → shared-account projection → original target receipt/account observation', { timeout: 20_000 }, async () => {
+test('retained original target receipt/account observation preserves precision and conflicts without new delivery', { timeout: 20_000 }, async () => {
   const state = await setup(); const remote = await connection(state);
-  process.env.QZ_TEST_PROVIDER_SECRET = 'test-only-must-not-reach-child';
   try {
-    const { input, view } = await built(state); assert.equal(view.status, 'COMPUTED', view.error ?? '');
-    assert.deepEqual(view.targets, [{ instrumentId: 'TEST.SIM', weight: '0.250000000000000001' }]);
-    assert.equal(view.curve[0]!.value, input.capital); assert.equal(view.metrics[0]!.value, null);
-    const displayedPortfolio = (await state.service.app.inject({ url: `${api}/portfolios/${view.id}`, headers: state.headers })).json();
-    assert.deepEqual(displayedPortfolio.weights, input.researchIds.map(researchId => ({ researchId, weight: '1' }))); assert.equal(displayedPortfolio.targetExpired, false); assert.match(displayedPortfolio.targetExpiresAt, /\.\d{9}Z$/);
-    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: { ...input, capital: '2000' } })).statusCode, 409);
-    const command = { requestId: 'observe', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' };
-    const start = await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: command }); assert.equal(start.statusCode, 202, start.body);
-    const observed = await settledObservation(state.service, start.json().id);
-    assert.equal(observed.status, 'OBSERVING', observed.error ?? ''); assert.equal(observed.receipt!.externalId, 'original-external-identity');
-    assert.equal(observed.equity, '1234.123456789012345678'); assert.equal(observed.cash, null); assert.equal(observed.updatedAt, '2027-01-15T08:00:00.123456789Z');
-    const displayedObservation = (await state.service.app.inject({ url: `${api}/observations`, headers: state.headers })).json().find((item: { id: string }) => item.id === observed.id);
-    assert.equal(displayedObservation.connectionId, 'protocol-paper'); assert.equal(displayedObservation.connectionName, 'Protocol only');
-    assert.deepEqual(displayedObservation.provenance, { clientId: 'client-original', accountId: 'account-original', sequence: '9007199254740995', nativeClockNs: '1800000000123456789' });
-    assert.equal('url' in displayedObservation, false); assert.equal('tokenEnv' in displayedObservation, false);
-    assert.equal(remote.saved.id, observed.receipt!.id); assert.equal(remote.saved.expiresAt, observed.receipt!.expiresAt);
-    assert.deepEqual(remote.saved.target, (await state.service.work.getPortfolio(view.id)).target);
-    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: command })).json().id, observed.id);
-    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { ...command, mode: 'live' } })).statusCode, 409);
-    await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/refresh`, headers: state.headers });
-    assert.equal((await state.service.work.getObservation(observed.id)).view.curve.length, 1); assert.equal(remote.posts, 1);
+    const { view } = await built(state);
+    const retained = await retainTarget(state, state.options.config.connections[0]!, view.id); remote.retain(retained);
+    const refresh = () => state.service.app.inject({ method: 'POST', url: `${api}/observations/${retained.observationId}/refresh`, headers: state.headers });
+    const response = await refresh(); assert.equal(response.statusCode, 200, response.body);
+    const observed = response.json();
+    assert.equal(observed.status, 'OBSERVING', observed.error ?? ''); assert.equal(observed.receipt.externalId, 'original-external-identity');
+    assert.equal(observed.equity, '1234.123456789012345678'); assert.equal(observed.cash, null);
+    assert.equal(observed.updatedAt, '2027-01-15T08:00:00.123456789Z');
+    const displayed = (await state.service.app.inject({ url: `${api}/observations`, headers: state.headers })).json().find((item: { id: string }) => item.id === observed.id);
+    assert.equal(displayed.connectionId, 'protocol-paper'); assert.equal(displayed.connectionName, 'Protocol only');
+    assert.deepEqual(displayed.provenance, { clientId: 'client-original', accountId: 'account-original', sequence: '9007199254740995', nativeClockNs: '1800000000123456789' });
+    assert.equal('url' in displayed, false); assert.equal('tokenEnv' in displayed, false);
+    await refresh(); assert.equal((await state.service.work.getObservation(observed.id)).view.curve.length, 1);
     remote.setExternalId('conflicting-external-identity');
-    const conflict = (await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/refresh`, headers: state.headers })).json();
+    const conflict = (await refresh()).json();
     assert.equal(conflict.error, 'downstream_receipt_external_id_conflict'); assert.equal(conflict.receipt.externalId, 'original-external-identity');
     const stopped = await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/stop`, headers: state.headers });
     assert.equal(stopped.json().status, 'STOPPED'); assert.equal(stopped.json().receipt.status, 'ACKNOWLEDGED');
-  } finally { delete process.env.QZ_TEST_PROVIDER_SECRET; await state.cleanup(); await remote.downstream.close(); }
+    assert.equal(remote.posts, 0);
+  } finally { await state.cleanup(); await remote.downstream.close(); }
 });
 
-test('uncertain remote delivery reconciles after restart without a second POST; extension changes use the official live registry', { timeout: 20_000 }, async () => {
-  const state = await setup(); const remote = await connection(state, true);
+test('retained uncertain delivery reconciles after restart without POST and preserves stop', { timeout: 20_000 }, async () => {
+  const state = await setup(); const remote = await connection(state);
   try {
     const { view } = await built(state);
-    const response = await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { requestId: 'uncertain', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' } });
-    const observed = await settledObservation(state.service, response.json().id); assert.equal(observed.receipt!.status, 'UNCERTAIN'); assert.equal(observed.equity, null);
-    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { requestId: 'second-unknown', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' } })).statusCode, 409);
-    await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/stop`, headers: state.headers });
-    const extension = await state.service.app.inject({ method: 'PATCH', url: `${api}/extensions/test.protocol-research`, headers: state.headers, payload: { enabled: false } }); assert.equal(extension.json().state, 'disabled');
-    assert.equal(state.service.research.registry.snapshot().extension('test.protocol-research'), undefined);
+    const retained = await retainTarget(state, state.options.config.connections[0]!, view.id); remote.retain(retained);
+    const before = await state.service.work.getObservation(retained.observationId);
+    assert.equal(before.view.receipt!.status, 'UNCERTAIN'); assert.equal(before.view.equity, null);
+    const denied = await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { requestId: 'second-unknown', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' } });
+    assert.equal(denied.statusCode, 410); assert.equal(denied.json().error, 'native_strategy_only');
+    await state.service.app.inject({ method: 'POST', url: `${api}/observations/${retained.observationId}/stop`, headers: state.headers });
     await state.restart();
-    const views = (await state.service.app.inject({ url: `${api}/extensions`, headers: state.headers })).json(); assert.equal(views.find((item: { name: string }) => item.name === 'test.protocol-research').state, 'disabled');
-    assert.equal(state.service.research.registry.snapshot().extension('test.protocol-research'), undefined);
-    await state.service.app.inject({ url: `${api}/observations`, headers: state.headers }); assert.equal(remote.posts, 1);
-    const refreshed = await state.service.app.inject({ method: 'POST', url: `${api}/observations/${observed.id}/refresh`, headers: state.headers });
-    assert.equal(refreshed.json().receipt.status, 'ACKNOWLEDGED', refreshed.body); assert.equal(remote.posts, 1);
-    assert.equal(refreshed.json().status, 'STOPPED'); assert.equal(refreshed.json().equity, null);
+    const response = await state.service.app.inject({ method: 'POST', url: `${api}/observations/${retained.observationId}/refresh`, headers: state.headers });
+    assert.equal(response.statusCode, 200, response.body);
+    const after = response.json();
+    assert.equal(after.receipt.id, before.view.receipt!.id); assert.equal(after.receipt.status, 'ACKNOWLEDGED');
+    assert.equal(after.status, 'STOPPED'); assert.equal(after.equity, null); assert.equal(remote.posts, 0);
     assert.equal((await state.service.app.inject({ method: 'PATCH', url: `${api}/extensions/qz.science`, headers: state.headers, payload: { enabled: false } })).statusCode, 409);
   } finally { await state.cleanup(); await remote.downstream.close(); }
 });
 
-test('missing independent evidence and native failures disclose errors, never an invented curve/target', { timeout: 20_000 }, async () => {
+test('retired portfolio creation cannot invent a curve or target for missing evidence', { timeout: 20_000 }, async () => {
   const state = await setup();
   try {
     state.faux.setResponses([fauxAssistantMessage('No evaluation was performed.')]);
     const start = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'no-evidence', goal: 'Missing evidence', model: state.model, datasetId: 'controlled' } });
     await (await state.service.research.harness.submission(start.json().submissionId, context))!.wait(context);
     const absent = await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: { requestId: 'absent', name: 'Absent', researchIds: [start.json().conversationId], datasetId: 'controlled', capital: '1' } });
-    assert.equal(absent.statusCode, 422); assert.equal(absent.json().error, 'independent_evidence_missing');
-    const { receipt } = await studied(state, 'failing-native'); state.service.config.jobBinary = '/bin/false';
-    const queued = await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: { requestId: 'failure', name: 'Failed', researchIds: [receipt.conversationId], datasetId: 'controlled', capital: '1' } }); assert.equal(queued.statusCode, 202, queued.body);
-    await state.service.research.harness.waitForTask(queued.json().taskId as TaskId, context);
-    const failed = (await state.service.work.getPortfolio(queued.json().id)).view; assert.equal(failed.status, 'FAILED'); assert.equal(failed.error, 'native_forecast_failed'); assert.deepEqual(failed.curve, []); assert.deepEqual(failed.targets, []);
+    assert.equal(absent.statusCode, 404); assert.equal(absent.json().error, 'not_found');
+    assert.deepEqual((await state.service.research.harness.snapshot(Application, context))!.portfolios, {});
     assert.equal((await state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload: { nativeTimeoutSeconds: 0 } })).statusCode, 400);
   } finally { await state.cleanup(); }
-});
-
-test('graceful suspension during unsafe POST resumes original receipt reconciliation, never a repeated offer', { timeout: 20_000 }, async () => {
-  const state = await setup(); const remote = await connection(state, false, 200);
-  try {
-    const { view } = await built(state);
-    const response = await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: { requestId: 'interrupted-offer', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' } });
-    assert.equal(response.statusCode, 202, response.body);
-    await remote.entered;
-    const before = await state.service.work.getObservation(response.json().id); assert.equal(before.view.receipt!.status, 'UNCERTAIN');
-    await state.restart();
-    const after = await settledObservation(state.service, before.view.id);
-    assert.equal(after.receipt!.id, before.view.receipt!.id); assert.equal(after.receipt!.status, 'ACKNOWLEDGED', after.error ?? '');
-    assert.equal(remote.posts, 1); assert.equal(after.equity, '1234.123456789012345678');
-  } finally { await state.cleanup(); await remote.downstream.close(); }
 });

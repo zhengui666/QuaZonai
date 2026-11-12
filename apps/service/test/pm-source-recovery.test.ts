@@ -1,3 +1,8 @@
+import { readSourceRevision } from '../src/pm-source.ts';
+import type { Task } from '@earendil-works/pi-durable';
+import { createPmPlatform } from '../src/pm-platform.ts';
+import { captureDataset } from '../src/pm-datasets.ts';
+import type { PmRecord } from '../src/pm-facts.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -6,7 +11,7 @@ import type { TaskId } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
 import { publishDatasetRevision } from '../src/dataset-revision-publish.ts';
-import { pmRecord, pmState } from '../src/pm-facts.ts';
+import { fact, PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
 import { context, setup } from './support.ts';
 
 test('same-source recovery records each failure episode once across HTTP observation and Durable restart without new scientific attempts', { timeout: 75_000 }, async () => {
@@ -19,19 +24,30 @@ test('same-source recovery records each failure episode once across HTTP observa
     dataset.revisionManifest = join(state.directory, 'published-source', 'current.json');
     const published = await publishDatasetRevision(dataset, { scope: 'TEST_SOURCE_RECOVERY_PROTOCOL' }); dataset.data = published.configured.data;
     const originalManifest = await readFile(dataset.revisionManifest, 'utf8'); await state.restart();
-    const started = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
-      payload: { requestId: 'same-source-recovery', goal: 'Disclose unavailable research evidence without manufacturing an investment conclusion.', datasetId: dataset.id,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, model: state.model } });
-    assert.equal(started.statusCode, 202, started.body); const first = started.json<Pm.PmMandateView>(); const id = first.mandate.id;
+    const id = 'same-source-recovery';
+    const originalSource = await readSourceRevision(dataset);
+    await state.service.research.harness.commit(async tx => {
+      const stored = pmState(await tx.doc(PmDocument));
+      const registered = captureDataset(dataset, stored, String(BigInt(Date.now()) * 1_000_000n), originalSource);
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      const record = {
+        input: { datasetId: dataset.id }, conversationId: conversation.id,
+        mandate: { ...fact(id), capitalSource: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } },
+        policy: { id: 'existing-policy', validDomain: {} }, datasets: [registered.revision.id],
+        campaigns: { original: { id: 'original', state: 'CONCLUDED', datasetRevisionIds: [registered.revision.id], runtime: { conversationId: conversation.id, taskId: null } } },
+        strategies: {}, assessments: {}, events: {}, cycles: {}, decisions: {}, comparisons: {}, capacities: {}, ensembles: {}, evidence: {}, artifacts: {},
+        outcomes: {}, attributions: {}, retirements: {}, commands: {}, gaps: {}, derivedTrials: {}, budgetMovements: {}, searchFamily: {},
+        latestStrategyId: 'existing-strategy', currentDecisionId: null, latestCycleId: null, basisRevision: 'existing-basis', monitorTaskId: null,
+      } as unknown as PmRecord;
+      stored.mandates[id] = record;
+      stored.mandates[id]!.monitorTaskId = await tx.createTask(createPmPlatform(state.options.config).extension.tasks!.find(task => task.definition.name === 'qz.pm.mandate-monitor')! as Task<{ mandateId: string }, { phase: 'start' }, null, object>, { mandateId: id },
+        { conversationId: conversation.id, ownership: { kind: 'conversation' }, background: true });
+    }, context);
     const read = async () => {
       const response = await state.service.app.inject({ url: `/api/v3/mandates/${encodeURIComponent(id)}`, headers: state.headers });
       assert.equal(response.statusCode, 200, response.body); return response.json<Pm.PmMandateView>();
     };
-    const recompute = await state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/recompute`, headers: state.headers,
-      payload: { requestId: 'original-protocol-report', expectedRevision: first.mandate.revision } });
-    assert.equal(recompute.statusCode, 202, recompute.body);
-    await state.service.research.harness.waitForTask(recompute.json<Pm.PmMandateView>().lastCycle!.runtime.taskId as TaskId, context);
-    const before = await read(); assert.equal(before.currentDecision!.action, 'NEEDS_EVIDENCE');
+    const before = await read(); assert.equal(before.currentDecision, null, 'Source recovery does not invent a research decision.');
     const originalDataset = before.datasetRevisions[0]!;
     const originalTrials = structuredClone(before.researchTrials); const originalBudget = structuredClone(before.budgetMovements);
     const exposures = structuredClone((await state.service.research.harness.snapshot(Exposures, context))?.windows ?? []);

@@ -56,7 +56,14 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
   const config = configDefaults(raw, dirname(absolute));
   validateNautilusConfiguration(config);
   const base = dirname(absolute);
-  config.research.modules = config.research.modules?.map((path) => resolve(base, path));
+  // These two absolute paths were shipped by the old Docker default, not user plugins.
+  // Retire only those exact built-ins in memory; never rewrite owner configuration or data.
+  const retiredDefaults = new Set(['/opt/quazonai/apps/research/plugins/factor-wasm.ts', '/opt/quazonai/apps/research/plugins/heldout-wasm.ts']);
+  config.research.modules = config.research.modules?.map((path) => resolve(base, path)).filter(path => {
+    if (!retiredDefaults.has(path)) return true;
+    console.warn(`Retired built-in research module skipped: ${path}`);
+    return false;
+  });
   config.research.providerModules = config.research.providerModules?.map((path) => resolve(base, path));
   config.extensions = config.extensions.map((extension) => ({ ...extension, module: resolve(base, extension.module) }));
   if (config.staticDir) config.staticDir = resolve(base, config.staticDir);

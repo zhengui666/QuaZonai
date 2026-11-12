@@ -1,15 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Form, Input, Select, Table, Tabs } from 'antd';
-import { ArrowLeftIcon, ArrowRightIcon, PlusIcon } from '@phosphor-icons/react';
+import { Button, Table, Tabs } from 'antd';
+import { ArrowLeftIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DatasetView, ModelView, ObservationView, ServiceTier, SettingsView, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
-import type { AssetTarget, CapacityEstimate, MetricObservation, ModeledOperatingComparison, PmMandateStart, PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
-import { decimalUnits, draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
+import type { AssetTarget, CapacityEstimate, MetricObservation, ModeledOperatingComparison, PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
+import { useCommand } from './commands';
 import { useResource } from './data-hooks';
-import { href, navigate, type Route } from './router';
+import { href, type Route } from './router';
 import { Disclosure, RecordTitle } from './disclosure';
 import { shortTitle } from './titles';
-import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, useConfirm } from './ui';
+import { Empty, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, useConfirm } from './ui';
 import { pmAssumption, pmCapitalShare, pmMetricValue, pmRatio, pmReason, pmTime } from './pm-values';
 import { DeleteRecord } from './delete-record';
 import './pm.css';
@@ -26,77 +24,20 @@ function decisionLabel(decision: PortfolioDecision, context?: string): string {
 }
 const authorityNames: Record<string, string> = { RESEARCH_ONLY: '研究', SHADOW_TARGETS: '影子观察', AUTHORIZED_TARGETS: '已授权目标更新' };
 export default function Pm({ route }: { route: Route }) {
-  return route.creating ? <NewMandate /> : route.id ? <MandateDetail id={route.id} /> : <Mandates />;
+  return route.creating ? <Empty title="旧投资研究目标创建入口已移除" action={<a href={href('/research/new')}>开始原生研究</a>} /> : route.id ? <MandateDetail id={route.id} /> : <Mandates />;
 }
 function Mandates() {
   const query = useResource<PmMandateView[]>('/mandates', { poll: 5000 });
-  return <div className="index-page pm-page"><header className="page-heading"><h1>投资决策</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/pm/new')}>创建投资目标</Button></header>
-    <p className="pm-introduction">从资金目标开始，持续跟踪研究证据、组合、资金配置与后续结果。</p>
+  return <div className="index-page pm-page"><header className="page-heading"><h1>投资决策</h1></header>
+    <p className="pm-introduction">查看已有账户配置、原始目标回执与后续实际结果。新的研究从原生研究入口开始。</p>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
-    {query.isPending ? <Loading /> : !query.data?.length ? !query.error && <Empty title="尚无投资目标"><p>提供业务目标、数据和资金意图，系统据此研究、比较并更新配置依据。</p></Empty> : <Table<PmMandateView> rowKey={row => row.mandate.id} dataSource={query.data} pagination={{ pageSize: 15, hideOnSinglePage: true }} scroll={{ x: 750 }} columns={[
+    {query.isPending ? <Loading /> : !query.data?.length ? !query.error && <Empty title="尚无投资目标"><p>通过原生研究探索策略；已有账户的目标和退出资金仍在目标与观测中管理。</p></Empty> : <Table<PmMandateView> rowKey={row => row.mandate.id} dataSource={query.data} pagination={{ pageSize: 15, hideOnSinglePage: true }} scroll={{ x: 750 }} columns={[
       { title: '投资目标', render: (_value, row) => <a className="record-link" href={href(`/pm/${encodeURIComponent(row.mandate.id)}`)}>{shortTitle(row.mandate.ownerGoal)}</a> },
       { title: '当前判断', render: (_value, row) => row.currentDecision ? decisionLabel(row.currentDecision, row.comparisons.find(item => item.id === row.currentDecision?.comparisonRef)?.evaluationContext) : row.lastCycle ? <Status plain value={row.lastCycle.state} /> : '等待研究证据' },
       { title: '可投入资金', render: (_value, row) => <MoneyValue money={row.currentDecision?.capital?.committedCapital} /> },
       { title: '运行范围', render: (_value, row) => authorityNames[row.mandate.operatingAuthority] },
       { title: '最近依据', render: (_value, row) => pmTime(row.lastCycle?.asOfNs) },
     ]} />}
-  </div>;
-}
-const thinkingLabels: Record<ThinkingLevel, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
-interface MandateForm { goal: string; datasetId: string; fundingKind: 'RESEARCH_SCENARIO' | 'ACCOUNT'; capital: string; accountBindingId?: string; model: string; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; businessPreference: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER'; operatingAuthority: NonNullable<PmMandateStart['operatingAuthority']> }
-function NewMandate() {
-  const datasets = useResource<DatasetView[]>('/datasets'); const models = useResource<ModelView[]>('/research/models'); const settings = useResource<SettingsView>('/settings');
-  const observations = useResource<ObservationView[]>('/observations'); const [form] = Form.useForm<MandateForm>(); const [saved, setSaved] = useState(draftIsPersisted('pm'));
-  const command = useCommand<PmMandateView>('mandates', result => { removeDraft('pm'); navigate(`/pm/${encodeURIComponent(result.mandate.id)}`); }, '/mandates');
-  const original = command.values as unknown as PmMandateStart | undefined;
-  const initialized = useRef(false); const [thinkingChanged, setThinkingChanged] = useState(false);
-  const [draft] = useState(() => readDraft<Partial<MandateForm>>('pm'));
-  const datasetId = Form.useWatch('datasetId', form); const fundingKind = Form.useWatch('fundingKind', form);
-  const selectedModelKey = Form.useWatch('model', form); const thinkingLevel = Form.useWatch('thinkingLevel', form); const serviceTier = Form.useWatch('serviceTier', form);
-  const selectedModel = models.data?.find(row => `${row.provider}:${row.modelId}` === selectedModelKey);
-  const modelOptions = models.data?.map(row => ({ value: `${row.provider}:${row.modelId}`, label: `${row.name} / ${row.provider}` })) ?? [];
-  if (selectedModelKey && !modelOptions.some(row => row.value === selectedModelKey)) modelOptions.push({ value: selectedModelKey, label: `${selectedModelKey} / 当前不可用` });
-  const dataset = datasets.data?.find(row => row.id === datasetId);
-  const preferences = (model: ModelView) => {
-    const isDefault = model.provider === settings.data?.defaultModel?.provider && model.modelId === settings.data.defaultModel.modelId;
-    return { thinkingLevel: isDefault ? settings.data?.thinkingLevel ?? model.effectiveThinkingLevel : model.effectiveThinkingLevel, serviceTier: isDefault ? settings.data?.serviceTier ?? undefined : undefined };
-  };
-  useEffect(() => {
-    if (initialized.current || !datasets.data || !models.data || !settings.data) return;
-    initialized.current = true;
-    if (original) form.setFieldsValue({ goal: original.goal, datasetId: original.datasetId, model: `${original.model.provider}:${original.model.modelId}`, thinkingLevel: original.thinkingLevel, serviceTier: original.serviceTier,
-      fundingKind: original.funding.kind, businessPreference: original.businessPreference ?? 'FRONTIER', operatingAuthority: original.operatingAuthority ?? 'RESEARCH_ONLY', ...(original.funding.kind === 'RESEARCH_SCENARIO' ? { capital: original.funding.capital.amount } : { accountBindingId: original.funding.accountBindingId }) });
-    else {
-      const preferred = draft?.model ? models.data.find(row => `${row.provider}:${row.modelId}` === draft.model) : models.data.find(row => row.provider === settings.data!.defaultModel?.provider && row.modelId === settings.data!.defaultModel?.modelId) ?? (models.data.length === 1 ? models.data[0] : undefined);
-      form.setFieldsValue({ ...(datasets.data.length === 1 ? { datasetId: datasets.data[0]!.id } : {}), ...(preferred ? { model: `${preferred.provider}:${preferred.modelId}`, ...preferences(preferred) } : {}), ...draft });
-    }
-  }, [datasets.data, models.data, settings.data, original, form]);
-  useEffect(() => {
-    if (!command.pending && selectedModel && thinkingLevel && !selectedModel.thinkingLevels.includes(thinkingLevel)) { form.setFieldValue('thinkingLevel', undefined); setThinkingChanged(true); setSaved(saveDraft('pm', form.getFieldsValue())); }
-    if (!command.pending && selectedModel && serviceTier && !selectedModel.serviceTiers.includes(serviceTier)) { form.setFieldValue('serviceTier', undefined); setSaved(saveDraft('pm', form.getFieldsValue())); }
-  }, [selectedModel, thinkingLevel, serviceTier, command.pending, form]);
-  return <div className="authoring-page pm-authoring"><a className="text-link back-link" href={href('/pm')}><ArrowLeftIcon size={14} />投资决策</a><div className="authoring-heading"><h1>创建投资目标</h1></div>
-    <p className="pm-introduction">描述资金与账户配置希望实现的业务结果。因子成员、比例、资本试验点与容量由系统计算和记录。<a href={href('/research/new')}>独立因子研究</a>也可单独开展。</p>
-    <ErrorNotice error={datasets.error ?? models.error ?? settings.error} retry={() => { void datasets.refetch(); void models.refetch(); void settings.refetch(); }} />
-    {datasets.isPending || models.isPending || settings.isPending ? <Loading /> : !datasets.data || !models.data || !settings.data ? null : <Form<MandateForm> form={form} layout="vertical" initialValues={{ fundingKind: 'RESEARCH_SCENARIO', businessPreference: 'FRONTIER', operatingAuthority: 'RESEARCH_ONLY' }} disabled={!!command.pending || command.busy}
-      onValuesChange={(_changed, value) => { if (!command.pending) setSaved(saveDraft('pm', value)); }} onFinish={value => {
-        const split = value.model.indexOf(':'); if (split < 1 || !dataset) return;
-        void command.submit({ goal: value.goal, datasetId: value.datasetId, model: { provider: value.model.slice(0, split), modelId: value.model.slice(split + 1) }, ...(value.thinkingLevel ? { thinkingLevel: value.thinkingLevel } : {}), ...(value.serviceTier ? { serviceTier: value.serviceTier } : {}),
-          businessPreference: value.businessPreference, operatingAuthority: value.operatingAuthority, funding: value.fundingKind === 'ACCOUNT' ? { kind: 'ACCOUNT', accountBindingId: value.accountBindingId } : { kind: 'RESEARCH_SCENARIO', capital: { amount: value.capital, currency: dataset.currency } } });
-      }}>
-      <PendingCommand command={command} />
-      <Form.Item name="goal" label="投资目标" rules={[{ required: true, whitespace: true, message: '请描述希望实现的收益、稳定性与资金用途' }]}><Input.TextArea rows={4} autoFocus placeholder="说明希望赚取什么收益、为什么可能存在机会、重视哪些下行表现，以及资金用途。" /></Form.Item>
-      <Form.Item name="datasetId" label="研究数据" rules={[{ required: true, message: '请选择已登记的数据' }]}><Select options={datasets.data?.map(row => ({ value: row.id, label: `${row.name} / ${row.currency}`, disabled: !row.ready }))} /></Form.Item>
-      <Form.Item name="businessPreference" label="候选取舍" extra="业务偏好会随原目标冻结；不会代替资金、成本或可行性检查。"><Select options={[{ value: 'FRONTIER', label: '先比较收益与风险取舍' }, { value: 'NET_RETURN', label: '净收益优先' }, { value: 'DOWNSIDE_FIRST', label: '下行表现优先' }]} /></Form.Item>
-      <Form.Item name="fundingKind" label="资金来源"><Select options={[{ value: 'RESEARCH_SCENARIO', label: '研究资金场景' }, { value: 'ACCOUNT', label: '已有观测账户' }]} /></Form.Item>
-      <Form.Item name="operatingAuthority" label="运行范围" extra="目标更新需要独立评估、当前账户和执行证据全部满足；系统不会发送券商订单。"><Select options={[{ value: 'RESEARCH_ONLY', label: '研究与比较' }, { value: 'SHADOW_TARGETS', label: '研究并观察影子目标' }, { value: 'AUTHORIZED_TARGETS', label: '条件满足后更新已有账户目标' }]} /></Form.Item>
-      {fundingKind === 'ACCOUNT' ? <><ErrorNotice error={observations.error} retry={() => { void observations.refetch(); }} /><Form.Item name="accountBindingId" label="观测账户" rules={[{ required: true, message: '请选择已有账户绑定' }]}><Select options={observations.data?.map(row => ({ value: row.id, label: `${row.name} / ${row.currency}` }))} /></Form.Item></> : <Form.Item name="capital" label="研究本金" rules={[{ required: true, message: '请输入研究本金' }, { validator: (_rule, value: string) => !value || (decimalUnits(value) ?? 0n) > 0n ? Promise.resolve() : Promise.reject(new Error('请输入精确正金额，最多18位小数')) }]}><Input inputMode="decimal" suffix={dataset?.currency} /></Form.Item>}
-      <Form.Item name="model" label="研究模型" rules={[{ required: true, message: '请选择可用模型' }, { validator: (_rule, value: string) => !value || models.data?.some(row => `${row.provider}:${row.modelId}` === value) ? Promise.resolve() : Promise.reject(new Error('所选模型不可用，请重新选择')) }]}><Select showSearch optionFilterProp="label" options={modelOptions} onChange={value => { const model = models.data?.find(row => `${row.provider}:${row.modelId}` === value); form.setFieldsValue(model ? preferences(model) : { thinkingLevel: undefined, serviceTier: undefined }); setThinkingChanged(false); setSaved(saveDraft('pm', form.getFieldsValue())); }} /></Form.Item>
-      <Form.Item name="thinkingLevel" label="推理强度" extra={thinkingChanged ? '原推理强度不可用，请重新选择' : undefined} rules={[{ required: !!selectedModel, message: '请选择推理强度' }]}><Select disabled={!selectedModel || !!command.pending || command.busy} options={selectedModel?.thinkingLevels.map(value => ({ value, label: thinkingLabels[value] }))} onChange={() => setThinkingChanged(false)} /></Form.Item>
-      <Form.Item name="serviceTier" label="推理速度" extra={selectedModel && !selectedModel.serviceTiers.length ? '当前模型服务不支持速度配置' : undefined}><Select allowClear disabled={!selectedModel?.serviceTiers.length || !!command.pending || command.busy} placeholder={!selectedModel ? '先选择模型' : selectedModel.serviceTiers.length ? '使用默认速度' : '由模型服务决定'} options={selectedModel?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : '标准' }))} /></Form.Item>
-      <ErrorNotice error={command.error} /><DraftNotice saved={saved || !!command.pending} />
-      <div className="form-actions"><Button disabled={false} onClick={() => navigate('/pm')}>返回</Button>{command.pending ? <Button type="primary" loading={command.busy} disabled={command.busy} onClick={() => { void command.submit(); }}>核对原提交</Button> : <Button type="primary" htmlType="submit">开始研究 <ArrowRightIcon size={15} /></Button>}</div>
-    </Form>}
   </div>;
 }
 function MandateDetail({ id }: { id: string }) {
@@ -111,7 +52,6 @@ function MandateDetail({ id }: { id: string }) {
         {view.currentDecision && <><DecisionSummary decision={view.currentDecision} /><ReasonList codes={view.currentDecision.reasonCodes} /></>}
         {view.mandate.unresolvedIntent.length > 0 && <ul className="pm-reasons">{view.mandate.unresolvedIntent.map((text, index) => <li key={index}>{text}</li>)}</ul>}
       </section>
-      {(view.mandate.unresolvedIntent.length > 0 || view.gaps.some(row => row.state !== 'RESOLVED' && row.permittedRemedy === 'CLARIFY_INTENT')) && <IntentClarification view={view} path={path} />}
       <Tabs items={[
         { key: 'allocation', label: '组合与资金', children: <Allocation view={view} /> },
         { key: 'research', label: '研究与策略', children: <ResearchProgress view={view} /> },
@@ -122,30 +62,6 @@ function MandateDetail({ id }: { id: string }) {
       {view.gaps.filter(row => row.state !== 'RESOLVED').length > 0 && <section className="pm-section"><h2>需要补齐的证据</h2>{view.gaps.filter(row => row.state !== 'RESOLVED').map(row => <div key={row.id} className="pm-gap"><p>{pmReason(row.reasonCode)}</p><Status plain value={row.state} /><Disclosure title="证据条件与下一步"><Facts items={[["所需能力", row.requiredCapability], ["原因", row.reasonCode], ["可执行的补证据方式", row.permittedRemedy]]} /></Disclosure></div>)}</section>}
     </>}
   </div>;
-}
-interface ClarificationForm { statement: string; noLeverage: boolean; resolvedAmbiguities: string[] }
-function IntentClarification({ view, path }: { view: PmMandateView; path: string }) {
-  const cache = useQueryClient(); const [form] = Form.useForm<ClarificationForm>(); const draftKey = `pm:${view.mandate.id}:intent` as const;
-  const command = useCommand<unknown>(draftKey, () => {
-    removeDraft(draftKey); form.resetFields(); void cache.invalidateQueries({ queryKey: [path] }); void cache.invalidateQueries({ queryKey: ['/mandates'] });
-  }, `${path}/intent-clarifications`);
-  useEffect(() => { const draft = readDraft<ClarificationForm>(draftKey); if (draft) form.setFieldsValue(draft); }, [draftKey, form]);
-  return <section className="pm-section"><Disclosure title="澄清投资意图"><p>说明原要求的含义。已生效的风险约束与历史证据会继续保留；新约束需要相应的账户与数据能力。</p>
-    <Form<ClarificationForm> form={form} layout="vertical" initialValues={{ noLeverage: false, resolvedAmbiguities: [] }} disabled={command.busy || !!command.pending}
-      onValuesChange={(_change, value) => { if (!command.pending) saveDraft(draftKey, value); }}
-      onFinish={value => { const statement = value.noLeverage ? `${value.statement.trim()}\n不使用杠杆` : value.statement.trim();
-        void command.submit({ expectedRevision: view.mandate.revision, statement,
-          boundaries: value.noLeverage ? [{ kind: 'LEVERAGE', sourceStatement: '不使用杠杆', value: { maximumGrossNavRatio: '1', borrowingAllowed: false } }] : [],
-          resolvedAmbiguities: value.resolvedAmbiguities ?? [] }); }}>
-      <PendingCommand command={command} />
-      <Form.Item name="statement" label="补充说明" rules={[{ required: true, whitespace: true, message: '请说明原要求的确切含义' }]}><Input.TextArea rows={3} /></Form.Item>
-      <Form.Item name="noLeverage" valuePropName="checked" extra="禁止借款需要现金账户支持；保证金账户的杠杆字段为1不足以证明这一条件。"><Checkbox>明确为不使用杠杆、不借入资金</Checkbox></Form.Item>
-      {view.mandate.unresolvedIntent.length > 0 && <Form.Item name="resolvedAmbiguities" label="本次已说明的条目"><Checkbox.Group options={view.mandate.unresolvedIntent.map(value => ({ label: value, value }))} /></Form.Item>}
-      <ErrorNotice error={command.error} />
-      {command.pending ? <Button type="primary" disabled={false} loading={command.busy} onClick={() => { void command.submit(); }}>核对原澄清请求</Button>
-        : <Button type="primary" htmlType="submit">保存意图澄清</Button>}
-    </Form>
-  </Disclosure></section>;
 }
 function PmActions({ view, path }: { view: PmMandateView; path: string }) {
   const cache = useQueryClient(); const confirm = useConfirm();

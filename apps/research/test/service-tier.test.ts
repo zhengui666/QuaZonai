@@ -10,7 +10,7 @@ import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import type { Provider } from '@earendil-works/pi-ai/models';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import research from '../plugins/research.ts';
 
 const context = BACKGROUND_CONTEXT;

@@ -377,6 +377,7 @@ fn report_statistics(returns: &ReportCurrencyDailyReturnsV1) -> Vec<NativeStatis
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     analyzer.register_statistic(Arc::new(CAGR::new(Some(365))));
+    crate::performance::register_tail_risk(&mut analyzer, 365);
     let replacements: [(Statistic, Statistic); 3] = [
         (
             Arc::new(ReturnsVolatility::new(None)),

@@ -31,6 +31,11 @@ impl std::error::Error for FillFeeFailure {}
 pub(crate) struct FillFeeObserver(Rc<RefCell<Option<FillFeeFailure>>>);
 
 impl FillFeeObserver {
+    #[cfg(test)]
+    fn clear(&self) {
+        self.0.borrow_mut().take();
+    }
+
     pub(crate) fn wrap(&self, delegate: FeeModelHandle) -> FeeModelHandle {
         FeeModelHandle::new(ObservedFillFee {
             delegate,
@@ -111,5 +116,26 @@ impl FeeModel for ObservedFillFee {
             underlying_px,
         );
         self.observe(result, order, quantity, price, instrument)
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+
+    #[test]
+    fn clearing_a_session_observer_clears_the_venue_handle_copy() {
+        let observer = FillFeeObserver::default();
+        let venue_copy = observer.clone();
+        *venue_copy.0.borrow_mut() = Some(FillFeeFailure {
+            reason: "prior-fill-error".into(),
+            client_order_id: ClientOrderId::from("prior-order"),
+            instrument_id: InstrumentId::from("BTC/USDT.TEST"),
+            quantity: Quantity::from("1"),
+            price: Price::from("1"),
+        });
+        assert!(observer.check().is_err());
+        observer.clear();
+        assert!(venue_copy.check().is_ok());
     }
 }

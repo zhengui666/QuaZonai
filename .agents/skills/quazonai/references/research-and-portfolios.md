@@ -1,141 +1,64 @@
-# 研究、因子与组合
+# 原生研究、参数扫描与证据评级
 
-目录：
-- [提交研究](#提交研究)
-- [跟踪、分页与恢复](#跟踪分页与恢复)
-- [选择因子并构建组合](#选择因子并构建组合)
-- [容量分析](#容量分析)
-- [Tick 经济回放](#tick-经济回放)
+## 自然语言研究
 
-## 提交研究
-
-```sh
-quazonai datasets
-quazonai research models
-quazonai schema show ResearchStart
-```
-
-选择真实可用数据集和模型。检查数据集的 `ready`、时间范围、币种、`nativeModality`、`preparation`、`inputCoverage` 和 `researchSettings`；已完成数据准备不代表科学证据合格。模型采用返回的 `provider` 与 `modelId`；可选推理等级和服务档位也从模型返回值选取。
-
-最小文件请求如下。将所有 `REPLACE_*` 替换成实际值后保存为 `research-request.json`：
-
-```json
-{
-  "requestId": "REPLACE_NEW_UNIQUE_REQUEST_ID",
-  "goal": "REPLACE_USER_RESEARCH_QUESTION",
-  "datasetId": "REPLACE_DATASET_ID",
-  "model": {"provider": "REPLACE_PROVIDER", "modelId": "REPLACE_MODEL_ID"}
-}
-```
-
-```sh
-quazonai research start --file research-request.json
-```
-
-也可用简单参数形式：
+先读取 `quazonai datasets`、`quazonai research models` 和 `quazonai schema show ResearchStart`。使用真实已就绪数据集和模型，不编造目录、数据覆盖或费率。
 
 ```sh
 quazonai research start --goal "$goal" --dataset "$dataset_id" --model "$provider:$model_id" --request-id "$request_id"
-```
-
-不要混用 `--file` 与 `--goal` / `--dataset` / `--model`。需要结构化目标时，在文件中添加 `specification`，先读取 `ResearchSpecification`：
-
-- 使用 `version: 1`，提供非空 `name`、`question`、`rationale`；`goal` 必须与 `question` 完全相同。
-- `single-factor` 使用 `pearson_ic`、`maxMembers: 1`；`ensemble` 使用 `Sharpe Ratio (252 days)` 或 `Sharpe Ratio (365 days)` 及正整数 `maxMembers`。
-- `evaluation.direction` 为 `maximize`，`evaluation.scheme` 为 `registered-partitions`；`search.stop` 为 `selection` 或 `budget-or-selection`。
-- `evaluation.target` 是可选有限数值。仅按用户实际要求设定，不把研究愿望变成已实现的收益承诺。
-- 通过 `capital` 添加用户指定的容量假设；通过 `thinkingLevel` / `serviceTier` 选择模型实际支持的选项。
-- `publicLiteratureQueries` 仅填写用户明确允许外发的 1–3 条检索文本；每条 1–500 字符。不自动把完整私有目标转成公开检索词。
-
-优先使用 `datasetId` 形式。只有已有完整、合法的科学输入时才使用 `{requestId, input:{goal,model,data,policy,...}}` 形式；不要从展示用的 `researchSettings` 反造完整科学请求。
-
-## 跟踪、分页与恢复
-
-保存受理回执的 `conversationId` 与 `submissionId`。使用 conversation ID：
-
-```sh
-quazonai research wait "$research_id" --timeout 60
 quazonai research get "$research_id"
 quazonai research diagnostics "$research_id"
+quazonai research wait "$research_id" --timeout 60
 ```
 
-`watch` 返回沿途详情和最后总结，`wait` 仅返回最后总结。判断 `settled`、`submissionStatus`、`research.final`、`criterion`、`trialRecords` 和错误；不能凭 `IDLE`、空 tasks 或存在 final 就断言 submission 已结束。结果同时保留指标分区、单位、状态和缺失原因。
+`research_id` 为受理回执的 conversationId。复杂请求使用 `--file`，不与简单参数混用。模型的推理等级和服务档位取自实际列表。公开文献查询仅使用用户授权外发的内容。
 
-`research list` 返回 `items` 与可选 `cursor`。如果有 cursor，将该对象序列化为单个参数继续：`quazonai research list --cursor "$cursor_json"`，直到没有 cursor。不要自行构造页码或游标。
+研究 Agent 在同一 Pi Conversation 内配置并运行已注册的官方 Rust 策略。当前单标的回测接线为 EMA_CROSS、GRID_MARKET_MAKER（QuoteTick），ORDER_BOOK_IMBALANCE（L2 订单簿）及 HURST_VPIN_DIRECTIONAL（官方 BAR/QuoteTick/TradeTick 订阅）；参数及可选 base 配置按实际原生 schema 原样传递。不是任意 Python Strategy、用户源码动态运行、所有交易所或全部 Nautilus 策略的通用入口。不要用已退役的因子、IC、WASM 拟合或组合评分工具替代。
 
-只有用户需要停止时运行 `research stop ID`，随后读回。需要恢复被中断/失败的研究时，先检查 diagnostics 的原终止 submission，再执行：
+Hurst/VPIN 的 INTERNAL BAR 由官方 DataEngine 根据原 TradeTick 聚合；EXTERNAL BAR 必须使用原完整 BarType。外部非时间 BAR 若只供策略读取，应明确配置原生 venue.bar_execution=false，并提供用于撮合的原 Quote/Trade 数据；省略保持官方默认 true，不由胶水静默关闭。当前账户仍仅支持 EMA_CROSS，研究注册这些策略不扩大账户执行能力。
+
+先看真实数据类型及覆盖。数据准备不等于策略获利；缺失或未预热统计保留为空，官方统计名、币种和单位保留原意。回测不启动账户，也不把历史目标点当实时策略。
+
+## 同一研究继续和恢复
+
+保存 conversationId 与 submissionId。`watch`/`wait` 超时只退出客户端，不停止远端任务。需要停止时使用 `research stop ID` 并读回。通过 `diagnostics` 确认终止 submission 后：
 
 ```sh
-quazonai research resume "$research_id" --submission-id "$terminal_submission_id"
+quazonai research resume "$research_id" --submission-id "$terminal_submission_id" --instruction "$reply"
 ```
 
-保存新回执中的 `submissionId`、`previousSubmissionId`，继续观察同一 conversation。不要对仍在运行或只是客户端超时的研究调用 resume。
+用 instruction 回答追问、修改研究方向或在已结束/停止的研究中继续；仍在运行的任务不要重建。保留新回执身份。Web 研究页显示同一 Pi 消息并支持回复，CLI 没有另一个聊天发送命令。
 
-## 选择因子并构建组合
+## 参数扫描
+
+先请求来源的实际选项，将 `{ "sourceKind":"research", "researchId":实际整数ID }` 保存为 query.json：
 
 ```sh
-quazonai factor list
-quazonai factor get "$factor_id"
-quazonai schema show PortfolioStart
+quazonai parameter-scan options --file query.json
+quazonai schema show ParameterScanStart
+quazonai parameter-scan preview --file scan.json
+quazonai parameter-scan create --file scan.json
+quazonai parameter-scan wait "$scan_id" --timeout 60
+quazonai parameter-scan get "$scan_id"
+quazonai parameter-scan trials "$scan_id"
 ```
 
-检查 `evidence`、`combinable`、`reason`、数据集、币种、市场、`criterion` 与 review。`historical`、`component_only`、`validation_only` 和探索性 tick 因子不能被描述为已独立验证的可交易策略。
+scan.json 按合同提供 requestId、name、source={kind:"research",researchId}、mode:"STRATEGY"、axes、objective、execution={concurrency}。axis.key 仅使用 options 返回的现有数值路径；domain 使用 values 字符串数组或 range 的 start/end/step 字符串。不是新策略 DSL，非扫描字段继续沿用原请求。
 
-用户已给定组合资本和配置时，形成 `portfolio-request.json`：
+objective.metricId 使用 options 返回的实际标识、partition:"FULL_SELECTION" 和用户选择的 maximize/minimize。权益统计使用独立的 `equity-performance:252:原生统计名` 或 `equity-performance:365:原生统计名`，不要把它们替换成同名 canonical key。候选统计列表只是建议，不按指标名字猜方向或改变数值符号。当前合同没有 batchSize。读回缺失原因、失败、未决和 comparable 数量，不把缺失值补零。原生 run.outcome=stopped 的结果保留为 STOPPED，不进入完整窗口排名。排名标记 UNQUALIFIED_EXPLORATORY，不是样本外证明，也不是实盘许可。
 
-```json
-{
-  "requestId": "REPLACE_NEW_UNIQUE_REQUEST_ID",
-  "name": "REPLACE_PORTFOLIO_NAME",
-  "datasetId": "REPLACE_DATASET_ID",
-  "capital": "10000",
-  "factors": [{"factorId": "REPLACE_FACTOR_ID", "weight": "1"}]
-}
-```
+## 官方权益统计与收益口径
 
-这里的资金和权重仅演示字段类型，替换成任务实际值。需要独立数据评估时使用真实 `independentDatasetId`。也可按合同使用 `researchIds` 与 `weights`，不要把研究 ID 当因子 ID；不自行假定两种选择方式可以混用。
+查看 `equity_performance` 的真实 source、status/reason、币种、快照覆盖、收益日数与频率。它直接读取 Nautilus 官方 portfolio_returns，并调用官方 CAGR/Sharpe 的 252 与 365 两种频率；没有权益证据时保持不可用，不退回持仓收益冒充权益。canonical 默认统计可能使用持仓收益，不能按名称视为日权益收益。官方跨日延续也不等于每天实际观测，短样本年化不是已实现年收益。
 
-```sh
-quazonai portfolio build --file portfolio-request.json
-quazonai portfolio wait "$portfolio_id" --timeout 60
-quazonai portfolio get "$portfolio_id"
-```
+通过研究 Agent 选择 WF 目标时，可明确 `metric_source:"EQUITY_PERFORMANCE"`、`annualization_days:252` 或 `365` 及该频率对应的 `native_key`。未选时保留原 canonical 语义，不静默改变目标。股票常用频率与全天候市场频率只是计算假设，必须与用户目的及报告口径一致。
 
-从 build 的回执取得 portfolio ID。读取状态、`progress`、指标、曲线、`performance`、review、容量及 `targetExpired`。生成 targets 不表示已经向账户交付。
+## 防过拟合与 AI 综合意见
 
-## 容量分析
+通过研究 Agent 请求逻辑预评估、明确候选/方法的 walk-forward、邻近参数及成本敏感性，然后读取实际研究结果。它们是研究工具，不是独立 CLI 子命令。原生回测和统计由 Nautilus 执行；逻辑分析与综合星级是模型判断，不是 Nautilus 官方评分。
 
-读取 `CapitalAssumptions`，把用户指定的情景保存到文件，例如：
+逻辑预评估应先于对应数值运行，事先说明候选、窗口和优化目标。不得将全区间敏感性当新的样本外测试，不得在看完结果后声称事前注册。检查任务来源、运行状态、窗口、费用、缺失证据和限制；不能只凭任务 COMPLETED 或星级宣称验证通过。证据不足时保持星级不可用，AI 星级不表示获利概率、独立审计或交易授权。
 
-```json
-{"scenarios":["10000","50000"],"participation":"0.01","maximumAgeSeconds":60}
-```
+## 既有记录
 
-示例数值不作为默认投资假设。scenarios 必须为正十进制字符串；participation 为 `(0,1]` 的十进制字符串；maximumAgeSeconds 为 `1..4294967295` 的整数。
-
-```sh
-quazonai factor capacity "$factor_id"
-quazonai factor capacity "$factor_id" --file capacity-assumptions.json
-quazonai portfolio capacity "$portfolio_id" --file capacity-assumptions.json
-```
-
-容量请求不要求 `requestId`；不要强加统一请求外壳。报告 `status`、`scope`、`basis`、有效时钟、约束、覆盖和 `reason`。流动性容量不等于盈利能力；`economicCapacity.status: UNAVAILABLE` 时保持不可用结论。
-
-## Tick 经济回放
-
-```sh
-quazonai schema show TickEconomicReplayStart
-quazonai schema show NativeTickEconomicRequest
-quazonai schema show NativeTickFactorRequest
-```
-
-用真实 tick 因子来源及相符的数据修订构造请求。顶层包含 `requestId`、`datasetId`、`request`，并在单个 `factorId` 与 `members:[{factorId,weight}]` 中二选一。按需要提供真实 `fundingCatalog`。
-
-内层 request 包含 `schema_version:1`、完整 `research`、`scenario`、`fx_instrument_ids` 与 `funding_source`；费用、资本、参与率、延迟和纳秒全部保留字符串。不要把缺失成本补零，不把 EVENT_TIME_PROXY_UNVERIFIED 当 RECEIVED_TIME_OBSERVED，也不为获得更好结果改动已有研究分区或来源。需要额外原生结构时，先在 `schema list --domain` 找真实名称再读取。
-
-```sh
-quazonai portfolio replay-ticks --file tick-replay-request.json
-quazonai portfolio tick-replay "$replay_id"
-```
-
-保留回执中的 replay ID 和 taskId，以有限间隔读取同一 replay；当前没有专属 watch/wait。检查 `COMPUTED` / `FAILED` / `STOPPED`、`progress`、`error`，以及结果的 coverage、methods、limitations、资金费缺口、费用与分区指标。结果的 `UNQUALIFIED_EXPLORATORY` 保持为探索性结论。
+`portfolio list/get` 保留历史只读结果。CLI 不再提供新建因子、组合 build 或容量评分入口。旧 `portfolio replay-ticks` / `portfolio tick-replay` 的服务路由已移除，不可用于新建或查询回放；使用同一 `research` 的官方原生策略入口，不尝试重新启用旧因子执行链。

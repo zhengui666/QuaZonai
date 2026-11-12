@@ -164,3 +164,52 @@ qz_apply_update "$ROOT"`, 'qz-scratch-update-test', fileURLToPath(new URL('./man
   await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
 
 });
+
+for (const blocked of [false, true]) test(`explicit no-backup update preserves data and task guard (blocked=${blocked})`, async t => {
+  const root = await directory(t);
+  for (const name of ['data', 'bundle', 'work']) await mkdir(join(root, name));
+  const image = `sha256:${'a'.repeat(64)}`;
+  const old = { schema_version: 5, version: 'v0.0.0-ci.1', revision: 'b'.repeat(40), root, uid: process.getuid(), gid: process.getgid(), project: 'no-backup-test', port: 8081, image, runtime_image: image, bundle: join(root, 'bundle') };
+  const candidate = { ...old, version: 'v0.0.0-ci.2', revision: 'c'.repeat(40) };
+  for (const [name, value] of [['installation.json', old], ['candidate.json', candidate], ['bundle/release.json', candidate]]) await writeFile(join(root, name), JSON.stringify(value));
+  await writeFile(join(root, 'bundle/json.awk'), await readFile(new URL('./json.awk', import.meta.url)));
+  await writeFile(join(root, 'data/original'), 'original database and credentials');
+  const shell = (policy, body) => spawnSync('bash', ['-c', `source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"; QZ_BUNDLE="$ROOT/bundle"; QZ_BACKUP_POLICY=$3
+qz_prepare() { QZ_PREPARED="$ROOT/candidate.json"; }
+qz_stop() { echo stop >> "$ROOT/calls"; }
+qz_idle() { echo idle >> "$ROOT/calls"; ${blocked ? 'return 27;' : ':;'} }
+qz_backup() { echo backup >> "$ROOT/calls"; return 93; }
+${body}`, 'no-backup-test', fileURLToPath(new URL('./manage.sh', import.meta.url)), root, policy], { encoding: 'utf8', timeout: 20_000 });
+  const result = shell('skip', 'qz_activate() { return 31; }; qz_apply_update "$ROOT"');
+  assert.equal(result.status, blocked ? 27 : 31, result.stderr);
+  assert.equal(await readFile(join(root, 'calls'), 'utf8'), 'stop\nidle\n');
+  assert.equal(await readFile(join(root, 'data/original'), 'utf8'), 'original database and credentials');
+  await assert.rejects(stat(join(root, 'backups')), { code: 'ENOENT' });
+  const pending = JSON.parse(await readFile(join(root, 'pending.json'), 'utf8'));
+  assert.equal(pending.backup_policy, 'skip'); assert.equal(pending.phase, blocked ? 'preparing' : 'starting');
+  if (!blocked) assert.equal(pending.backup, null);
+  const changed = shell('required', 'qz_apply_update "$ROOT"');
+  assert.notEqual(changed.status, 0); assert.match(changed.stderr, /original backup policy/);
+  assert.equal(await readFile(join(root, 'calls'), 'utf8'), 'stop\nidle\n');
+  if (!blocked) {
+    const retry = shell('skip', 'qz_start() { :; }; qz_apply_update "$ROOT"');
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(JSON.parse(await readFile(join(root, 'installation.json'), 'utf8')).version, candidate.version);
+    assert.equal(await readFile(join(root, 'calls'), 'utf8'), 'stop\nidle\n');
+    assert.equal(await readFile(join(root, 'data/original'), 'utf8'), 'original database and credentials');
+  }
+});
+
+test('no-backup flag parses only for update operations before any Docker call', async t => {
+  const root = await directory(t);
+  const script = fileURLToPath(new URL('./manage.sh', import.meta.url));
+  const accepted = spawnSync('bash', ['-c', `source "$1"
+qz_preflight() { :; }; qz_lock() { :; }
+qz_apply_update() { test "$QZ_BACKUP_POLICY" = skip; }
+qz_main apply-update --directory "$2" --no-backup`, 'option-test', script, root], { encoding: 'utf8' });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const rejected = spawnSync('bash', [script, 'restore', root, '--directory', root, '--no-backup'], { encoding: 'utf8' });
+  assert.notEqual(rejected.status, 0); assert.match(rejected.stderr, /only valid for update/);
+  assert.deepEqual(await readdir(root), []);
+});

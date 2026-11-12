@@ -1,9 +1,12 @@
+import { PmTargetTask, pmTargetPayload, pmTargetAllocation, targetEligibility } from '../src/pm-target.ts';
+import { AdjustAccount } from '../src/automatic.ts';
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView, PortfolioDecision, TargetCommand } from '../../../packages/contracts/src/pm.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { Application, json, nowNs, nsTime, object, observation } from '../src/facts.ts';
@@ -15,35 +18,26 @@ import { context, setup } from './support.ts';
 
 // Protocol acceptance only: real HTTP, official Durable tasks and SQLite, with
 // explicit controlled account/eligibility facts. No scientific result is
-// synthesized by these tests or promoted into investment evidence. The full
-// native research/qualification path has a separate acceptance suite.
+// synthesized by these tests or promoted into investment evidence. Retained
+// target records test recovery only, not support for new target submissions.
 async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['mandate']['operatingAuthority'] = 'AUTHORIZED_TARGETS', dataPlugin = false) {
   const state = await setup();
   const datasetId = dataPlugin ? 'controlled-plugin' : 'controlled';
   const remote = Fastify();
   try {
-    const posts: JsonObject[] = []; const accepted: JsonObject[] = []; const gets: string[] = [];
+    const posts: JsonObject[] = []; const retained: JsonObject[] = []; const gets: string[] = [];
     let receive: 'UNAVAILABLE' | 'PENDING' | 'ACKNOWLEDGED' = 'UNAVAILABLE';
     let externalId = 'controlled-external-original';
     let receiptOverride: JsonObject = {};
     let remoteAccount: JsonObject = {};
     const priorExpiry = nsTime((BigInt(nowNs()) - 1_000_000_000n).toString());
-    remote.post('/targets', (request, reply) => {
-      const body = json(request.body); posts.push(body);
-      const allocation = object(body.allocation);
-      for (const [field, sourceField] of Object.entries({ accountSourceId: 'accountSourceId', observationId: 'observationId', snapshotSequence: 'sequence', nativeClockNs: 'nativeClockNs', controlRevision: 'controlRevision' })) {
-        if (allocation[field] !== remoteAccount[sourceField]) return reply.code(409).send({ error: 'controlled_receiver_snapshot_changed' });
-      }
-      if (typeof allocation.reserved !== 'string' || compareDecimal(allocation.reserved, '0') !== 0) return reply.code(409).send({ error: 'controlled_receiver_reservation_changed' });
-      accepted.push(body);
-      return reply.code(503).send({ error: 'received_but_response_lost' });
-    });
+    remote.post('/targets', (request, reply) => { posts.push(json(request.body)); return reply.code(410).send({ error: 'retired_target_must_not_be_called' }); });
     remote.get<{ Params: { id: string } }>('/targets/:id', (request, reply) => {
       gets.push(request.params.id);
       if (request.params.id === 'controlled-prior-target') return { id: request.params.id, clientId: 'controlled-client', accountId: 'controlled-account',
         expiresAt: priorExpiry, status: 'REJECTED', externalId: 'controlled-prior-external' };
       if (receive === 'UNAVAILABLE') return reply.code(503).send({ error: 'receipt_not_yet_readable' });
-      const original = accepted.find(body => body.id === request.params.id);
+      const original = retained.find(body => body.id === request.params.id);
       if (!original) return reply.code(404).send({ error: 'original_request_not_accepted' });
       return { ...original, status: receive, externalId, ...receiptOverride };
     });
@@ -98,9 +92,8 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
       funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model,
       businessPreference: 'NET_RETURN', operatingAuthority,
     };
-    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: input });
-    assert.equal(admitted.statusCode, 202, admitted.body);
-    const id = admitted.json<PmMandateView>().mandate.id;
+    const retainedRecord = await retainPmControlRecord(state, input as import('../../../packages/contracts/src/pm.ts').PmMandateStart);
+    const id = retainedRecord.mandate.id;
     const snapshot = pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id);
     if (!keepMonitor) {
       // Isolate receipt/eligibility cases from unrelated research monitoring.
@@ -162,7 +155,8 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
         payload: { requestId, expectedRevision: '0', decisionId } });
     }
     async function record() { return pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id); }
-    return { state, remote, posts, accepted, gets, id, connection, decisionId, read, offer, record,
+    return { state, remote, posts, retained, gets, id, connection, decisionId, read, offer, record,
+      retainOriginal(value: JsonObject) { retained.push(structuredClone(value)); },
       receipt(status: typeof receive, overrides: JsonObject = {}) { receive = status; receiptOverride = overrides; },
       external(value: string) { externalId = value; },
       accountSnapshot(value: JsonObject) { remoteAccount = structuredClone(value); },
@@ -206,22 +200,38 @@ test('PM monitoring retains plugin source lookup after disable, omitted datasets
 });
 
 async function delivered(f: Awaited<ReturnType<typeof fixture>>): Promise<TargetCommand> {
-  const response = await f.offer(); assert.equal(response.statusCode, 202, response.body);
-  try {
-    await eventually(async () => f.posts.length === 1 && (await f.read()).targetCommands[0]?.state === 'UNCERTAIN', 'Lost remote response must persist UNCERTAIN.');
-  } catch (error) {
-    const record = await f.record(); const command = Object.values(record.commands)[0]!;
-    const taskId = record.artifacts[`target-task:${command.id}`]!.taskId as TaskId;
-    assert.fail(`${String(error)} ${JSON.stringify({ posts: f.posts.length, command, task: await f.state.service.research.harness.getTask(taskId, context), error: record.artifacts[`target-error:${command.id}`] })}`);
-  }
-  assert.equal(f.accepted.length, 1, 'The actual receiver must have accepted the complete original snapshot group before losing its response.');
+  // Pre-upgrade command facts only. Never call the retired new-target endpoint
+  // or claim that a generated allocation was executed by the upstream strategy.
+  await f.state.service.research.harness.commit(async tx => {
+    const record = pmRecord(pmState(await tx.doc(PmDocument)), f.id);
+    const app = await tx.doc(Application), source = observation(app.observations[f.connection.id]);
+    const decision = record.decisions[f.decisionId]!;
+    const commandId = 'TEST_ONLY_ORIGINAL_REMOTE_COMMAND';
+    const target = pmTargetPayload(record, decision), allocation = pmTargetAllocation(record, decision, source, app.accountControls);
+    const command: TargetCommand = { ...fact(commandId), decisionId: f.decisionId, idempotencyKey: commandId, accountBindingId: f.connection.id,
+      basisRevision: decision.basisRevision, controlRevision: String(allocation.controlRevision), payloadEvidenceRef: 'retained-original-payload',
+      validUntilNs: decision.validUntilNs!, state: 'UNCERTAIN', externalReceiptRef: null };
+    record.commands[commandId] = command; decision.targetCommandId = commandId;
+    record.artifacts[command.payloadEvidenceRef] = target; record.artifacts[`target-allocation:${commandId}`] = allocation;
+    f.retainOriginal({ id: commandId, clientId: f.connection.clientId, accountId: f.connection.accountId, expiresAt: nsTime(command.validUntilNs), target: json(target), allocation: json(allocation) });
+    const taskId = await tx.createTask(PmTargetTask, { mandateId: f.id, commandId, reconcileOnly: true },
+      { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+    record.artifacts[`target-task:${commandId}`] = { taskId };
+  }, context);
+  await eventually(async () => f.gets.length > 0, 'The actual recovery task must query the original remote receipt.');
+  assert.equal(f.posts.length, 0);
   return (await f.read()).targetCommands[0]!;
+}
+
+async function checkRetainedEligibility(f: Awaited<ReturnType<typeof fixture>>) {
+  const record = await f.record(); const app = (await f.state.service.research.harness.snapshot(Application, context))!;
+  targetEligibility(record, record.decisions[f.decisionId]!, captureAccount(app, f.connection.id).basis, 'paper');
 }
 
 test('PM operations: uncertain delivery reopens the original task and receipt; a different request ID cannot resend the same decision', { timeout: 30_000 }, async () => {
   const f = await fixture();
   try {
-    const command = await delivered(f); const originalPayload = structuredClone(f.posts[0]);
+    const command = await delivered(f); const originalPayload = structuredClone(f.retained[0]);
     assert.equal(originalPayload!.id, command.idempotencyKey);
     assert.deepEqual(originalPayload!.target, { schema_version: 1, asof_ns: (await f.record()).artifacts.TEST_ONLY_CONTROLLED_NATIVE_TARGET!.asof_ns,
       valid_until_ns: command.validUntilNs, targets: [{ instrument_id: 'TEST.SIM', currency: 'USD', weight: '0' }], cash_weight: '1' });
@@ -230,9 +240,9 @@ test('PM operations: uncertain delivery reopens the original task and receipt; a
     assert.equal(object(originalPayload!.allocation).controlRevision, '3');
     assert.deepEqual(originalPayload!.allocation, (await f.record()).artifacts[`target-allocation:${command.id}`]);
     const taskId = (await f.record()).artifacts[`target-task:${command.id}`]!.taskId as TaskId;
-    assert.equal((await f.offer()).statusCode, 202, 'Original request replay must be accepted.');
+    assert.equal((await f.offer()).statusCode, 410, 'The retired POST cannot replay even an old accepted request.');
     const duplicate = await f.offer('different-request-same-decision');
-    assert.equal(duplicate.statusCode, 409, duplicate.body);
+    assert.equal(duplicate.statusCode, 410, duplicate.body);
     assert.equal((await f.read()).targetCommands.length, 1);
     await f.state.restart();
     assert.equal((await f.record()).artifacts[`target-task:${command.id}`]!.taskId, taskId);
@@ -241,10 +251,10 @@ test('PM operations: uncertain delivery reopens the original task and receipt; a
     await eventually(async () => (await f.read()).targetCommands[0]?.state === 'ACKNOWLEDGED', 'Official recovery must reconcile the original receipt.');
     const settled = await f.state.service.research.harness.waitForTask(taskId, context);
     assert.equal(settled.state.status, 'terminal');
-    assert.equal(f.posts.length, 1); assert.deepEqual(f.posts[0], originalPayload);
+    assert.equal(f.posts.length, 0); assert.deepEqual(f.retained[0], originalPayload);
     assert.ok(f.gets.length > 0 && f.gets.every(id => id === command.idempotencyKey));
     const view = await f.read(); assert.equal(view.currentDecision!.targetCommandId, command.id);
-    assert.equal((await f.offer('new-request-after-acknowledgement')).statusCode, 409, 'An acknowledged decision cannot create a second delivery.');
+    assert.equal((await f.offer('new-request-after-acknowledgement')).statusCode, 410, 'An acknowledged decision cannot create a second delivery.');
     assert.equal(view.outcomes.filter(item => item.realizedMetrics.length > 0).length, 0, 'A target acknowledgement is not realized profit.');
     assert.deepEqual(observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]).view.positions,
       [{ instrumentId: 'TEST.SIM', quantity: '10', value: '100', pnl: null }], 'Acknowledgement must not invent a fill or zero the positions.');
@@ -265,7 +275,7 @@ test('PM operations: external receipt identity remains pinned through PENDING, a
     assert.deepEqual((await f.record()).artifacts[`target-receipt:${command.id}`], pinned);
     f.external('controlled-external-original');
     await eventually(async () => (await f.read()).targetCommands[0]?.state === 'ACKNOWLEDGED', 'Original external identity must remain reconcilable.');
-    assert.equal(f.posts.length, 1);
+    assert.equal(f.posts.length, 0);
   } finally { await f.cleanup(); }
 });
 
@@ -286,11 +296,11 @@ test('PM operations: retirement preserves uncertain delivery and residual positi
     assert.equal(view.targetCommands[0]!.state, 'UNCERTAIN');
     await f.state.restart();
     assert.equal((await retire()).statusCode, 202); assert.equal((await f.read()).retirements.length, 1);
-    assert.equal((await f.offer('retired-decision-cannot-be-resent')).statusCode, 409);
+    assert.equal((await f.offer('retired-decision-cannot-be-resent')).statusCode, 410);
     f.receipt('ACKNOWLEDGED');
     await eventually(async () => (await f.read()).targetCommands[0]?.state === 'ACKNOWLEDGED', 'Retirement must not abandon uncertain receipt reconciliation.');
     const final = await f.read();
-    assert.equal(final.currentDecision, null); assert.equal(f.posts.length, 1);
+    assert.equal(final.currentDecision, null); assert.equal(f.posts.length, 0);
     assert.equal(final.retirements[0]!.positionDisposition, 'MONITORING_EXISTING');
     assert.equal(final.retirements[0]!.reconciliationRequired, true, 'Acknowledgement does not prove liquidation.');
     assert.equal(final.retirements[0]!.closureEvidenceRefs.length, 0);
@@ -317,7 +327,8 @@ for (const changed of ['positions', 'openOrders'] as const) {
       for (const field of ['accountSourceId', 'observationId', 'sequence', 'observedAtNs', 'controlRevision', 'currency', 'equity', 'reserved'] as const) assert.deepEqual(captured[field], before[field]);
       assert.notEqual(captured.positionsEvidenceRef, before.positionsEvidenceRef);
       assert.notEqual(captured.outstandingCommandsRef, before.outstandingCommandsRef);
-      const rejected = await f.offer(); assert.equal(rejected.statusCode, 409, rejected.body);
+      await assert.rejects(checkRetainedEligibility(f));
+      const rejected = await f.offer(); assert.equal(rejected.statusCode, 410, rejected.body);
       assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
     } finally { await f.cleanup(); }
   });
@@ -330,7 +341,8 @@ test('PM operations: a historical decision without an account basis returns a bu
       const record = pmRecord(pmState(await tx.doc(PmDocument)), f.id);
       record.decisions[f.decisionId]!.accountBasis = null;
     }, context);
-    const rejected = await f.offer(); assert.equal(rejected.statusCode, 409, rejected.body);
+    await assert.rejects(checkRetainedEligibility(f));
+      const rejected = await f.offer(); assert.equal(rejected.statusCode, 410, rejected.body);
     assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
   } finally { await f.cleanup(); }
 });
@@ -345,7 +357,8 @@ test('PM operations: a superseded READY assessment cannot qualify a strategy who
         outcome: 'NEEDS_EVIDENCE', reasonCodes: ['controlled-current-source-invalidated'] };
       record.strategies[record.latestStrategyId]!.pipelineAssessmentId = 'current-missing-evidence';
     }, context);
-    const rejected = await f.offer(); assert.equal(rejected.statusCode, 409, rejected.body);
+    await assert.rejects(checkRetainedEligibility(f));
+      const rejected = await f.offer(); assert.equal(rejected.statusCode, 410, rejected.body);
     assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
     assert.equal((await f.record()).assessments['controlled-target-assessment']!.outcome, 'READY', 'History remains intact; it simply cannot authorize a current target.');
   } finally { await f.cleanup(); }
@@ -356,7 +369,7 @@ function flatSnapshot(original: JsonObject, sequence: string, orders?: number): 
   const money = (amount: string) => ({ amount, currency: 'USD' });
   snapshot.controlRevision = '3';
   snapshot.nativeObservation = { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.68.0' },
+    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.69.0' },
     sequence, dropped_events: '0', observed_at_ns: snapshot.nativeClockNs!, connection: 'CONNECTED',
     snapshot: { account_id: 'CONTROLLED-ACCOUNT', account_type: 'CASH', base_currency: null,
       balances: [{ total: money('1000.000000000000000001'), locked: money('0'), free: money('1000.000000000000000001') }],
@@ -469,17 +482,24 @@ test('PM operations: retired and draining monitors coalesce ten transport heartb
   } finally { await f.cleanup(); }
 });
 
-test('PM operations: maintenance parks original automatic sizing while retirement continues read-only account reconciliation', { timeout: 35_000 }, async () => {
+test('PM operations: maintenance retires original automatic sizing while preserving read-only account reconciliation', { timeout: 35_000 }, async () => {
   // This PM observes retirement responsibility without claiming target
-  // control of the independently enabled legacy automatic controller.
+  // control of a retained legacy automatic-controller record.
   const f = await fixture(true, 'RESEARCH_ONLY');
   try {
     const automatic = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${encodeURIComponent(f.connection.id)}/automatic`, headers: f.state.headers,
       payload: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } });
-    assert.equal(automatic.statusCode, 200, automatic.body);
+    assert.equal(automatic.statusCode, 410, automatic.body);
+    const automaticTaskId = await f.state.service.research.harness.commit(async tx => {
+      const app = await tx.doc(Application), source = observation(app.observations[f.connection.id]);
+      source.view.automaticPolicy = { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 };
+      const taskId = await tx.createTask(AdjustAccount, { id: f.connection.id, binary: '/must-not-execute', dataDir: f.state.directory },
+        { conversationId: pmRecord(pmState(await tx.doc(PmDocument)), f.id).conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+      source.taskId = taskId; app.observations[f.connection.id] = json(source); return taskId;
+    }, context);
+    await f.state.service.research.harness.waitForTask(automaticTaskId, context);
     const originalAccount = observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]);
-    const automaticTaskId = originalAccount.taskId as TaskId;
-    assert.ok(automaticTaskId > 0);
+    assert.equal(originalAccount.view.automaticPolicy!.enabled, false);
     const retired = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(f.id)}/retire`, headers: f.state.headers,
       payload: { requestId: 'retire-before-maintenance', expectedRevision: '0' } });
     assert.equal(retired.statusCode, 202, retired.body);
@@ -487,29 +507,21 @@ test('PM operations: maintenance parks original automatic sizing while retiremen
     const entered = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/enter', headers: f.state.headers,
       payload: { requestId: 'maintain-with-residual-account' } });
     assert.equal(entered.statusCode, 202, entered.body);
-    await eventually(async () => (await f.state.service.research.harness.getTask(automaticTaskId, context))?.state.status === 'waiting',
-      'Original automatic task must park on the official maintenance gate.');
     const parked = await f.state.service.research.harness.getTask(automaticTaskId, context);
-    assert.ok(parked);
-    assert.equal(parked.kind, 'qz.account-adjustment');
-    assert.equal(parked.state.status, 'waiting');
+    assert.ok(parked); assert.equal(parked.kind, 'qz.account-adjustment'); assert.equal(parked.state.status, 'terminal');
     const statusBefore = await f.state.service.app.inject({ url: '/api/v3/maintenance', headers: f.state.headers });
     assert.equal(statusBefore.statusCode, 200, statusBefore.body);
     const maintenance = statusBefore.json();
     assert.equal(maintenance.state, 'DRAINING', 'Unresolved retirement responsibility must prevent premature quiescence.');
-    assert.deepEqual(parked.state.status === 'waiting' ? parked.state.on : [], [maintenance.barrierTaskId]);
-    assert.equal(object(parked.state.checkpoint).phase, 'maintenance');
-    assert.equal(object(parked.state.checkpoint).maintenanceEpoch, maintenance.epoch);
     const sequence = (BigInt(String(originalAccount.snapshot!.sequence)) + 1n).toString();
     f.accountSnapshot(flatSnapshot(originalAccount.snapshot!, sequence, 0));
     await eventually(async () => (await f.read()).retirements[0]?.positionDisposition === 'FLAT_CONFIRMED',
-      'DRAINING must permit the original read-only monitor to observe authoritative flat balances and orders while automatic sizing stays parked.');
+      'DRAINING must permit the original read-only monitor to observe authoritative flat balances and orders while retired automatic sizing stays disabled.');
     await eventually(async () => (await f.state.service.app.inject({ url: '/api/v3/maintenance', headers: f.state.headers })).json().state === 'QUIESCED',
-      'Only reconciled retirement and parked original tasks may enter QUIESCED.');
+      'Only reconciled retirement and terminal original tasks may enter QUIESCED.');
     const observed = observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]);
     assert.equal(observed.snapshot!.sequence, sequence);
-    assert.equal(observed.view.automaticPolicy!.enabled, true, 'Maintenance preserves the existing automatic policy.');
-    assert.equal(observed.taskId, automaticTaskId, 'Read-only refresh cannot replace the parked original adjustment task.');
+    assert.equal(observed.view.automaticPolicy!.enabled, false, 'Maintenance cannot reactivate retired automatic sizing.');
     assert.deepEqual((await f.state.service.research.harness.getTask(automaticTaskId, context))?.state, parked.state);
     assert.equal((await f.read()).retirements[0]!.reconciliationRequired, false);
     assert.equal(f.posts.length, 0, 'Draining does not send new targets or liquidation requests.');
@@ -521,14 +533,14 @@ for (const mismatched of ['missing', 'changed'] as const) {
     const f = await fixture();
     try {
       const command = await delivered(f);
-      const original = structuredClone(f.posts[0]!);
+      const original = structuredClone(f.retained[0]!);
       f.receipt('ACKNOWLEDGED', { allocation: mismatched === 'missing' ? null : { ...object(original.allocation), controlRevision: '4' } });
       await f.state.restart();
       await eventually(async () => (await f.record()).artifacts[`target-error:${command.id}`]?.reason === 'target_receipt_allocation_mismatch', 'Revision-bound receipts must echo the original complete allocation.');
       assert.equal((await f.read()).targetCommands[0]!.state, 'UNCERTAIN');
       f.receipt('ACKNOWLEDGED');
       await eventually(async () => (await f.read()).targetCommands[0]!.state === 'ACKNOWLEDGED', 'The actual original receipt remains reconcilable.');
-      assert.equal(f.posts.length, 1); assert.deepEqual(f.posts[0], original);
+      assert.equal(f.posts.length, 0); assert.deepEqual(f.retained[0], original);
     } finally { await f.cleanup(); }
   });
 }
@@ -547,7 +559,7 @@ test('PM operations: a legacy uncertain command without an allocation envelope s
     f.receipt('ACKNOWLEDGED', { allocation: null });
     await f.state.restart();
     await eventually(async () => (await f.read()).targetCommands[0]!.state === 'ACKNOWLEDGED', 'Legacy uncertain requests retain their original read-only reconciliation path.');
-    assert.equal(f.posts.length, 1);
+    assert.equal(f.posts.length, 0);
     assert.ok(f.gets.length > 0 && f.gets.every(id => id === command.idempotencyKey));
   } finally { await f.cleanup(); }
 });
@@ -560,7 +572,8 @@ test('PM operations: a paused strategy cannot offer its retained target while or
       record.artifacts[`strategy-control:${record.decisions[f.decisionId]!.strategyVersionId}`] = { action: 'pause', requestId: 'original-pause' };
     }, context);
     const response = await f.offer();
-    assert.equal(response.statusCode, 409, response.body); assert.match(response.body, /target_strategy_paused/);
+    await assert.rejects(checkRetainedEligibility(f), /target_strategy_paused/);
+    assert.equal(response.statusCode, 410, response.body); assert.match(response.body, /native_strategy_only/);
     assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
   } finally { await f.cleanup(); }
 });

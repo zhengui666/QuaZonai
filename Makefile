@@ -6,11 +6,6 @@ PROFILE ?= debug
 CARGO_PROFILE_FLAG := $(if $(filter release,$(PROFILE)),--release,)
 SCIENCE_FEATURES := job/native-sandbox-test,job/catalog-prepare,job/hyperliquid-offline
 QZ_JOB_BINARY ?= $(abspath $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/$(PROFILE)/job)
-QZ_PM_NATIVE_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(TMPDIR),/tmp))/qz-pm-native-fixture
-QZ_PM_OBSERVED_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(TMPDIR),/tmp))/qz-pm-observed-fixture
-QZ_EXPORT_OBSERVED_FIXTURES ?= 1
-QZ_SCIENCE_TEST_FILTER_ARGS ?=
-QZ_PM_FORWARD_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(TMPDIR),/tmp))/qz-pm-forward-fixture
 
 check: check-ts check-web check-deploy
 
@@ -38,21 +33,15 @@ check-web:
 check-science:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p contracts -p domain --lib --tests
-	env -u QZ_PM_OBSERVED_FIXTURE_DIR QZ_PM_EXPORT_FIXTURE_DIR="$(QZ_PM_NATIVE_FIXTURE_DIR)" $(if $(filter 1,$(QZ_EXPORT_OBSERVED_FIXTURES)),QZ_PM_OBSERVED_FIXTURE_DIR="$(QZ_PM_OBSERVED_FIXTURE_DIR)") QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" $(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test catalog --test factors --test review_science --test review_allocation --test catalog_factor_scan --test catalog_prefix --test science_cli --test live_progress --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test source_tools --test catalog_prepare --test ensemble_fit --test ensemble_refresh --test capital_curve --test spot_cash_runtime --test observed_spot --test study -- --test-threads=1 $(QZ_SCIENCE_TEST_FILTER_ARGS)
+	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --tests -- --test-threads=1
 
-# Use the matching built kernel for capital, portfolio-management and remote
-# native execution tests.
+# Use the matching built kernel for real capital sizing and existing account
+# protocols; original-market strategy replay is covered by check-science.
 check-core:
 	test -x "$(QZ_JOB_BINARY)"
-	test -f "$(QZ_PM_NATIVE_FIXTURE_DIR)/source.json"
-	test -f "$(QZ_PM_NATIVE_FIXTURE_DIR)/source-next.json"
-	test -f "$(QZ_PM_OBSERVED_FIXTURE_DIR)/source.json"
-	test -f "$(QZ_PM_OBSERVED_FIXTURE_DIR)/science/source.json"
-	test -f "$(QZ_PM_OBSERVED_FIXTURE_DIR)/science/cash-heavy/source.json"
-	test -f "$(QZ_PM_OBSERVED_FIXTURE_DIR)/science/cash-heavy-hour/source.json"
-	test -f "$(QZ_PM_FORWARD_FIXTURE_DIR)/source.json"
-	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" QZ_PM_NATIVE_FIXTURE="$(QZ_PM_NATIVE_FIXTURE_DIR)/source.json" QZ_PM_NATIVE_FIXTURE_DIR="$(QZ_PM_NATIVE_FIXTURE_DIR)" QZ_PM_OBSERVED_FIXTURE_DIR="$(QZ_PM_OBSERVED_FIXTURE_DIR)" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" npm --prefix apps/service run test:native
-	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" QZ_PM_NATIVE_FIXTURE="$(QZ_PM_NATIVE_FIXTURE_DIR)/source.json" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" node --experimental-strip-types --test apps/service/test/remote-native.ts
+	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" npm --prefix apps/service run test:native
+	npm --prefix apps/nautilus test
+	node --experimental-strip-types --test apps/research/test/remote-native.test.ts apps/research/test/remote-admission.test.ts apps/research/test/native-scan-recovery.test.ts
 
 # Manual/formal-release science coverage only, on the retained three crates.
 check-native-full:

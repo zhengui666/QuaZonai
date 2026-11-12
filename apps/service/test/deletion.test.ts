@@ -1,19 +1,13 @@
 import { readResearchAdmissions } from '../src/admissions.ts';
-import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import fs from 'node:fs';
 import Fastify from 'fastify';
-import { syncBuiltinESMExports } from 'node:module';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { awaitWithContext } from '@earendil-works/chord/context';
-import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId } from '@earendil-works/pi-durable';
 import type { DeletionReceipt } from '../../../packages/contracts/src/index.ts';
 import { Study, Requests } from '../../research/src/documents.ts';
-import { evaluateTrial } from '../../research/src/trials.ts';
 import { Application, json, observation, portfolio } from '../src/facts.ts';
 import type { ObservationFact } from '../src/facts.ts';
-import { context, setup, studied, built, fauxAssistantMessage, fauxToolCall, wat } from './support.ts';
+import { context, setup, studied, built, fauxAssistantMessage } from './support.ts';
 
 const api = '/api/v3';
 type State = Awaited<ReturnType<typeof setup>>;
@@ -41,7 +35,8 @@ test('factor deletion removes only its owner projection; original ledger, reques
     const before = structuredClone((await state.service.research.harness.snapshot(Study, id, context))!);
     const deleted = await expectReceipt(await remove(state, 'factors', factor.id), 'factor', factor.id);
     assert.deepEqual(await factors(state), []);
-    for (const suffix of ['', '/capacity']) await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}${suffix}`, headers: state.headers }), 404, 'factor_not_found');
+    await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}`, headers: state.headers }), 404, 'factor_not_found');
+    await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}/capacity`, headers: state.headers }), 404, 'not_found');
     const detail = await state.service.app.inject({ url: `${api}/research/${id}`, headers: state.headers });
     assert.equal(detail.statusCode, 200, detail.body); assert.deepEqual(detail.json().factors ?? [], []);
     const after = (await state.service.research.harness.snapshot(Study, id, context))!;
@@ -49,7 +44,7 @@ test('factor deletion removes only its owner projection; original ledger, reques
     assert.equal(after.deletedFactors?.[factor.id], deleted.deletedAt);
     const legacy = { requestId: 'deleted-member-legacy', name: 'Must reject deleted original member', researchIds: [id], datasetId: 'controlled', capital: '1' };
     for (const payload of [legacy, { ...legacy, requestId: 'deleted-member-atomic', researchIds: undefined, factors: [{ factorId: factor.id, weight: '1' }] }]) {
-      await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload }), 409, 'factor_deleted');
+      await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload }), 404, 'not_found');
     }
     await state.restart();
     assert.deepEqual(await factors(state), []);
@@ -82,7 +77,7 @@ test('research deletion hides its factors without erasing admissions or trials a
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: input }), 409, 'research_deleted');
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/research/${id}/resume`, headers: state.headers, payload: { submissionId: receipt.submissionId } }), 409, 'research_deleted');
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers,
-      payload: { requestId: 'deleted-study-consumer', name: 'Reject old research', researchIds: [id], datasetId: 'controlled', capital: '1' } }), 409, 'research_deleted');
+      payload: { requestId: 'deleted-study-consumer', name: 'Reject old research', researchIds: [id], datasetId: 'controlled', capital: '1' } }), 404, 'not_found');
     assert.equal(state.faux.state.callCount, calls);
   } finally { await state.cleanup(); }
 });
@@ -103,9 +98,9 @@ test('portfolio references block member deletion; deleting portfolio retains fro
     assert.deepEqual(stored.native, original.native); assert.deepEqual(stored.target, original.target); assert.deepEqual(stored.view, original.view);
     await state.restart();
     assert.deepEqual((await remove(state, 'portfolios', view.id)).json(), deleted);
-    await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: input }), 409, 'portfolio_deleted');
+    await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: input }), 404, 'not_found');
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
-      payload: { requestId: 'deleted-portfolio-consumer', portfolioId: view.id, mode: 'paper', connectionId: 'not-configured' } }), 404, 'portfolio_not_found');
+      payload: { requestId: 'deleted-portfolio-consumer', portfolioId: view.id, mode: 'paper', connectionId: 'not-configured' } }), 410, 'native_strategy_only');
     await expectReceipt(await remove(state, 'factors', factor.id), 'factor', factor.id);
     await expectReceipt(await remove(state, 'research', id), 'research', id);
   } finally { await state.cleanup(); }
@@ -131,47 +126,21 @@ test('deletes require owner authentication and reject invalid/nonexistent identi
 test('running native submission rejects deletion and remains running until the distinct owner stop completes', { timeout: 15_000 }, async () => {
   const state = await setup();
   let entered!: () => void; const running = new Promise<void>(resolve => { entered = resolve; });
-  const blocker = defineExtension({ name: 'test.deletion-blocker', tools: [defineTool({ name: 'deletion_block', description: 'TEST_ONLY active native submission', parameters: obj({}),
-    async execute(_args, _api, ctx) { entered(); await awaitWithContext(new Promise<void>(() => {}), ctx); return {}; },
-  })] });
+  let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
   try {
-    state.options.extensions.push(blocker); await state.restart();
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('deletion_block', {}), { stopReason: 'toolUse' })]);
+    state.faux.setResponses([async () => { entered(); await released; return fauxAssistantMessage('Released response'); }]);
     const start = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
       payload: { requestId: 'running-deletion', goal: 'Controlled active task', model: state.model, datasetId: 'controlled' } });
     assert.equal(start.statusCode, 202, start.body); const { conversationId } = start.json(); await running;
     await expectError(await remove(state, 'research', conversationId), 409, 'research_delete_tasks_active');
     assert.equal((await state.service.research.state(conversationId)).submission!.status, 'placed');
     assert.equal((await state.service.research.harness.snapshot(Study, conversationId, context))!.deletedAt, undefined);
+    release();
     const stop = await state.service.app.inject({ method: 'POST', url: `${api}/research/${conversationId}/stop`, headers: state.headers });
     assert.equal(stop.statusCode, 202, stop.body);
     await expectReceipt(await remove(state, 'research', conversationId), 'research', conversationId);
-  } finally { await state.cleanup(); }
+  } finally { release(); await state.cleanup(); }
 });
-
-// Suspend only the real filesystem copy, then delete its original source member
-// before the final transaction. This is software admission-race evidence.
-test('portfolio final admission rechecks deletion after its actual catalog capture', async t => {
-  const state = await setup(); let release!: () => void; const resumed = new Promise<void>(resolve => { release = resolve; });
-  let reached!: () => void; const capturing = new Promise<void>(resolve => { reached = resolve; });
-  const originalCp = fs.promises.cp;
-  try {
-    const { receipt } = await studied(state); const id = receipt.conversationId;
-    const mocked = t.mock.method(fs.promises, 'cp', async (...args: Parameters<typeof originalCp>) => {
-      await originalCp(...args); reached(); await resumed;
-    });
-    syncBuiltinESMExports();
-    const admission = state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers,
-      payload: { requestId: 'capture-race', name: 'Original member deleted during capture', researchIds: [id], datasetId: 'controlled', capital: '1' } }).then(value => value);
-    await capturing;
-    await expectReceipt(await remove(state, 'research', id), 'research', id);
-    release(); const rejected = await admission;
-    await expectError(rejected, 409, 'research_deleted');
-    assert.deepEqual((await state.service.work.snapshot())!.portfolios, {});
-    mocked.mock.restore(); syncBuiltinESMExports();
-  } finally { release(); t.mock.restoreAll(); syncBuiltinESMExports(); await state.cleanup(); }
-});
-
 
 test('portfolio deletion preserves stopped observation facts and refuses unresolved account/receipt responsibilities', async () => {
   const state = await setup();
@@ -214,76 +183,45 @@ test('portfolio deletion preserves stopped observation facts and refuses unresol
 });
 
 
-test('observation final admission rechecks a portfolio deleted during the real downstream capability read', async () => {
-  const state = await setup(); const downstream = Fastify(); let offers = 0;
-  let reached!: () => void; const reading = new Promise<void>(resolve => { reached = resolve; });
-  let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
-  downstream.get('/capabilities', () => ({ clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
-    capitalExit: { version: 2, supported: false, readable: true } }));
-  downstream.get('/capital-exits', async () => {
-    reached(); await released;
-    return { clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
-      accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] };
-  });
-  downstream.post('/targets', () => { offers++; return { error: 'must_not_offer_deleted_portfolio' }; });
+test('retired observation admission never reads downstream or posts targets for saved or deleted portfolios', async () => {
+  const state = await setup(); const downstream = Fastify(); let requests = 0;
+  downstream.addHook('onRequest', async () => { requests++; });
+  downstream.get('/capabilities', () => ({ error: 'must_not_read_retired_admission' }));
+  downstream.get('/capital-exits', () => ({ error: 'must_not_read_retired_admission' }));
+  downstream.post('/targets', () => ({ error: 'must_not_offer_retired_portfolio' }));
   try {
     const url = await downstream.listen({ host: '127.0.0.1', port: 0 });
-    state.options.config.connections = [{ id: 'delete-race', name: 'TEST_ONLY read race', mode: 'paper', url, clientId: 'test-client', accountId: 'test-account' }];
+    state.options.config.connections = [{ id: 'delete-race', name: 'TEST_ONLY retired admission', mode: 'paper', url, clientId: 'test-client', accountId: 'test-account' }];
     await state.restart(); const { view } = await built(state);
-    const admission = state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
-      payload: { requestId: 'original-observation-race', portfolioId: view.id, mode: 'paper', connectionId: 'delete-race' } }).then(value => value);
-    await reading; await expectReceipt(await remove(state, 'portfolios', view.id), 'portfolio', view.id);
-    release(); await expectError(await admission, 409, 'portfolio_deleted');
-    assert.deepEqual((await state.service.work.snapshot())!.observations, {}); assert.equal(offers, 0);
-  } finally { release(); await state.cleanup(); await downstream.close(); }
+    for (const deleted of [false, true]) {
+      if (deleted) await expectReceipt(await remove(state, 'portfolios', view.id), 'portfolio', view.id);
+      await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
+        payload: { requestId: `retired-observation-${deleted}`, portfolioId: view.id, mode: 'paper', connectionId: 'delete-race' } }), 410, 'native_strategy_only');
+      assert.deepEqual((await state.service.work.snapshot())!.observations, {});
+      assert.equal(requests, 0, 'Retired creation must not contact any downstream endpoint');
+    }
+  } finally { await state.cleanup(); await downstream.close(); }
 });
 
-
-test('legacy portfolio freezes only its selected trial and does not prevent deletion of an unused trial factor', async () => {
+test('saved portfolio references only its selected trial; unused factors remain deletable without erasing records', async () => {
   const state = await setup();
-  const firstTrial = defineExtension({ name: 'test.unselected-factor', tools: [defineTool({
-    name: 'controlled_unselected_trial', description: 'TEST_ONLY unused original trial', parameters: obj({}), replay: 'safe',
-    async execute(_args, api, ctx) {
-      // Reconstruct the first trial of a pre-review selected-factor fixture.
-      await api.commit(async tx => { delete (await tx.doc(Study, api.conversationId)).input!.policy.reviewPolicies; }, ctx);
-      const study = (await api.snapshot(Study, api.conversationId, ctx))!;
-      await evaluateTrial(api, ctx, { hypothesis: 'Original candidate which is not selected', model: wat }, async () => ({
-        request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }],
-      }));
-      return { output: [{ type: 'text', text: 'Original nonselected trial recorded; no final selection yet.' }] };
-    },
-  })] });
   try {
-    state.options.extensions.push(firstTrial); await state.restart();
-    state.faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('controlled_unselected_trial', {}), { stopReason: 'toolUse' }),
-      fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' }),
-    ]);
-    const started = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
-      payload: { requestId: 'two-trial-dependency', goal: 'Select one of two original protocol candidates', model: state.model, datasetId: 'controlled' } });
-    assert.equal(started.statusCode, 202, started.body);
-    const receipt = started.json();
-    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
-    const study = (await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!;
-    assert.equal(study.trials.length, 2); const [unselected, selected] = study.trials;
-    assert.notEqual(unselected!.taskId, selected!.taskId); assert.equal(study.final!.trialId, selected!.taskId);
-    const allFactors = await factors(state);
-    const unusedId = allFactors.find(item => item.id.includes(`.t${unselected!.taskId}.`))!.id;
-    const selectedId = allFactors.find(item => item.id.includes(`.t${selected!.taskId}.`))!.id;
-    const start = await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers,
-      payload: { requestId: 'selected-original-trial', name: 'Original selected protocol only', researchIds: [receipt.conversationId], datasetId: 'controlled', capital: '1' } });
-    assert.equal(start.statusCode, 202, start.body);
-    const view = start.json(); await state.service.research.harness.waitForTask(view.taskId as TaskId, context);
-    const frozen = structuredClone(await state.service.work.getPortfolio(view.id));
-    assert.equal(frozen.evidence[0]!.selected && (frozen.evidence[0]!.selected as { taskId: number }).taskId, selected!.taskId);
+    const { view } = await built(state); const id = view.researchIds[0] as ConversationId;
+    await state.service.research.harness.commit(async tx => {
+      const study = await tx.doc(Study, id);
+      study.trials.push({ ...study.trials[0]!, taskId: Number(study.trials[0]!.taskId) + 1000 });
+    }, context);
+    const study = (await state.service.research.state(id)).research!;
+    const all = await factors(state);
+    const unusedId = all.find(item => item.id.includes(`.t${study.trials[1]!.taskId}.`))!.id;
+    const selectedId = all.find(item => item.id.includes(`.t${study.trials[0]!.taskId}.`))!.id;
+    const original = structuredClone(await state.service.work.getPortfolio(view.id));
     const deleted = await expectReceipt(await remove(state, 'factors', unusedId), 'factor', unusedId);
     await expectError(await remove(state, 'factors', selectedId), 409, 'factor_delete_portfolio_in_use');
-    assert.deepEqual(await state.service.work.getPortfolio(view.id), frozen);
-    assert.deepEqual((await factors(state)).map(item => item.id), [selectedId]);
+    assert.deepEqual(await state.service.work.getPortfolio(view.id), original);
     await state.restart();
     assert.deepEqual((await remove(state, 'factors', unusedId)).json(), deleted);
     await expectError(await remove(state, 'factors', selectedId), 409, 'factor_delete_portfolio_in_use');
-    assert.deepEqual(await state.service.work.getPortfolio(view.id), frozen);
-    assert.deepEqual((await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!.trials, study.trials);
+    assert.deepEqual((await state.service.research.state(id)).research!.trials, study.trials);
   } finally { await state.cleanup(); }
 });

@@ -10,7 +10,8 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { ResearchIntakeTask } from '../src/intake.ts';
 import { Requests } from '../src/documents.ts';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
+import { openResearch as openCurrentResearch } from '../src/host.ts';
 
 const context = BACKGROUND_CONTEXT;
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; };
@@ -81,7 +82,7 @@ test('a colliding owner request cannot be returned as its own recovery receipt',
 test('close waits for an admitted business command before closing the official intake scheduler', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-intake-close-')); const entered = deferred(); const release = deferred();
   const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider); faux.setResponses([fauxAssistantMessage('Original response')]);
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, authorizeAdmission: async () => { entered.resolve(); await release.promise; } });
+  const host = await openCurrentResearch({ database: join(directory, 'research.sqlite'), models, authorizeAdmission: async () => { entered.resolve(); await release.promise; } });
   const input = { goal: 'Drain one admitted command', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} };
   try {
     const starting = host.start('original-start', input); await entered.promise;

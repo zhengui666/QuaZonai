@@ -16,7 +16,6 @@ import { researchInput } from '../src/input.ts';
 import { LiteratureDoc } from '../src/literature-document.ts';
 import { literatureTools } from '../src/literature-tools.ts';
 import { researchExtension } from '../plugins/research.ts';
-import wasm from '../plugins/factor-wasm.ts';
 
 const context = BACKGROUND_CONTEXT;
 const paper = { id: 'doi:10.0000/test-only', source: 'crossref' as const, title: 'Protocol fixture, not a real paper',
@@ -72,18 +71,18 @@ test('official durable research saves retrieved sources and attributed notes, re
       const saved = JSON.parse(latest(transcript, 'research_literature').text) as LiteratureView;
       assert.equal(saved.searches.length, 1); assert.equal(saved.notes.length, 1);
       assert.equal(saved.notes[0]!.searchId, searchId); assert.equal(saved.notes[0]!.excerpt, note().excerpt);
-      return call('factor_evaluate', { hypothesis: 'Literature still requires an actual scientific trial.', model: '(module)' });
+      return call('research_finish', { reason: 'Literature discussion complete; no scientific result claimed.' });
     },
     call('research_finish', { reason: 'Original single trial exhausted after missing scientific input.' }),
   ]);
-  let host = await openResearch({ ...state, extensions: [extension, wasm] });
+  let host = await openResearch({ ...state, extensions: [extension] });
   try {
     const receipt = await host.start('literature-original', state.input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const saved = await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context);
     assert.equal(searches, 1); assert.equal(saved!.searches.length, 1); assert.equal(saved!.notes.length, 1);
     const facts = (await host.state(receipt.conversationId)).research!;
-    assert.equal(facts.trials.length, 1); assert.equal(facts.trials[0]!.status, 'FAILED');
+    assert.equal(facts.trials.length, 0);
     assert.equal(facts.final!.status, 'STOPPED'); assert.equal(facts.final!.result, null);
     const before = await host.view(receipt.conversationId);
     assert.equal(JSON.stringify(before.entries).includes('HELDOUT_PRIVATE_SENTINEL'), false);
@@ -99,14 +98,14 @@ test('official durable research saves retrieved sources and attributed notes, re
     assert.equal(searches, 1);
     assert.deepEqual(await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context), saved);
     const calls = state.faux.state.callCount;
-    await host.close(); host = await openResearch({ ...state, extensions: [extension, wasm] });
+    await host.close(); host = await openResearch({ ...state, extensions: [extension] });
     assert.deepEqual(await host.start('literature-original', state.input), receipt);
     assert.deepEqual(await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context), saved);
     assert.equal(state.faux.state.callCount, calls); assert.equal(searches, 1);
   } finally { await host.close(); await state.cleanup(); }
 });
 
-test('unavailable literature is retained without blocking or qualifying a scientific attempt', { timeout: 15_000 }, async () => {
+test('unavailable literature is retained without a scientific qualification', { timeout: 15_000 }, async () => {
   const state = await setup(); let searches = 0;
   const extension = researchExtension(async query => { searches++; return { ...result(query), status: 'unavailable', papers: [],
     sources: [{ source: 'crossref', status: 'error', error: 'http_429' }, { source: 'arxiv', status: 'error', error: 'timeout' }] }; });
@@ -116,11 +115,11 @@ test('unavailable literature is retained without blocking or qualifying a scient
     transcript => {
       const receipt = JSON.parse(latest(transcript, 'research_literature_search').text) as LiteratureSearch;
       assert.equal(receipt.status, 'unavailable'); assert.deepEqual(receipt.papers, []);
-      return call('factor_evaluate', { hypothesis: 'Unverified hypothesis; sources unavailable.', model: '(module)' });
+      return call('research_finish', { reason: 'Literature discussion complete; no scientific result claimed.' });
     },
     call('research_finish', { reason: 'Original trial exhausted; missing scientific input.' }),
   ]);
-  const host = await openResearch({ ...state, extensions: [extension, wasm] });
+  const host = await openResearch({ ...state, extensions: [extension] });
   try {
     const receipt = await host.start('unavailable-literature', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
@@ -128,7 +127,7 @@ test('unavailable literature is retained without blocking or qualifying a scient
     const literature = (await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context))!;
     assert.equal(literature.searches.length, 1); assert.equal(literature.searches[0]!.status, 'unavailable'); assert.deepEqual(literature.notes, []);
     const facts = (await host.state(receipt.conversationId)).research!;
-    assert.equal(facts.trials.length, 1); assert.equal(facts.trials[0]!.status, 'FAILED');
+    assert.equal(facts.trials.length, 0);
     assert.equal(facts.final!.status, 'STOPPED'); assert.equal(facts.final!.result, null);
   } finally { await host.close(); await state.cleanup(); }
 });
@@ -238,19 +237,19 @@ test('only frozen owner queries leave private research; model text and out-of-ra
     },
     () => {
       assert.deepEqual(sent, queries); assert.equal(sent.some(query => query.includes('PRIVATE_SENTINEL')), false);
-      return call('factor_evaluate', { hypothesis: 'Original private hypothesis with public literature context.', model: '(module)' });
+      return call('research_finish', { reason: 'Literature discussion complete; no scientific result claimed.' });
     },
     fauxAssistantMessage('The original scientific attempt has no native data; preserve that failed receipt.'),
     fauxAssistantMessage('The same native data gap remains; there is no new scientific evidence.'),
   ]);
-  let host = await openResearch({ ...state, extensions: [extension, wasm] });
+  let host = await openResearch({ ...state, extensions: [extension] });
   try {
     await assert.rejects(host.start('invalid-query-admission', withQueries(['invalid\nquery'])), /research_public_literature_queries_invalid/);
     const receipt = await host.start('frozen-public-queries', input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     assert.deepEqual(sent, queries);
     await assert.rejects(host.start('frozen-public-queries', withQueries(['changed public query'])), /request_id_conflict/);
-    await host.close(); host = await openResearch({ ...state, extensions: [extension, wasm] });
+    await host.close(); host = await openResearch({ ...state, extensions: [extension] });
     assert.deepEqual(await host.start('frozen-public-queries', input), receipt);
     assert.deepEqual((await host.state(receipt.conversationId)).research!.input!.publicLiteratureQueries, queries);
     await assert.rejects(host.start('frozen-public-queries', withQueries([...queries].reverse())), /request_id_conflict/);
@@ -258,7 +257,7 @@ test('only frozen owner queries leave private research; model text and out-of-ra
   } finally { await host.close(); await state.cleanup(); }
 });
 
-test('legacy input without public queries exposes capability absence, keeps old receipts readable and still runs science', { timeout: 15_000 }, async () => {
+test('missing public queries discloses capability absence without scientific claims', { timeout: 15_000 }, async () => {
   const state = await setup(); let requests = 0;
   const extension = researchExtension(async query => { requests++; return result(query); });
   const { publicLiteratureQueries: _queries, ...input } = state.input;
@@ -271,18 +270,18 @@ test('legacy input without public queries exposes capability absence, keeps old 
     transcript => {
       const response = latest(transcript, 'research_literature_search'); assert.equal(response.error, false);
       assert.deepEqual(JSON.parse(response.text), { status: 'unavailable', reason: 'public_queries_not_configured', sources: [], papers: [] });
-      return call('factor_evaluate', { hypothesis: 'No public query configured; retain scientific attempt.', model: '(module)' });
+      return call('research_finish', { reason: 'Literature discussion complete; no scientific result claimed.' });
     },
     call('research_finish', { reason: 'Original scientific attempt exhausted without public queries.' }),
   ]);
-  const host = await openResearch({ ...state, extensions: [extension, wasm] });
+  const host = await openResearch({ ...state, extensions: [extension] });
   try {
     const receipt = await host.start('legacy-no-public-queries', input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     assert.equal(requests, 0);
     assert.equal(await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context), undefined);
     const study = (await host.state(receipt.conversationId)).research!;
-    assert.equal(study.trials.length, 1); assert.equal(study.trials[0]!.status, 'FAILED'); assert.equal(study.final!.status, 'STOPPED');
+    assert.equal(study.trials.length, 0); assert.equal(study.final!.status, 'STOPPED');
     const oldReceipt = { ...result('original historical query'), id: 700 };
     await host.harness.commit(async tx => { (await tx.doc(LiteratureDoc, receipt.conversationId)).searches.push(oldReceipt); }, context);
     state.faux.setResponses([fauxAssistantMessage([

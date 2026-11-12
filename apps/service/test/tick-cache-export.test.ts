@@ -8,8 +8,6 @@ import type { NativeTickFactorRequest } from '../../../packages/contracts/src/ti
 import { exportDataset } from '../src/dataset-export.ts';
 import { readSourceRevision } from '../src/pm-source.ts';
 import { context, fauxAssistantMessage, setup } from './support.ts';
-import factorWasm from '../../research/plugins/factor-wasm.ts';
-import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 
 // Controlled framing/publication only; native numerical cache checks belong to Rust.
 async function preparedCache(target: NativeTickFactorRequest['target'] = { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 }, flow = false, regimes = false, received = false) {
@@ -278,7 +276,7 @@ test('configured research admits the published cache snapshot after producer byt
   const f = await preparedCache(); const state = await setup();
   try {
     const exported = await exportDataset(f.options); await writeFile(f.source, Buffer.alloc(f.bytes.length));
-    state.options.extensions.push(factorWasm, heldoutWasm); state.options.config.datasets = [exported]; await state.restart();
+    state.options.config.datasets = [exported]; await state.restart();
     state.faux.setResponses([fauxAssistantMessage('Controlled snapshot admission only; no numerical result claimed.')]);
     const started = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
       payload: { requestId: 'cohort-snapshot-admission', goal: 'Retain the original published source', datasetId: exported.id, model: state.model } });

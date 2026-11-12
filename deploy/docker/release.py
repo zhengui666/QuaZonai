@@ -38,7 +38,6 @@ def releases() -> dict:
 
 
 def asset_package():
-    # smoke.py reuses bundle() without shipping this CI-only producer to users.
     sys.path.insert(0, str(BUNDLE.parent))
     import package
     return package

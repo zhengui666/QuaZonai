@@ -47,7 +47,6 @@ enum Command {
     Advance(CapitalExitViewV1),
     Available(CapitalExitViewV1),
     TryObsoleteTarget,
-    Observation(Id),
     CancellationProbe(CapitalExitViewV1, Option<QuoteTick>),
     ExpectStaleEvidence(CapitalExitViewV1),
 }
@@ -82,7 +81,7 @@ nautilus_strategy!(FixtureStrategy, {
         self.state.borrow_mut().fills.push(event.clone());
     }
     fn on_order_canceled(&mut self, event: &OrderCanceled) {
-        self.state.borrow_mut().cancels.push(event.clone());
+        self.state.borrow_mut().cancels.push(*event);
     }
 });
 impl FixtureStrategy {
@@ -91,7 +90,6 @@ impl FixtureStrategy {
         self.sequence += 1;
         let sequence = DbCounter::new(self.sequence).unwrap();
         match command {
-            Command::Observation(id) => self.source_observation_id = id,
             Command::Seed => {
                 for (quantity, price, id) in [
                     ("100.00", "0.500", "SEED-HOLDINGS"),

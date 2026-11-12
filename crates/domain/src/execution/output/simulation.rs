@@ -190,7 +190,7 @@ fn shape_mode(value: &NativeSimulationResultV1, observed_hold: bool) -> Result<(
     if let Some(report) = &value.spot_cash_report {
         spot_cash_report::shape(report)?;
     }
-    if value.native_version != "0.68.0"
+    if value.native_version != contracts::portfolio::NAUTILUS_EXECUTION_VERSION
         || value.iterations.get() == 0
         || (value.consumed_target_points.get() == 0 && !observed_hold)
         || value.returns_kind != NativeReturnsKind::PortfolioDaily
@@ -202,7 +202,7 @@ fn shape_mode(value: &NativeSimulationResultV1, observed_hold: bool) -> Result<(
     }
     let mut statistics = BTreeSet::new();
     for stat in &value.statistics {
-        text(&stat.native_key, 1, 200, false)?;
+        text(&stat.native_key, 1, 512, false)?;
         let group = match stat.group {
             NativeStatisticGroup::Pnl => 0,
             NativeStatisticGroup::Returns => 1,
@@ -222,11 +222,17 @@ fn shape_mode(value: &NativeSimulationResultV1, observed_hold: bool) -> Result<(
         {
             return Err(bad("native_output.simulation_statistic"));
         }
-        nullable(
-            stat.value,
-            &stat.reason_code,
-            "NATIVE_STATISTIC_UNAVAILABLE",
-        )?;
+        if !(stat.group == NativeStatisticGroup::Returns
+            && stat.value.is_none()
+            && stat.native_key.contains(" vs ")
+            && super::benchmark_unavailable(stat.reason_code.as_deref()))
+        {
+            nullable(
+                stat.value,
+                &stat.reason_code,
+                "NATIVE_STATISTIC_UNAVAILABLE",
+            )?;
+        }
     }
     if value
         .returns

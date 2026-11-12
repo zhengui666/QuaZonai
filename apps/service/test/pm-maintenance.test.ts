@@ -1,3 +1,4 @@
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import { readResearchAdmissions } from '../src/admissions.ts';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -38,11 +39,9 @@ test('maintenance preserves one monitor/gate epoch across restart and replays co
       schema_version: 1, selection: { event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], maximum_rows: 100 }, parameters: {},
     } };
     await state.restart();
-    const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
-      payload: { requestId: 'maintenance-monitor', goal: 'Preserve original budget-limited campaign', datasetId: 'controlled', model: state.model,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } } });
-    assert.equal(response.statusCode, 202, response.body);
-    const mandateId = response.json().mandate.id;
+    const retained = await retainPmControlRecord(state, { requestId: 'maintenance-monitor', goal: 'Preserve existing account monitor', datasetId: 'controlled', model: state.model,
+      funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } } });
+    const mandateId = retained.mandate.id;
     const record = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[mandateId]!;
     const monitorTaskId = record.monitorTaskId!;
     const denied = await state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/enter', payload: { requestId: 'anonymous' } });

@@ -95,11 +95,11 @@ fn audit_rejects_logged_fill_when_native_cash_posting_was_rolled_back() {
 #[test]
 fn audit_rejects_missing_duplicated_or_unknown_fee_fill_evidence() {
     let (account, pair, fill) = fixture(true);
-    assert!(reconcile(&account, &[], &[pair.clone()], 1, 3).is_err());
+    assert!(reconcile(&account, &[], std::slice::from_ref(&pair), 1, 3).is_err());
     assert!(reconcile(
         &account,
         &[fill.clone(), fill.clone()],
-        &[pair.clone()],
+        std::slice::from_ref(&pair),
         1,
         3
     )

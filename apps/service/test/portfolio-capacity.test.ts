@@ -1,19 +1,32 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withAbortSignal } from '@earendil-works/chord/context';
 import { portfolioCapacity, unavailableCapacity } from '../src/capacity.ts';
-import { Application, json } from '../src/facts.ts';
+import { Application, json, type PortfolioFact } from '../src/facts.ts';
 import { built, context, setup } from './support.ts';
 
 const policy = { participation: '0.0100', maximumAgeSeconds: 120, scenarios: ['10000.000000000000000001', '01000.00', '10000.000000000000000001'] };
+
+// Historical capacity records need their original native inputs explicitly saved;
+// the shared built() helper no longer runs the retired portfolio builder.
+async function retainCapacityInputs(state: Awaited<ReturnType<typeof setup>>, id: string) {
+  const fact = await state.service.work.getPortfolio(id);
+  const catalog = join(state.directory, 'saved-capacity-catalog'); await mkdir(catalog);
+  const retained: PortfolioFact = { ...fact, native: { catalog, simulationRequest: { schema_version: 1, settings: { base_currency: 'USD' } } },
+    view: { ...fact.view, capacity: unavailableCapacity('USD', 'explicit_capacity_policy_missing_or_incompatible') } };
+  await state.service.research.harness.commit(async tx => {
+    (await tx.doc(Application)).portfolios[id] = json(retained);
+  }, context);
+  return retained;
+}
 
 test('portfolio capacity uses only the exact saved native request/catalog and leaves original facts and tasks unchanged', async () => {
   const state = await setup();
   try {
     const { view } = await built(state);
-    const original = await state.service.work.getPortfolio(view.id);
+    const original = await retainCapacityInputs(state, view.id);
     assert.equal(original.view.capacity?.reason, 'explicit_capacity_policy_missing_or_incompatible');
     assert.equal(original.view.capacity?.requestedAssumptions, undefined);
     const before = await state.service.work.snapshot();
@@ -52,7 +65,7 @@ test('old or uncomputed portfolio capacity is explicitly unavailable without rec
   const state = await setup();
   try {
     const { view } = await built(state);
-    const original = await state.service.work.getPortfolio(view.id);
+    const original = await retainCapacityInputs(state, view.id);
     const variants = [
       { status: 'COMPUTED', native: null, reason: 'portfolio_simulation_request_missing' },
       { status: 'COMPUTED', native: { catalog: original.native!.catalog }, reason: 'portfolio_simulation_request_missing' },
@@ -82,7 +95,7 @@ test('portfolio capacity preserves unknown execution errors and cancellation and
   const state = await setup();
   try {
     const { view } = await built(state);
-    const original = await state.service.work.getPortfolio(view.id);
+    const original = await retainCapacityInputs(state, view.id);
     const cwdPath = join(state.directory, 'capacity-cwd.txt'); const script = join(state.directory, 'capacity-error.mjs');
     await writeFile(script, `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(cwdPath)}, process.cwd()); console.error('original private portfolio capacity failure'); process.exit(1);\n`);
     await writeFile(state.options.config.jobBinary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });

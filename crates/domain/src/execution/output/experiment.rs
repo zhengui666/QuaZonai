@@ -13,13 +13,14 @@ pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), Do
     experiment_request(&value.request)?;
     features::artifact_ids(&value.feature_artifact_ids)?;
     crate::control::text(&value.instrument_id, 1, 200, false)?;
-    if value.native_versions
-        != BTreeMap::from([
-            ("nautilus-backtest".into(), "0.68.0".into()),
+    if !super::exact_native_versions(
+        &value.native_versions,
+        &BTreeMap::from([
+            ("nautilus-backtest".into(), "0.69.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
-        ])
-        || value.source_row_count.get() == 0
+        ]),
+    ) || value.source_row_count.get() == 0
         || usize::from(value.feature_count) > MAX_EXPERIMENT_FEATURES
         || value.feature_count == 0
         || value.folds.is_empty()

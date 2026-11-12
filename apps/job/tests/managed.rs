@@ -153,21 +153,9 @@ fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
     let outputs = output_bytes(f);
     // This validator is also used at the independent Store adoption boundary.
     // Exercise it against genuine compiler/engine output, not JSON-shaped mocks.
-    let calibration = match &parameters {
-        NativeTaskParametersV1::EvaluateSealedAlpha {
-            calibration_artifact_id: Some(id),
-            ..
-        } => Some(
-            serde_json::from_slice(
-                &fs::read(f.input.join("objects").join(id.to_string())).unwrap(),
-            )
-            .unwrap(),
-        ),
-        _ => None,
-    };
     domain::execution::output_bindings(
         &parameters,
-        calibration.as_ref(),
+        None,
         f.spec.deadline_at.unwrap() - chrono::Duration::seconds(60),
         chrono::Utc::now(),
         &outputs,
@@ -199,7 +187,7 @@ fn actual_managed_catalog_validation_publishes_native_counts_and_no_pit_claim() 
     attach_catalog(&f, id, catalog.path());
     assert!(execute(&f));
     let report: NativeDataQualityReportV1 = result(&f, "qz.data_quality");
-    assert_eq!(report.native_version, "nautilus-persistence/0.68.0");
+    assert_eq!(report.native_version, "nautilus-persistence/0.69.0");
     assert_eq!(report.datasets[0].row_count.get(), 40);
     assert_eq!(report.datasets[0].instrument_ids.len(), 2);
     assert_eq!(report.datasets[0].dataset_revision_id, id);
@@ -255,7 +243,7 @@ fn sealed_quality_does_not_publish_last_bar_values() {
 }
 
 #[test]
-fn actual_managed_forecast_reads_only_the_bound_model_and_retains_null_warmup() {
+fn retired_managed_forecast_cannot_publish_or_execute() {
     let (catalog, request) = market::market("0.001", 20);
     let dataset_id = Id::new();
     let model = Id::new();
@@ -279,81 +267,18 @@ fn actual_managed_forecast_reads_only_the_bound_model_and_retains_null_warmup() 
     );
     fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
     attach_catalog(&f, dataset_id, catalog.path());
-    assert!(execute(&f));
-    let report: contracts::science::NativeForecastResultV1 = result(&f, "qz.native_forecast");
-    let value = serde_json::to_value(report).unwrap();
-    assert!(value.to_string().contains("INDICATOR_WARMUP"));
-    assert!(value.to_string().contains("LABEL_NOT_COMPLETE"));
+    assert_eq!(
+        job::managed::execute(&f.input, &f.output)
+            .unwrap_err()
+            .to_string(),
+        "NATIVE_RESEARCH_OPERATION_RETIRED"
+    );
+    assert!(!execute(&f));
+    assert!(!f.output.join("index.json").exists());
 }
 
 #[test]
-fn actual_managed_sealed_uses_original_fit_and_rejects_other_partitions() {
-    use contracts::science::NativeAlphaSealedResultV1;
-    for role in [
-        DataPartition::Sealed,
-        DataPartition::Discovery,
-        DataPartition::Validation,
-    ] {
-        let (catalog, request, calibration, wasm) = market::sealed();
-        let dataset_id = Id::new();
-        let model = Id::new();
-        let fitted = Id::new();
-        let bytes = serde_json::to_vec(&calibration).unwrap();
-        let f = fixture(
-            NativeTaskParametersV1::EvaluateSealedAlpha {
-                schema_version: SchemaV1,
-                dataset_revision_id: dataset_id,
-                model_artifact_id: model,
-                calibration_artifact_id: Some(fitted),
-                request: Box::new(request.clone()),
-            },
-            vec![
-                RuntimeInputV1::Dataset {
-                    revision_id: dataset_id,
-                    registered_ref: "synthetic-held-out".into(),
-                    storage_version: "1".into(),
-                    role,
-                },
-                RuntimeInputV1::Artifact {
-                    artifact_id: model,
-                    storage_version: "1".into(),
-                    byte_count: market::count(wasm.len() as u64),
-                    role: ArtifactInputRole::Model,
-                },
-                RuntimeInputV1::Artifact {
-                    artifact_id: fitted,
-                    storage_version: "1".into(),
-                    byte_count: market::count(bytes.len() as u64),
-                    role: ArtifactInputRole::Model,
-                },
-            ],
-        );
-        fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
-        fs::write(f.input.join("objects").join(fitted.to_string()), bytes).unwrap();
-        attach_catalog(&f, dataset_id, catalog.path());
-        if role != DataPartition::Sealed {
-            assert!(!execute(&f));
-            assert!(!f.output.join("index.json").exists());
-            continue;
-        }
-        assert!(execute(&f));
-        let report: NativeAlphaSealedResultV1 = result(&f, "qz.alpha_sealed");
-        domain::execution::check_alpha_sealed(&request, Some(&calibration), &report).unwrap();
-        assert_eq!(report.assets.len(), 2);
-        assert!(report
-            .assets
-            .iter()
-            .all(|asset| asset.observation_count.get() == 21));
-        assert_eq!(
-            report.calibration_source_report_artifact_id,
-            Some(calibration.source_report_artifact_id)
-        );
-    }
-}
-
-#[test]
-fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() {
-    use contracts::science::NativePortfolioStudyResultV1;
+fn retired_managed_study_cannot_publish_or_execute() {
     for (liquidity, infeasible) in [(false, false), (false, true), (true, false), (true, true)] {
         let (catalog, mut request, wasm) = if liquidity {
             market::study_liquidity("10000000", "0.4")
@@ -427,111 +352,14 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
         }
         attach_catalog(&f, dataset, catalog.path());
-        for rejected in [DataPartition::Sealed, DataPartition::Forward] {
-            let mut wrong_role = f.spec.clone();
-            let RuntimeInputV1::Dataset { role, .. } = &mut wrong_role.inputs[0] else {
-                unreachable!()
-            };
-            *role = rejected;
-            assert!(domain::execution::task(&wrong_role, &parameters).is_err());
-        }
-        let mut missing_model = f.spec.clone();
-        missing_model.inputs.remove(1);
-        assert!(domain::execution::task(&missing_model, &parameters).is_err());
-        if liquidity {
-            let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters else {
-                unreachable!()
-            };
-            let mut missing = f.spec.clone();
-            missing.inputs.retain(|i| {
-                !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. }
-                if Some(*artifact_id) == request.mandate.constraints.liquidity_ref)
-            });
-            assert!(domain::execution::task(&missing, &parameters).is_err());
-            let mut missing_calendar = f.spec.clone();
-            missing_calendar.inputs.retain(|i| {
-                !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. }
-                if *artifact_id == request.calendar.as_ref().unwrap().artifact_id)
-            });
-            assert!(domain::execution::task(&missing_calendar, &parameters).is_err());
-        }
-        assert!(execute(&f));
-        let report: NativePortfolioStudyResultV1 = result(&f, "qz.portfolio_study");
-        assert!(report
-            .frames
-            .iter()
-            .all(|frame| frame.bar_notionals.len() == if liquidity { 2 } else { 0 }));
-        let outputs = output_bytes(&f);
-        let index = outputs
-            .iter()
-            .position(|(a, _)| a.schema.name == contracts::portfolio_history::NAME)
-            .unwrap();
-        let batch = contracts::portfolio_history::read(&outputs[index].1).unwrap();
-        assert_eq!(batch.num_rows(), report.frames.len() * 2);
         assert_eq!(
-            batch.column(6).null_count(),
-            if infeasible { batch.num_rows() } else { 0 }
+            job::managed::execute(&f.input, &f.output)
+                .unwrap_err()
+                .to_string(),
+            "NATIVE_RESEARCH_OPERATION_RETIRED"
         );
-        assert_eq!(
-            batch.column(7).null_count(),
-            if infeasible { batch.num_rows() } else { 0 }
-        );
-        let rejects = |outputs: &[(RuntimeOutputV1, Vec<u8>)]| {
-            assert!(domain::execution::output_bindings(
-                &parameters,
-                None,
-                f.spec.deadline_at.unwrap() - chrono::Duration::seconds(60),
-                chrono::Utc::now(),
-                outputs
-            )
-            .is_err());
-        };
-        let mut missing = outputs.clone();
-        missing.remove(index);
-        rejects(&missing);
-        let mut columns = batch.columns().to_vec();
-        columns[6] = std::sync::Arc::new(
-            arrow_array::Decimal128Array::from(vec![
-                Some(123_456_789_012_345_678_i128);
-                batch.num_rows()
-            ])
-            .with_precision_and_scale(38, 18)
-            .unwrap(),
-        );
-        let changed_weights = arrow_array::RecordBatch::try_new(batch.schema(), columns).unwrap();
-        let mut wrong_weights = outputs.clone();
-        wrong_weights[index].1.clear();
-        contracts::portfolio_history::write(&mut wrong_weights[index].1, &changed_weights).unwrap();
-        wrong_weights[index].0.byte_count = market::count(wrong_weights[index].1.len() as u64);
-        rejects(&wrong_weights);
-        let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters else {
-            unreachable!()
-        };
-        let mut changed = report.clone();
-        changed.frames[0].cutoff_ns = market::count(changed.frames[0].cutoff_ns.get() + 1);
-        let batch = contracts::portfolio_history::batch(request, &changed).unwrap();
-        let mut wrong = outputs.clone();
-        wrong[index].1.clear();
-        contracts::portfolio_history::write(&mut wrong[index].1, &batch).unwrap();
-        wrong[index].0.byte_count = market::count(wrong[index].1.len() as u64);
-        rejects(&wrong);
-        let mut truncated = outputs.clone();
-        truncated[index].1.pop();
-        truncated[index].0.byte_count = market::count(truncated[index].1.len() as u64);
-        rejects(&truncated);
-        let mut wrong_media = outputs.clone();
-        wrong_media[index].0.media_type = "application/json".into();
-        rejects(&wrong_media);
-        assert_eq!(report.frames.len(), if infeasible { 1 } else { 3 });
-        assert_eq!(report.simulation.is_none(), infeasible);
-        assert_eq!(report.simulation_request.is_none(), infeasible);
-        if let Some(simulation) = report.simulation {
-            assert_eq!(simulation.consumed_target_points.get(), 3);
-            assert_eq!(
-                simulation.returns_status,
-                contracts::evidence::MetricStatus::Ok
-            );
-        }
+        assert!(!execute(&f));
+        assert!(!f.output.join("index.json").exists());
     }
 }
 
@@ -679,519 +507,16 @@ fn portfolio_fixture(
 }
 
 #[test]
-fn managed_portfolio_plans_from_original_native_one_tick_references() {
-    let mut previous = contracts::DecimalValue::zero();
-    for probability in ["0", "0.5", "1"] {
-        let f = portfolio_fixture(false, |request| {
-            let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill { parameters, .. } =
-                &mut request.execution_settings.fill_model
-            else {
-                unreachable!()
-            };
-            parameters.prob_slippage = probability.parse().unwrap();
-        });
-        assert!(execute(&f));
-        let report: contracts::science::NativePortfolioBuildResultV1 =
-            result(&f, "qz.native_portfolio");
-        assert_eq!(report.slippage_references.is_empty(), probability == "0");
-        let cost = &report.input.assets[0].transaction_cost_rate;
-        if probability != "0" {
-            assert!(cost.as_decimal() > previous.as_decimal());
-            assert_eq!(
-                report.slippage_references[0].close_price,
-                "1.02".parse().unwrap()
-            );
-            assert_eq!(
-                report.slippage_references[0].event_ns,
-                report.input.forecasts.forecast_asof_ns
-            );
-        }
-        previous = cost.clone();
-    }
-}
-
-#[test]
-fn portfolio_requires_unchanged_original_execution_settings() {
-    for case in 0..5 {
-        let mut f = portfolio_fixture(false, |request| {
-            if case == 4 {
-                request.execution_settings.fee_rates[0].taker = "0.01".parse().unwrap();
-                request.assets[0].transaction_cost_rate = "0.01".parse().unwrap();
-            }
-        });
-        let task: NativeTaskParametersV1 = serde_json::from_slice(
-            &fs::read(
-                f.input
-                    .join("objects")
-                    .join(f.spec.parameters_artifact_id.to_string()),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let NativeTaskParametersV1::BuildPortfolio { request, .. } = task else {
-            unreachable!()
-        };
-        let costs_id = request.mandate.constraints.transaction_costs_ref;
-        let path = f.input.join("objects").join(costs_id.to_string());
-        match case {
-            0 => {}
-            1 => {
-                let mut costs = request.execution_settings;
-                let contracts::portfolio::NativeModelRefV1::NautilusDefaultFill {
-                    parameters, ..
-                } = &mut costs.fill_model
-                else {
-                    unreachable!()
-                };
-                parameters.random_seed = market::count(8);
-                let bytes = serde_json::to_vec(&costs).unwrap();
-                fs::write(&path, &bytes).unwrap();
-                for input in &mut f.spec.inputs {
-                    if let RuntimeInputV1::Artifact {
-                        artifact_id,
-                        byte_count,
-                        ..
-                    } = input
-                    {
-                        if *artifact_id == costs_id {
-                            *byte_count = market::count(bytes.len() as u64);
-                        }
-                    }
-                }
-            }
-            2 => {
-                for input in &mut f.spec.inputs {
-                    if let RuntimeInputV1::Artifact {
-                        artifact_id, role, ..
-                    } = input
-                    {
-                        if *artifact_id == costs_id {
-                            *role = ArtifactInputRole::Report;
-                        }
-                    }
-                }
-            }
-            3 => fs::remove_file(&path).unwrap(),
-            _ => {}
-        }
-        fs::write(
-            f.input.join("spec.json"),
-            serde_json::to_vec(&f.spec).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(execute(&f), case == 0, "cost source case {case}");
-        if case != 0 {
-            assert!(!f.output.join("index.json").exists());
-        }
-    }
-}
-
-#[test]
-fn managed_portfolio_uses_original_measured_liquidity_and_rejects_changed_copies() {
-    for case in 0..7 {
-        let mut f = portfolio_fixture(false, |request| {
-            let assumption = contracts::execution_assumptions::BarLiquidityAssumptionV1 {
-                schema_version: SchemaV1,
-                report_artifact_id: Id::new(),
-                maximum_age_seconds: 86400,
-                participation_limit: "0.00001".parse().unwrap(),
-            };
-            request.mandate.constraints.liquidity_ref = Some(assumption.report_artifact_id);
-            request.mandate.constraints.max_participation =
-                Some(assumption.participation_limit.clone());
-            request.bar_liquidity = Some(contracts::science::NativePortfolioLiquidityV1 {
-                schema_version: SchemaV1,
-                assumption,
-                source: NativeDatasetSelectionV1 {
-                    dataset_revision_id: Id::new(),
-                    selection: request.selection.clone(),
-                },
-            });
-        });
-        let path = f
-            .input
-            .join("objects")
-            .join(f.spec.parameters_artifact_id.to_string());
-        let mut task: NativeTaskParametersV1 =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &mut task else {
-            unreachable!()
-        };
-        let binding = request.bar_liquidity.as_mut().unwrap();
-        match case {
-            0 => {}
-            1 => request.assets[0].available_notional = Some("1".parse().unwrap()),
-            2 => binding.source.dataset_revision_id = Id::new(),
-            3 => binding.assumption.maximum_age_seconds = 1,
-            4 => {
-                let report = binding.assumption.report_artifact_id;
-                for input in &mut f.spec.inputs {
-                    if let RuntimeInputV1::Artifact {
-                        artifact_id, role, ..
-                    } = input
-                    {
-                        if *artifact_id == report {
-                            *role = ArtifactInputRole::Report;
-                        }
-                    }
-                }
-            }
-            _ => {
-                let report_path = f
-                    .input
-                    .join("objects")
-                    .join(binding.assumption.report_artifact_id.to_string());
-                let mut report: NativeDataQualityReportV1 =
-                    serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
-                if case == 5 {
-                    report.datasets[0].last_bar_notionals.as_mut().unwrap()[0].notional_value =
-                        "1".parse().unwrap();
-                } else {
-                    report.datasets[0].last_bar_notionals = None;
-                }
-                let bytes = serde_json::to_vec(&report).unwrap();
-                fs::write(report_path, &bytes).unwrap();
-                for input in &mut f.spec.inputs {
-                    if let RuntimeInputV1::Artifact {
-                        artifact_id,
-                        byte_count,
-                        ..
-                    } = input
-                    {
-                        if *artifact_id == binding.assumption.report_artifact_id {
-                            *byte_count = market::count(bytes.len() as u64);
-                        }
-                    }
-                }
-            }
-        }
-        let bytes = serde_json::to_vec(&task).unwrap();
-        fs::write(&path, &bytes).unwrap();
-        for input in &mut f.spec.inputs {
-            if let RuntimeInputV1::Artifact {
-                artifact_id,
-                byte_count,
-                ..
-            } = input
-            {
-                if *artifact_id == f.spec.parameters_artifact_id {
-                    *byte_count = market::count(bytes.len() as u64);
-                }
-            }
-        }
-        fs::write(
-            f.input.join("spec.json"),
-            serde_json::to_vec(&f.spec).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(execute(&f), case == 0, "liquidity case {case}");
-        if case == 0 {
-            let report: contracts::science::NativePortfolioBuildResultV1 =
-                result(&f, "qz.native_portfolio");
-            assert!(report.allocation.targets.is_some());
-            domain::portfolio::allocation_result(&report.input, &report.allocation).unwrap();
-            assert!(report
-                .input
-                .assets
-                .iter()
-                .all(|a| a.available_notional.is_some()));
-        } else {
-            assert!(!f.output.join("index.json").exists());
-        }
-    }
-}
-
-#[test]
-fn managed_build_measures_rolling_policy_and_rejects_unbound_or_expired_inputs() {
-    use contracts::science::{NativePortfolioBuildResultV1, NativeRollingBarLiquidityPolicyV1};
-    for case in 0..6 {
-        let mut f = portfolio_fixture(false, |request| {
-            let policy = NativeRollingBarLiquidityPolicyV1 {
-                schema_version: SchemaV1,
-                maximum_age_seconds: if case == 3 { 1 } else { 3600 },
-                participation_limit: "0.00001".parse().unwrap(),
-            };
-            request.mandate.constraints.liquidity_ref = Some(Id::new());
-            request.mandate.constraints.max_participation =
-                Some(policy.participation_limit.clone());
-            request.rolling_liquidity = Some(policy);
-        });
-        let path = f
-            .input
-            .join("objects")
-            .join(f.spec.parameters_artifact_id.to_string());
-        let mut task: NativeTaskParametersV1 =
-            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &mut task else {
-            unreachable!()
-        };
-        let id = request.mandate.constraints.liquidity_ref.unwrap();
-        let policy_path = f.input.join("objects").join(id.to_string());
-        match case {
-            1 => fs::remove_file(&policy_path).unwrap(),
-            2 => {
-                for input in &mut f.spec.inputs {
-                    if let RuntimeInputV1::Artifact {
-                        artifact_id, role, ..
-                    } = input
-                    {
-                        if *artifact_id == id {
-                            *role = ArtifactInputRole::DataQuality;
-                        }
-                    }
-                }
-            }
-            4 => request.assets[0].available_notional = Some("1".parse().unwrap()),
-            5 => {
-                let mut original = request.rolling_liquidity.clone().unwrap();
-                original.participation_limit = "0.00002".parse().unwrap();
-                fs::write(&policy_path, serde_json::to_vec(&original).unwrap()).unwrap();
-            }
-            _ => {}
-        }
-        if case == 4 {
-            assert!(domain::execution::portfolio_build_request(request).is_err());
-        }
-        fs::write(&path, serde_json::to_vec(&task).unwrap()).unwrap();
-        fs::write(
-            f.input.join("spec.json"),
-            serde_json::to_vec(&f.spec).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(execute(&f), case == 0, "rolling Build case {case}");
-        if case != 0 {
-            assert!(!f.output.join("index.json").exists());
-            continue;
-        }
-        let report: NativePortfolioBuildResultV1 = result(&f, "qz.native_portfolio");
-        assert_eq!(report.bar_notionals.len(), 2);
-        let NativeTaskParametersV1::BuildPortfolio { request, .. } = &task else {
-            unreachable!()
-        };
-        for (asset, value) in report.input.assets.iter().zip(&report.bar_notionals) {
-            assert_eq!(
-                asset.available_notional.as_ref(),
-                Some(&value.notional_value)
-            );
-            assert!(value.notional_value.is_positive());
-        }
-        for changed_field in 0..4 {
-            let mut changed = report.clone();
-            match changed_field {
-                0 => changed.bar_notionals.clear(),
-                1 => changed.bar_notionals[0].notional_value = "0".parse().unwrap(),
-                2 => changed.bar_notionals[0].currency = "EUR".into(),
-                _ => changed.bar_notionals[0].event_ns = DbCounter::ZERO,
-            }
-            assert!(domain::execution::portfolio_build_result(request, &changed).is_err());
-        }
-    }
-}
-
-#[test]
-fn actual_managed_risk_budgeting_preserves_catalog_risk_contributions() {
-    managed_risk_budget(false);
-}
-
-#[test]
-fn actual_managed_cvar_risk_budget_preserves_catalog_and_tail_witness() {
-    managed_risk_budget(true);
-}
-
-fn managed_risk_budget(cvar: bool) {
-    use contracts::portfolio::*;
-    let f = portfolio_fixture(cvar, |r| {
-        r.mandate.objective = AllocationObjective::RiskBudgeting;
-        r.mandate.constraints.max_ex_ante_risk = Some("1".parse().unwrap());
-        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut r.mandate.optimizer else {
-            unreachable!()
-        };
-        if cvar {
-            r.mandate.risk_measure = AllocationRisk::Cvar;
-            parameters.cvar_confidence = Some("0.95".parse().unwrap());
-        }
-        parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
-            schema_version: SchemaV1,
-            risky_gross_exposure: "1".parse().unwrap(),
-            assets: r
-                .assets
-                .iter()
-                .map(|a| RiskBudgetAssetV1 {
-                    instrument_id: a.instrument_id.clone(),
-                    share: "0.5".parse().unwrap(),
-                    sign: RiskBudgetSign::Long,
-                })
-                .collect(),
-        });
-    });
-    assert!(execute(&f));
-    let report: contracts::science::NativePortfolioBuildResultV1 =
-        result(&f, "qz.native_portfolio");
-    assert_eq!(
-        report.allocation.solver_status,
-        SolverStatus::Optimal,
-        "{:?}",
-        report.allocation
-    );
-    domain::portfolio::allocation_result(&report.input, &report.allocation).unwrap();
-    assert_eq!(report.allocation.cvar_risk_budget_witness.is_some(), cvar);
-}
-
-#[test]
-fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasibility() {
+fn retired_managed_build_cannot_publish_or_execute() {
     let f = portfolio_fixture(false, |_| {});
-    assert!(execute(&f));
-    let report: contracts::science::NativePortfolioBuildResultV1 =
-        result(&f, "qz.native_portfolio");
-    assert!(report
-        .allocation
-        .targets
-        .as_ref()
-        .is_some_and(|v| v.len() == 2));
-    assert!(report.consumed_fuel.unwrap().get() > 0);
-    for member in &report.input.forecasts.members {
-        assert_eq!(member.forecasts, vec![0.01, 0.01]);
-    }
-    assert_eq!(report.input.return_history.end_ns.len(), 18);
-    let expected = 1.003_f64 / 1.001_f64 - 1.0;
-    assert!((report.input.return_history.asset_returns[0][0] - expected).abs() < 1e-14);
-    let incompatible = portfolio_fixture(false, |r| r.members[1].alpha_id = r.members[0].alpha_id);
-    assert!(!execute(&incompatible));
-    let bad = portfolio_fixture(false, |r| {
-        r.mandate.constraints.min_cash_weight = "1".parse().unwrap();
-        r.mandate.constraints.max_cash_weight = "1".parse().unwrap();
-    });
-    assert!(execute(&bad));
-    let report: contracts::science::NativePortfolioBuildResultV1 =
-        result(&bad, "qz.native_portfolio");
     assert_eq!(
-        report.allocation.solver_status,
-        contracts::portfolio::SolverStatus::Infeasible
+        job::managed::execute(&f.input, &f.output)
+            .unwrap_err()
+            .to_string(),
+        "NATIVE_RESEARCH_OPERATION_RETIRED"
     );
-    assert!(report.allocation.targets.is_none());
-    assert!(report.allocation.cash_weight.is_none());
-}
-
-#[test]
-fn portfolio_requires_original_current_weights_and_rejects_future_expired_or_mismatched_values() {
-    for case in 0..4 {
-        let f = portfolio_fixture(false, |r| match case {
-            0 => {
-                r.current_weights.available_ns =
-                    market::count(r.selection.decision_cutoff_ns.get() + 1)
-            }
-            1 => r.current_weights.valid_until_ns = r.selection.decision_cutoff_ns,
-            2 => r.current_weights.weights[0].weight = "0.99".parse().unwrap(),
-            _ => r.current_weights.base_currency = "EUR".into(),
-        });
-        assert!(!execute(&f), "invalid frozen weights case {case}");
-    }
-    let mut f = portfolio_fixture(false, |_| {});
-    let id = f
-        .spec
-        .inputs
-        .iter()
-        .find_map(|i| match i {
-            RuntimeInputV1::Artifact {
-                artifact_id,
-                role: ArtifactInputRole::Report,
-                ..
-            } => Some(*artifact_id),
-            _ => None,
-        })
-        .unwrap();
-    // Same declared object identity cannot omit the required original REPORT binding.
-    f.spec.inputs.retain(
-        |i| !matches!(i, RuntimeInputV1::Artifact { artifact_id, .. } if *artifact_id == id),
-    );
-    fs::write(
-        f.input.join("spec.json"),
-        serde_json::to_vec(&f.spec).unwrap(),
-    )
-    .unwrap();
     assert!(!execute(&f));
-    let f = portfolio_fixture(false, |_| {});
-    let id = f
-        .spec
-        .inputs
-        .iter()
-        .find_map(|i| match i {
-            RuntimeInputV1::Artifact {
-                artifact_id,
-                role: ArtifactInputRole::Report,
-                ..
-            } => Some(*artifact_id),
-            _ => None,
-        })
-        .unwrap();
-    let path = f.input.join("objects").join(id.to_string());
-    let raw = fs::read_to_string(&path).unwrap();
-    let changed = raw.replace("USD", "EUR");
-    assert_ne!(raw, changed);
-    assert_eq!(raw.len(), changed.len());
-    fs::write(path, changed).unwrap();
-    assert!(
-        !execute(&f),
-        "same-length original snapshot substitution must fail"
-    );
-}
-
-#[test]
-fn actual_managed_alpha_validation_seals_all_folds_and_never_trains_sealed_or_discovery() {
-    for role in [
-        DataPartition::Validation,
-        DataPartition::Discovery,
-        DataPartition::Sealed,
-    ] {
-        let (catalog, source) = market::market("0", 25);
-        let dataset_id = Id::new();
-        let model = Id::new();
-        let wasm = market::module("local.get 0");
-        let parameters = NativeTaskParametersV1::ValidateAlpha {
-            schema_version: SchemaV1,
-            dataset_revision_id: dataset_id,
-            model_artifact_id: model,
-            request: Box::new(market::alpha_validation_request(&source)),
-        };
-        let mut input = dataset(dataset_id);
-        if let RuntimeInputV1::Dataset {
-            role: input_role, ..
-        } = &mut input
-        {
-            *input_role = role;
-        }
-        let f = fixture(
-            parameters.clone(),
-            vec![
-                input,
-                RuntimeInputV1::Artifact {
-                    artifact_id: model,
-                    storage_version: "1".into(),
-                    byte_count: market::count(wasm.len() as u64),
-                    role: ArtifactInputRole::Model,
-                },
-            ],
-        );
-        fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
-        attach_catalog(&f, dataset_id, catalog.path());
-        let allowed = role == DataPartition::Validation;
-        assert_eq!(
-            domain::execution::task(&f.spec, &parameters).is_ok(),
-            allowed
-        );
-        assert_eq!(execute(&f), allowed);
-        if allowed {
-            let report: contracts::science::NativeAlphaValidationResultV1 =
-                result(&f, "qz.alpha_validation");
-            assert_eq!(report.folds.len(), 6);
-            assert!(report
-                .folds
-                .iter()
-                .all(|fold| fold.source_row_count.get() == 25));
-        } else {
-            assert!(!f.output.join("index.json").exists());
-        }
-    }
+    assert!(!f.output.join("index.json").exists());
 }
 
 #[test]
@@ -1516,143 +841,18 @@ fn portfolio_sequence_binds_every_original_target_and_one_native_account() {
 }
 
 #[test]
-fn original_native_allocation_enters_one_shared_account_without_future_build_rows() {
-    use contracts::science::*;
-    let unsupported = portfolio_fixture(false, |request| {
-        request.execution_settings.account_kind = NativeAccountKind::Cash
-    });
-    assert!(!execute(&unsupported));
-    assert!(!unsupported.output.join("index.json").exists());
-    let cutoff = market::instant(10);
-    let build = portfolio_fixture(false, |request| {
-        // This explicit capital keeps one native lot below the original exposure tolerance.
-        request.mandate.capital_assumption = "10000000".parse().unwrap();
-        request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
-        request.selection.event_end_ns = cutoff;
-        request.selection.decision_cutoff_ns = cutoff;
-        request.current_weights.asof_ns = cutoff;
-        request.current_weights.available_ns = cutoff;
-        request.current_weights.valid_until_ns = market::count(cutoff.get() + 1);
-        // The declared initial hypothesis matches the native account's all-cash start.
-        request.current_weights.cash_weight = "1".parse().unwrap();
-        for (asset, weight) in request
-            .assets
-            .iter_mut()
-            .zip(&mut request.current_weights.weights)
-        {
-            asset.current_weight = "0".parse().unwrap();
-            weight.weight = "0".parse().unwrap();
-        }
-    });
-    assert!(execute(&build));
-    let report: NativePortfolioBuildResultV1 = result(&build, "qz.native_portfolio");
-    assert_eq!(report.input.forecasts.members.len(), 2);
-    assert_ne!(
-        report.input.forecasts.members[0].alpha_id,
-        report.input.forecasts.members[1].alpha_id
-    );
-    assert!(report
-        .input
-        .return_history
-        .available_ns
-        .iter()
-        .all(|time| *time <= cutoff));
-    assert!(report
-        .input
-        .forecasts
-        .members
-        .iter()
-        .all(|member| member.available_ns <= cutoff));
-    let task: NativeTaskParametersV1 = serde_json::from_slice(
-        &fs::read(
-            build
-                .input
-                .join("objects")
-                .join(build.spec.parameters_artifact_id.to_string()),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let NativeTaskParametersV1::BuildPortfolio {
-        dataset_revision_id,
-        request,
-        ..
-    } = task
-    else {
-        unreachable!()
-    };
-    let until = market::count(
-        cutoff.get()
-            + u64::from(request.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000,
-    );
-    let simulation = NativeSimulationRequestV1 {
-        schema_version: SchemaV1,
-        selection: NativeBarSelectionV1 {
-            event_start_ns: cutoff,
-            event_end_ns: until,
-            decision_cutoff_ns: until,
-            ..request.selection.clone()
-        },
-        settings: request.execution_settings.clone(),
-        target_points: vec![NativeTargetPointV1 {
-            schema_version: SchemaV1,
-            rebalance_instrument_ids: None,
-            asof_ns: cutoff,
-            valid_until_ns: until,
-            targets: report.allocation.targets.unwrap(),
-            cash_weight: report.allocation.cash_weight.unwrap(),
-        }],
-    };
-    let mut unsupported = simulation.clone();
-    unsupported.settings.account_kind = NativeAccountKind::Cash;
-    let catalog = build
-        .input
-        .join("catalogs")
-        .join(dataset_revision_id.to_string());
-    let error = job::simulation::simulate(&catalog, &unsupported).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("execution_assumption_account_instrument"));
-    let f = fixture(
+fn native_managed_output_limit_fails_without_a_published_index() {
+    let (catalog, request) = market::market("0.001", 20);
+    let id = Id::new();
+    let mut f = fixture(
         NativeTaskParametersV1::SimulatePortfolio {
             schema_version: SchemaV1,
-            dataset_revision_id,
-            request: Box::new(simulation),
+            dataset_revision_id: id,
+            request: Box::new(request),
         },
-        vec![dataset(dataset_revision_id)],
+        vec![dataset(id)],
     );
-    attach_catalog(
-        &f,
-        dataset_revision_id,
-        &build
-            .input
-            .join("catalogs")
-            .join(dataset_revision_id.to_string()),
-    );
-    assert!(execute(&f));
-    let outcome: NativeSimulationResultV1 = result(&f, "qz.native_simulation");
-    assert_eq!(outcome.consumed_target_points.get(), 1);
-    assert!(outcome.orders.get() > 0);
-    assert_eq!(
-        outcome.canonical_result["accounts"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        outcome.returns_status,
-        contracts::evidence::MetricStatus::InsufficientData
-    );
-    assert!(
-        outcome.returns.is_empty(),
-        "intraday execution is not daily scientific PASS"
-    );
-}
-
-#[test]
-fn native_managed_output_limit_fails_without_a_published_index() {
-    let mut f = portfolio_fixture(false, |_| {});
+    attach_catalog(&f, id, catalog.path());
     f.spec.limits.output_bytes = Some(DbCounter::new(1).unwrap());
     fs::write(
         f.input.join("spec.json"),
@@ -1688,7 +888,7 @@ fn native_compiler_rejects_a_dataset_mount_before_starting_a_compiler() {
 }
 
 #[test]
-fn managed_cross_source_evaluation_publishes_native_bound_fold_evidence() {
+fn retired_managed_cross_source_evaluation_cannot_publish_or_execute() {
     let (catalog, request, parts) = experiment_fixture::fixture(false);
     let dataset_id = Id::new();
     let model_id = Id::new();
@@ -1735,15 +935,9 @@ fn managed_cross_source_evaluation_publishes_native_bound_fold_evidence() {
         fs::write(f.input.join("objects").join(id.to_string()), raw).unwrap();
     }
     attach_catalog(&f, dataset_id, catalog.path());
-    assert!(execute(&f));
-    let report: contracts::science::NativeExperimentEvaluationResultV1 =
-        result(&f, "qz.experiment_evaluation");
-    assert_eq!(report.feature_artifact_ids, feature_ids);
-    assert!(report.folds.len() > 1);
-    assert!(report
-        .folds
-        .iter()
-        .all(|fold| fold.simulation.consumed_target_points.get() == fold.decisions.len() as u64));
+    assert!(!execute(&f));
+    assert!(!f.output.join("index.json").exists());
+    assert_eq!(fs::read_dir(&f.output).unwrap().count(), 0);
 }
 
 #[test]
@@ -1937,4 +1131,23 @@ fn forward_daily_statistics_use_original_reports_and_fixed_native_methods() {
         role: ArtifactInputRole::Report,
     });
     assert!(domain::execution::task(&extra, &parameters).is_err());
+}
+
+#[test]
+fn retired_managed_compilers_reject_before_reading_source() {
+    for parameters in [
+        NativeTaskParametersV1::CompileModel {
+            schema_version: SchemaV1,
+            code_artifact_id: Id::new(),
+        },
+        NativeTaskParametersV1::CompileFeatureModel {
+            schema_version: SchemaV1,
+            code_artifact_id: Id::new(),
+        },
+    ] {
+        let f = fixture(parameters, vec![]);
+        let error = job::managed::execute(&f.input, &f.output).unwrap_err();
+        assert_eq!(error.to_string(), "NATIVE_RESEARCH_OPERATION_RETIRED");
+        assert_eq!(fs::read_dir(&f.output).unwrap().count(), 0);
+    }
 }

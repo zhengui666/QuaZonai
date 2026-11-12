@@ -5,15 +5,12 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CapacityReport, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
-import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { classifyExecutionError } from '../../research/src/execution-errors.ts';
-import { replayCatalog, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
-import { executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 import type { ServiceConfig } from './config.ts';
 import { json, object } from './facts.ts';
 import type { PortfolioFact } from './facts.ts';
-import { readFactor } from './factors.ts';
 
 type Assumptions = NonNullable<ResearchSpecification['capital']>;
 export function unavailableCapacity(currency: string, reason: string, scope = 'portfolio', policy?: Assumptions): CapacityReport {
@@ -67,25 +64,4 @@ export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConf
     const report = await assessCapacity(scienceTarget(config), catalog, simulation, assumptions, directory, context);
     return { ...report, scope: id };
   } finally { await rm(directory, { recursive: true, force: true }); }
-}
-export async function factorCapacity(host: ResearchHost, config: ServiceConfig, id: string, context: Context, assumptions?: Assumptions): Promise<CapacityReport> {
-  const { view, study, specification } = await readFactor(host, id);
-  const capital = assumptions ?? specification?.capital;
-  if (!view.combinable) return unavailableCapacity(view.currency ?? '', view.reason ?? 'independent_evidence_missing', id, capital);
-  if (!capital) return unavailableCapacity(view.currency ?? '', 'explicit_capacity_policy_missing', id);
-  const selected = study.trials.find(trial => trial.taskId === view.trialId)!;
-  const proposal = object(selected.proposal); const input = study.input!;
-  const result = object(study.final!.result); const request = object(result.request);
-  const directory = await mkdtemp(join(config.dataDir, 'capacity-'));
-  try {
-    const catalog = input.data.sealed ? replayCatalog(input.data, request) : String(input.data.catalog);
-    const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy));
-    const targets = await forecastMembers(scienceTarget(config), catalog, strategyMembers(proposal), request, policy, view.currency!, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
-    const simulation = { schema_version: 1, selection: targets.selection, settings: policy.simulationSettings, target_points: targets.points };
-    const report = await assessCapacity(scienceTarget(config), catalog, simulation, capital, directory, context);
-    return { ...report, scope: id };
-  } catch (error) {
-    return capacityFailure(error, view.currency ?? '', id, capital);
-  }
-  finally { await rm(directory, { recursive: true, force: true }); }
 }

@@ -295,6 +295,7 @@ async fn setup_plan(
             dataset_revision_id: data.discovery,
             settlement_rule_ref: "controlled-spot-settlement".into(),
             settings: NativeSimulationSettingsV1 {
+                price_benchmark: None,
                 multi_currency_spot_cash: None,
                 schema_version: SchemaV1,
                 base_currency: "USD".into(),

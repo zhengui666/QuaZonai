@@ -95,14 +95,14 @@ pub fn policy(
 
 pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainError> {
     let versions = BTreeMap::from([
-        ("nautilus-indicators".into(), "0.68.0".into()),
-        ("nautilus-persistence".into(), "0.68.0".into()),
+        ("nautilus-indicators".into(), "0.69.0".into()),
+        ("nautilus-persistence".into(), "0.69.0".into()),
         ("wasmi".into(), "2.0.0".into()),
         ("solow-cv".into(), "0.7.3".into()),
         ("linregress".into(), "0.5.4".into()),
         ("ndarray-stats".into(), "0.7.0".into()),
     ]);
-    if value.native_versions != versions
+    if !super::exact_native_versions(&value.native_versions, &versions)
         || value.folds.is_empty()
         || value.consumed_fuel == Some(contracts::DbCounter::ZERO)
     {

@@ -1,4 +1,4 @@
-//! Apply frozen targets in one native Nautilus simulated account.
+//! Apply explicit frozen target instructions in one Nautilus account.
 use crate::catalog::{load_catalog, NativeMarketData};
 pub use crate::fee_models::FillFeeFailure;
 use anyhow::{ensure, Result};
@@ -70,16 +70,13 @@ pub(crate) struct ReplayStatus {
     order_rejection: Option<String>,
     order_denial: Option<String>,
     submitted_after_ns: u64,
-    study_infeasible: bool,
     settled_replay_ns: Option<u64>,
-    frames: Vec<NativePortfolioStudyFrameV1>,
     spot_fills: Vec<OrderFilled>,
 }
 
 impl ReplayStatus {
     fn replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
-        self.failure.is_none()
-            && (self.study_infeasible || (data_complete && self.consumed == expected_targets))
+        self.failure.is_none() && data_complete && self.consumed == expected_targets
     }
 
     fn record_callback_error(&mut self, error: anyhow::Error) {
@@ -115,26 +112,12 @@ impl ReplayStatus {
     }
 }
 
-pub(crate) struct StudyInput {
-    pub cutoff_ns: DbCounter,
-    pub input: contracts::portfolio::AllocationInputV1,
-    pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
-    pub bar_notionals: Vec<contracts::execution::NativeBarNotionalV1>,
-    pub liquidity_maximum_age: Option<u32>,
-}
-
 pub(crate) struct TargetReplay {
     core: StrategyCore,
     instruments: Vec<InstrumentAny>,
     bar_types: Vec<BarType>,
     latest: BTreeMap<InstrumentId, Bar>,
     points: Vec<NativeTargetPointV1>,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
     settings: NativeSimulationSettingsV1,
     spot_cash: Option<crate::spot_cash_capture::SpotCashCaptureHandle>,
     currency: Currency,
@@ -291,7 +274,7 @@ impl TargetReplay {
             .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
         let finished =
             status.replay_terminal(data_complete, self.points.len()) && self.orders_settled();
-        if finished && !status.study_infeasible {
+        if finished {
             status
                 .settled_replay_ns
                 .get_or_insert_with(|| self.clock().timestamp_ns().as_u64());
@@ -366,9 +349,6 @@ impl TargetReplay {
     }
 
     fn apply_bar(&mut self, bar: &Bar, receipt_ns: u64) -> Result<()> {
-        if self.status.borrow().study_infeasible {
-            return Ok(());
-        }
         ensure!(
             self.status.borrow().failure.is_none(),
             "SIMULATION_ALREADY_FAILED"
@@ -474,94 +454,8 @@ impl TargetReplay {
         ensure!(equity > Decimal::ZERO, "SIMULATION_NONPOSITIVE_EQUITY");
         // Most BARs only establish readiness. Own the target only once the
         // complete decision can use settled positions and native equity.
-        let mut point = point.clone();
+        let point = point.clone();
 
-        if let Some(planned) = self.study_inputs.get(next) {
-            let mut input = planned.input.clone();
-            input.forecasts.decision_asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
-            if let Some(age) = planned.liquidity_maximum_age {
-                domain::portfolio::bar_liquidity_age(
-                    &planned.bar_notionals,
-                    &input.base_currency,
-                    age,
-                    input.forecasts.decision_asof_ns,
-                )?;
-            }
-            input.capital_assumption = equity.to_string().parse().map_err(anyhow::Error::msg)?;
-            let mut cash = Decimal::ONE;
-            for (asset, instrument) in input.assets.iter_mut().zip(&self.instruments) {
-                let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
-                let notional = checked(
-                    checked(
-                        crate::spot_cash_runtime::inventory_quantity(
-                            spot_snapshot.as_ref(),
-                            instrument,
-                            || self.portfolio().net_position(&instrument.id()),
-                        )?
-                        .checked_mul(price),
-                    )?
-                    .checked_mul(instrument.multiplier().as_decimal()),
-                )?;
-                let weight = checked(notional.checked_div(equity))?.round_dp(18);
-                cash = checked(cash.checked_sub(weight))?;
-                asset.current_weight = weight.to_string().parse().map_err(anyhow::Error::msg)?;
-            }
-            input.current_cash_weight = cash.to_string().parse().map_err(anyhow::Error::msg)?;
-            let allocation = crate::allocate(&input)?;
-            domain::portfolio::allocation_result(&input, &allocation)?;
-            let targets = allocation.targets.clone();
-            let cash = allocation.cash_weight.clone();
-            self.status
-                .borrow_mut()
-                .frames
-                .push(NativePortfolioStudyFrameV1 {
-                    cutoff_ns: planned.cutoff_ns,
-                    input,
-                    allocation,
-                    slippage_references: planned.slippage.clone(),
-                    bar_notionals: planned.bar_notionals.clone(),
-                });
-            let (Some(targets), Some(cash)) = (targets, cash) else {
-                self.status.borrow_mut().study_infeasible = true;
-                return Ok(());
-            };
-            point.targets = targets;
-            point.cash_weight = cash;
-            point.asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
-            validate_point(&self.settings, &point, &self.instruments)?;
-        }
-        if let Some((constraints, currency, tolerance)) = &self.strategy_constraints {
-            let current = self
-                .instruments
-                .iter()
-                .map(|instrument| {
-                    let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
-                    let notional = checked(
-                        checked(
-                            crate::spot_cash_runtime::inventory_quantity(
-                                spot_snapshot.as_ref(),
-                                instrument,
-                                || self.portfolio().net_position(&instrument.id()),
-                            )?
-                            .checked_mul(price),
-                        )?
-                        .checked_mul(instrument.multiplier().as_decimal()),
-                    )?;
-                    checked(notional.checked_div(equity))?
-                        .round_dp(18)
-                        .to_string()
-                        .parse()
-                        .map_err(anyhow::Error::msg)
-                })
-                .collect::<Result<Vec<DecimalValue>>>()?;
-            domain::execution::strategy::target_bounds(
-                constraints,
-                currency,
-                tolerance,
-                &point,
-                &current,
-            )?;
-        }
         let mut reductions = Vec::<OrderAny>::new();
         let mut increases = Vec::<OrderAny>::new();
         for (instrument, target) in self.instruments.iter().zip(&point.targets) {
@@ -888,6 +782,7 @@ fn portfolio_return_analysis(
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     let period = 252;
+    crate::performance::register_tail_risk(&mut analyzer, period);
     analyzer.register_statistic(Arc::new(CAGR::new(Some(period))));
 
     analyzer.set_portfolio_returns_from_snapshots(&account_ids, &snapshots);
@@ -933,39 +828,7 @@ pub fn simulate(
     root: &Path,
     request: &NativeSimulationRequestV1,
 ) -> Result<NativeSimulationResultV1> {
-    run(root, request, Vec::new())?
-        .0
-        .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
-}
-
-pub(crate) fn run(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
-    run_with_strategy(root, request, study_inputs, None)
-}
-
-pub fn simulate_strategy(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    mandate: &contracts::strategy_portfolio::StrategyMandateContentV1,
-) -> Result<NativeSimulationResultV1> {
-    run_with_strategy(
-        root,
-        request,
-        Vec::new(),
-        Some((
-            mandate.constraints.clone(),
-            mandate.base_currency.clone(),
-            mandate.exposure_tolerance.clone(),
-        )),
-    )?
-    .0
-    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+    run_with_strategy_and_spot(root, request, None)
 }
 
 /// Explicit research-candidate entry. Source rows must come from the trusted
@@ -981,16 +844,12 @@ pub fn simulate_spot_cash_candidate(
     run_with_strategy_and_spot(
         root,
         request,
-        Vec::new(),
-        None,
         Some(crate::spot_cash_runtime::SpotReplayInputs {
             dataset_revision_id,
             closed_rows,
             observed_start: None,
         }),
-    )?
-    .0
-    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+    )
 }
 
 /// Explicit observed-inventory runner. Empty points mean no submitted orders,
@@ -1001,11 +860,7 @@ pub(crate) fn run_observed_spot(
     dataset_revision_id: contracts::Id,
     closed_rows: Vec<crate::spot_cash_capture::ClosedBarSourceRow>,
     initial_state: &contracts::observed_spot::NativeObservedSpotStartV1,
-    study_inputs: Vec<StudyInput>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
+) -> Result<NativeSimulationResultV1> {
     domain::observed_spot::starting_balances(
         initial_state,
         &request.settings,
@@ -1015,8 +870,6 @@ pub(crate) fn run_observed_spot(
     run_with_strategy_and_spot(
         root,
         request,
-        study_inputs,
-        None,
         Some(crate::spot_cash_runtime::SpotReplayInputs {
             dataset_revision_id,
             closed_rows,
@@ -1025,42 +878,13 @@ pub(crate) fn run_observed_spot(
     )
 }
 
-fn run_with_strategy(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
-    run_with_strategy_and_spot(root, request, study_inputs, strategy_constraints, None)
-}
-
 fn run_with_strategy_and_spot(
     root: &Path,
     request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
     mut spot_inputs: Option<crate::spot_cash_runtime::SpotReplayInputs>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
+) -> Result<NativeSimulationResultV1> {
     ensure!(
-        study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
-        "STUDY_FRAME_COUNT"
-    );
-    ensure!(
-        (study_inputs.is_empty() && strategy_constraints.is_none() && spot_inputs.is_none())
+        spot_inputs.is_none()
             || request
                 .target_points
                 .iter()
@@ -1086,7 +910,7 @@ fn run_with_strategy_and_spot(
         .then(|| crate::spot_cash_runtime::execution_horizon(request))
         .transpose()?;
     let wake_order_arrivals = scoped_replay || is_spot;
-    let market = if !request.target_points.is_empty()
+    let mut market = if !request.target_points.is_empty()
         && request
             .target_points
             .iter()
@@ -1140,6 +964,23 @@ fn run_with_strategy_and_spot(
             "OBSERVED_SPOT_UNVALUED_CURRENCY"
         );
     }
+    let first_event = market
+        .series
+        .iter()
+        .flat_map(|series| &series.bars)
+        .map(|bar| bar.ts_init)
+        .min()
+        .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+    let bar_ends = market.series.iter().flat_map(|series| &series.bars).fold(
+        BTreeMap::<InstrumentId, u64>::new(),
+        |mut ends, bar| {
+            let time = bar.ts_init.as_u64();
+            ends.entry(bar.bar_type.instrument_id())
+                .and_modify(|end| *end = (*end).max(time))
+                .or_insert(time);
+            ends
+        },
+    );
     let status = Rc::new(RefCell::new(ReplayStatus::default()));
     let mut strategy = TargetReplay {
         core: StrategyCore::new_checked(
@@ -1159,8 +1000,6 @@ fn run_with_strategy_and_spot(
             .collect(),
         latest: BTreeMap::new(),
         points: request.target_points.clone(),
-        study_inputs,
-        strategy_constraints,
         settings: request.settings.clone(),
         spot_cash: None,
         currency,
@@ -1175,18 +1014,7 @@ fn run_with_strategy_and_spot(
         outstanding_orders: BTreeSet::new(),
         // Every selected series must deliver its own final real BAR before
         // shutdown, even when the markets' observation clocks differ.
-        replay_bar_ends: wake_order_arrivals.then(|| {
-            market.series.iter().flat_map(|series| &series.bars).fold(
-                BTreeMap::<InstrumentId, u64>::new(),
-                |mut ends, bar| {
-                    let time = bar.ts_init.as_u64();
-                    ends.entry(bar.bar_type.instrument_id())
-                        .and_modify(|end| *end = (*end).max(time))
-                        .or_insert(time);
-                    ends
-                },
-            )
-        }),
+        replay_bar_ends: wake_order_arrivals.then(|| bar_ends.clone()),
         status: status.clone(),
     };
     let config = BacktestEngineConfig {
@@ -1210,20 +1038,11 @@ fn run_with_strategy_and_spot(
         ..BacktestEngineConfig::default()
     };
     let mut engine = BacktestEngine::new(config)?;
+    let fill_fees = crate::fee_models::FillFeeObserver::default();
     let live_progress = crate::live_progress::LiveProgress::attach();
-    let result = (|| -> Result<Option<NativeSimulationResultV1>> {
+    let result = (|| -> Result<NativeSimulationResultV1> {
         let settings = &request.settings;
-        let fill_fees = crate::fee_models::FillFeeObserver::default();
 
-        let fee = if is_spot {
-            crate::spot_cash_runtime::fee_model(request, &market)?
-        } else {
-            crate::fee_models::catalog_fees::fee_model(
-                &market,
-                settings,
-                engine.kernel().clock.clone(),
-            )?
-        };
         let default_fill = DefaultFillModel::new(
             fill.prob_fill_on_limit
                 .as_decimal()
@@ -1236,61 +1055,65 @@ fn run_with_strategy_and_spot(
             Some(fill.random_seed.get()),
         )?;
         let fill_model = FillModelHandle::new(default_fill);
-        engine.add_venue(
-            SimulatedVenueConfig::builder()
-                .venue(venue)
-                .oms_type(OmsType::Netting)
-                .account_type(match settings.account_kind {
-                    NativeAccountKind::Cash => AccountType::Cash,
-                    NativeAccountKind::Margin => AccountType::Margin,
-                })
-                .book_type(BookType::L1_MBP)
-                .maybe_base_currency((!is_spot).then_some(currency))
-                .allow_cash_borrowing(false)
-                .starting_balances(if let Some(balances) = &observed_balances {
-                    balances
-                        .iter()
-                        .map(|balance| {
-                            Money::from_str_exact(&format!(
-                                "{} {}",
-                                balance.amount.as_decimal().to_plain_string(),
-                                balance.currency
-                            ))
-                            .map_err(anyhow::Error::msg)
-                        })
-                        .collect::<Result<Vec<_>>>()?
-                } else {
-                    vec![Money::from_str_exact(&format!(
-                        "{} {}",
-                        settings.starting_capital.as_decimal().to_plain_string(),
-                        settings.base_currency
-                    ))
-                    .map_err(anyhow::Error::msg)?]
-                })
-                .default_leverage(native_decimal(&settings.leverage)?)
-                // Every fee model can fail at the actual fill, including a
-                // delayed fill after a frozen maker/taker policy has expired.
-                // Preserve that original cause before native shutdown or the
-                // generic unsettled-order checks can obscure it.
-                .fee_model(fill_fees.wrap(fee))
-                .fill_model(fill_model)
-                .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
-                    DurationNanos::new(latency.base_latency_ns.get()),
-                    DurationNanos::new(latency.insert_latency_ns.get()),
-                    DurationNanos::new(latency.update_latency_ns.get()),
-                    DurationNanos::new(latency.cancel_latency_ns.get()),
-                )))
-                .bar_execution(true)
-                .liquidity_consumption(true)
-                .build()?,
-        )?;
-        let first_event = market
-            .series
-            .iter()
-            .flat_map(|series| &series.bars)
-            .map(|bar| bar.ts_init)
-            .min()
-            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+        {
+            let fee = if is_spot {
+                crate::spot_cash_runtime::fee_model(request, &market)?
+            } else {
+                crate::fee_models::catalog_fees::fee_model(
+                    &market,
+                    settings,
+                    engine.kernel().clock.clone(),
+                )?
+            };
+            engine.add_venue(
+                SimulatedVenueConfig::builder()
+                    .venue(venue)
+                    .oms_type(OmsType::Netting)
+                    .account_type(match settings.account_kind {
+                        NativeAccountKind::Cash => AccountType::Cash,
+                        NativeAccountKind::Margin => AccountType::Margin,
+                    })
+                    .book_type(BookType::L1_MBP)
+                    .maybe_base_currency((!is_spot).then_some(currency))
+                    .allow_cash_borrowing(false)
+                    .starting_balances(if let Some(balances) = &observed_balances {
+                        balances
+                            .iter()
+                            .map(|balance| {
+                                Money::from_str_exact(&format!(
+                                    "{} {}",
+                                    balance.amount.as_decimal().to_plain_string(),
+                                    balance.currency
+                                ))
+                                .map_err(anyhow::Error::msg)
+                            })
+                            .collect::<Result<Vec<_>>>()?
+                    } else {
+                        vec![Money::from_str_exact(&format!(
+                            "{} {}",
+                            settings.starting_capital.as_decimal().to_plain_string(),
+                            settings.base_currency
+                        ))
+                        .map_err(anyhow::Error::msg)?]
+                    })
+                    .default_leverage(native_decimal(&settings.leverage)?)
+                    // Every fee model can fail at the actual fill, including a
+                    // delayed fill after a frozen maker/taker policy has expired.
+                    // Preserve that original cause before native shutdown or the
+                    // generic unsettled-order checks can obscure it.
+                    .fee_model(fill_fees.wrap(fee))
+                    .fill_model(fill_model)
+                    .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
+                        DurationNanos::new(latency.base_latency_ns.get()),
+                        DurationNanos::new(latency.insert_latency_ns.get()),
+                        DurationNanos::new(latency.update_latency_ns.get()),
+                        DurationNanos::new(latency.cancel_latency_ns.get()),
+                    )))
+                    .bar_execution(true)
+                    .liquidity_consumption(true)
+                    .build()?,
+            )?;
+        }
         ensure!(
             market
                 .series
@@ -1320,7 +1143,7 @@ fn run_with_strategy_and_spot(
             None
         };
         engine.add_strategy(strategy)?;
-        for series in market.series {
+        for series in &mut market.series {
             // Native replay merges these streams by receive time and retains
             // insertion priority on ties, matching the original series order.
             // Scoped selections may legitimately have an empty asset series.
@@ -1328,8 +1151,7 @@ fn run_with_strategy_and_spot(
                 // Frozen source evidence keeps INTERNAL/RightOpen semantics.
                 // The consuming native engine requires explicitly external
                 // delivery with a closed event label; no quote/trade is invented.
-                let bars = series
-                    .bars
+                let bars = std::mem::take(&mut series.bars)
                     .into_iter()
                     .map(crate::catalog::runtime_bar)
                     .collect::<Result<Vec<_>>>()?;
@@ -1354,14 +1176,12 @@ fn run_with_strategy_and_spot(
         status.borrow_mut().finish_run(native_result)?;
 
         let observed = status.borrow();
-        if observed.study_infeasible {
-            return Ok(None);
-        }
+        let expected_targets = request.target_points.len();
         ensure!(
-            observed.consumed == request.target_points.len(),
+            observed.consumed == expected_targets,
             "NATIVE_TARGETS_NOT_CONSUMED: consumed={} expected={}",
             observed.consumed,
-            request.target_points.len()
+            expected_targets
         );
         let native = engine.get_result();
         ensure!(
@@ -1369,7 +1189,7 @@ fn run_with_strategy_and_spot(
                 && native.summary.get("orders.inflight").map(String::as_str) == Some("0"),
             "NATIVE_ORDERS_NOT_SETTLED"
         );
-        let spot_cash_report = if let Some(capture) = spot_capture.take() {
+        let mut spot_cash_report = if let Some(capture) = spot_capture.take() {
             let tape = capture.finish(&engine)?;
             Some(crate::spot_cash_runtime::finish_report(
                 &engine,
@@ -1420,13 +1240,86 @@ fn run_with_strategy_and_spot(
                 if is_spot {
                     Default::default()
                 } else {
-                    daily.get_performance_stats_returns()
+                    daily.get_performance_stats_portfolio_returns()
                 },
             ),
             (NativeStatisticGroup::General, native.stats_general),
         ] {
             for (key, value) in values {
-                statistics.push(statistic(group, key, None, value));
+                let mut entry = statistic(group, key, None, value);
+                if group == NativeStatisticGroup::Returns && !fully_priced {
+                    entry.value = None;
+                    entry.reason_code = Some("NATIVE_STATISTIC_UNAVAILABLE".into());
+                }
+                statistics.push(entry);
+            }
+        }
+        if let Some(benchmark) = &request.settings.price_benchmark {
+            if let Some(report) = &mut spot_cash_report {
+                let days = report
+                    .daily_returns
+                    .days
+                    .iter()
+                    .map(|d| {
+                        (
+                            d.day_start_ns.get(),
+                            d.day_end_ns.get(),
+                            if d.reason.is_none() { d.value } else { None },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                report
+                    .statistics
+                    .extend(crate::performance::versus_catalog_price(
+                        root,
+                        benchmark,
+                        &request.selection,
+                        &report.daily_returns.report_currency,
+                        usize::from(report.daily_returns.annualization_days),
+                        &days,
+                    ));
+                report
+                    .statistics
+                    .sort_by(|a, b| a.native_key.cmp(&b.native_key));
+            } else {
+                let accounts = engine.kernel().cache.borrow().accounts_all_owned();
+                let snapshots = engine
+                    .kernel()
+                    .portfolio
+                    .borrow()
+                    .snapshots(&accounts[0].id());
+                let boundaries: std::collections::BTreeSet<_> =
+                    snapshots.iter().map(|s| s.ts_event.as_u64()).collect();
+                let days = daily
+                    .portfolio_returns()
+                    .iter()
+                    .map(|(time, value)| {
+                        let start = time.as_u64();
+                        let end = start.saturating_add(86_400_000_000_000);
+                        (
+                            start,
+                            end,
+                            (fully_priced
+                                && boundaries.contains(&start)
+                                && boundaries.contains(&end))
+                            .then_some(*value),
+                        )
+                    })
+                    // Partial start/end calendar days are not part of the
+                    // complete UTC daily comparison window.
+                    .filter(|(start, end, _)| {
+                        *start >= request.selection.event_start_ns.get()
+                            && *end <= request.selection.event_end_ns.get()
+                    })
+                    .collect::<Vec<_>>();
+                statistics.extend(crate::performance::versus_catalog_price(
+                    root,
+                    benchmark,
+                    &request.selection,
+                    &request.settings.base_currency,
+                    252,
+                    &days,
+                ));
             }
         }
         statistics.sort_by(|a, b| (&a.native_key, &a.currency).cmp(&(&b.native_key, &b.currency)));
@@ -1458,7 +1351,7 @@ fn run_with_strategy_and_spot(
         if let Some(evidence) = projected_bar_evidence {
             summary.insert("qz.source_runtime_bar_projection".into(), evidence);
         }
-        Ok(Some(NativeSimulationResultV1 {
+        Ok(NativeSimulationResultV1 {
             settled_replay_ns: observed
                 .settled_replay_ns
                 .map(DbCounter::new)
@@ -1479,12 +1372,11 @@ fn run_with_strategy_and_spot(
             returns_reason,
             returns,
             canonical_result: engine.get_canonical_result()?.as_value().clone(),
-        }))
+        })
     })();
     drop(live_progress);
     engine.dispose();
-    let frames = std::mem::take(&mut status.borrow_mut().frames);
-    Ok((result?, frames))
+    result
 }
 
 #[cfg(test)]
@@ -1630,17 +1522,14 @@ mod replay_error_tests {
     }
 
     #[test]
-    fn replay_infeasible_study_is_terminal_without_consuming_future_targets() {
+    fn replay_is_terminal_only_after_all_data_and_targets_are_consumed() {
         let mut status = ReplayStatus::default();
         assert!(!status.replay_terminal(false, 1));
         assert!(!status.replay_terminal(true, 1));
-        status.study_infeasible = true;
-        assert!(status.replay_terminal(false, 1));
         assert_eq!(status.consumed, 0);
         status.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
         assert!(!status.replay_terminal(false, 1));
         status.failure = None;
-        status.study_infeasible = false;
         status.consumed = 1;
         assert!(!status.replay_terminal(false, 1));
         assert!(status.replay_terminal(true, 1));

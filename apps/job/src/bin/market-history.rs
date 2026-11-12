@@ -37,6 +37,22 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Convert an existing published-hour source into a new native L2 catalog, preserving both clocks.
+    PublishedBooks {
+        /// Exact official instrument ID from the source definitions; repeat to select several. Omit for all.
+        #[arg(long = "instrument-id")]
+        instrument_ids: Vec<InstrumentId>,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Inclusive original provider-receipt timestamp, nanoseconds.
+        #[arg(long)]
+        available_start_ns: u64,
+        /// Exclusive original provider-receipt timestamp, nanoseconds.
+        #[arg(long)]
+        available_end_ns: u64,
+    },
     /// Encode official historical settlement events as native InstrumentClose data.
     InstrumentCloses {
         #[arg(long)]
@@ -67,6 +83,9 @@ enum Command {
         end_seconds: u64,
         #[arg(long)]
         output: PathBuf,
+        /// Explicit existing native market catalog to append funding to; omitted creates output/catalog.
+        #[arg(long)]
+        native_catalog: Option<PathBuf>,
         /// Research source revision to which the funding sidecar belongs.
         #[arg(long)]
         source_revision: String,
@@ -450,6 +469,10 @@ fn publish_funding(
             "instruments": instruments,
             "rows": rates.len(),
             "missing_instruments": missing,
+            "native_catalog": "catalog",
+            "native_funding_fields": "Original official FundingRateUpdate: rate, interval, next_funding_ns, ts_event and ts_init preserved",
+            "historical_clock_semantics": "Official historical adapter maps venue interval-end time to both ts_event and ts_init; not measured collector receive time",
+            "simulation_scope": "Nautilus standard funding uses mark price or book midpoint, not Hyperliquid oracle-price payment equivalence",
             "source": "Hyperliquid public fundingHistory at https://api.hyperliquid.xyz/info via official NautilusTrader adapter; settled hourly interval-end timestamps; half-open event-time window; no collector receive timestamps",
         }),
     )?;
@@ -461,18 +484,130 @@ fn publish_funding(
     Ok(())
 }
 
+/// Publish the adapter's original typed funding records, without reconstructing clocks
+/// or inventing a settlement boundary. Existing published output is verified, never erased.
+fn publish_native_funding(
+    output: &Path,
+    native_catalog: Option<&Path>,
+    instruments: &[InstrumentAny],
+    updates: &BTreeMap<String, Vec<FundingRateUpdate>>,
+) -> Result<()> {
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+    let destination = native_catalog.map_or_else(|| output.join("catalog"), Path::to_path_buf);
+    if native_catalog.is_some() {
+        ensure!(destination.is_dir(), "FUNDING_TARGET_CATALOG_REQUIRED");
+    }
+    let staged = (!destination.exists())
+        .then(|| {
+            tempfile::Builder::new()
+                .prefix(".native-funding-")
+                .tempdir_in(output)
+        })
+        .transpose()?;
+    let root = staged
+        .as_ref()
+        .map_or(destination.as_path(), |dir| dir.path());
+    if staged.is_some() {
+        job::catalog::currencies::write(root, instruments)?;
+    } else {
+        job::catalog::currencies::load(root)?;
+    }
+    let mut catalog = ParquetDataCatalog::from_uri(
+        root.to_str().context("FUNDING_CATALOG_PATH")?,
+        None,
+        Some(4096),
+        None,
+        None,
+    )?;
+    if staged.is_some() {
+        catalog.write_instruments(instruments.to_vec())?;
+    }
+    let definitions = catalog.query_instruments(None)?;
+    for expected in instruments {
+        let expected = serde_json::to_value(expected)?;
+        ensure!(
+            definitions
+                .iter()
+                .any(|actual| serde_json::to_value(actual).ok().as_ref() == Some(&expected)),
+            "FUNDING_CATALOG_INSTRUMENT_MISMATCH"
+        );
+    }
+    let ids = instruments
+        .iter()
+        .map(|value| value.id().to_string())
+        .collect::<Vec<_>>();
+    let actual =
+        catalog.query::<FundingRateUpdate>(Some(ids.clone()), None, None, None, None, false)?;
+    let mut existing = BTreeMap::new();
+    for row in actual {
+        existing
+            .entry((row.instrument_id, row.ts_event))
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+    // Validate every collision before writing any new funding data. Never replace a
+    // pre-existing file or change a conflicting settlement/clock to make it fit.
+    let mut additions = BTreeMap::<String, Vec<FundingRateUpdate>>::new();
+    for (id, rows) in updates {
+        let mut requested = BTreeSet::new();
+        for row in rows {
+            ensure!(
+                requested.insert(row.ts_event),
+                "FUNDING_NATIVE_DUPLICATE_EVENT"
+            );
+            if let Some(saved) = existing.get(&(row.instrument_id, row.ts_event)) {
+                ensure!(
+                    saved.len() == 1
+                        && serde_json::to_value(saved[0])? == serde_json::to_value(row)?,
+                    "FUNDING_CATALOG_RECORD_CONFLICT"
+                );
+            } else {
+                additions.entry(id.clone()).or_default().push(*row);
+            }
+        }
+    }
+    for rows in additions.values_mut() {
+        rows.sort_by_key(|row| row.ts_init);
+        if !rows.is_empty() {
+            catalog.write_to_parquet(rows, None, None, None)?;
+        }
+    }
+    let saved = catalog.query::<FundingRateUpdate>(Some(ids), None, None, None, None, false)?;
+    for row in updates.values().flatten() {
+        let matches = saved
+            .iter()
+            .filter(|value| {
+                value.instrument_id == row.instrument_id && value.ts_event == row.ts_event
+            })
+            .collect::<Vec<_>>();
+        // FundingRateUpdate::PartialEq ignores timestamps; official serialization doesn't.
+        ensure!(
+            matches.len() == 1 && serde_json::to_value(matches[0])? == serde_json::to_value(row)?,
+            "FUNDING_CATALOG_RECORD_MISMATCH"
+        );
+    }
+    if staged.is_some() {
+        fs::rename(root, &destination)?;
+    }
+    Ok(())
+}
+
 async fn hyperliquid_funding(
     instruments_path: &Path,
     start_seconds: u64,
     end_seconds: u64,
     output: &Path,
     source_revision: &str,
+    native_catalog: Option<&Path>,
 ) -> Result<()> {
     use nautilus_hyperliquid::{
         common::{consts::HYPERLIQUID_VENUE, enums::HyperliquidEnvironment},
         http::client::HyperliquidHttpClient,
     };
     ensure!(start_seconds < end_seconds, "FUNDING_TIME_RANGE_INVALID");
+    if let Some(path) = native_catalog {
+        ensure!(path.is_dir(), "FUNDING_TARGET_CATALOG_REQUIRED");
+    }
     ensure!(
         !source_revision.trim().is_empty(),
         "FUNDING_SOURCE_REVISION_EMPTY"
@@ -498,17 +633,19 @@ async fn hyperliquid_funding(
         .collect();
     ensure!(!instruments.is_empty(), "FUNDING_PERPETUALS_EMPTY");
     let selected: Vec<_> = instruments.keys().cloned().collect();
-    let parts = funding_parts(
-        output,
-        &serde_json::json!({
-            "source_revision": source_revision,
-            "start_ns": start_ns.to_string(),
-            "end_ns": end_ns.to_string(),
-            "instruments": instruments.iter().map(|(id, instrument)| (id, instrument.raw_symbol().to_string())).collect::<BTreeMap<_, _>>(),
-        }),
-    )?;
+    let mut acquisition = serde_json::json!({
+        "source_revision": source_revision,
+        "start_ns": start_ns.to_string(),
+        "end_ns": end_ns.to_string(),
+        "instruments": instruments.iter().map(|(id, instrument)| (id, instrument.raw_symbol().to_string())).collect::<BTreeMap<_, _>>(),
+    });
+    if let Some(path) = native_catalog {
+        acquisition["native_catalog"] = serde_json::to_value(path.canonicalize()?)?;
+    }
+    let parts = funding_parts(output, &acquisition)?;
     let client = HyperliquidHttpClient::new(HyperliquidEnvironment::Mainnet, 60, None)?;
     let mut rates = BTreeMap::new();
+    let mut native_updates = BTreeMap::<String, Vec<FundingRateUpdate>>::new();
     for (index, (id, instrument)) in instruments.iter().enumerate() {
         ensure!(
             instrument.id().venue == *HYPERLIQUID_VENUE,
@@ -528,11 +665,28 @@ async fn hyperliquid_funding(
         for update in updates {
             let time = update.ts_event.as_u64();
             if (start_ns..end_ns).contains(&time) {
+                ensure!(
+                    update.instrument_id == instrument.id(),
+                    "FUNDING_NATIVE_IDENTITY_MISMATCH"
+                );
                 rates.insert((time, id.clone()), update.rate);
+                native_updates.entry(id.clone()).or_default().push(update);
             }
         }
     }
+    publish_native_funding(
+        output,
+        native_catalog,
+        &instruments.values().cloned().collect::<Vec<_>>(),
+        &native_updates,
+    )?;
     publish_funding(output, source_revision, start_ns, end_ns, selected, rates)?;
+    if let Some(path) = native_catalog {
+        let manifest_path = output.join("funding-rates.manifest.json");
+        let mut manifest: serde_json::Value = json(&manifest_path)?;
+        manifest["native_catalog"] = serde_json::to_value(path.canonicalize()?)?;
+        publish_funding_json(&manifest_path, &manifest)?;
+    }
     fs::remove_dir_all(parts)?;
     Ok(())
 }
@@ -1480,6 +1634,23 @@ fn trade_memory_limit() -> Result<()> {
 
 fn main() {
     let result = match Arguments::parse().command {
+        Command::PublishedBooks {
+            instrument_ids,
+            source,
+            output,
+            available_start_ns,
+            available_end_ns,
+        } => job::ticks::economic::export_published_books_selected(
+            &source,
+            &output,
+            available_start_ns,
+            available_end_ns,
+            &instrument_ids,
+        )
+        .and_then(|report| {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }),
         Command::InstrumentCloses {
             source,
             instruments,
@@ -1496,6 +1667,7 @@ fn main() {
             end_seconds,
             output,
             source_revision,
+            native_catalog,
         } => tokio::runtime::Runtime::new()
             .context("FUNDING_RUNTIME_UNAVAILABLE")
             .and_then(|runtime| {
@@ -1505,6 +1677,7 @@ fn main() {
                     end_seconds,
                     &output,
                     &source_revision,
+                    native_catalog.as_deref(),
                 ))
             }),
         Command::ContextPrices {
@@ -1728,6 +1901,120 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_funding_append_preserves_market_data_and_rejects_conflicts() {
+        use nautilus_model::{
+            data::QuoteTick,
+            types::{Price, Quantity},
+        };
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let root = tempfile::tempdir().unwrap();
+        let market = root.path().join("market");
+        fs::create_dir(&market).unwrap();
+        let mut instrument = nautilus_model::instruments::stubs::crypto_perpetual_ethusdt();
+        instrument.id = "ETHUSDT-PERP.HYPERLIQUID".parse().unwrap();
+        let instrument = InstrumentAny::CryptoPerpetual(instrument);
+        let id = instrument.id();
+        job::catalog::currencies::write(&market, std::slice::from_ref(&instrument)).unwrap();
+        let mut catalog = ParquetDataCatalog::new(&market, None, None, None, None);
+        catalog.write_instruments(vec![instrument.clone()]).unwrap();
+        let quote = QuoteTick::new(
+            id,
+            Price::from("100.00"),
+            Price::from("101.00"),
+            Quantity::from("1.000"),
+            Quantity::from("1.000"),
+            1.into(),
+            2.into(),
+        );
+        catalog
+            .write_to_parquet(&[quote], None, None, None)
+            .unwrap();
+        let rate = FundingRateUpdate::new(
+            id,
+            "0.000123456789".parse().unwrap(),
+            Some(60),
+            None,
+            3_600_000_000_000u64.into(),
+            3_600_000_000_000u64.into(),
+        );
+        let updates = BTreeMap::from([(id.to_string(), vec![rate])]);
+        let definitions = root.path().join("instruments.json");
+        publish_funding_json(&definitions, &vec![instrument.clone()]).unwrap();
+        let output = root.path().join("funding-sidecar");
+        let parts = funding_parts(&output, &serde_json::json!({
+            "source_revision":"native-append-test","start_ns":"1000000000","end_ns":"3601000000000",
+            "instruments":{id.to_string():instrument.raw_symbol().to_string()},
+            "native_catalog":market.canonicalize().unwrap()
+        })).unwrap();
+        publish_funding_json(&parts.join("0.json"), &vec![rate]).unwrap();
+        hyperliquid_funding(
+            &definitions,
+            1,
+            3601,
+            &output,
+            "native-append-test",
+            Some(&market),
+        )
+        .await
+        .unwrap();
+        let manifest: serde_json::Value =
+            json(&output.join("funding-rates.manifest.json")).unwrap();
+        assert_eq!(
+            manifest["native_catalog"],
+            serde_json::to_value(market.canonicalize().unwrap()).unwrap()
+        );
+        assert!(!output.join("catalog").exists());
+        publish_native_funding(
+            root.path(),
+            Some(&market),
+            std::slice::from_ref(&instrument),
+            &updates,
+        )
+        .unwrap();
+        let saved = catalog
+            .query::<FundingRateUpdate>(None, None, None, None, None, false)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(saved).unwrap(),
+            serde_json::to_value(vec![rate]).unwrap()
+        );
+        let quotes = catalog
+            .query::<QuoteTick>(None, None, None, None, None, false)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(quotes).unwrap(),
+            serde_json::to_value(vec![quote]).unwrap()
+        );
+        let replay: contracts::native_strategy::NativeStrategyBacktestRequestV1 = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"instrument_id":id.to_string(),"selectors":[{"data_type":"QuoteTick","identifier":id.to_string()},{"data_type":"FundingRateUpdate","identifier":id.to_string()}],
+            "event_start_ns":"1","event_end_ns":"3601000000000","available_end_ns":"3601000000000",
+            "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L1_MBP","starting_balances":["100000 USDT"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
+            "strategy":{"kind":"EMA_CROSS","trade_size":"1.000","fast_period":2,"slow_period":3}
+        })).unwrap();
+        let replay = job::native_strategy::run(&market, replay).unwrap();
+        assert_eq!(replay.data_rows_by_type["QuoteTick"].get(), 1);
+        assert_eq!(replay.data_rows_by_type["FundingRateUpdate"].get(), 1);
+        let mut changed = rate;
+        changed.rate = "0.02".parse().unwrap();
+        let conflict = BTreeMap::from([(id.to_string(), vec![changed])]);
+        assert!(
+            publish_native_funding(root.path(), Some(&market), &[instrument], &conflict)
+                .unwrap_err()
+                .to_string()
+                .contains("FUNDING_CATALOG_RECORD_CONFLICT")
+        );
+        assert_eq!(
+            serde_json::to_value(
+                catalog
+                    .query::<FundingRateUpdate>(None, None, None, None, None, false)
+                    .unwrap()
+            )
+            .unwrap(),
+            serde_json::to_value(vec![rate]).unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn funding_acquisition_reuses_completed_markets_and_excludes_end_boundary() {
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("funding");
@@ -1758,12 +2045,12 @@ mod tests {
                     Some(60),
                     None,
                     UnixNanos::from(time),
-                    UnixNanos::from(time),
+                    UnixNanos::from(time + 17),
                 )
             })
             .collect();
         publish_funding_json(&parts.join("0.json"), &updates).unwrap();
-        hyperliquid_funding(&definitions, 1, 2, &output, "research-v1")
+        hyperliquid_funding(&definitions, 1, 2, &output, "research-v1", None)
             .await
             .unwrap();
         assert!(!parts.exists());
@@ -1774,6 +2061,24 @@ mod tests {
         let manifest: serde_json::Value =
             json(&output.join("funding-rates.manifest.json")).unwrap();
         assert_eq!(manifest["missing_instruments"], serde_json::json!([]));
+        assert_eq!(manifest["native_catalog"], "catalog");
+        let mut native = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(
+            &output.join("catalog"),
+            None,
+            None,
+            None,
+            None,
+        );
+        let saved = native
+            .query::<FundingRateUpdate>(None, None, None, None, None, false)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(saved).unwrap(),
+            serde_json::to_value(&updates[..1]).unwrap()
+        );
+        let saved_definitions = native.query_instruments(None).unwrap();
+        assert_eq!(saved_definitions.len(), 1);
+        assert_eq!(saved_definitions[0].id(), id);
     }
 
     fn tick_options(prefixes: &[String], resume: bool, rows: u64, bytes: u64) -> ImportOptions<'_> {
@@ -2641,27 +2946,6 @@ mod tests {
                 10_000_000,
             )
             .unwrap();
-            let model = wat::parse_str(r#"(module
-                (global $value (mut f64) (f64.const 0))
-                (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
-                    local.get 0 i32.eqz if local.get 1 global.set $value end)
-                (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#).unwrap();
-            assert_eq!(
-                serde_json::to_value(
-                    job::ticks::evaluate(&mono.join("catalog"), &request, &model, true).unwrap()
-                )
-                .unwrap(),
-                serde_json::to_value(
-                    job::ticks::evaluate(
-                        &prepared.join("independent/catalog"),
-                        &request,
-                        &model,
-                        true
-                    )
-                    .unwrap()
-                )
-                .unwrap()
-            );
             let relative = tempfile::Builder::new()
                 .prefix(".qz-relative-compose-")
                 .tempdir_in(std::env::current_dir().unwrap())

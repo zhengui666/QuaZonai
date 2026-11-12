@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Assemble a minimal native OCI filesystem from an already built, locked Rust job
-// and the exact rustup toolchain. Docker alone creates the immutable image identity.
+// and its native runtime dependencies. Docker creates the immutable image identity.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,27 +49,7 @@ function destination(absolute) {
 function copyNative(source, target) {
   copyNativeFile(root, source, target);
 }
-function isElf(file) {
-  const header = Buffer.alloc(4);
-  const descriptor = fs.openSync(file, 'r');
-  try { return fs.readSync(descriptor, header, 0, 4, 0) === 4 && header.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])); }
-  finally { fs.closeSync(descriptor); }
-}
-function nativeExecutables(directory) {
-  const result = [];
-  for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, item.name);
-    if (item.isDirectory()) result.push(...nativeExecutables(file));
-    else if ((item.isFile() || item.isSymbolicLink()) && isElf(file)) result.push(file);
-  }
-  return result;
-}
 try {
-  const rustcVersion = run('rustc-version', 'rustup', ['run', '1.99.1', 'rustc', '-Vv']).stdout;
-  if (!rustcVersion.includes('release: 1.99.1\n') || !rustcVersion.includes('host: x86_64-unknown-linux-gnu\n')) throw new Error('Exact native Rust toolchain required');
-  const sysroot = fs.realpathSync(run('rust-sysroot', 'rustup', ['run', '1.99.1', 'rustc', '--print', 'sysroot']).stdout.trim());
-  const installed = run('rust-targets', 'rustup', ['target', 'list', '--installed', '--toolchain', '1.99.1']).stdout;
-  if (!installed.split(/\r?\n/).includes('wasm32-unknown-unknown')) throw new Error('Install the native wasm32-unknown-unknown standard target first');
   run('job-version', executable, ['--version']);
   const timeoutBinary = '/usr/bin/timeout';
   const archiveBinaries = ['/usr/bin/tar', '/usr/bin/zstd'];
@@ -82,10 +62,7 @@ try {
   fs.writeFileSync(destination('/usr/share/doc/quazonai/native-manifest.json'), JSON.stringify(identity, null, 2) + '\n');
   copyNative(timeoutBinary, '/usr/bin/timeout');
   for (const binary of archiveBinaries) copyNative(binary, binary);
-  fs.mkdirSync(destination('/opt/rust'), { recursive: true, mode: 0o755 });
-  copyNative(path.join(sysroot, 'bin/rustc'), '/opt/rust/bin/rustc');
-  fs.cpSync(path.join(sysroot, 'lib'), destination('/opt/rust/lib'), { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false });
-  const nativeFiles = [executable, timeoutBinary, ...archiveBinaries, path.join(sysroot, 'bin/rustc'), ...nativeExecutables(path.join(sysroot, 'lib'))];
+  const nativeFiles = [executable, timeoutBinary, ...archiveBinaries];
   if (values['isolation-probe']) {
     const probe = fs.realpathSync(values['isolation-probe']);
     copyNative(probe, '/usr/local/bin/isolation-probe');
@@ -95,8 +72,8 @@ try {
   fs.writeFileSync(path.join(directory, 'native-elf-inputs.json'), JSON.stringify(inspectedFiles, null, 2) + '\n', { mode: 0o600 });
   for (const [index, file] of inspectedFiles.entries()) {
     // Resolve symlink aliases before ldd so $ORIGIN is the actual executable's
-    // directory. Rustup supplies the pinned toolchain's native loader search path.
-    const result = run('native-ldd-' + index, 'rustup', ['run', '1.99.1', 'ldd', file], [0, 1]);
+    // directory.
+    const result = run('native-ldd-' + index, 'ldd', [file], [0, 1]);
     const text = (result.stdout ?? '') + (result.stderr ?? '');
     if (result.status !== 0 && !/not a dynamic executable|statically linked/.test(text)) throw new Error('Unrecognized native dependency inspection: native-ldd-' + index);
     if (/not found/.test(text)) throw new Error('A required native shared library is unavailable: native-ldd-' + index + ' (' + path.basename(file) + ')');
@@ -104,8 +81,6 @@ try {
       const match = line.match(/=>\s+(\/.*?)\s+\(0x/) ?? line.match(/^\s*(\/.*?)\s+\(0x/);
       if (!match) continue;
       const source = match[1];
-      // rustc/LLVM use their native relative RPATH under the relocated complete sysroot.
-      if (source.startsWith(sysroot + path.sep)) continue;
       copyNative(source, source);
       // usr-merged hosts resolve /lib64's ELF interpreter into /usr/lib64.
       // scratch still needs the absolute path requested by the executable.
@@ -116,8 +91,6 @@ try {
   for (const name of ['tmp', 'input', 'output']) fs.mkdirSync(destination('/' + name), { mode: name === 'tmp' ? 0o1777 : 0o755 });
   fs.chmodSync(destination('/tmp'), 0o1777);
   // Preserve upstream notices from installed distributions.
-  const noticeRoot = path.join(sysroot, 'share/doc/rust');
-  if (fs.existsSync(noticeRoot)) fs.cpSync(noticeRoot, destination('/usr/share/doc/rust'), { recursive: true, dereference: false, verbatimSymlinks: true });
   for (const component of ['coreutils', 'tar', 'zstd', 'libacl1', 'libzstd1', 'liblz4-1', 'liblzma5', 'zlib1g', 'libc6', 'libgcc-s1', 'libstdc++6']) {
     const copyright = '/usr/share/doc/' + component + '/copyright';
     if (fs.existsSync(copyright)) copyNative(copyright, copyright);
@@ -139,7 +112,7 @@ try {
   };
   normalizePermissions(root);
   fs.chmodSync(destination('/tmp'), 0o1777);
-  const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.99.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
+  const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, target: 'x86_64-unknown-linux-gnu', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
   if (!values['prepare-only']) {
     const dockerfile = path.join(repository, 'runtimes/native/native-job.Dockerfile');
     run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--build-arg', 'VERSION=' + values['image-version'], '--build-arg', 'REVISION=' + sourceCommit, '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);
@@ -148,7 +121,6 @@ try {
     const info = JSON.parse(run('native-image-inspect', 'docker', ['image', 'inspect', image]).stdout)[0];
     if (info.Id !== image || info.Os !== 'linux' || info.Architecture !== 'amd64') throw new Error('Native image identity mismatch');
     run('native-image-job-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', image, '--version']);
-    run('native-image-compiler-version', 'docker', ['run', '--rm', '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--entrypoint', '/opt/rust/bin/rustc', image, '--version']);
     report.native_image_id = image;
     report.stage = 'BUILT_AND_EXECUTED';
   }

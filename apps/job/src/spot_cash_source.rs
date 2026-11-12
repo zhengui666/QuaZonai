@@ -101,7 +101,8 @@ fn source_rows(
     BTreeMap<FrozenSpotCandleRowV1, ClosedBarSourceRow>,
 )> {
     ensure!(
-        bundle.native_version == "0.68.0" && !bundle.responses.is_empty(),
+        ["0.68.0", "0.69.0"].contains(&bundle.native_version.as_str())
+            && !bundle.responses.is_empty(),
         "SPOT_SOURCE_VERSION_OR_RESPONSES"
     );
     let instrument: InstrumentAny = serde_json::from_value(bundle.instrument_definition.clone())?;
@@ -185,9 +186,9 @@ fn source_rows(
                 .checked_add(1)
                 .context("SPOT_SOURCE_CLOSE_RANGE")?;
             ensure!(
-                candle.s.to_string() == response.coin
+                candle.s == response.coin
                     && candle.i.as_str() == "1m"
-                    && candle.t % MINUTE_MS == 0
+                    && candle.t.is_multiple_of(MINUTE_MS)
                     && candle.t.checked_add(MINUTE_MS) == Some(close_ms)
                     && windows.insert(candle.t),
                 "SPOT_SOURCE_RAW_ROW_IDENTITY_OR_BOUNDARY"

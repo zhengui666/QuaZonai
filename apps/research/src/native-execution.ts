@@ -5,7 +5,7 @@ import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { defineDocFamily, defineTask, type Harness, type ConversationId, type JsonObject, type TaskId, type TaskRuntime } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { lstat, readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Agent, fetch } from 'undici';
@@ -16,7 +16,7 @@ import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativ
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 import { canonical } from './documents.ts';
 
-export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'value-observed-spot', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
@@ -195,32 +195,6 @@ export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, r
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
 }
 
-async function attachments(original: string[]): Promise<{ args: string[]; files: Record<string, string> }> {
-  const args = [...original]; const files: Record<string, string> = {}; let index = 0;
-  async function attach(path: string, name: string) {
-    if (!(await lstat(path)).isFile()) throw new Error('nautilus_artifact_file_required');
-    files[name] = (await readFile(path)).toString('base64');
-  }
-  for (let position = 0; position < args.length; position++) {
-    const flag = args[position];
-    if (!['--model', '--scope', '--objects'].includes(flag!)) continue;
-    const path = args[++position]; if (!path) throw new Error('nautilus_artifact_argument_missing');
-    if (flag === '--objects') {
-      const prefix = `objects-${index++}`;
-      for (const entry of (await readdir(path, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name))) {
-        // Only native UUID objects are consumed; request.json and temporary
-        // models in the same scratch directory are not object-store inputs.
-        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(entry.name)) continue;
-        await attach(join(path, entry.name), `${prefix}/${entry.name}`);
-      }
-      args[position] = `@objects:${prefix}`;
-    } else {
-      const name = `${flag.slice(2)}-${index++}`; await attach(path, name); args[position] = `@file:${name}`;
-    }
-  }
-  return { args, files };
-}
-
 type AdoptedReceipt = { requestId: string } & ({ status: 'COMPLETED'; native: JsonObject } | { status: 'FAILED' | 'CANCELLED'; error: string });
 const NativeCalls = defineDocFamily<{ taskId: TaskId<NativeJson> | null; adoptedReceipt?: AdoptedReceipt }, null>({
   kind: 'qz.native-call', version: 1, scope: 'task', family: true,
@@ -396,7 +370,7 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
 async function executeRemote(target: RemoteNativeTarget, command: string, input: NativeJson, originalArgs: string[], context: Context): Promise<NativeJson> {
   const owner = tracking.getStore(); const nativeHost = nativeBindings.getStore();
   if (!owner && !nativeHost) throw new Error('native_harness_required');
-  const artifacts = await attachments(originalArgs);
+  const artifacts = { args: [...originalArgs], files: {} as Record<string, string> };
   // A committed business-stage cache can skip earlier calls after a restart.
   // Bind immutable native inputs, not an invocation-local call ordinal.
   const callsKey = canonicalJsonDigest({ target: target as unknown as NativeJson, command, input, ...artifacts });
@@ -420,7 +394,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       await writer.commit(async tx => { (await tx.doc(NativeExecutionRequestPart, conversationId, `${request.requestId}:${index}`, null)).data = data; return undefined; }, context);
     });
     const frozen: RemoteTaskInput = { target, requestId: request.requestId, basis: callsKey, command, request: retained,
-      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'replay-tick-economic') ? { receiptRequired: true } : {}) };
+      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'native-strategy-backtest' || command === 'native-walk-forward') ? { receiptRequired: true } : {}) };
     if (owner) await owner.runtime.commit(async tx => {
       const call = await tx.doc(NativeCalls, owner.taskId, callsKey, null);
       let selectedRequestId = request.requestId;
@@ -511,4 +485,11 @@ async function executeNativeUnwrapped(target: NativeTarget, command: string, inp
     stage = 'decode'; if (parseError !== undefined) throw parseError; return stdout.finish();
   } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
   finally { if (timer) clearInterval(timer); await progressRead; await env.cleanup(withoutAbortSignal(context)); }
+}
+
+/** Typed object projection only; execution and receipt ownership stay in the native adapter. */
+export async function executeNative(binary: NativeTarget, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
+  const result = await executeNativeValue(binary, command, input, args, directory, context);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('native_result');
+  return result;
 }

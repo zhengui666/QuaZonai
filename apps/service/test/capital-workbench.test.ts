@@ -86,9 +86,20 @@ async function protocolReceiver() {
     receiptGets.push(request.params.requestId); return allowReceipt && receipts.has(request.params.requestId) ? receipts.get(request.params.requestId) : reply.code(404).send({ error: 'original_receipt_unavailable' });
   });
   server.post('/targets', request => { targetPosts.push(json(request.body)); throw new Error('An account-only binding does not deliver a target.'); });
+  const nativePreviewPosts: { path: string; body: JsonObject }[] = [];
+  let wrongPreviewIdentity = false; let falselySubmitted = false; let malformedPreview = false;
+  for (const path of ['/sizing/fixed-risk', '/orders/preview']) server.post(path, request => {
+    assert.equal(request.headers['x-qz-client-id'], envelope.clientId);
+    const body = object(request.body); nativePreviewPosts.push({ path, body });
+    assert.equal(body.clientId, envelope.clientId); assert.equal(body.accountId, envelope.accountId);
+    return { ...envelope, accountId: wrongPreviewIdentity ? 'wrong-account' : envelope.accountId,
+      preview_only: true, ...(path === '/sizing/fixed-risk'
+        ? { instrument_id: object(body.sizing).instrument_id, quantity: '0.00000001', model: 'NAUTILUS_FIXED_RISK', input_source: 'REQUEST_SCENARIO', account_balance_verified: false }
+        : { submitted: falselySubmitted, automatic_protection_enabled: false, orders: malformedPreview ? [null] : [{ instrument_id: body.instrument_id }] }) };
+  });
   const url = await server.listen({ host: '127.0.0.1', port: 0 });
   const connection: ConnectionConfig = { id: 'capital-connection', name: 'Existing cash account', url, clientId: envelope.clientId, accountId: envelope.accountId, mode: envelope.mode };
-  return { connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
+  return { nativePreviewPosts, malformedResponse() { malformedPreview = true; }, wrongIdentity() { wrongPreviewIdentity = true; }, submittedResponse() { falselySubmitted = true; }, connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
     get current() { return current; }, advanceObservation() { observationId = 'observation-later'; }, blockQuotes() { blocked = true; },
     loseStart() { loseNextStart = true; allowReceipt = false; }, revealReceipt() { allowReceipt = true; }, close: () => server.close() };
 }
@@ -171,5 +182,38 @@ test('a lost capital POST resumes its original Durable request and never sends a
     assert.equal(retry.statusCode, 202, retry.body); assert.equal(retry.json().state, 'ACCEPTED');
     assert.equal(remote.startPosts.length, 1); assert.ok(remote.receiptGets.length > 0); assert.ok(remote.receiptGets.every(id => id === request.requestId));
     assert.deepEqual(remote.targetPosts, []);
+  } finally { await state.cleanup(); await remote.close(); }
+});
+
+
+test('native preview service binds observation identity and never admits trading', { timeout: 30_000 }, async () => {
+  const state = await setup(); const remote = await protocolReceiver();
+  try {
+    state.options.config.connections = [remote.connection]; await state.restart();
+    const created = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
+      payload: { requestId: 'native-preview-account', purpose: 'ACCOUNT_ONLY', mode: 'paper', connectionId: remote.connection.id } });
+    assert.equal(created.statusCode, 202, created.body);
+    const path = '/api/v3/observations/' + created.json().id;
+    const sizing = { sizing: { instrument_id: 'BTC/USDC.HYPERLIQUID', entry: '100.000000000000000001', stop_loss: '95', equity: '1000', currency: 'USDC', risk: '0.01', commission_rate: '0', exchange_rate: '1', unit_batch_size: '0' } };
+    const order = { instrument_id: 'BTC/USDC.HYPERLIQUID', order: { kind: 'STOP_LOSS', side: 'SELL', quantity: '0.00000001', trigger_price: '95' } };
+    const call = (suffix: string, payload: JsonObject, headers = state.headers) => state.service.app.inject({ method: 'POST', url: path + suffix, headers, payload });
+    const size = await call('/sizing/fixed-risk', sizing); assert.equal(size.statusCode, 200, size.body);
+    assert.equal(size.json().account_balance_verified, false); assert.equal(size.json().quantity, '0.00000001');
+    assert.deepEqual(remote.nativePreviewPosts[0]!.body, { ...sizing, clientId: remote.connection.clientId, accountId: remote.connection.accountId });
+    const preview = await call('/orders/preview', order); assert.equal(preview.statusCode, 200, preview.body); assert.equal(preview.json().submitted, false);
+    const before = remote.nativePreviewPosts.length;
+    assert.equal((await call('/orders/preview', order, {} as typeof state.headers)).statusCode, 401);
+    assert.notEqual((await call('/orders/preview', { ...order, accountId: 'different' })).statusCode, 200);
+    assert.equal(remote.nativePreviewPosts.length, before);
+    for (const extra of [{ operation: 'TARGET' }, { operation: 'CONTROL' }, { operation: 'SHUTDOWN' }, { operation: 'FIXED_RISK_SIZE' }, { requestId: 'forged' }, { extra: 'field' }] as JsonObject[]) {
+      const rejected = await call('/sizing/fixed-risk', { sizing: { ...sizing.sizing, ...extra } });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+    }
+    assert.equal(remote.nativePreviewPosts.length, before);
+
+    remote.malformedResponse(); assert.equal((await call('/orders/preview', order)).statusCode, 502);
+    remote.submittedResponse(); assert.equal((await call('/orders/preview', order)).statusCode, 502);
+    remote.wrongIdentity(); assert.equal((await call('/sizing/fixed-risk', sizing)).statusCode, 409);
+    assert.deepEqual(remote.targetPosts, []); assert.deepEqual(remote.startPosts, []); assert.deepEqual(remote.actionPosts, []);
   } finally { await state.cleanup(); await remote.close(); }
 });

@@ -15,7 +15,6 @@ const worker = await createNautilusWorker({
   catalogRoots: roots,
   token: process.env.QZ_NAUTILUS_TOKEN,
   maximumConcurrentTickExecutions: Number(process.env.QZ_NAUTILUS_TICK_CONCURRENCY ?? '1'),
-  calibrationThreads: process.env.QZ_CALIBRATION_THREADS === undefined ? undefined : Number(process.env.QZ_CALIBRATION_THREADS),
   accounts,
   accountBinary: process.env.QZ_ACCOUNT_BINARY,
 });

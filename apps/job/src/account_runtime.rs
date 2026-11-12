@@ -1,23 +1,47 @@
 //! Account execution adapter hosted by the existing remote worker. Business
 //! intents stay in TypeScript; every financial call below uses the official node.
+//!
+//! Current account strategy wiring: the upstream EMA_CROSS example only. The same
+//! registry constructs it for replay. BOOT parks it before live dispatch; explicit
+//! START uses upstream reset/start, so indicators cold-warm rather than retaining
+//! an arbitrary strategy's private state. STOP keeps upstream semantics.
+//! OrderBookImbalance is replay-only here: its on_stop closes positions, so parking
+//! it after LiveNode auto-start would violate the no-automatic-trading boot policy.
+//!
+//! Capital exits use the controller's upstream HEDGING OMS and an explicit existing
+//! position ID, with reduce-only orders. Only a unique long position is supported;
+//! ambiguous/short positions are rejected. Sandbox evidence is not a claim of live
+//! exchange execution validation, nor generic strategy recovery compatibility.
 use crate::{account_observer::project_snapshot, account_runtime_cache::AccountCacheFactory};
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use contracts::Id;
+use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
 use indexmap::IndexMap;
 use nautilus_common::{
-    actor::DataActor, cache::CacheConfig, enums::Environment, logging::logger::LoggerConfig,
+    actor::DataActor,
+    cache::CacheConfig,
+    component::{component_state, reset_component, stop_component},
+    enums::{ComponentState, Environment},
+    logging::logger::LoggerConfig,
     timer::TimeEvent,
 };
 use nautilus_core::DurationNanos;
-use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+use nautilus_execution::models::{
+    fee::{FeeModelAny, MakerTakerFeeModel},
+    fill::{DefaultFillModel, FillModelAny},
+    latency::{LatencyModelAny, StaticLatencyModel},
+};
 use nautilus_hyperliquid::{
-    common::{consts::HYPERLIQUID_CLIENT_ID, enums::HyperliquidEnvironment},
+    common::{
+        consts::HYPERLIQUID_CLIENT_ID,
+        enums::{HyperliquidEnvironment, HyperliquidProductType},
+    },
     http::client::HyperliquidHttpClient,
     HyperliquidDataClientConfig, HyperliquidDataClientFactory, HyperliquidExecutionClientConfig,
     HyperliquidExecutionClientFactory,
 };
 use nautilus_live::{
-    config::LiveExecutionEngineConfig,
+    config::{LiveExecutionEngineConfig, LiveRiskEngineConfig},
+    execution::submission::SubmissionRecoveryPolicy,
     node::{LiveNode, LiveNodeHandle},
 };
 use nautilus_model::{
@@ -27,7 +51,7 @@ use nautilus_model::{
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, TraderId, Venue},
     instruments::{Instrument, InstrumentAny},
     orders::Order,
-    types::{Currency, Money},
+    types::{Currency, Money, Price},
 };
 use nautilus_portfolio::config::PortfolioConfig;
 use nautilus_sandbox::{SandboxExecutionClientConfig, SandboxExecutionClientFactory};
@@ -59,14 +83,98 @@ pub struct AccountRuntimeConfig {
     pub account_id: String,
     pub mode: String,
     pub account_address: Option<String>,
+    pub native_strategy: NativeStrategyDeployment,
     pub instruments: Vec<String>,
     pub starting_balance: Option<String>,
     pub paper_fee_rate: Option<String>,
+    #[serde(default)]
+    pub risk: AccountRiskConfig,
+    pub paper_execution: Option<PaperExecutionConfig>,
     pub source_id: String,
     pub trader_id: Option<String>,
     pub data_dir: PathBuf,
     #[serde(default)]
     pub testnet: bool,
+    /// Omitted retains all products, including existing external orders during recovery.
+    pub execution_product_types: Option<Vec<HyperliquidProductType>>,
+}
+/// Explicit compiled upstream strategy bound to this physical account host.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeStrategyDeployment {
+    pub instrument_id: String,
+    pub strategy: NativeCompiledStrategyV1,
+}
+
+/// Only expose native limits, never the native bypass switch.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AccountRiskConfig {
+    pub max_order_submit_rate: Option<String>,
+    pub max_order_modify_rate: Option<String>,
+    pub max_notional_per_order: std::collections::HashMap<String, String>,
+}
+impl AccountRiskConfig {
+    fn native(&self, instruments: &[String]) -> Result<LiveRiskEngineConfig> {
+        ensure!(
+            self.max_notional_per_order
+                .keys()
+                .all(|id| instruments.contains(id)),
+            "account_native_risk_instrument_scope"
+        );
+        let mut config = LiveRiskEngineConfig::default();
+        if let Some(rate) = &self.max_order_submit_rate {
+            config.max_order_submit_rate = rate.clone();
+        }
+        if let Some(rate) = &self.max_order_modify_rate {
+            config.max_order_modify_rate = rate.clone();
+        }
+        config.max_notional_per_order = self.max_notional_per_order.clone();
+        Ok(config)
+    }
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaperExecutionConfig {
+    pub prob_fill_on_limit: f64,
+    pub prob_slippage: f64,
+    pub random_seed: String,
+    // Decimal strings retain nanosecond precision across the JSON boundary.
+    pub base_latency_ns: String,
+    pub insert_latency_ns: String,
+    pub update_latency_ns: String,
+    pub cancel_latency_ns: String,
+    #[serde(default)]
+    pub queue_position: bool,
+}
+impl PaperExecutionConfig {
+    fn models(&self) -> Result<(FillModelAny, LatencyModelAny)> {
+        let base = self.base_latency_ns.parse::<u64>()?;
+        let insert = self.insert_latency_ns.parse::<u64>()?;
+        let update = self.update_latency_ns.parse::<u64>()?;
+        let cancel = self.cancel_latency_ns.parse::<u64>()?;
+        // The upstream constructor adds each delay to base; reject overflow
+        // before entering that infallible constructor.
+        ensure!(
+            [insert, update, cancel]
+                .iter()
+                .all(|delay| base.checked_add(*delay).is_some()),
+            "account_native_latency_overflow"
+        );
+        Ok((
+            FillModelAny::Default(DefaultFillModel::new(
+                self.prob_fill_on_limit,
+                self.prob_slippage,
+                Some(self.random_seed.parse()?),
+            )?),
+            LatencyModelAny::Static(StaticLatencyModel::new(
+                DurationNanos::new(base),
+                DurationNanos::new(insert),
+                DurationNanos::new(update),
+                DurationNanos::new(cancel),
+            )),
+        ))
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 struct Request {
@@ -132,8 +240,11 @@ struct TargetAcceptance {
     submitted: Vec<String>,
     receipt: Option<Value>,
 }
-struct AccountStrategy {
+struct AccountController {
     core: StrategyCore,
+    signal_strategy_id: Option<StrategyId>,
+    native_trader: std::rc::Rc<std::cell::RefCell<nautilus_system::trader::Trader>>,
+    native_managed_stop: bool,
     config: AccountRuntimeConfig,
     ids: Vec<InstrumentId>,
     client: ClientId,
@@ -152,23 +263,22 @@ struct AccountStrategy {
     last_tick_ns: u64,
     last_slice_ns: u64,
     submission_attempted: bool,
-    budget_target_epoch: Option<u64>,
     cache_failed: Arc<AtomicBool>,
     spot_facts: Option<SpotFacts>,
     target_acceptances: BTreeMap<String, TargetAcceptance>,
     #[cfg(test)]
     replies: Option<std::rc::Rc<std::cell::RefCell<BTreeMap<String, Value>>>>,
 }
-impl std::fmt::Debug for AccountStrategy {
+impl std::fmt::Debug for AccountController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AccountStrategy")
+        f.debug_struct("AccountController")
             .field("account", &self.account)
             .finish()
     }
 }
-nautilus_strategy!(AccountStrategy, {});
+nautilus_strategy!(AccountController, {});
 
-impl DataActor for AccountStrategy {
+impl DataActor for AccountController {
     fn on_save(&self) -> Result<IndexMap<String, Vec<u8>>> {
         self.target_acceptances
             .iter()
@@ -183,10 +293,17 @@ impl DataActor for AccountStrategy {
             }
         }
         self.control = None;
-        self.budget_target_epoch = None;
         Ok(())
     }
     fn on_start(&mut self) -> Result<()> {
+        // Trader starts registered components synchronously before live data dispatch.
+        // The official signal strategy is registered first; park it before returning
+        // startup readiness. Only an explicit STRATEGY_START may resume it.
+        if let Some(id) = self.signal_strategy_id {
+            if component_state(&id.inner())? == ComponentState::Running {
+                stop_component(&id.inner())?;
+            }
+        }
         let ids = self.ids.clone();
         self.subscribe_quotes(ids.clone(), Some(*HYPERLIQUID_CLIENT_ID), None);
         self.subscribe_book_at_interval(
@@ -246,7 +363,7 @@ impl DataActor for AccountStrategy {
         Ok(())
     }
 }
-impl AccountStrategy {
+impl AccountController {
     fn fence(&self, epoch: u64) -> Result<&Control> {
         ensure!(
             !self.cache_failed.load(Ordering::SeqCst),
@@ -262,33 +379,35 @@ impl AccountStrategy {
     }
     fn refresh_snapshot(&mut self) -> Result<()> {
         let account = self.account;
-        let cache = self.cache();
-        let account_event = cache
-            .account(&account)
-            .and_then(|v| v.last_event())
-            .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
-        let mut stamp = account_event.event_id.to_string();
-        for id in &self.ids {
-            if let Some(q) = cache.quote(id) {
-                stamp.push_str(&format!(":{}:{}", id, q.ts_init));
+        let stamp = {
+            let cache = self.cache();
+            let account_event = cache
+                .account(&account)
+                .and_then(|v| v.last_event())
+                .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
+            let mut stamp = account_event.event_id.to_string();
+            for id in &self.ids {
+                if let Some(q) = cache.quote(id) {
+                    stamp.push_str(&format!(":{}:{}", id, q.ts_init));
+                }
+                if let Some(book) = cache.order_book(id) {
+                    stamp.push_str(&format!(":book:{}", book.ts_last));
+                }
             }
-            if let Some(book) = cache.order_book(id) {
-                stamp.push_str(&format!(":book:{}", book.ts_last));
+            let orders = cache.orders(None, None, None, Some(&account), None);
+            for o in &orders {
+                stamp.push_str(&format!(
+                    ":{}:{}:{}",
+                    o.client_order_id(),
+                    o.status(),
+                    o.filled_qty()
+                ));
             }
-        }
-        let orders = cache.orders(None, None, None, Some(&account), None);
-        for o in &orders {
-            stamp.push_str(&format!(
-                ":{}:{}:{}",
-                o.client_order_id(),
-                o.status(),
-                o.filled_qty()
-            ));
-        }
+            stamp
+        };
         if stamp == self.stamp {
             return Ok(());
         }
-        drop(cache);
         let native = self
             .portfolio_rc()
             .try_borrow_mut()
@@ -320,7 +439,11 @@ impl AccountStrategy {
             for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
             json!({"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
                 "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
-                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags())})
+                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
+                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
+                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
+                "contingency_type":o.contingency_type().map(|v|v.to_string()),
+                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
         }).collect();
         let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
             let quote=cache.quote(&p.instrument_id);
@@ -359,13 +482,148 @@ impl AccountStrategy {
             "sequence":native.ts_init.as_u64().to_string(),"observed_at_ns":native.ts_init.as_u64().to_string(),"observation_id":Id::new().to_string(),
             "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"orders":order_rows,"fills":fills,"cash":cash,"equity":equity,"currency":"USDC",
             "native_version":crate::NAUTILUS_VERSION,"currency_precision":Currency::USDC().precision,"control_epoch":self.control.as_ref().map(|c|c.epoch.to_string()),"control_revision":self.control.as_ref().map(|c|c.revision.clone()),"fenced":self.control.as_ref().is_none_or(|c|c.mode=="PAUSED")||self.cache_failed.load(Ordering::SeqCst),
-            "remaining_trading":if self.control.as_ref().is_some_and(|c|self.budget_target_epoch==Some(c.epoch)){"BUDGET_AWARE"}else{"FENCED_PENDING_TARGET"}}),
+            "remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
         );
         self.stamp = stamp;
         Ok(())
     }
     fn process(&mut self, r: &Request) -> Result<Value> {
         match r.operation.as_str() {
+            #[cfg(test)]
+            "TEST_RESTING_LIMIT" => {
+                let instrument = self.ids[0];
+                let order = self.order_factory().limit(
+                    instrument,
+                    OrderSide::Buy,
+                    nautilus_model::types::Quantity::from("1.00"),
+                    Price::from("1.00"),
+                    Some(TimeInForce::Gtc),
+                    None,
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(ClientOrderId::from("fault-resting")),
+                );
+                self.submit_order(order, None, Some(self.client), None)?;
+                Ok(json!({"sent":true}))
+            }
+            #[cfg(test)]
+            "TEST_MODIFY_LIMIT" => {
+                self.modify_order(
+                    ClientOrderId::from("fault-resting"),
+                    None,
+                    Some(Price::from("2.00")),
+                    None,
+                    Some(self.client),
+                    None,
+                )?;
+                Ok(json!({"sent":true}))
+            }
+            #[cfg(test)]
+            "TEST_CANCEL_LIMIT" => {
+                self.cancel_order(
+                    ClientOrderId::from("fault-resting"),
+                    Some(self.client),
+                    None,
+                )?;
+                Ok(json!({"sent":true}))
+            }
+            "STRATEGY_STATUS" => self.strategy_status(),
+            "STRATEGY_START" => {
+                let prepared = (|| -> Result<_> {
+                    let control = self.fence(r.text("epoch")?.parse()?)?;
+                    ensure!(
+                        control.mode == "NORMAL"
+                            && control.reserved == Decimal::ZERO
+                            && control.buffer == Decimal::ZERO
+                            && control.exits.is_empty(),
+                        "account_native_strategy_capital_reserved"
+                    );
+                    ensure!(
+                        !self.cache_failed.load(Ordering::SeqCst),
+                        "account_native_cache_write_failed"
+                    );
+                    let id = self
+                        .signal_strategy_id
+                        .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
+                    let state = component_state(&id.inner())?;
+                    Ok((id, state))
+                })();
+                let (id, state) = match prepared {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return Ok(
+                            json!({"admission":"REJECTED","started":false,"reason":error.to_string()}),
+                        );
+                    }
+                };
+                if state == ComponentState::Stopped {
+                    reset_component(&id.inner())?;
+                }
+                if state != ComponentState::Running {
+                    self.native_trader.borrow().start_strategy(&id)?;
+                }
+                self.strategy_status()
+            }
+            "STRATEGY_STOP" => {
+                self.stop_signal_strategy()?;
+                self.strategy_status()
+            }
+
+            "FIXED_RISK_SIZE" => {
+                let id = InstrumentId::from_str(r.text("instrument_id")?)?;
+                ensure!(self.ids.contains(&id), "account_native_instrument_scope");
+                let instrument = self
+                    .cache()
+                    .instrument(&id)
+                    .ok_or_else(|| anyhow!("account_native_instrument_unavailable"))?;
+                let risk = r.decimal("risk")?;
+                ensure!(
+                    risk > Decimal::ZERO && risk <= Decimal::ONE,
+                    "account_native_risk_fraction"
+                );
+                let quantity = nautilus_risk::sizing::calculate_fixed_risk_position_size(
+                    &instrument,
+                    Price::from_str(r.text("entry")?).map_err(anyhow::Error::msg)?,
+                    Price::from_str(r.text("stop_loss")?).map_err(anyhow::Error::msg)?,
+                    Money::from_decimal_exact(
+                        Decimal::from_str_exact(r.text("equity")?)?,
+                        Currency::from_str(r.text("currency")?)?,
+                    )?,
+                    risk,
+                    r.decimal("commission_rate")?,
+                    r.decimal("exchange_rate")?,
+                    if r.value("hard_limit").is_null() {
+                        None
+                    } else {
+                        Some(r.decimal("hard_limit")?)
+                    },
+                    r.decimal("unit_batch_size")?,
+                    1,
+                )?;
+                Ok(
+                    json!({"instrument_id":id.to_string(),"quantity":quantity.to_string(),"model":"NAUTILUS_FIXED_RISK","preview_only":true,"input_source":"REQUEST_SCENARIO","account_balance_verified":false}),
+                )
+            }
+            "ORDER_PREVIEW" => {
+                let id = InstrumentId::from_str(r.text("instrument_id")?)?;
+                ensure!(
+                    self.ids.contains(&id),
+                    "account_native_instrument_not_configured"
+                );
+                let request = serde_json::from_value(r.value("order").clone())?;
+                let cache = self.cache();
+                let instrument = cache
+                    .instrument(&id)
+                    .ok_or_else(|| anyhow!("account_native_instrument_unavailable"))?;
+                crate::account_order_preview::preview(&instrument, request, &self.config.mode)
+            }
             "QUANTIZE_MONEY" => {
                 ensure!(r.text("currency")? == "USDC", "account_native_currency");
                 let money = Money::from_decimal(r.decimal("amount")?, Currency::USDC())?;
@@ -427,33 +685,10 @@ impl AccountStrategy {
                     Err(_) => Err(anyhow!("account_native_submit_outcome_uncertain")),
                 }
             }
-            "TARGET" => match self.submit_target(r) {
-                Ok(receipt) => Ok(receipt),
-                Err(error) => {
-                    let id = r.text("id")?.to_owned();
-                    if let Some(saved) = self.target_acceptances.get(&id) {
-                        if saved.original != r.body
-                            || saved.receipt.is_some()
-                            || !saved.submitted.is_empty()
-                        {
-                            return Err(error);
-                        }
-                    } else {
-                        self.target_acceptances.insert(
-                            id.clone(),
-                            TargetAcceptance {
-                                original: r.body.clone(),
-                                epoch: r.value("epoch").as_str().unwrap_or_default().into(),
-                                submitted: vec![],
-                                receipt: None,
-                            },
-                        );
-                    }
-                    self.finish_unsubmitted_target(&id, error.to_string())
-                }
-            },
+            "TARGET" => bail!("account_native_target_execution_retired"),
             "TARGET_STATUS" => self.target_status(r),
             "CANCEL_EXIT" => self.cancel_exit(r),
+            "CANCEL_PROTECTION" => self.cancel_protection(r),
             "SHUTDOWN" => {
                 self.control = None;
                 self.handle.stop();
@@ -461,6 +696,25 @@ impl AccountStrategy {
             }
             _ => bail!("account_native_operation_unsupported"),
         }
+    }
+    fn strategy_status(&self) -> Result<Value> {
+        let id = self
+            .signal_strategy_id
+            .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
+        Ok(
+            json!({"strategy_id":id.to_string(),"state":format!("{:?}",component_state(&id.inner())?).to_ascii_uppercase(),
+            "native_version":crate::NAUTILUS_VERSION,"instrument_id":self.config.native_strategy.instrument_id,
+            "config":self.config.native_strategy.strategy,"default_start":"PAUSED",
+            "restart_warmup":"OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS","start_semantics":"UPSTREAM_RESET_THEN_START"}),
+        )
+    }
+    fn stop_signal_strategy(&self) -> Result<()> {
+        if let Some(id) = self.signal_strategy_id {
+            if component_state(&id.inner())? == ComponentState::Running {
+                self.native_trader.borrow_mut().stop_strategy(&id)?;
+            }
+        }
+        Ok(())
     }
     fn apply_control(&mut self, r: &Request) -> Result<Value> {
         let epoch = r.text("epoch")?.parse::<u64>()?;
@@ -551,10 +805,19 @@ impl AccountStrategy {
                     self.refresh_snapshot()?;
                 }
                 return Ok(
-                    json!({"applied":true,"epoch":epoch.to_string(),"revision":revision,"remaining_trading":if self.budget_target_epoch==Some(epoch){"BUDGET_AWARE"}else{"FENCED_PENDING_TARGET"}}),
+                    json!({"applied":true,"epoch":epoch.to_string(),"revision":revision,"remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
                 );
             }
         }
+        if self.native_managed_stop
+            && self.signal_strategy_id.is_some_and(|id| {
+                component_state(&id.inner()).ok() == Some(ComponentState::Running)
+            })
+        {
+            bail!("account_native_managed_stop_requires_explicit_stop");
+        }
+        self.stop_signal_strategy()?;
+        ensure!(self.signal_strategy_id.is_none_or(|id|component_state(&id.inner()).ok()!=Some(ComponentState::Running)),"account_native_strategy_stop_unsettled");
         // This synchronous owner-thread fence is visible before cancel commands
         // enter the native queue; old timer callbacks cannot pass submit checks.
         self.control = Some(Control {
@@ -568,7 +831,6 @@ impl AccountStrategy {
             minimum_interval_ns,
         });
         self.update_spot_observation(spot_candidate);
-        self.budget_target_epoch = None;
         self.last_slice_ns = self.last_slice_ns.max(
             self.cache()
                 .orders(None, None, None, Some(&self.account), None)
@@ -591,7 +853,7 @@ impl AccountStrategy {
         self.stamp.clear();
         self.refresh_snapshot()?;
         Ok(
-            json!({"applied":true,"epoch":epoch.to_string(),"revision":r.text("revision")?,"remaining_trading":"FENCED_PENDING_TARGET","fenced_old_targets":true}),
+            json!({"applied":true,"epoch":epoch.to_string(),"revision":r.text("revision")?,"remaining_trading":"PAUSED_NATIVE_STRATEGY","fenced_old_targets":true}),
         )
     }
     fn update_spot_observation(&mut self, candidate: Option<SpotFacts>) -> bool {
@@ -678,6 +940,10 @@ impl AccountStrategy {
                 .any(|o| !o.is_closed() && exit_id(o.tags()).is_some()),
             "account_native_previous_exit_order_unsettled"
         );
+        ensure!(
+            self.protection_orders(None).is_empty(),
+            "account_native_cancel_protection_before_exit"
+        );
         let (instrument, quote) = self.quote_and_instrument(id)?;
         let quantity = r.decimal("quantity")?;
         let floor = r.decimal("minimum_price")?;
@@ -687,13 +953,16 @@ impl AccountStrategy {
                 && quote.bid_price.as_decimal() >= floor,
             "account_native_exit_price_or_quantity"
         );
-        let holding = self
-            .cache()
-            .positions(None, Some(&id), None, Some(&self.account), None)
-            .iter()
-            .filter(|p| p.is_open() && p.is_long())
-            .map(|p| p.quantity.as_decimal())
-            .sum::<Decimal>();
+        let (holding, position_id) = {
+            let cache = self.cache();
+            let positions = cache.positions(None, Some(&id), None, Some(&self.account), None);
+            let open = positions.iter().filter(|p| p.is_open()).collect::<Vec<_>>();
+            ensure!(
+                open.len() == 1 && open[0].is_long(),
+                "account_native_exit_position_selection_required"
+            );
+            (open[0].quantity.as_decimal(), open[0].id)
+        };
         let sold_reserved = self
             .cache()
             .orders(
@@ -819,7 +1088,7 @@ impl AccountStrategy {
         );
         self.submission_attempted = true;
         self.last_slice_ns = now;
-        self.submit_order(order, None, Some(self.client), None)?;
+        self.submit_order(order, Some(position_id), Some(self.client), None)?;
         self.stamp.clear();
         Ok(
             json!({"submitted":true,"client_order_id":client.to_string(),"epoch":epoch.to_string(),"acknowledgement":"NATIVE_SUBMIT_ONLY"}),
@@ -845,245 +1114,35 @@ impl AccountStrategy {
         }
         Ok(json!({"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
-    fn submit_target(&mut self, r: &Request) -> Result<Value> {
-        let target_id = r.text("id")?.to_owned();
-        if let Some(old) = self.target_acceptances.get(&target_id) {
-            ensure!(
-                old.original == r.body,
-                "account_native_target_replay_conflict"
-            );
-            if let Some(receipt) = &old.receipt {
-                return Ok(receipt.clone());
-            }
-            ensure!(
-                old.submitted.is_empty(),
-                "account_native_original_target_requires_reconciliation"
-            );
-        }
-        let epoch = r.text("epoch")?.parse::<u64>()?;
-        let control = self.fence(epoch)?.clone();
-        let expires = r.text("expires_at")?.parse::<u64>()?;
-        ensure!(
-            expires > self.clock().timestamp_ns().as_u64(),
-            "account_native_target_expired"
-        );
-        let capital = r.decimal("capital")?;
-        ensure!(capital >= Decimal::ZERO, "account_native_target_capital");
-        let signal = r
-            .value("signal_capital")
-            .as_str()
-            .map(Decimal::from_str)
-            .transpose()?
-            .unwrap_or(capital + control.reserved);
-        let weights = r
-            .value("weights")
-            .as_array()
-            .ok_or_else(|| anyhow!("account_native_weights_required"))?;
-        let mut parsed = BTreeMap::new();
-        let mut sum = Decimal::ZERO;
-        for row in weights {
-            let id = InstrumentId::from_str(
-                row["instrument_id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow!("account_native_weight_instrument"))?,
-            )?;
-            let weight = Decimal::from_str(
-                row["weight"]
-                    .as_str()
-                    .ok_or_else(|| anyhow!("account_native_weight_decimal"))?,
-            )?;
-            ensure!(
-                weight >= Decimal::ZERO && self.ids.contains(&id) && !parsed.contains_key(&id),
-                "account_native_weight_scope"
-            );
-            sum += weight;
-            parsed.insert(id, weight);
-        }
-        ensure!(sum <= Decimal::ONE, "account_native_weight_budget");
-        self.target_acceptances.insert(
-            target_id.clone(),
-            TargetAcceptance {
-                original: r.body.clone(),
-                epoch: epoch.to_string(),
-                submitted: vec![],
-                receipt: None,
-            },
-        );
-        self.persist_acceptances()?;
-        let all_orders = self
-            .cache()
-            .orders(None, None, None, Some(&self.account), None)
+    fn protection_orders(&self, target: Option<&str>) -> Vec<ClientOrderId> {
+        self.cache()
+            .orders(None, None, None, None, None)
             .iter()
-            .map(|o| (*o).clone())
-            .collect::<Vec<_>>();
+            .filter(|o| {
+                !o.is_closed()
+                    && o.tags().is_some_and(|tags| {
+                        tags.iter().any(|tag| {
+                            tag.as_str()
+                                .strip_prefix("QZ-PROTECTION:")
+                                .is_some_and(|id| target.is_none_or(|target| target == id))
+                        })
+                    })
+            })
+            .map(|o| o.client_order_id())
+            .collect()
+    }
+    fn cancel_protection(&mut self, r: &Request) -> Result<Value> {
+        let target = r.text("id")?;
         ensure!(
-            !all_orders
-                .iter()
-                .any(|o| !o.is_closed() && o.order_side() == OrderSide::Buy),
-            "account_native_previous_target_buy_unsettled"
+            self.target_acceptances.contains_key(target),
+            "account_native_target_unknown"
         );
-        let cash = self.spot_cash()?;
-        let mut available = (cash - control.reserved - control.buffer).max(Decimal::ZERO);
-        let mut result = vec![];
-        for (index, id) in self.ids.clone().iter().enumerate() {
-            let (instrument, quote) = self.quote_and_instrument(*id)?;
-            let weight = parsed.get(id).copied().unwrap_or(Decimal::ZERO);
-            let current = self
-                .cache()
-                .positions(None, Some(id), None, Some(&self.account), None)
-                .iter()
-                .filter(|p| p.is_open())
-                .map(|p| p.signed_decimal_qty())
-                .sum::<Decimal>();
-            ensure!(
-                current >= Decimal::ZERO,
-                "account_native_short_position_unsupported"
-            );
-            // Exit reservations constrain BUY funding. Every ordinary signal
-            // keeps its unreduced scale; only authorized SLICE may add exit sales.
-            let target_capital = if control.reserved > Decimal::ZERO || !control.exits.is_empty() {
-                signal
-            } else {
-                capital
-            };
-            let target = target_capital
-                .checked_mul(weight)
-                .and_then(|v| v.checked_div(quote.ask_price.as_decimal()))
-                .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-            let side = if target >= current {
-                OrderSide::Buy
-            } else {
-                OrderSide::Sell
-            };
-            if side == OrderSide::Buy {
-                ensure!(
-                    self.clock().timestamp_ns().as_u64() < self.fee_valid_until_ns,
-                    "account_native_spot_fee_evidence_expired"
-                );
-            }
-            if side == OrderSide::Sell
-                && all_orders.iter().any(|o| {
-                    !o.is_closed() && o.instrument_id() == *id && o.order_side() == OrderSide::Sell
-                })
-            {
-                continue;
-            }
-            let diff = (target - current).abs();
-            let max = if side == OrderSide::Buy {
-                available
-                    / buy_cost_per_unit(
-                        quote.ask_price.as_decimal(),
-                        self.fee_rate,
-                        instrument.size_increment().as_decimal(),
-                    )?
-            } else {
-                current
-            };
-            let quantity = diff.min(max);
-            if quantity < instrument.size_increment().as_decimal() {
-                continue;
-            }
-            let mut qty = instrument.try_make_qty_from_decimal(quantity, Some(true))?;
-            if qty.as_decimal() <= Decimal::ZERO
-                || instrument.min_quantity().is_some_and(|m| qty < m)
-            {
-                continue;
-            }
-            let raw = if side == OrderSide::Buy {
-                quote.ask_price.as_decimal()
-            } else {
-                quote.bid_price.as_decimal()
-            };
-            let limit = valid_sell_floor(
-                raw,
-                instrument.price_precision(),
-                instrument.size_precision(),
-            )?;
-            let price = instrument.try_make_price_from_decimal(limit)?;
-            if side == OrderSide::Buy {
-                let quantity = qty.as_decimal().min(
-                    available
-                        / buy_cost_per_unit(
-                            limit,
-                            self.fee_rate,
-                            instrument.size_increment().as_decimal(),
-                        )?,
-                );
-                if quantity < instrument.size_increment().as_decimal() {
-                    continue;
-                }
-                qty = instrument.try_make_qty_from_decimal(quantity, Some(true))?;
-                if qty.as_decimal() <= Decimal::ZERO {
-                    continue;
-                }
-            }
-            if instrument
-                .min_notional()
-                .is_some_and(|m| qty.as_decimal() * price.as_decimal() < m.as_decimal())
-            {
-                continue;
-            }
-            let client = ClientOrderId::new_checked(&format!("QZT-{}-{index}", r.text("id")?))?;
-            if self.cache().order(&client).is_some() {
-                continue;
-            }
-            let buy_debit = if side == OrderSide::Buy {
-                let rounding = fee_rounding_reserve(
-                    qty.as_decimal(),
-                    self.fee_rate,
-                    instrument.size_increment().as_decimal(),
-                )?;
-                let debit = qty
-                    .as_decimal()
-                    .checked_mul(limit)
-                    .and_then(|v| v.checked_mul(Decimal::ONE + self.fee_rate))
-                    .and_then(|v| v.checked_add(rounding))
-                    .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-                ensure!(
-                    debit <= available,
-                    "account_native_buy_budget_rounding_bound"
-                );
-                debit
-            } else {
-                Decimal::ZERO
-            };
-            self.fence(epoch)?;
-            let order = self.order_factory().limit(
-                *id,
-                side,
-                qty,
-                price,
-                Some(TimeInForce::Ioc),
-                None,
-                Some(false),
-                Some(side == OrderSide::Sell),
-                Some(false),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(vec![Ustr::from(&format!("QZ-TARGET:{}", r.text("id")?))]),
-                Some(client),
-            );
-            self.target_acceptances
-                .get_mut(&target_id)
-                .unwrap()
-                .submitted
-                .push(client.to_string());
-            self.persist_acceptances()?;
-            self.submit_order(order, None, Some(self.client), None)?;
-            if side == OrderSide::Buy {
-                available -= buy_debit;
-            }
-            result.push(client.to_string());
+        let ids = self.protection_orders(Some(target));
+        for id in &ids {
+            self.cancel_order(*id, Some(self.client), None)?;
         }
-        self.budget_target_epoch = Some(epoch);
         self.stamp.clear();
-        let receipt = json!({"applied":true,"acknowledged":true,"target_id":r.text("id")?,"submitted_client_order_ids":result,"epoch":epoch.to_string(),"remaining_trading":"BUDGET_AWARE"});
-        self.target_acceptances.get_mut(&target_id).unwrap().receipt = Some(receipt.clone());
-        self.persist_acceptances()?;
-        Ok(receipt)
+        Ok(json!({"target_id":target,"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
     fn persist_acceptances(&self) -> Result<()> {
         let id = self
@@ -1137,22 +1196,9 @@ impl AccountStrategy {
                 );
             }
         } else {
-            ensure!(
-                !self.cache_failed.load(Ordering::SeqCst),
-                "account_native_cache_write_failed"
-            );
-            // This handler runs after official startup recovery. Absence is a
-            // valid negative because every target intent precedes submission.
-            // Persist that terminal result to prevent a later replay of this ID.
-            let original = r.body.clone();
-            self.target_acceptances.insert(
-                id.clone(),
-                TargetAcceptance {
-                    original,
-                    epoch: r.value("epoch").as_str().unwrap_or_default().into(),
-                    submitted: vec![],
-                    receipt: None,
-                },
+            return Ok(
+                json!({"acknowledged":false,"target_id":id,"state":"UNKNOWN","admission":"UNCERTAIN",
+                "reason":"legacy_target_owner_state_not_loaded","submitted_client_order_ids":[]}),
             );
         }
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
@@ -1299,19 +1345,26 @@ fn fee_rounding_reserve(
         .checked_mul(maximum_fills)
         .ok_or_else(|| anyhow!("account_native_decimal_range"))
 }
-fn buy_cost_per_unit(
-    price: Decimal,
-    fee_bound: Decimal,
-    size_increment: Decimal,
-) -> Result<Decimal> {
-    price
-        .checked_mul(Decimal::ONE + fee_bound)
-        .and_then(|v| {
-            half_fee_quantum(fee_bound)
-                .checked_div(size_increment)
-                .and_then(|rounding| v.checked_add(rounding))
-        })
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))
+// Keep the official risk engine and queued dispatch. Cache persistence failures
+// are otherwise log-only upstream; halt at the execution boundary, not a timer.
+fn install_cache_failure_risk_fence(node: &LiveNode, failed: Arc<AtomicBool>) {
+    use nautilus_common::{
+        messages::execution::TradingCommand,
+        msgbus::{self, MessagingSwitchboard, TypedIntoHandler},
+    };
+    let risk = std::rc::Rc::downgrade(node.kernel().risk_engine());
+    msgbus::register_trading_command_endpoint(
+        MessagingSwitchboard::risk_engine_execute(),
+        TypedIntoHandler::from(move |command: TradingCommand| {
+            if let Some(risk) = risk.upgrade() {
+                let mut risk = risk.borrow_mut();
+                if failed.load(Ordering::SeqCst) {
+                    risk.set_trading_state(nautilus_model::enums::TradingState::Halted);
+                }
+                risk.execute(command);
+            }
+        }),
+    );
 }
 
 pub async fn run() -> Result<()> {
@@ -1326,6 +1379,26 @@ pub async fn run() -> Result<()> {
     }
     result
 }
+fn execution_product_types(config: &AccountRuntimeConfig) -> Result<Vec<HyperliquidProductType>> {
+    let products = config
+        .execution_product_types
+        .clone()
+        .unwrap_or_else(|| HyperliquidExecutionClientConfig::default().product_types);
+    ensure!(
+        !products.is_empty(),
+        "account_native_execution_product_types_empty"
+    );
+    for instrument in &config.instruments {
+        let id = InstrumentId::from_str(instrument)?;
+        let product = HyperliquidProductType::from_symbol(id.symbol.as_str())?;
+        ensure!(
+            products.contains(&product),
+            "account_native_instrument_outside_execution_scope"
+        );
+    }
+    Ok(products)
+}
+
 async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
@@ -1334,6 +1407,31 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     ensure!(
         !config.instruments.is_empty() && config.instruments.len() <= 256,
         "account_native_instrument_count"
+    );
+    ensure!(
+        config.mode == "paper" || config.paper_execution.is_none(),
+        "account_native_paper_execution_requires_paper"
+    );
+    ensure!(
+        !matches!(
+            config.native_strategy.strategy,
+            NativeCompiledStrategyV1::HurstVpinDirectional { .. }
+        ),
+        "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+    );
+    ensure!(
+        !matches!(
+            config.native_strategy.strategy,
+            NativeCompiledStrategyV1::GridMarketMaker { .. }
+        ),
+        "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+    );
+    ensure!(
+        matches!(
+            config.native_strategy.strategy,
+            NativeCompiledStrategyV1::EmaCross { .. }
+        ),
+        "account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance"
     );
     let _: Id = config
         .source_id
@@ -1353,6 +1451,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         ids.iter().all(|id| id.venue == Venue::from("HYPERLIQUID")),
         "account_native_hyperliquid_scope"
     );
+    let execution_product_types = execution_product_types(&config)?;
     let environment = if config.testnet {
         HyperliquidEnvironment::Testnet
     } else {
@@ -1395,6 +1494,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     };
     let cache_factory = AccountCacheFactory::new(config.data_dir.clone());
     let cache_failed = cache_factory.failed.clone();
+    let cache_config = CacheConfig {
+        flush_on_start: false,
+        save_market_data: false,
+        ..Default::default()
+    };
     let mut builder = LiveNode::builder(
         trader,
         if config.mode == "paper" {
@@ -1409,15 +1513,12 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     })
     .with_load_state(true)
     .with_save_state(true)
-    .with_cache_config(CacheConfig {
-        flush_on_start: false,
-        save_market_data: false,
-        ..Default::default()
-    })
-    .with_cache_database_factory(Box::new(cache_factory.clone()))
+    .with_cache_config(cache_config.clone())
+    .with_risk_engine_config(config.risk.native(&config.instruments)?)
     .with_reconciliation(true)
     .with_exec_engine_config(LiveExecutionEngineConfig {
         load_cache: true,
+        submission_recovery_policy: SubmissionRecoveryPolicy::RetainUnresolved,
         open_check_interval_secs: Some(10.0),
         position_check_interval_secs: Some(30.0),
         ..Default::default()
@@ -1450,6 +1551,14 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         let balances = cache_factory
             .restored_balances(&account)?
             .unwrap_or(vec![Money::from_decimal(initial, Currency::USDC())?]);
+        let models = config
+            .paper_execution
+            .as_ref()
+            .map(PaperExecutionConfig::models)
+            .transpose()?;
+        let (fill_model, latency_model) = models
+            .map(|(fill, latency)| (Some(fill), Some(latency)))
+            .unwrap_or_default();
         builder = builder.add_simulated_exec_client(
             Some("QZ-PAPER".into()),
             Box::new(SandboxExecutionClientFactory::new()),
@@ -1462,6 +1571,12 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
                 fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
                     fee_rate, fee_rate,
                 ))),
+                fill_model,
+                latency_model,
+                queue_position: config
+                    .paper_execution
+                    .as_ref()
+                    .is_some_and(|scenario| scenario.queue_position),
                 liquidity_consumption: true,
                 ..Default::default()
             }),
@@ -1471,6 +1586,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
             Some("HYPERLIQUID".into()),
             Box::new(HyperliquidExecutionClientFactory::new()),
             Box::new(HyperliquidExecutionClientConfig {
+                product_types: execution_product_types,
                 account_id: account,
                 account_address: config.account_address.clone(),
                 environment,
@@ -1481,6 +1597,15 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         )?;
     }
     let mut node = builder.build()?;
+    cache_factory
+        .install(
+            node.kernel().cache(),
+            trader,
+            node.instance_id(),
+            cache_config,
+        )
+        .await?;
+    install_cache_failure_risk_fence(&node, cache_failed.clone());
     let handle = node.handle();
     let session = node.instance_id().to_string();
     let (sender, inbox) = mpsc::sync_channel::<Request>(64);
@@ -1544,10 +1669,73 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         )?
         .saturating_add(60_000_000_000)
     };
-    node.add_strategy(AccountStrategy {
+    let instrument_id: InstrumentId = config.native_strategy.instrument_id.parse()?;
+    ensure!(
+        ids.contains(&instrument_id),
+        "account_native_strategy_instrument_not_configured"
+    );
+    let compiled = crate::native_strategy::registry::build_strategy(
+        instrument_id,
+        &config.native_strategy.strategy,
+    )?;
+    let native_managed_stop = match &compiled {
+        crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(s) => {
+            s.strategy_core().config.manage_stop
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+            )
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+            )
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(s) => {
+            s.strategy_core().config.manage_stop
+        }
+    };
+    match compiled {
+        crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
+            node.add_strategy(strategy)?
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+            )
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+            )
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(strategy) => {
+            node.add_strategy(strategy)?
+        }
+    }
+    let signal_strategy_id = *node
+        .kernel()
+        .trader
+        .borrow()
+        .strategy_ids()
+        .last()
+        .ok_or_else(|| anyhow!("account_native_strategy_registration_failed"))?;
+    node.add_strategy(AccountController {
+        signal_strategy_id: Some(signal_strategy_id),
+        native_trader: node.kernel().trader.clone(),
+        native_managed_stop,
         core: StrategyCore::new(StrategyConfig {
+            // Sandbox dispatches execution events asynchronously. The official strategy
+            // manager reconciles OTO quantities after fills reach the shared cache.
+            // Do not double-manage Hyperliquid adapter-staged child orders.
+            manage_contingent_orders: config.mode == "paper",
             strategy_id: Some(strategy_id),
-            external_order_instrument_ids: Some(ids.clone()),
+            order_id_tag: Some("CONTROL".into()),
+            // Explicit position IDs allow authorized exits to reduce the signal strategy
+            // position. Never infer a controller-owned NETTING position.
+            oms_type: Some(nautilus_model::enums::OmsType::Hedging),
+            external_order_instrument_ids: None,
             log_events: false,
             log_commands: false,
             ..Default::default()
@@ -1570,7 +1758,6 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         last_tick_ns: 0,
         last_slice_ns: 0,
         submission_attempted: false,
-        budget_target_epoch: None,
         cache_failed,
         spot_facts: None,
         target_acceptances: BTreeMap::new(),
@@ -1582,7 +1769,146 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_risk_defaults_and_explicit_limits() {
+        let defaults = super::AccountRiskConfig::default().native(&[]).unwrap();
+        assert!(!defaults.bypass);
+        assert_eq!(
+            defaults,
+            nautilus_live::config::LiveRiskEngineConfig::default()
+        );
+        let config: super::AccountRiskConfig = serde_json::from_value(serde_json::json!({
+            "max_order_submit_rate":"10/00:00:01", "max_order_modify_rate":"5/00:00:01",
+            "max_notional_per_order":{"BTC-USDC-SPOT.HYPERLIQUID":"1000.25"}
+        }))
+        .unwrap();
+        assert!(config.native(&[]).is_err());
+        let native = config
+            .native(&["BTC-USDC-SPOT.HYPERLIQUID".into()])
+            .unwrap();
+        assert_eq!(native.max_order_submit_rate, "10/00:00:01");
+        assert_eq!(native.max_order_modify_rate, "5/00:00:01");
+        assert_eq!(
+            native.max_notional_per_order["BTC-USDC-SPOT.HYPERLIQUID"],
+            "1000.25"
+        );
+        assert!(serde_json::from_value::<super::AccountRiskConfig>(
+            serde_json::json!({"bypass":true})
+        )
+        .is_err());
+    }
+    #[tokio::test]
+    async fn live_rejects_paper_scenario_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"live",
+            "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"EMA_CROSS","trade_size":"1","fast_period":2,"slow_period":3}},
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"], "source_id":"unused", "data_dir":"/tmp/unused",
+            "paper_execution":{"prob_fill_on_limit":1.0,"prob_slippage":0.0,"random_seed":"1",
+                "base_latency_ns":"0","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_paper_execution_requires_paper"
+        );
+    }
+    #[tokio::test]
+    async fn orderbook_strategy_account_lifecycle_rejected_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"paper",
+            "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":1.0,"time_in_force":"IOC","dry_run":false}},
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"],"source_id":"unused","data_dir":"/tmp/unused"
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance"
+        );
+    }
+    #[tokio::test]
+    async fn grid_strategy_account_lifecycle_rejected_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"paper",
+            "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"GRID_MARKET_MAKER","trade_size":"1","num_levels":2,"grid_step_bps":10,"skew_factor":0.1,"max_position":"2","requote_threshold_bps":5,"expire_time_secs":null,"on_cancel_resubmit":true}},
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"],"source_id":"unused","data_dir":"/tmp/unused"
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+        );
+    }
+    #[tokio::test]
+    async fn hurst_strategy_account_lifecycle_rejected_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"paper",
+            "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"HURST_VPIN_DIRECTIONAL","bar_type":"BTC-USDC-SPOT.HYPERLIQUID-100-VALUE-LAST-INTERNAL","trade_size":"1","hurst_window":8,"hurst_lags":[2,4],"hurst_enter":0.55,"hurst_exit":0.5,"vpin_window":2,"vpin_threshold":0.3,"max_holding_secs":60}},
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"],"source_id":"unused","data_dir":"/tmp/unused"
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+        );
+    }
+    #[test]
+    fn native_paper_models_validate_probabilities_and_exact_nanoseconds() {
+        let mut scenario = super::PaperExecutionConfig {
+            prob_fill_on_limit: 0.5,
+            prob_slippage: 0.2,
+            random_seed: "18446744073709551615".into(),
+            base_latency_ns: "9007199254740993".into(),
+            insert_latency_ns: "1".into(),
+            update_latency_ns: "2".into(),
+            cancel_latency_ns: "3".into(),
+            queue_position: true,
+        };
+        assert!(scenario.models().is_ok());
+        scenario.prob_slippage = 1.1;
+        assert!(scenario.models().is_err());
+        scenario.prob_slippage = 0.2;
+        scenario.base_latency_ns = u64::MAX.to_string();
+        assert!(scenario.models().is_err());
+        scenario.base_latency_ns = "-1".into();
+        assert!(scenario.models().is_err());
+    }
     use super::*;
+
+    #[test]
+    fn execution_scope_preserves_legacy_product_visibility_and_accepts_explicit_spot() {
+        let mut value = json!({
+            "client_id": "QZ", "account_id": "HYPERLIQUID-001", "mode": "live",
+            "instruments": ["HYPE-USDC-SPOT.HYPERLIQUID"],
+            "native_strategy":{"instrument_id":"HYPE-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"EMA_CROSS","trade_size":"1","fast_period":2,"slow_period":3}},
+            "source_id": "source", "data_dir": "/tmp/account"
+        });
+        let config: AccountRuntimeConfig = serde_json::from_value(value.clone()).unwrap();
+        let products = execution_product_types(&config).unwrap();
+        assert!(products.contains(&HyperliquidProductType::Spot));
+        assert!(products.contains(&HyperliquidProductType::Perp));
+        assert!(products.contains(&HyperliquidProductType::Outcome));
+        value["execution_product_types"] = json!(["SPOT"]);
+        let config = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            execution_product_types(&config).unwrap(),
+            vec![HyperliquidProductType::Spot]
+        );
+        value["execution_product_types"] = json!([]);
+        assert!(execution_product_types(&serde_json::from_value(value.clone()).unwrap()).is_err());
+        value["execution_product_types"] = json!(["PERP"]);
+        assert!(execution_product_types(&serde_json::from_value(value.clone()).unwrap()).is_err());
+        value["execution_product_types"] = json!(["INVALID"]);
+        assert!(serde_json::from_value::<AccountRuntimeConfig>(value).is_err());
+    }
+
     use nautilus_common::{
         cache::database::CacheDatabaseFactory, live::get_data_event_sender, messages::DataEvent,
     };
@@ -1658,6 +1984,11 @@ mod tests {
         let starting = factory
             .restored_balances(&account)?
             .unwrap_or(vec![Money::from("1000 USDC")]);
+        let cache_config = CacheConfig {
+            flush_on_start: false,
+            save_market_data: false,
+            ..Default::default()
+        };
         let mut node = LiveNode::builder(trader, Environment::Sandbox)?
             .with_logging(LoggerConfig {
                 bypass_logging: true,
@@ -1665,12 +1996,7 @@ mod tests {
             })
             .with_load_state(true)
             .with_save_state(true)
-            .with_cache_config(CacheConfig {
-                flush_on_start: false,
-                save_market_data: false,
-                ..Default::default()
-            })
-            .with_cache_database_factory(Box::new(factory.clone()))
+            .with_cache_config(cache_config.clone())
             .with_reconciliation(true)
             .with_exec_engine_config(LiveExecutionEngineConfig {
                 load_cache: true,
@@ -1698,12 +2024,42 @@ mod tests {
                 }),
             )?
             .build()?;
+        factory
+            .install(
+                node.kernel().cache(),
+                trader,
+                node.instance_id(),
+                cache_config,
+            )
+            .await?;
+        install_cache_failure_risk_fence(&node, factory.failed.clone());
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
-        node.add_strategy(AccountStrategy {
+        let native_config = NativeCompiledStrategyV1::EmaCross {
+            trade_size: "1".into(),
+            fast_period: 2,
+            slow_period: 3,
+            base: None,
+        };
+        match crate::native_strategy::registry::build_strategy(ids[0], &native_config)? {
+            crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
+                node.add_strategy(strategy)?
+            }
+            _ => unreachable!(),
+        }
+        let signal_strategy_id = *node.kernel().trader.borrow().strategy_ids().last().unwrap();
+        node.add_strategy(AccountController {
+            signal_strategy_id: Some(signal_strategy_id),
+            native_trader: node.kernel().trader.clone(),
+            native_managed_stop: false,
             core: StrategyCore::new(StrategyConfig {
+                manage_contingent_orders: true,
                 strategy_id: Some(StrategyId::from("QZ-ACCOUNT-OWNER-001")),
-                external_order_instrument_ids: Some(ids.clone()),
+                order_id_tag: Some("CONTROL".into()),
+                // Explicit position IDs allow authorized exits to reduce the signal strategy
+                // position. Never infer a controller-owned NETTING position.
+                oms_type: Some(nautilus_model::enums::OmsType::Hedging),
+                external_order_instrument_ids: None,
                 log_events: false,
                 log_commands: false,
                 ..Default::default()
@@ -1713,13 +2069,25 @@ mod tests {
                 account_id: account.to_string(),
                 mode: if scoped { "live" } else { "paper" }.into(),
                 account_address: None,
+                native_strategy: NativeStrategyDeployment {
+                    instrument_id: ids[0].to_string(),
+                    strategy: NativeCompiledStrategyV1::EmaCross {
+                        trade_size: "1".into(),
+                        fast_period: 2,
+                        slow_period: 3,
+                        base: None,
+                    },
+                },
                 instruments: ids.iter().map(ToString::to_string).collect(),
                 starting_balance: Some("1000".into()),
                 paper_fee_rate: Some("0.001".into()),
+                risk: AccountRiskConfig::default(),
+                paper_execution: None,
                 source_id: Id::new().to_string(),
                 trader_id: None,
                 data_dir: directory.into(),
                 testnet: false,
+                execution_product_types: None,
             },
             ids,
             client: ClientId::from("QZ-PAPER"),
@@ -1738,7 +2106,6 @@ mod tests {
             last_tick_ns: 0,
             last_slice_ns: 0,
             submission_attempted: false,
-            budget_target_epoch: None,
             cache_failed: factory.failed.clone(),
             spot_facts: None,
             target_acceptances: BTreeMap::new(),
@@ -1773,312 +2140,339 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
-    fn publish(cache: &Rc<RefCell<nautilus_common::cache::Cache>>) -> Result<()> {
-        let now = UnixNanos::from(u64::try_from(
-            chrono::Utc::now().timestamp_nanos_opt().unwrap(),
-        )?);
-        for (id, price) in [
-            ("BTC-USDC-SPOT.HYPERLIQUID", "100.00"),
-            ("ETH-USDC-SPOT.HYPERLIQUID", "200.00"),
-        ] {
-            let id = InstrumentId::from(id);
-            let price = Price::from(price);
-            let size = Quantity::from("1000.00");
-            let mut book = OrderBook::new(id, BookType::L2_MBP);
-            book.add(BookOrder::new(OrderSide::Buy, price, size, 1), 0, 1, now);
-            book.add(BookOrder::new(OrderSide::Sell, price, size, 2), 0, 2, now);
-            cache.borrow_mut().add_order_book(book)?;
-            get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
-                id, price, price, size, size, now, now,
-            ))))?;
-        }
-        Ok(())
-    }
     fn control(epoch: &str, mode: &str, reserved: &str) -> Value {
         json!({"epoch":epoch,"revision":epoch,"reserved_amount":reserved,"cash_buffer":"0","mode":mode,"exit_ids":["exit-original"],"minimum_interval_seconds":1})
     }
+    fn publish_native_quote(
+        cache: &Rc<RefCell<nautilus_common::cache::Cache>>,
+        price: &str,
+    ) -> Result<()> {
+        let now = UnixNanos::from(chrono::Utc::now().timestamp_nanos_opt().unwrap() as u64);
+        let id = InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID");
+        let price = Price::from_str(price).map_err(anyhow::Error::msg)?;
+        let size = Quantity::from("1000.00");
+        let mut book = OrderBook::new(id, BookType::L2_MBP);
+        book.add(BookOrder::new(OrderSide::Buy, price, size, 1), 0, 1, now);
+        book.add(BookOrder::new(OrderSide::Sell, price, size, 2), 0, 2, now);
+        cache.borrow_mut().add_order_book(book)?;
+        get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
+            id, price, price, size, size, now, now,
+        ))))?;
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn official_multi_spot_natural_slice_and_restart_preserve_native_account() -> Result<()> {
+    async fn native_strategy_cache_failure_halts_before_submission() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let (mut first, tx, replies) = node(directory.path()).await?;
-        let handle = first.handle();
-        let cache = first.kernel().cache();
-        let drive = async {
-            while !handle.is_running() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            publish(&cache)?;
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            let initial = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                Decimal::from_str(initial["cash"].as_str().unwrap())? == Decimal::from(1000),
-                "native_initial_cash"
-            );
-            let quantized = request(
-                &tx,
-                &replies,
-                "QUANTIZE_MONEY",
-                json!({"amount":"2684105.0099999998","currency":"USDC"}),
-            )
-            .await?;
-            ensure!(
-                Decimal::from_str(quantized["amount"].as_str().unwrap())?
-                    == Decimal::from_str("2684105.01")?
-                    && quantized["precision"] == Currency::USDC().precision,
-                "official_money_quantization"
-            );
-            request(&tx, &replies, "CONTROL", control("1", "NORMAL", "0")).await?;
-            let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
-                + 60_000_000_000)
-                .to_string();
-            let target = json!({"epoch":"1","id":"initial-target","expires_at":expiry,"capital":"1000","signal_capital":"1000","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.5"},{"instrument_id":"ETH-USDC-SPOT.HYPERLIQUID","weight":"0.5"}]});
-            let accepted = request(&tx, &replies, "TARGET", target).await?;
-            ensure!(
-                accepted["acknowledged"] == true,
-                "native_target_not_accepted"
-            );
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            let held = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                held["fills"].as_array().unwrap().len() == 2,
-                "official_two_asset_fills_missing"
-            );
-            request(
-                &tx,
-                &replies,
-                "CONTROL",
-                control("2", "NATURAL_RELEASE", "200"),
-            )
-            .await?;
-            let before = held["positions"].clone();
-            let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
-                + 60_000_000_000)
-                .to_string();
-            request(&tx,&replies,"TARGET",json!({"epoch":"2","id":"natural-unchanged","expires_at":expiry,"capital":"800","signal_capital":"1000","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.5"},{"instrument_id":"ETH-USDC-SPOT.HYPERLIQUID","weight":"0.5"}]})).await?;
-            let natural = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                natural["positions"] == before,
-                "natural_release_forced_proportional_sales"
-            );
-            let forbidden=request(&tx,&replies,"SLICE",json!({"epoch":"2","exit_id":"exit-original","client_order_id":"forbidden-natural-slice","instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","quantity":"0.10","minimum_price":"100.00"})).await?;
-            ensure!(
-                forbidden["admission"] == "REJECTED",
-                "natural_forced_slice_admitted"
-            );
-            request(
-                &tx,
-                &replies,
-                "CONTROL",
-                control("3", "BOUNDED_LIMIT", "500"),
-            )
-            .await?;
-            let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
-                + 60_000_000_000)
-                .to_string();
-            request(&tx,&replies,"TARGET",json!({"epoch":"3","id":"bounded-unchanged","expires_at":expiry,"capital":"500","signal_capital":"1000","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.5"},{"instrument_id":"ETH-USDC-SPOT.HYPERLIQUID","weight":"0.5"}]})).await?;
-            let bounded = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                bounded["positions"] == before && bounded["fills"].as_array().unwrap().len() == 2,
-                "bounded_target_bypassed_exit_slice_authorization"
-            );
-            request(&tx, &replies, "CONTROL", control("4", "CASH_ONLY", "500")).await?;
-            let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
-                + 60_000_000_000)
-                .to_string();
-            request(&tx,&replies,"TARGET",json!({"epoch":"4","id":"cash-only-unchanged","expires_at":expiry,"capital":"500","signal_capital":"1000","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.5"},{"instrument_id":"ETH-USDC-SPOT.HYPERLIQUID","weight":"0.5"}]})).await?;
-            let cash_only = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                cash_only["positions"] == before
-                    && cash_only["fills"].as_array().unwrap().len() == 2,
-                "cash_only_target_forced_exit_sales"
-            );
-            request(
-                &tx,
-                &replies,
-                "CONTROL",
-                control("5", "BOUNDED_LIMIT", "500"),
-            )
-            .await?;
-            publish(&cache)?;
-            let rejected=request(&tx,&replies,"SLICE",json!({"epoch":"5","exit_id":"exit-original","client_order_id":"rejected-cost-ioc","instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","quantity":"0.10","minimum_price":"100.00","minimum_interval_seconds":1,"reference_bid":"100","remaining_cost_budget":"0","fee_rate_bound":"0.001","maximum_slice_notional":"50","maximum_participation":"0.1"})).await?;
-            ensure!(
-                rejected["admission"] == "REJECTED"
-                    && rejected["submitted"] == false
-                    && rejected["reason"] == "account_native_remaining_cost_exceeded",
-                "cost_limit_not_enforced_before_submit"
-            );
-            let submitted=request(&tx,&replies,"SLICE",json!({"epoch":"5","exit_id":"exit-original","client_order_id":"original-exit-ioc","instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","quantity":"0.10","minimum_price":"100.00","minimum_interval_seconds":1,"reference_bid":"100","remaining_cost_budget":"1","fee_rate_bound":"0.001","maximum_slice_notional":"50","maximum_participation":"0.1"})).await?;
-            ensure!(submitted["submitted"] == true, "native_slice_not_submitted");
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            let after = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                after["fills"].as_array().unwrap().len() == 3,
-                "native_ioc_fill_missing"
-            );
-            let cash_before = Decimal::from_str(after["cash"].as_str().unwrap())?;
-            let spend_cap = Decimal::from_str("3.003")?;
-            let buffer = cash_before - Decimal::from(5) - spend_cap;
-            ensure!(buffer >= Decimal::ZERO, "native_small_budget_setup");
-            let mut authority = control("6", "NORMAL", "5");
-            authority["cash_buffer"] = json!(buffer.to_string());
-            request(&tx, &replies, "CONTROL", authority).await?;
-            let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
-                + 60_000_000_000)
-                .to_string();
-            request(&tx,&replies,"TARGET",json!({"epoch":"6","id":"rounding-reserve-target","expires_at":expiry,"capital":"990","signal_capital":"990","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.498"},{"instrument_id":"ETH-USDC-SPOT.HYPERLIQUID","weight":"0.502"}]})).await?;
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            let after = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            let boundary_order = after["orders"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|o| o["client_order_id"] == "QZT-rounding-reserve-target-0")
-                .ok_or_else(|| anyhow!("native_boundary_buy_missing"))?;
-            ensure!(
-                Decimal::from_str(boundary_order["quantity"].as_str().unwrap())?
-                    == Decimal::new(2, 2),
-                "native_buy_did_not_reserve_per_fill_rounding_quantum"
-            );
-            let cash_after = Decimal::from_str(after["cash"].as_str().unwrap())?;
-            ensure!(
-                cash_before - cash_after <= spend_cap && cash_after >= Decimal::from(5) + buffer,
-                "native_buy_consumed_reserved_cash_or_buffer"
-            );
-            let status = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"initial-target"}),
-            )
-            .await?;
-            ensure!(
-                status["acknowledged"] == true && status["epoch"] == "1",
-                "original_target_ack_missing"
-            );
-            let expired=request(&tx,&replies,"TARGET",json!({"id":"expired-original","epoch":"6","expires_at":"1","capital":"1","weights":[]})).await?;
-            ensure!(
-                expired["acknowledged"] == false
-                    && expired["state"] == "EXPIRED"
-                    && expired["admission"] == "NOT_SUBMITTED",
-                "expired_target_did_not_close_without_submission"
-            );
-            let absent = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"never-submitted","epoch":"1","expires_at":"1"}),
-            )
-            .await?;
-            ensure!(
-                absent["state"] == "EXPIRED" && absent["admission"] == "NOT_SUBMITTED",
-                "unknown_target_negative_not_proven_after_recovery"
-            );
-            request(&tx, &replies, "CONTROL", control("7", "PAUSED", "500")).await?;
-            let canceled = request(
-                &tx,
-                &replies,
-                "CANCEL_EXIT",
-                json!({"epoch":"7","exit_id":"exit-original"}),
-            )
-            .await?;
-            ensure!(
-                canceled["settled"] == true,
-                "native_terminal_exit_cancellation_unsettled"
-            );
-            let obsolete = request(&tx, &replies, "SLICE", json!({"epoch":"3"})).await?;
-            ensure!(
-                obsolete["admission"] == "REJECTED"
-                    && obsolete["reason"] == "account_native_obsolete_control_epoch",
-                "obsolete_epoch_admitted"
-            );
-            request(&tx, &replies, "SHUTDOWN", json!({})).await?;
-            Ok::<_, anyhow::Error>(after)
-        };
+        let (mut native, tx, replies) = node(directory.path()).await?;
+        let handle = native.handle();
+        let cache = native.kernel().cache();
+        let risk = native.kernel().risk_engine().clone();
         let stop = handle.clone();
-        let controlled = async {
-            let result = drive.await;
-            stop.stop();
-            result
-        };
-        let (run, result) = tokio::join!(first.run_with_mode(NodeRunMode::Hosted), controlled);
-        run?;
-        let previous = result?;
-        first.dispose();
-        drop(cache);
-        drop(first);
-        let (mut second, tx, replies) = node(directory.path()).await?;
-        let handle = second.handle();
-        let cache = second.kernel().cache();
         let drive = async {
             while !handle.is_running() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            publish(&cache)?;
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            request(&tx, &replies, "TEST_RESTING_LIMIT", json!({})).await?;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ensure!(
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .is_some_and(|o| o.status() == nautilus_model::enums::OrderStatus::Accepted),
+                "resting_order_not_accepted"
+            );
+            // A real backing-store failure, not a synthetic successful response.
+            // Preserve existing test files while obstructing the orders directory.
+            let orders = directory.path().join("native-cache/orders");
+            std::fs::rename(&orders, directory.path().join("saved-orders"))?;
+            std::fs::write(&orders, b"unwritable order directory")?;
+            for price in [
+                "100.00", "99.00", "98.00", "97.00", "103.00", "106.00", "90.00", "110.00",
+            ] {
+                publish_native_quote(&cache, price)?;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+            ensure!(
+                risk.borrow().trading_state() == nautilus_model::enums::TradingState::Halted,
+                "risk_not_halted"
+            );
+            {
+                let cached = cache.borrow();
+                let orders = cached.orders(None, None, None, None, None);
+                ensure!(
+                    orders
+                        .iter()
+                        .any(|o| o.strategy_id().to_string().starts_with("EMA_CROSS")),
+                    "official_strategy_did_not_attempt_order"
+                );
+                ensure!(
+                    orders
+                        .iter()
+                        .filter(|o| o.client_order_id() != ClientOrderId::from("fault-resting"))
+                        .all(|o| o.ts_submitted().is_none() && o.filled_qty().is_zero()),
+                    "cache_failure_reached_execution"
+                );
+                ensure!(
+                    cached.positions(None, None, None, None, None).is_empty(),
+                    "cache_failure_opened_position"
+                );
+            }
+            request(&tx, &replies, "TEST_MODIFY_LIMIT", json!({})).await?;
             tokio::time::sleep(Duration::from_millis(40)).await;
-            let restored = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
             ensure!(
-                restored["cash"] == previous["cash"],
-                "paper_restart_reset_native_cash"
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .price()
+                    == Some(Price::from("1.00")),
+                "halted_order_modified"
             );
+            request(&tx, &replies, "TEST_CANCEL_LIMIT", json!({})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
             ensure!(
-                restored["positions"] == previous["positions"],
-                "paper_restart_reset_native_positions"
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .status()
+                    == nautilus_model::enums::OrderStatus::Canceled,
+                "halted_cancel_blocked"
             );
+            let status = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
             ensure!(
-                restored["fills"] == previous["fills"],
-                "paper_restart_lost_native_order_events"
+                status["recovery_required"] == true && status["fenced"] == true,
+                "fault_not_exposed"
             );
+            let exit = request(&tx, &replies, "SLICE", json!({"epoch":"1"})).await?;
             ensure!(
-                restored["fenced"] == true,
-                "restart_opened_financial_authority"
+                exit["admission"] == "REJECTED"
+                    && exit["submitted"] == false
+                    && exit["reason"] == "account_native_cache_write_failed",
+                "fault_did_not_reject_new_exit"
             );
-            let status = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"initial-target"}),
-            )
-            .await?;
+            let stopped = request(&tx, &replies, "STRATEGY_STOP", json!({})).await?;
+            ensure!(stopped["state"] == "STOPPED", "explicit_stop_unavailable");
+            let error = request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
             ensure!(
-                status["acknowledged"] == true && status["epoch"] == "1",
-                "paper_restart_lost_original_target_ack"
+                error["admission"] == "REJECTED"
+                    && error["reason"] == "account_native_cache_write_failed",
+                "fault_allowed_restart"
             );
-            let expired = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"expired-original","epoch":"6"}),
-            )
-            .await?;
-            ensure!(
-                expired["state"] == "EXPIRED" && expired["admission"] == "NOT_SUBMITTED",
-                "paper_restart_lost_negative_target_terminal"
-            );
-            let absent = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"never-submitted","epoch":"1"}),
-            )
-            .await?;
-            ensure!(
-                absent["state"] == "EXPIRED" && absent["admission"] == "NOT_SUBMITTED",
-                "paper_restart_lost_unknown_target_terminal"
-            );
-            request(&tx, &replies, "SHUTDOWN", json!({})).await?;
             Ok::<_, anyhow::Error>(())
         };
-        let stop = handle.clone();
         let controlled = async {
             let result = drive.await;
             stop.stop();
             result
         };
-        let (run, result) = tokio::join!(second.run_with_mode(NodeRunMode::Hosted), controlled);
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
         run?;
-        second.dispose();
-        result
+        result?;
+        native.dispose();
+        Ok(())
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compiled_strategy_explicit_start_stop_capital_pause_and_restart_warmup() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let mut prior_orders = 0;
+        for restart in [false, true] {
+            let (mut native, tx, replies) = node(directory.path()).await?;
+            let handle = native.handle();
+            let cache = native.kernel().cache();
+            let drive = async {
+                while !handle.is_running() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                let initial = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
+                ensure!(
+                    initial["state"] == "STOPPED",
+                    "native_strategy_boot_not_paused: {initial}"
+                );
+                ensure!(
+                    cache.borrow().orders(None, None, None, None, None).len() == prior_orders,
+                    "native_orders_not_restored"
+                );
+                publish_native_quote(&cache, "100.00")?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                ensure!(
+                    cache.borrow().orders(None, None, None, None, None).len() == prior_orders,
+                    "paused_strategy_traded"
+                );
+                let mut normal = control("1", "NORMAL", "0");
+                normal["exit_ids"] = json!([]);
+                request(&tx, &replies, "CONTROL", normal).await?;
+                let started =
+                    request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+                ensure!(
+                    started["state"] == "RUNNING",
+                    "native_strategy_start_failed: {started}"
+                );
+                publish_native_quote(&cache, "100.00")?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                ensure!(
+                    cache.borrow().orders(None, None, None, None, None).len() == prior_orders,
+                    "native_restart_skipped_official_warmup"
+                );
+                if !restart {
+                    for price in ["99.00", "98.00", "97.00", "103.00", "106.00"] {
+                        publish_native_quote(&cache, price)?;
+                        tokio::time::sleep(Duration::from_millis(40)).await;
+                    }
+                    let count = cache.borrow().orders(None, None, None, None, None).len();
+                    ensure!(count > prior_orders, "official_ema_did_not_submit");
+                    ensure!(
+                        cache
+                            .borrow()
+                            .orders(None, None, None, None, None)
+                            .iter()
+                            .all(|o| o.strategy_id().to_string().starts_with("EMA_CROSS")),
+                        "controller_generated_signal_orders"
+                    );
+                    prior_orders = count;
+                    let stopped = request(&tx, &replies, "STRATEGY_STOP", json!({})).await?;
+                    ensure!(stopped["state"] == "STOPPED", "native_stop_failed");
+                    publish_native_quote(&cache, "1.00")?;
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    ensure!(
+                        cache.borrow().orders(None, None, None, None, None).len() == prior_orders,
+                        "stopped_strategy_traded"
+                    );
+                    let before_reset_orders = cache
+                        .borrow()
+                        .orders(None, None, None, None, None)
+                        .iter()
+                        .map(|o| (o.client_order_id(), o.status()))
+                        .collect::<Vec<_>>();
+                    let before_reset_positions = cache
+                        .borrow()
+                        .positions(None, None, None, None, None)
+                        .iter()
+                        .map(|p| (p.id, p.quantity))
+                        .collect::<Vec<_>>();
+                    request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+                    ensure!(
+                        cache
+                            .borrow()
+                            .orders(None, None, None, None, None)
+                            .iter()
+                            .map(|o| (o.client_order_id(), o.status()))
+                            .collect::<Vec<_>>()
+                            == before_reset_orders,
+                        "reset_changed_cached_orders"
+                    );
+                    ensure!(
+                        cache
+                            .borrow()
+                            .positions(None, None, None, None, None)
+                            .iter()
+                            .map(|p| (p.id, p.quantity))
+                            .collect::<Vec<_>>()
+                            == before_reset_positions,
+                        "reset_changed_cached_positions"
+                    );
+                    request(
+                        &tx,
+                        &replies,
+                        "CONTROL",
+                        control("2", "NATURAL_RELEASE", "100"),
+                    )
+                    .await?;
+                    let stopped = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
+                    ensure!(
+                        stopped["state"] == "STOPPED",
+                        "capital_control_did_not_pause_strategy"
+                    );
+                    let rejected =
+                        request(&tx, &replies, "STRATEGY_START", json!({"epoch":"2"})).await?;
+                    ensure!(
+                        rejected["admission"] == "REJECTED"
+                            && rejected["reason"] == "account_native_strategy_capital_reserved",
+                        "reserved_capital_not_protected"
+                    );
+                    let retired = request(&tx, &replies, "TARGET", json!({}))
+                        .await
+                        .unwrap_err()
+                        .to_string();
+                    ensure!(
+                        retired == "account_native_target_execution_retired",
+                        "legacy_target_admitted"
+                    );
+                    request(
+                        &tx,
+                        &replies,
+                        "CONTROL",
+                        control("3", "BOUNDED_LIMIT", "1000"),
+                    )
+                    .await?;
+                    publish_native_quote(&cache, "100.00")?;
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    let before = cache
+                        .borrow()
+                        .positions(None, None, None, None, None)
+                        .into_iter()
+                        .filter(|p| p.is_open())
+                        .map(|p| p.quantity.as_decimal())
+                        .sum::<Decimal>();
+                    let slice = request(&tx,&replies,"SLICE",json!({"epoch":"3","exit_id":"exit-original",
+                        "client_order_id":"native-strategy-capital-exit","instrument_id":"BTC-USDC-SPOT.HYPERLIQUID",
+                        "quantity":"0.25","minimum_price":"100.00","reference_bid":"100.00",
+                        "remaining_cost_budget":"10","fee_rate_bound":"0.001","maximum_slice_notional":"25",
+                        "maximum_participation":"0.1"})).await?;
+                    ensure!(
+                        slice["submitted"] == true,
+                        "capital_slice_not_submitted: {slice}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    let positions = cache
+                        .borrow()
+                        .positions(None, None, None, None, None)
+                        .into_iter()
+                        .map(|p| (p.is_short(), p.is_open(), p.quantity.as_decimal()))
+                        .collect::<Vec<_>>();
+                    ensure!(
+                        positions.iter().all(|p| !p.0),
+                        "capital_controller_opened_separate_short"
+                    );
+                    let after = positions
+                        .iter()
+                        .filter(|p| p.1)
+                        .map(|p| p.2)
+                        .sum::<Decimal>();
+                    ensure!(
+                        after == before - Decimal::new(25, 2),
+                        "capital_slice_did_not_reduce_original_position: before={before} after={after} orders={:?}",
+                        cache.borrow().orders(None, None, None, None, None)
+                    );
+                    prior_orders = cache.borrow().orders(None, None, None, None, None).len();
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            let stop = handle.clone();
+            let controlled = async {
+                let result = drive.await;
+                stop.stop();
+                result
+            };
+            let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+            run?;
+            result?;
+            native.dispose();
+            drop(cache);
+            drop(native);
+        }
+        Ok(())
+    }
+
     #[test]
     fn hyperliquid_floor_never_rounds_below_authorization() -> Result<()> {
         for raw in ["0.0000123456", "1.2345678", "123.45678", "99999.9999"] {
@@ -2126,160 +2520,6 @@ mod tests {
             )? == Decimal::from_str("0.01000005")?,
             "per_fill_rounding_cost_bound_incorrect"
         );
-        ensure!(
-            buy_cost_per_unit(Decimal::from(100), Decimal::new(1, 3), Decimal::new(1, 2))?
-                == Decimal::from_str("100.1000005")?,
-            "buy_per_unit_rounding_reserve_incorrect"
-        );
-        ensure!(
-            buy_cost_per_unit(Decimal::from(100), Decimal::ZERO, Decimal::new(1, 2))?
-                == Decimal::from(100),
-            "zero_fee_buy_invented_rounding_cost"
-        );
         Ok(())
-    }
-    #[tokio::test(flavor = "current_thread")]
-    async fn scoped_spot_budget_debits_fills_without_reusing_perpetual_cash() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let (mut native, tx, replies) = node_with_scope(directory.path(), true).await?;
-        let handle = native.handle();
-        let cache = native.kernel().cache();
-        let drive = async {
-            while !handle.is_running() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            publish(&cache)?;
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            let now = u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?;
-            let mut authority = control("1", "NORMAL", "5");
-            authority["cash_buffer"] = json!("5");
-            authority["spot_free_cash"] = json!("20");
-            authority["spot_total_cash"] = json!("20");
-            authority["spot_balances"] = json!([{"coin":"USDC","total":"20","hold":"0"}]);
-            authority["spot_facts_asof_ns"] = json!((now - 1_000_000).to_string());
-            authority["spot_facts_valid_until_ns"] = json!((now + 60_000_000_000).to_string());
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            let observed = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            let heartbeat = u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?;
-            authority["spot_facts_asof_ns"] = json!((heartbeat - 1_000_000).to_string());
-            authority["spot_facts_valid_until_ns"] =
-                json!((heartbeat + 60_000_000_000).to_string());
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            let unchanged = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                unchanged["sequence"] == observed["sequence"]
-                    && unchanged["observation_id"] == observed["observation_id"],
-                "spot_ttl_heartbeat_fabricated_economic_snapshot"
-            );
-            authority["spot_total_cash"] = json!("21");
-            authority["spot_balances"] = json!([{"coin":"USDC","total":"21","hold":"1"}]);
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            let cash_changed = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                cash_changed["sequence"] != unchanged["sequence"],
-                "spot_economic_change_reused_native_sequence"
-            );
-            authority["spot_balances"] = json!([{"coin":"USDC","total":"21","hold":"1"},{"coin":"BTC","total":"1","hold":"0"}]);
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            let holdings_changed = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                holdings_changed["sequence"] != cash_changed["sequence"],
-                "non_cash_spot_holding_change_reused_native_sequence"
-            );
-            authority["spot_total_cash"] = json!("20");
-            authority["spot_balances"] = json!([{"coin":"USDC","total":"20","hold":"0"}]);
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            let mut target = json!({"epoch":"1","id":"scoped-first","expires_at":(now+60_000_000_000).to_string(),"capital":"1000","signal_capital":"1000","weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"1"}]});
-            request(&tx, &replies, "TARGET", target.clone()).await?;
-            tokio::time::sleep(Duration::from_millis(60)).await;
-            let first = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                first["fills"].as_array().unwrap().len() == 1,
-                "scoped_buy_not_filled"
-            );
-            ensure!(
-                Decimal::from_str(first["cash"].as_str().unwrap())? >= Decimal::from(990),
-                "merged_cash_spent_through_spot_fence"
-            );
-            target["id"] = json!("scoped-second");
-            request(&tx, &replies, "TARGET", target.clone()).await?;
-            tokio::time::sleep(Duration::from_millis(40)).await;
-            let second = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                second["cash"] == first["cash"] && second["fills"].as_array().unwrap().len() == 1,
-                "same_spot_fact_cash_spent_twice"
-            );
-            let asof = authority["spot_facts_asof_ns"]
-                .as_str()
-                .unwrap()
-                .parse::<u64>()?;
-            authority["spot_facts_valid_until_ns"] = json!((asof + 1).to_string());
-            request(&tx, &replies, "CONTROL", authority.clone()).await?;
-            target["id"] = json!("scoped-expired");
-            let rejected = request(&tx, &replies, "TARGET", target).await?;
-            ensure!(
-                rejected["acknowledged"] == false
-                    && rejected["state"] == "REJECTED"
-                    && rejected["reason"] == "account_native_spot_facts_expired",
-                "expired_spot_fact_admitted"
-            );
-            let pending = request(
-                &tx,
-                &replies,
-                "TARGET_STATUS",
-                json!({"id":"scoped-expired"}),
-            )
-            .await?;
-            ensure!(
-                pending["acknowledged"] == false && pending["admission"] == "NOT_SUBMITTED",
-                "unsubmitted_target_falsely_acknowledged"
-            );
-            let mut paused = authority.clone();
-            paused["epoch"] = json!("2");
-            paused["revision"] = json!("2");
-            paused["mode"] = json!("PAUSED");
-            paused["spot_free_cash"] = json!("unavailable");
-            request(&tx, &replies, "CONTROL", paused.clone()).await?;
-            let fenced = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                fenced["fenced"] == true,
-                "pause_failed_without_financial_facts"
-            );
-            let canceled = request(
-                &tx,
-                &replies,
-                "CANCEL_EXIT",
-                json!({"epoch":"2","exit_id":"exit-original"}),
-            )
-            .await?;
-            ensure!(
-                canceled["settled"] == true,
-                "pause_cancel_required_financial_facts"
-            );
-            let refreshed = u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?;
-            paused["spot_free_cash"] = json!("21");
-            paused["spot_total_cash"] = json!("21");
-            paused["spot_balances"] = json!([{"coin":"USDC","total":"21","hold":"0"}]);
-            paused["spot_facts_asof_ns"] = json!((refreshed - 1_000_000).to_string());
-            paused["spot_facts_valid_until_ns"] = json!((refreshed + 60_000_000_000).to_string());
-            request(&tx, &replies, "CONTROL", paused).await?;
-            let updated = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
-            ensure!(
-                updated["fenced"] == true && updated["sequence"] != fenced["sequence"],
-                "paused_valid_spot_observation_not_sampled"
-            );
-            request(&tx, &replies, "SHUTDOWN", json!({})).await?;
-            Ok::<_, anyhow::Error>(())
-        };
-        let stop = handle.clone();
-        let controlled = async {
-            let result = drive.await;
-            stop.stop();
-            result
-        };
-        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
-        run?;
-        native.dispose();
-        result
     }
 }
