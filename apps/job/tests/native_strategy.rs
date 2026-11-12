@@ -839,7 +839,7 @@ fn l2_frames_cross_catalog_batches_files_and_engine_batches_without_loss() {
     }
     let split = 2000 * 3;
     let dir = catalog(&books[..split], &[]);
-    let native = job::catalog::open_catalog(dir.path()).unwrap();
+    let native = ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, Some(4096), None, None).unwrap();
     native.write_to_parquet(&books[split..], None, None, None).unwrap();
     let result = job::native_strategy::run(dir.path(), request(6 * SECOND)).unwrap();
     assert_eq!(result.data_rows_by_type["OrderBookDelta"].get(), count * 3);
