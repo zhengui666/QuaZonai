@@ -921,12 +921,13 @@ fn official_replay_frame_grouping_preserves_tied_selectors_and_strategy_callback
     fn normalize_settlement_ids(value: &mut serde_json::Value, ids: &mut Vec<String>, occurrences: &mut usize) {
         match value {
             serde_json::Value::Object(fields) => {
-                if let Some(serde_json::Value::String(reason)) = fields.get_mut("reason")
-                    && let Some(id) = reason.strip_prefix("funding_settlement:") {
+                if let Some(serde_json::Value::String(reason)) = fields.get_mut("reason") {
+                    if let Some(id) = reason.strip_prefix("funding_settlement:") {
                         nautilus_core::UUID4::from_str(id).expect("Only a genuine upstream UUID4 may be normalized");
                         let index = ids.iter().position(|known| known == id).unwrap_or_else(|| { ids.push(id.to_owned()); ids.len() - 1 });
                         *reason = format!("funding_settlement:identity-{index}");
                         *occurrences += 1;
+                    }
                 }
                 for child in fields.values_mut() { normalize_settlement_ids(child, ids, occurrences); }
             }
