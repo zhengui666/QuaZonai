@@ -371,9 +371,10 @@ impl Aggregation {
             (None, None) => return Ok(None),
             _ => anyhow::bail!("BAR_INTERVAL_UNITS_CONFLICT"),
         };
-        if !self.series.contains_key(&trade.instrument_id) {
-            self.series
-                .insert(trade.instrument_id, HistoricalTradeBars::new(kind)?);
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.series.entry(trade.instrument_id)
+        {
+            entry.insert(HistoricalTradeBars::new(kind)?);
         }
         self.series
             .get_mut(&trade.instrument_id)

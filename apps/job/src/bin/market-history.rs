@@ -558,7 +558,7 @@ fn publish_native_funding(
             if let Some(saved) = existing.get(&(row.instrument_id, row.ts_event)) {
                 ensure!(
                     saved.len() == 1
-                        && serde_json::to_value(&saved[0])? == serde_json::to_value(row)?,
+                        && serde_json::to_value(saved[0])? == serde_json::to_value(row)?,
                     "FUNDING_CATALOG_RECORD_CONFLICT"
                 );
             } else {
