@@ -32,9 +32,9 @@ function equityWire(available = false): JsonObject {
     first_snapshot_ns: available ? '1790000000000000000' : null, last_snapshot_ns: available ? '1790000000000000001' : null, snapshot_count: available ? '2' : '0', observed_utc_days: available ? '1' : '0', unpriced_snapshot_count: '0', return_days: available ? '1' : '0', notes: ['Protocol fixture, not measured performance'] };
 }
 // Protocol-only native wire. Numerical native execution is tested in the Rust job tests, not mocked here.
-function wire(walkRequest: JsonObject = request, outcome = 'completed', selected = 0, trainOutcome = outcome) {
+function wire(walkRequest: JsonObject = request, outcome = 'completed', selected = 0, trainOutcome = outcome, large = false) {
   const native = (start: string, end: string, candidate: JsonObject = source, runOutcome = outcome) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
-    instrument_definition: instrumentBasis(candidate), equity_performance: equityWire((walkRequest.objective as JsonObject).metric_source === 'EQUITY_PERFORMANCE'), canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [{ quantity: '1.0000000001' }, { quantity: '2.0000000002' }, { quantity: '3.0000000003' }], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
+    instrument_definition: instrumentBasis(candidate), equity_performance: equityWire((walkRequest.objective as JsonObject).metric_source === 'EQUITY_PERFORMANCE'), canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: large ? Array.from({ length: 1000 }, (_, index) => ({ quantity: String(index), proof: 'UNPROJECTED_ROW'.repeat(80) })) : [{ quantity: '1.0000000001' }, { quantity: '2.0000000002' }, { quantity: '3.0000000003' }], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
   return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
     trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: selected === 1 ? candidate_index + 1 : 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate, trainOutcome) })), selected_candidate_index: selected, test_result: native('1790000000000000003', '1790000000000000004', (walkRequest.candidates as JsonObject[])[selected]), status: outcome === 'stopped' ? 'TEST_STOPPED' : 'COMPLETED', reason: outcome === 'stopped' ? 'WALK_FORWARD_TEST_WINDOW_STOPPED' : null }] };
 }
@@ -65,7 +65,7 @@ test('stopped native test windows retain the original evidence but cannot claim 
   assert.throws(() => nativeWalkForwardResult(missing, request), /native_strategy_report_invalid/);
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity', 'paged'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity', 'paged', 'paged-large'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
   const source: JsonObject = behavior === 'scenario' ? { ...(request.candidates as JsonObject[])[0]!, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000' } } : (request.candidates as JsonObject[])[0]!;
   const objective = behavior === 'equity' ? { native_key: 'Sharpe Ratio (365 days)', metric_source: 'EQUITY_PERFORMANCE', annualization_days: 365, direction: 'MAXIMIZE' } : request.objective;
   const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity'].includes(behavior);
@@ -83,12 +83,13 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
     if (incoming.method === 'DELETE') { deletes.push(incoming.url!); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
     if (behavior === 'failed-cost' && original.command === 'native-strategy-backtest' && (original.input as any).venue.taker_fee === '0.002') { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'actual_cost_case_failed' })); return; }
     if (behavior === 'repeat' && posts.length === 1) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'recorded_first_attempt_failure' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject, behavior === 'wf-stopped' ? 'stopped' : 'completed', behavior.startsWith('winner-') ? 1 : 0, behavior === 'train-stopped' ? 'stopped' : 'completed') : { ...wire().folds[0]!.trials[0]!.result, request: original.input, instrument_definition: instrumentBasis(original.input as JsonObject), equity_performance: equityWire(behavior === 'equity'), canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: behavior === 'stopped' ? 'stopped' : 'completed' } } } } : { error: 'pending_original_receipt' }) }));
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject, behavior === 'wf-stopped' ? 'stopped' : 'completed', behavior.startsWith('winner-') ? 1 : 0, behavior === 'train-stopped' ? 'stopped' : 'completed', behavior === 'paged-large') : { ...wire().folds[0]!.trials[0]!.result, request: original.input, instrument_definition: instrumentBasis(original.input as JsonObject), equity_performance: equityWire(behavior === 'equity'), canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: behavior === 'stopped' ? 'stopped' : 'completed' } } } } : { error: 'pending_original_receipt' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'native-walk-forward-protocol', url: `http://127.0.0.1:${address.port}` };
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  if (behavior === 'paged-large') faux.getModel().contextWindow = 1_000_000;
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
   try {
@@ -108,12 +109,35 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         ...(behavior === 'repeat' ? [fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective }), { stopReason: 'toolUse' }),
         ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs, ...(behavior === 'winner-covered' ? { strategies } : {}) }), { stopReason: 'toolUse' })] : []),
-        fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
-        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes(behavior === 'wf-stopped' ? 'WALK_FORWARD_NO_COMPLETED_TESTS' : 'PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); assert.ok(prompt.includes('UPSTREAM_CANONICAL_REPORT_REFERENCE')); assert.ok(prompt.includes('position_snapshots')); if (behavior === 'paged') {
+        (input) => {
+          if (behavior === 'paged-large') {
+            const last = input.messages.at(-1)!; assert.equal(last.role, 'toolResult');
+            const raw = (last.content as any)[0].text; assert.ok(!raw.includes('UNPROJECTED_ROW'));
+            assert.equal(JSON.parse(raw).folds[0].test_result.canonical_result.positions.rowCount, 1000);
+            exposureTaskId = JSON.parse(raw).taskId;
+            return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 0, pageSize: 1000000 }), { stopReason: 'toolUse' });
+          }
+          return fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' });
+        },
+        ...(behavior === 'paged-large' ? [(input: any) => {
+          const raw = input.messages.at(-1).content[0].text; const page = JSON.parse(raw);
+          assert.ok(Buffer.byteLength(raw) <= 50 * 1024); assert.ok(page.nextOffset > 0 && page.nextOffset < 1000);
+          return fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' });
+        }] : []),
+        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes(behavior === 'wf-stopped' ? 'WALK_FORWARD_NO_COMPLETED_TESTS' : 'PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); assert.ok(prompt.includes('UPSTREAM_CANONICAL_REPORT_REFERENCE')); assert.ok(prompt.includes('position_snapshots')); if (behavior.startsWith('paged')) {
           const user = input.messages.find(message => message.role === 'user'); assert.ok(user && typeof user.content === 'string');
           exposureTaskId = JSON.parse(user.content).evidence.dataValidation.taskId;
-          return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 0, pageSize: 2 }), { stopReason: 'toolUse' });
+          return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 0, pageSize: behavior === 'paged-large' ? 1000000 : 2 }), { stopReason: 'toolUse' });
         } return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
+        ...(behavior === 'paged-large' ? [
+          (input: any) => { const raw = input.messages.at(-1).content[0].text;
+            assert.ok(Buffer.byteLength(raw) <= 50 * 1024); const page = JSON.parse(raw);
+            assert.ok(page.rows.length > 0 && page.rows.length < 1000); assert.equal(page.nextOffset, page.rows.length);
+            assert.equal(page.maxPayloadBytes, 50 * 1024); assert.equal(page.rows[0].quantity, '0');
+            return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.summary/folds/0/test_result/canonical_result', offset: 0, pageSize: 2 }), { stopReason: 'toolUse' }); },
+          (input: any) => { const summary = JSON.parse(input.messages.at(-1).content[0].text); assert.equal(summary.projection, 'SUMMARY_FIELDS_NOT_ORIGINAL_ROWS'); assert.equal(summary.rows.length, 2); assert.equal(summary.nextOffset, 2);
+            return fauxAssistantMessage(JSON.stringify({ stars: null, rationale: 'Only one bounded page read', risks: [], uncertainties: ['Remaining rows unread'], evidenceSufficient: false, dataJudgment: { stars: null, rationale: 'Partial', risks: [], uncertainties: [] } })); },
+        ] : []),
         ...(behavior === 'paged' ? [
           (input: any) => { const last = input.messages.at(-1); const page = JSON.parse(last.content[0].text); assert.deepEqual(page.rows, [{ quantity: '1.0000000001' }, { quantity: '2.0000000002' }]); assert.equal(page.nextOffset, 2);
             return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 2, pageSize: 1 }), { stopReason: 'toolUse' }); },
@@ -124,7 +148,10 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
           (input: any) => { assert.ok(JSON.stringify(input.messages.at(-1)).includes('not available'));
             return fauxAssistantMessage(JSON.stringify({ stars: null, rationale: 'Read only three recorded positions, not margin or peak exposure', risks: [], uncertainties: ['Other evidence unread'], evidenceSufficient: false, dataJudgment: { stars: null, rationale: 'Partial review only', risks: [], uncertainties: [] } })); },
         ] : []),
-        fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
+        (input) => { const message = input.messages.at(-1)!; assert.equal(message.role, 'toolResult');
+          const report = JSON.parse((message.content as any)[0].text); assert.equal(report.evidence, undefined);
+          assert.ok(report.evidenceReference.taskId); assert.equal(report.projection, 'ASSESSMENT_JUDGMENT_ONLY_ORIGINAL_TASK_RETAINED');
+          return fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'); },
       ]);
       if (receipt) {
         const submission = await (await host.harness.conversation(receipt.conversationId, context))!.submit({ type: 'input', content: 'Now run walk-forward and report existing facts', requestId: 'walk-forward-after-history' }, context);
@@ -142,6 +169,10 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       assert.equal(task.state.outcome.result.ratingStatus, behavior === 'scenario' ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' || behavior === 'equity' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
+      if (behavior === 'paged-large') {
+        assert.equal((task.state.outcome.result.exposureReads as any[]).length, 2);
+        assert.equal(((await host.harness.getTask(validation!.taskIds[0]!, context))!.state.outcome as any).result.folds[0].test_result.canonical_result.positions.length, 1000);
+      }
       if (behavior === 'paged') {
         const result = task.state.outcome.result;
         assert.equal((result.exposureReads as any[]).length, 2);

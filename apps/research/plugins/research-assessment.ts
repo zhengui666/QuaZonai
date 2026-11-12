@@ -1,3 +1,4 @@
+import { nativeResultTables, nativeResultView, nativeToolText, nativeToolOutputLimits, nativeToolMaxBytes } from '../src/native-result-view.ts';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
@@ -74,11 +75,7 @@ function nativeResultObjective(result: JsonObject, objective: JsonObject): numbe
 }
 /** Locate intact original evidence without copying market-sized rows into the review prompt. */
 export function nativeExposureEvidence(result: JsonObject, taskId: number, resultPath: string): JsonObject {
-  const report = object(result.canonical_result, 'native_report');
-  return { source: 'UPSTREAM_CANONICAL_REPORT_REFERENCE', taskId, resultRoot: 'task.state.outcome.result', resultPath,
-    tables: Object.fromEntries(['accounts', 'positions', 'position_snapshots', 'portfolio_snapshots'].map(name => [name, {
-      path: `${resultPath}.canonical_result.${name}`, rowCount: (report[name] as JsonValue[]).length,
-    }])), rowsReviewed: false, scope: 'REFERENCE_ONLY_ROWS_NOT_REVIEWED_NO_PEAK_EXPOSURE_OR_MARGIN_CLAIM' };
+  return nativeResultTables(result, taskId, resultPath);
 }
 /** Small read receipts only. Original evidence stays on its existing official Task. */
 const ExposureReads = defineDoc<{ pages: JsonObject[] }>({
@@ -91,13 +88,13 @@ function exposureReferences(value: JsonValue): JsonObject[] {
   return Object.values(value).flatMap(exposureReferences);
 }
 /** A per-return byte allowance, not a total evidence cap or a token-count estimate. */
-export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; path: string; offset: number; pageSize: number }, contextWindow: number): JsonObject {
+export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; path: string; offset: number; pageSize: number; projection?: string }, contextWindow: number): JsonObject {
   if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) throw new Error('assessment_evidence_model_context_unknown');
   // At most one UTF-8 byte per quarter of the advertised token window leaves room
   // for the manifest, previous pages and answer. Official Pi owns compaction.
-  const maxPayloadBytes = Math.floor(contextWindow / 4);
+  const maxPayloadBytes = Math.min(Math.floor(contextWindow / 4), nativeToolMaxBytes);
   const receipt = { taskId: args.taskId, path: args.path, offset: args.offset, totalRows: rows.length,
-    scope: 'ROWS_READ_BY_TOOL_NOT_PROOF_OF_MODEL_DELIVERY_OR_REVIEW', maxPayloadBytes };
+    scope: 'ROWS_READ_BY_TOOL_NOT_PROOF_OF_MODEL_DELIVERY_OR_REVIEW', maxPayloadBytes, ...(args.projection ? { projection: args.projection } : {}) };
   let bytes = Buffer.byteLength(JSON.stringify({ ...receipt, endExclusive: Number.MAX_SAFE_INTEGER, rows: [], nextOffset: Number.MAX_SAFE_INTEGER }));
   if (bytes > maxPayloadBytes) throw new Error('assessment_evidence_page_metadata_exceeds_model_budget');
   const selected: JsonValue[] = []; let end = args.offset;
@@ -112,8 +109,8 @@ export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; pa
   return { ...receipt, endExclusive: end, rows: selected, nextOffset: end < rows.length ? end : null };
 }
 export const exposureReadTool = defineTool({
-  name: 'native_assessment_read_exposure',
-  description: 'Read an explicitly requested page of an original native account/position table listed in this review manifest. Use its taskId and exact table path, offset (zero-based) and pageSize. pageSize is a requested row count; a conservative per-return byte budget derived from the selected model context may return fewer rows. Follow actual nextOffset, not the requested count. There is no imposed total-row or page-count limit. A row too large for one response fails explicitly without removing it from the original Task. Reducing pageSize cannot fix one oversized row: record it as unread, disclose the missing evidence, and continue other rows/tables instead of retrying that offset without progress. nextOffset null means only this table has ended. Returned rows are unchanged; reading a page is not proof of full review, peak exposure, or margin sufficiency. No backtests or orders.',
+  name: 'native_assessment_read_exposure', outputLimits: nativeToolOutputLimits,
+  description: 'Read an explicitly requested page of an original native result table (accounts, positions, fills, orders, snapshots, diagnostics or equity returns). To page compact metadata, use path $.summary then follow returned summaryPath values (JSON Pointer escaping ~0 and ~1); summary fields are not original data rows. Parent research may also read its own assessment summaries and sensitivity-run metadata; an assessment child may read only references in its review manifest. Use its taskId and exact table path, offset (zero-based) and pageSize. pageSize is a requested row count; a conservative per-return byte budget derived from the selected model context may return fewer rows. Follow actual nextOffset, not the requested count. There is no imposed total-row or page-count limit. A row too large for one response fails explicitly without removing it from the original Task. Reducing pageSize cannot fix one oversized row: record it as unread, disclose the missing evidence, and continue other rows/tables instead of retrying that offset without progress. nextOffset null means only this table has ended. Returned rows are unchanged; reading a page is not proof of full review, peak exposure, or margin sufficiency. No backtests or orders.',
   parameters: obj({ taskId: int({ minimum: 0 }), path: str(), offset: int({ minimum: 0 }), pageSize: int({ minimum: 1 }) }),
   replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
@@ -124,20 +121,53 @@ export const exposureReadTool = defineTool({
     const page = await api.commit(async tx => {
       const conversation = await tx.conversation(api.conversationId);
       const owner = conversation?.owner ? await tx.task(conversation.owner.taskId) : null;
-      if (owner?.kind !== 'qz.research.assessment' || object(owner.input, 'assessment_input').mode !== 'SYNTHESIS') throw new Error('assessment_evidence_reader_scope');
-      const references = exposureReferences(object(owner.input, 'assessment_input').evidence!);
-      const reference = references.find(ref => ref.taskId === args.taskId && Object.values(object(ref.tables, 'exposure_tables')).some(table => object(table, 'exposure_table').path === args.path));
-      if (!reference) throw new Error('assessment_evidence_reference_not_in_manifest');
+      const isReview = owner?.kind === 'qz.research.assessment' && object(owner.input, 'assessment_input').mode === 'SYNTHESIS';
       const source = await tx.task(args.taskId as TaskId);
-      if (source?.conversationId !== owner.conversationId || source.kind !== 'qz.native-strategy.backtest' || source.state.status !== 'terminal' || source.state.outcome.status !== 'completed') throw new Error('assessment_evidence_task_unavailable');
-      let rows: JsonValue = source.state.outcome.result;
-      // Paths are supplied by our manifest, never evaluated as expressions.
-      for (const key of args.path.replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1').split('.')) {
-        if (!rows || typeof rows !== 'object') throw new Error('assessment_evidence_path_invalid');
-        rows = (rows as Record<string, JsonValue>)[key]!;
+      const sourceConversation = isReview ? owner!.conversationId : api.conversationId;
+      const references = isReview ? exposureReferences(object(owner!.input, 'assessment_input').evidence!) : [];
+      const isSummary = args.path === '$.summary' || args.path.startsWith('$.summary/');
+      let view: JsonObject;
+      if (source?.conversationId === sourceConversation && source.state.status === 'terminal' && source.state.outcome.status === 'completed'
+        && (source.kind === 'qz.native-strategy.backtest' || !isReview && source.kind === 'qz.research.assessment')) {
+        view = source.kind === 'qz.native-strategy.backtest' ? nativeResultView(object(source.state.outcome.result, 'native_result'), args.taskId) : object(source.state.outcome.result, 'assessment_result');
+      } else if (!isReview && isSummary) {
+        const run = (await tx.doc(NativeSensitivity, api.conversationId)).runs.find(run => run.toolTaskId === args.taskId);
+        if (!run) throw new Error('assessment_evidence_task_unavailable');
+        const results: JsonObject[] = [];
+        for (const item of run.tasks) {
+          const original = await tx.task(item.taskId);
+          if (!original || original.conversationId !== api.conversationId) throw new Error('assessment_evidence_task_unavailable');
+          results.push({ role: item.role, taskId: item.taskId, status: original.state.status === 'terminal' ? original.state.outcome.status : original.state.status,
+            error: original.state.status === 'terminal' && original.state.outcome.status === 'failed' ? original.state.outcome.error.message : null,
+            result: original.state.status === 'terminal' && original.state.outcome.status === 'completed' ? nativeResultView(object(original.state.outcome.result, 'native_result'), item.taskId) : null });
+        }
+        view = { ...run, results };
+      } else throw new Error('assessment_evidence_task_unavailable');
+      let rows: JsonValue;
+      if (isSummary) {
+        if (isReview && !references.some(ref => ref.taskId === args.taskId)) throw new Error('assessment_evidence_reference_not_in_manifest');
+        let selected: JsonValue = view;
+        for (const encoded of args.path.slice('$.summary'.length).split('/').slice(1)) {
+          const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
+          if (!selected || typeof selected !== 'object' || !Object.hasOwn(selected, key)) throw new Error('assessment_evidence_path_invalid');
+          selected = (selected as Record<string, JsonValue>)[key]!;
+        }
+        const field = (key: string, value: JsonValue): JsonObject => ({ key,
+          ...(value && typeof value === 'object' ? { summaryPath: `${args.path}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+            kind: Array.isArray(value) ? 'ARRAY' : 'OBJECT', count: Object.keys(value).length } : { value }) });
+        rows = selected && typeof selected === 'object' ? Object.entries(selected).map(([key, value]) => field(key, value)) : [{ value: selected }];
+      } else {
+        if (source?.kind !== 'qz.native-strategy.backtest' || source.state.status !== 'terminal' || source.state.outcome.status !== 'completed') throw new Error('assessment_evidence_reference_not_in_manifest');
+        const available = isReview ? references : exposureReferences(view);
+        if (!available.some(ref => ref.taskId === args.taskId && Object.values(object(ref.tables, 'exposure_tables')).some(table => object(table, 'exposure_table').path === args.path))) throw new Error('assessment_evidence_reference_not_in_manifest');
+        rows = source.state.outcome.result;
+        for (const key of args.path.replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1').split('.')) {
+          if (!rows || typeof rows !== 'object') throw new Error('assessment_evidence_path_invalid');
+          rows = (rows as Record<string, JsonValue>)[key]!;
+        }
       }
       if (!Array.isArray(rows) || args.offset > rows.length) throw new Error('assessment_evidence_page_invalid');
-      const page = nativeExposurePage(rows, args, model.contextWindow);
+      const page = nativeExposurePage(rows, { ...args, ...(isSummary ? { projection: 'SUMMARY_FIELDS_NOT_ORIGINAL_ROWS' } : {}) }, model.contextWindow);
       const { rows: _rows, nextOffset: _next, ...receipt } = page;
       const log = await tx.doc(ExposureReads, api.conversationId);
       if (!log.pages.some(page => canonical(page) === canonical(receipt))) log.pages.push(receipt);
@@ -274,7 +304,7 @@ export const logicReviewTool = defineTool({
 });
 
 export const assessmentReportTool = defineTool({
-  name: 'native_strategy_assessment_report',
+  name: 'native_strategy_assessment_report', outputLimits: nativeToolOutputLimits,
   description: 'Read the real stored logic-review and native execution Tasks and ask a separate Pi child Agent to synthesize the evidence. Read actual native walk-forward Task results when present; ordinary historical native performance is not OOS. Incomplete validation remains ungraded. Overall stars remain null unless the predeclared method and candidates match completed native walk-forward, parameter-neighbour and cost cases with usable native statistics and the synthesis Agent judges the scoped evidence sufficient. Does not execute a backtest, create trading permission, or replace existing results. Can be requested in a subsequent submission in the same research conversation.',
   parameters: obj({}), replay: 'safe', executionMode: 'sequential',
   async execute(_args, api, context) {
@@ -435,7 +465,10 @@ export const assessmentReportTool = defineTool({
     }, context);
     const task = await api.waitForTask(id, context);
     if (task.state.outcome.status !== 'completed') throw new Error('research_assessment_report_not_completed');
-    return { output: [{ type: 'text', text: JSON.stringify({ taskId: id, ...task.state.outcome.result }) }] };
+    const { evidence: _evidence, exposureReads: _reads, ...report } = task.state.outcome.result;
+    return { output: [{ type: 'text', text: nativeToolText({ taskId: id, ...report, evidenceReference: { taskId: id, summaryPath: '$.summary/evidence' },
+      exposureReadsReference: { taskId: id, summaryPath: '$.summary/exposureReads', count: Array.isArray(task.state.outcome.result.exposureReads) ? task.state.outcome.result.exposureReads.length : 0 },
+      projection: 'ASSESSMENT_JUDGMENT_ONLY_ORIGINAL_TASK_RETAINED' }, id) }] };
   },
 });
 

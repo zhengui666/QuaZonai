@@ -1,3 +1,4 @@
+import { nativeResultView, nativeToolText, nativeToolMaxBytes } from '../src/native-result-view.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -271,4 +272,25 @@ test('exposure pages bound a single response by model context without truncating
   assert.throws(() => nativeExposurePage([{ value: 'x'.repeat(5000) }], args, 4096), /row_exceeds_model_page_budget.*reducing pageSize cannot fix.*record this row as unread/);
   assert.throws(() => nativeExposurePage([], args, 4), /metadata_exceeds_model_budget/);
   assert.equal(nativeExposurePage([], args, 4096).nextOffset, null);
+});
+
+
+test('native tool projections retain exact metrics and replace every market-sized array without mutating Task results', () => {
+  const rows = [{ raw: 'RAW_MARKET_ROW'.repeat(10000) }];
+  const original = { canonical_result: { run: { outcome: 'completed' }, statistics: { returns: { Sharpe: '3ff0000000000000' } },
+    accounts: rows, positions: rows, position_snapshots: rows, portfolio_snapshots: rows, orders: rows, fills: rows, diagnostics: rows },
+    equity_performance: { status: 'AVAILABLE', returns: rows, statistics: [{ native_key: 'Sharpe', value: 1 }] }, notes: ['Original caveat'] };
+  const view: any = nativeResultView(original, 123);
+  assert.ok(!JSON.stringify(view).includes('RAW_MARKET_ROW'));
+  assert.deepEqual(view.canonical_result.statistics, original.canonical_result.statistics);
+  assert.deepEqual(view.equity_performance.statistics, original.equity_performance.statistics);
+  assert.equal(view.equity_performance.returns.path, '$.equity_performance.returns');
+  assert.equal(view.canonical_result.fills.rowCount, 1);
+  assert.equal(original.canonical_result.fills, rows);
+  assert.equal(original.equity_performance.returns, rows);
+  const hugeSummary = { ...view, notes: ['long'.repeat(nativeToolMaxBytes)] };
+  const text = nativeToolText(hugeSummary, 123);
+  assert.ok(Buffer.byteLength(text) <= nativeToolMaxBytes);
+  assert.deepEqual(JSON.parse(text).summaryPath, '$.summary');
+  assert.equal(JSON.parse(text).taskId, 123);
 });
