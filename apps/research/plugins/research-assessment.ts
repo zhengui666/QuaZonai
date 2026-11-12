@@ -6,8 +6,8 @@ import { nativeEquityMetric, nativeStrategyResult, normalizedNativeStrategyReque
 import { NativeWalkForward } from './native-walk-forward.ts';
 import { nativeWalkForwardResult, normalizedWalkForwardObjective } from '../src/native-walk-forward-result.ts';
 import type { JsonValue } from '@earendil-works/chord';
-import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
-import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
+import { arr, int, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
+import { AssistantEntry, configure, defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
 import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { ResearchConfiguration, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
@@ -80,6 +80,72 @@ export function nativeExposureEvidence(result: JsonObject, taskId: number, resul
       path: `${resultPath}.canonical_result.${name}`, rowCount: (report[name] as JsonValue[]).length,
     }])), rowsReviewed: false, scope: 'REFERENCE_ONLY_ROWS_NOT_REVIEWED_NO_PEAK_EXPOSURE_OR_MARGIN_CLAIM' };
 }
+/** Small read receipts only. Original evidence stays on its existing official Task. */
+const ExposureReads = defineDoc<{ pages: JsonObject[] }>({
+  kind: 'qz.research-exposure-reads', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  initial: () => ({ pages: [] }), checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
+});
+function exposureReferences(value: JsonValue): JsonObject[] {
+  if (!value || typeof value !== 'object') return [];
+  if (!Array.isArray(value) && value.source === 'UPSTREAM_CANONICAL_REPORT_REFERENCE') return [value];
+  return Object.values(value).flatMap(exposureReferences);
+}
+/** A per-return byte allowance, not a total evidence cap or a token-count estimate. */
+export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; path: string; offset: number; pageSize: number }, contextWindow: number): JsonObject {
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) throw new Error('assessment_evidence_model_context_unknown');
+  // At most one UTF-8 byte per quarter of the advertised token window leaves room
+  // for the manifest, previous pages and answer. Official Pi owns compaction.
+  const maxPayloadBytes = Math.floor(contextWindow / 4);
+  const receipt = { taskId: args.taskId, path: args.path, offset: args.offset, totalRows: rows.length,
+    scope: 'ROWS_READ_BY_TOOL_NOT_PROOF_OF_MODEL_DELIVERY_OR_REVIEW', maxPayloadBytes };
+  let bytes = Buffer.byteLength(JSON.stringify({ ...receipt, endExclusive: Number.MAX_SAFE_INTEGER, rows: [], nextOffset: Number.MAX_SAFE_INTEGER }));
+  if (bytes > maxPayloadBytes) throw new Error('assessment_evidence_page_metadata_exceeds_model_budget');
+  const selected: JsonValue[] = []; let end = args.offset;
+  while (end < rows.length && selected.length < args.pageSize) {
+    const size = Buffer.byteLength(JSON.stringify(rows[end])) + (selected.length ? 1 : 0);
+    if (bytes + size > maxPayloadBytes) {
+      if (!selected.length) throw new Error(`assessment_evidence_row_exceeds_model_page_budget: task=${args.taskId} path=${args.path} offset=${end}; row remains intact on original Task but cannot be read through this page tool`);
+      break;
+    }
+    selected.push(rows[end]!); bytes += size; end++;
+  }
+  return { ...receipt, endExclusive: end, rows: selected, nextOffset: end < rows.length ? end : null };
+}
+export const exposureReadTool = defineTool({
+  name: 'native_assessment_read_exposure',
+  description: 'Read an explicitly requested page of an original native account/position table listed in this review manifest. Use its taskId and exact table path, offset (zero-based) and pageSize. pageSize is a requested row count; a conservative per-return byte budget derived from the selected model context may return fewer rows. Follow actual nextOffset, not the requested count. There is no imposed total-row or page-count limit. A row too large for one response fails explicitly without removing it from the original Task. nextOffset null means only this table has ended. Returned rows are unchanged; reading a page is not proof of full review, peak exposure, or margin sufficiency. No backtests or orders.',
+  parameters: obj({ taskId: int({ minimum: 0 }), path: str(), offset: int({ minimum: 0 }), pageSize: int({ minimum: 1 }) }),
+  replay: 'safe', executionMode: 'sequential',
+  async execute(args, api, context) {
+    for (const value of [args.taskId, args.offset, args.pageSize]) if (!Number.isSafeInteger(value)) throw new Error('assessment_evidence_page_invalid');
+    const agent = await api.agent(context);
+    const model = agent.model ? api.models.getModel(agent.model.provider, agent.model.modelId) : undefined;
+    if (!model) throw new Error('research_assessment_model_unavailable');
+    const page = await api.commit(async tx => {
+      const conversation = await tx.conversation(api.conversationId);
+      const owner = conversation?.owner ? await tx.task(conversation.owner.taskId) : null;
+      if (owner?.kind !== 'qz.research.assessment' || object(owner.input, 'assessment_input').mode !== 'SYNTHESIS') throw new Error('assessment_evidence_reader_scope');
+      const references = exposureReferences(object(owner.input, 'assessment_input').evidence!);
+      const reference = references.find(ref => ref.taskId === args.taskId && Object.values(object(ref.tables, 'exposure_tables')).some(table => object(table, 'exposure_table').path === args.path));
+      if (!reference) throw new Error('assessment_evidence_reference_not_in_manifest');
+      const source = await tx.task(args.taskId as TaskId);
+      if (source?.conversationId !== owner.conversationId || source.kind !== 'qz.native-strategy.backtest' || source.state.status !== 'terminal' || source.state.outcome.status !== 'completed') throw new Error('assessment_evidence_task_unavailable');
+      let rows: JsonValue = source.state.outcome.result;
+      // Paths are supplied by our manifest, never evaluated as expressions.
+      for (const key of args.path.replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1').split('.')) {
+        if (!rows || typeof rows !== 'object') throw new Error('assessment_evidence_path_invalid');
+        rows = (rows as Record<string, JsonValue>)[key]!;
+      }
+      if (!Array.isArray(rows) || args.offset > rows.length) throw new Error('assessment_evidence_page_invalid');
+      const page = nativeExposurePage(rows, args, model.contextWindow);
+      const { rows: _rows, nextOffset: _next, ...receipt } = page;
+      const log = await tx.doc(ExposureReads, api.conversationId);
+      if (!log.pages.some(page => canonical(page) === canonical(receipt))) log.pages.push(receipt);
+      return page;
+    }, context);
+    return { output: [{ type: 'text', text: JSON.stringify(page) }] };
+  },
+});
 function methodPart(value: JsonValue | undefined, fields: string[]): JsonObject {
   const result = { ...object(value, 'research_validation_method') }; for (const key of fields) result[key] ??= null; return result;
 }
@@ -131,14 +197,39 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const instrumentDefinition = task.input.request.instrument_definition && typeof task.input.request.instrument_definition === 'object' && !Array.isArray(task.input.request.instrument_definition) ? task.input.request.instrument_definition : { mode: 'HISTORICAL_AS_OF_START' };
     const staticScenario = instrumentDefinition.mode === 'STATIC_SCENARIO';
     const eligible = synthesis && object(task.input.evidence.ratingReadiness ?? {}, 'rating_readiness').eligible === true;
-    const answer = await runtime.models.completeSimple(model, {
-      systemPrompt: `${rubric}\nInstrument assumption: ${staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
-        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. exposureEvidence contains only original Task references, table paths and row counts, NOT row contents. This reviewer has NOT inspected those account or position rows. Disclose this explicitly; do not claim exposure, margin adequacy, unlevered returns or peak position was verified from references or row counts. Empty or incomplete rows mean exposure or margin is unverified, not zero; ending positions alone do not establish peak intrarun exposure. Do not label high-return results unlevered without supporting native evidence. Do not invent leverage ratios, margin rates or user-imposed position caps. Inspect actual fold windows, native data count semantics, fills and failed trials. Read all result notes before interpreting dataRowsByType: when CATALOG_ROW_COUNTS identifies a pre-run validation scan, those counts are not engine-consumed events. REPLAY_READER_ROWS_INCLUDING_PREFETCH includes look-ahead, not engine consumption. CATALOG_READ_CONSISTENCY_UNVERIFIED means Parquet Latest/read-only does not isolate concurrent writers; different folds/candidates may read different contents, and equal counts do not prove identical inputs. A count mismatch alone does not identify its cause. Official run bounds/iterations describe execution, not immutable input or continuous coverage. Do not label older reports as streaming when their notes do not establish that mode; absent count semantics remain unspecified. distinguish sampled book snapshots from event-complete incremental feeds, disclose known depth/cadence, dropped empty or malformed books and carry/checkpoint limitations; simulated fills on snapshots do not prove actual high-frequency fillability; a high Sharpe in a short sample does not establish annual return. equityPerformance is the separate official snapshot-only return series: inspect status/reason, actual observed UTC days versus return_days (which can include upstream carry-forward), unpriced counts, currency and 252 versus 365 annualization. CAGR is a short-window extrapolation, not a realized annual return or proof a 500% target was achieved. Never substitute canonical position returns when equityPerformance is unavailable. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
-        : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
-      messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
-    }, { signal: runtime.signal, ...(task.input.thinkingLevel && task.input.thinkingLevel !== 'off' ? { reasoning: task.input.thinkingLevel } : {}) });
-    if (answer.stopReason === 'error' || answer.stopReason === 'aborted') throw new Error('research_assessment_model_failed');
-    const text = answer.content.filter(part => part.type === 'text').map(part => part.text).join('');
+    const systemPrompt = `${rubric}\nInstrument assumption: ${staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
+        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. exposureEvidence contains only original Task references, table paths and row counts, NOT row contents. Initially you have NOT inspected those account or position rows. Use native_assessment_read_exposure to read relevant original table pages on demand before discussing exposure. State precisely which tables/ranges you read and what remains unread; nextOffset=null completes only that table, not the entire review. Never equate delivered pages with a completed semantic audit. Disclose partial review explicitly; do not claim exposure, margin adequacy, unlevered returns or peak position was verified from references or row counts. Empty or incomplete rows mean exposure or margin is unverified, not zero; ending positions alone do not establish peak intrarun exposure. Do not label high-return results unlevered without supporting native evidence. Do not invent leverage ratios, margin rates or user-imposed position caps. Inspect actual fold windows, native data count semantics, fills and failed trials. Read all result notes before interpreting dataRowsByType: when CATALOG_ROW_COUNTS identifies a pre-run validation scan, those counts are not engine-consumed events. REPLAY_READER_ROWS_INCLUDING_PREFETCH includes look-ahead, not engine consumption. CATALOG_READ_CONSISTENCY_UNVERIFIED means Parquet Latest/read-only does not isolate concurrent writers; different folds/candidates may read different contents, and equal counts do not prove identical inputs. A count mismatch alone does not identify its cause. Official run bounds/iterations describe execution, not immutable input or continuous coverage. Do not label older reports as streaming when their notes do not establish that mode; absent count semantics remain unspecified. distinguish sampled book snapshots from event-complete incremental feeds, disclose known depth/cadence, dropped empty or malformed books and carry/checkpoint limitations; simulated fills on snapshots do not prove actual high-frequency fillability; a high Sharpe in a short sample does not establish annual return. equityPerformance is the separate official snapshot-only return series: inspect status/reason, actual observed UTC days versus return_days (which can include upstream carry-forward), unpriced counts, currency and 252 versus 365 annualization. CAGR is a short-window extrapolation, not a realized annual return or proof a 500% target was achieved. Never substitute canonical position returns when equityPerformance is unavailable. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
+        : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`;
+    const content = JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence });
+    let text: string; let reviewConversationId: ConversationId | null = null; let exposureReads: JsonObject[] = [];
+    if (synthesis) {
+      await runtime.commit(async tx => {
+        const previous = (await tx.scanConversations({ ownerTaskId: task.id }, 1)).items[0];
+        if (previous) { reviewConversationId = previous.id; return; }
+        const child = await tx.createConversation({ ownership: { kind: 'task', taskId: task.id } });
+        reviewConversationId = child.id;
+        await configure(tx, child.id, { model: task.input.model, thinkingLevel: task.input.thinkingLevel ?? 'off',
+          instructions: systemPrompt, extensions: [assessmentExtension], tools: [exposureReadTool], maxTurns: null });
+        return undefined;
+      }, context);
+      const child = await runtime.conversation(reviewConversationId!, context);
+      if (!child) throw new Error('assessment_review_conversation_missing');
+      const settled = await (await child.submit({ type: 'input', content, requestId: `assessment:${task.id}` }, context)).wait(context);
+      if (settled.status !== 'done') throw new Error('research_assessment_model_failed');
+      text = '';
+      await runtime.commit(async tx => {
+        const entry = await tx.entry(settled.answer!);
+        if (!entry || entry.conversationId !== reviewConversationId || !AssistantEntry.is(entry)) throw new Error('assessment_review_answer_invalid');
+        text = (entry.model ?? []).filter(message => message.role === 'assistant').flatMap(message => message.content).filter(part => part.type === 'text').map(part => part.text).join('');
+        exposureReads = JSON.parse(JSON.stringify((await tx.doc(ExposureReads, reviewConversationId!)).pages));
+        return undefined;
+      }, context);
+    } else {
+      const answer = await runtime.models.completeSimple(model, { systemPrompt, messages: [{ role: 'user', content, timestamp: 0 }] },
+        { signal: runtime.signal, ...(task.input.thinkingLevel && task.input.thinkingLevel !== 'off' ? { reasoning: task.input.thinkingLevel } : {}) });
+      if (answer.stopReason === 'error' || answer.stopReason === 'aborted') throw new Error('research_assessment_model_failed');
+      text = answer.content.filter(part => part.type === 'text').map(part => part.text).join('');
+    }
     const response = object(JSON.parse(text), 'research_assessment_response');
     const judgment = assessmentJudgment(response);
     const dataJudgment = synthesis && response.dataJudgment !== undefined ? assessmentJudgment(response.dataJudgment) : null;
@@ -146,6 +237,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST', instrumentDefinitionAssumption: { ...instrumentDefinition, qualification: staticScenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT' },
       model: task.input.model, rubricVersion: 'SCOPED_RESEARCH_ADVISORY_V2', judgment: synthesis && !rated ? { ...judgment, stars: null } : judgment,
       ...(synthesis ? { dataJudgment: dataJudgment ? { ...dataJudgment, stars: rated ? dataJudgment.stars : null } : null, ratingStatus: rated ? staticScenario ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE' } : {}),
+      ...(synthesis ? { reviewConversationId, exposureReads, exposureReviewScope: 'RECORDED_TOOL_READS_ONLY_NOT_AUTOMATIC_FULL_AUDIT' } : {}),
       evidence: task.input.evidence, claim: synthesis ? rated ? staticScenario ? 'CONDITIONAL_STATIC_SCENARIO_RESEARCH_ASSESSMENT' : 'SCOPED_TWO_LANE_RESEARCH_ASSESSMENT' : 'INCOMPLETE_TWO_LANE_RESEARCH_ASSESSMENT' : 'CONFIGURATION_ONLY_LOGIC_REVIEW', tradingPermission: false };
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
   } },
@@ -330,7 +422,7 @@ export const assessmentReportTool = defineTool({
         observedScope: 'PER_FOLD_AVAILABILITY_WINDOWS_RECORDED_COUNT_SEMANTICS_AND_FILLS; COUNTS_NOT_PROOF_OF_ENGINE_CONSUMPTION_OR_IDENTICAL_INPUTS; REGISTERED_EVENT_RANGE_IS_NOT_PROOF_OF_CONTINUOUS_COVERAGE' };
       const staticScenario = request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO';
       const ratingReadiness: JsonObject = { eligible: reasons.length === 0, reasons, scope: staticScenario ? 'CONDITIONAL_STATIC_SCENARIO_RECORDED_PROTOCOL_ONLY' : 'RECORDED_PROTOCOL_AND_THIS_CONVERSATION_ONLY',
-        limitations: [...(staticScenario ? ['HISTORICAL_INSTRUMENT_RULES_NOT_VERIFIED'] : []), 'CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED', 'NATIVE_EXPOSURE_AND_MARGIN_ROWS_NOT_REVIEWED'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
+        limitations: [...(staticScenario ? ['HISTORICAL_INSTRUMENT_RULES_NOT_VERIFIED'] : []), 'CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED', 'EXPOSURE_REVIEW_SCOPE_REQUIRES_RECORDED_TOOL_READS_AND_AGENT_JUDGMENT'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
       const evidence: JsonObject = {
         executionSource: source,
         logic: matchingLogic ? { taskId: logic!.id, result: logic!.state.outcome!.status === 'completed' ? logic!.state.outcome!.result : null } : { status: 'MISSING_OR_DIFFERENT_CONFIGURATION', stars: null },
@@ -348,5 +440,7 @@ export const assessmentReportTool = defineTool({
 });
 
 
-export default defineExtension({ name: 'qz.research-assessment', tasks: [ResearchAssessmentTask], tools: [logicReviewTool, nativeSensitivityTool, assessmentReportTool],
+const assessmentExtension = defineExtension({ name: 'qz.research-assessment', tasks: [ResearchAssessmentTask], tools: [logicReviewTool, nativeSensitivityTool, assessmentReportTool, exposureReadTool],
   sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review with the same ordered strategies candidates planned for validation, before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_sensitivity with the same predeclared ordered strategies (all walk-forward candidates by default), neighbourStrategies/costs, and native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });
+
+export default assessmentExtension;

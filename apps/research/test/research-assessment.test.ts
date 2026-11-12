@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { openResearch } from '../src/host.ts';
-import { ResearchAssessment, ResearchAssessmentTask, assessmentJudgment, nativeExposureEvidence } from '../plugins/research-assessment.ts';
+import { ResearchAssessment, ResearchAssessmentTask, assessmentJudgment, nativeExposureEvidence, nativeExposurePage } from '../plugins/research-assessment.ts';
 import { ResearchConfiguration } from '../src/research-configuration.ts';
 import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 
@@ -125,7 +125,7 @@ test('a real native execution attempt cannot be relabelled as pre-execution logi
 });
 
 
-test('aborting an official assessment child cancels its model call and never persists a fabricated rating', async () => {
+for (const mode of ['LOGIC', 'SYNTHESIS'] as const) test(`aborting official ${mode} assessment cancels its model call and never persists a fabricated rating`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-assessment-cancel-'));
   const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider);
   let started!: () => void; const called = new Promise<void>(resolve => { started = resolve; });
@@ -138,7 +138,7 @@ test('aborting an official assessment child cancels its model call and never per
   let host = await openResearch(options);
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: { provider: faux.provider.id, modelId: faux.getModel().id }, request, configurationTaskId: null, evidence: {} }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode, model: { provider: faux.provider.id, modelId: faux.getModel().id }, request, configurationTaskId: null, evidence: {} }, { ownership: { kind: 'conversation' } }), context);
     await called; await host.harness.abortTask(id, context);
     assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
     await host.close(); host = await openResearch(options);
@@ -224,4 +224,51 @@ test('retired configuration metadata cannot supply an absent official execution 
     assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.assessment' }, 20), context)).items.length, 0);
     assert.equal(faux.state.callCount, 4, 'only ordinary model turns run, no invented reviewer input');
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('synthesis reopens its original owned review conversation and submission after host suspension', { timeout: 15000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-assessment-resume-'));
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  let entered!: () => void; const called = new Promise<void>(resolve => { entered = resolve; });
+  faux.setResponses([async (_input, options) => {
+    entered();
+    await new Promise<void>(resolve => { if (options?.signal?.aborted) resolve(); else options?.signal?.addEventListener('abort', () => resolve(), { once: true }); });
+    return fauxAssistantMessage('', { stopReason: 'aborted' });
+  }, fauxAssistantMessage(JSON.stringify({ ...judgment(null), evidenceSufficient: false, dataJudgment: judgment(null) }))]);
+  const options = { database: join(directory, 'research.sqlite'), models };
+  let host = await openResearch(options);
+  try {
+    const root = await host.harness.root(context);
+    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: { provider: faux.provider.id, modelId: faux.getModel().id }, request, configurationTaskId: null, evidence: {} }, { ownership: { kind: 'conversation' } }), context);
+    await called;
+    const before = await host.harness.commit(tx => tx.scanConversations({ ownerTaskId: id }, 10), context);
+    assert.equal(before.items.length, 1);
+    const originalSubmission = await host.harness.commit(tx => tx.submissionByRequest(before.items[0]!.id, `assessment:${id}`), context);
+    await host.close(); host = await openResearch(options);
+    const completed = await host.harness.waitForTask(id, context);
+    assert.equal(completed.state.outcome.status, 'completed', JSON.stringify(completed.state));
+    const after = await host.harness.commit(tx => tx.scanConversations({ ownerTaskId: id }, 10), context);
+    assert.deepEqual(after.items.map(item => item.id), before.items.map(item => item.id));
+    const submission = await host.harness.commit(tx => tx.submissionByRequest(before.items[0]!.id, `assessment:${id}`), context);
+    assert.equal(submission?.id, originalSubmission?.id);
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('exposure pages bound a single response by model context without truncating total evidence', () => {
+  const rows = Array.from({ length: 100 }, (_, index) => ({ index, value: 'x'.repeat(100) }));
+  const args = { taskId: 1, path: '$.canonical_result.positions', offset: 0, pageSize: 1000000 };
+  const seen: unknown[] = []; let offset = 0; let pages = 0;
+  do {
+    const page = nativeExposurePage(rows, { ...args, offset }, 4096);
+    assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 1024);
+    assert.ok((page.rows as unknown[]).length < 100);
+    seen.push(...page.rows as unknown[]); pages++;
+    if (page.nextOffset === null) break;
+    assert.ok((page.nextOffset as number) > offset); offset = page.nextOffset as number;
+  } while (true);
+  assert.ok(pages > 1); assert.deepEqual(seen, rows);
+  assert.throws(() => nativeExposurePage([{ value: 'x'.repeat(5000) }], args, 4096), /row_exceeds_model_page_budget/);
+  assert.throws(() => nativeExposurePage([], args, 4), /metadata_exceeds_model_budget/);
+  assert.equal(nativeExposurePage([], args, 4096).nextOffset, null);
 });

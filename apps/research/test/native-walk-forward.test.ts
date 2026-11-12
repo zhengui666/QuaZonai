@@ -34,7 +34,7 @@ function equityWire(available = false): JsonObject {
 // Protocol-only native wire. Numerical native execution is tested in the Rust job tests, not mocked here.
 function wire(walkRequest: JsonObject = request, outcome = 'completed', selected = 0, trainOutcome = outcome) {
   const native = (start: string, end: string, candidate: JsonObject = source, runOutcome = outcome) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
-    instrument_definition: instrumentBasis(candidate), equity_performance: equityWire((walkRequest.objective as JsonObject).metric_source === 'EQUITY_PERFORMANCE'), canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
+    instrument_definition: instrumentBasis(candidate), equity_performance: equityWire((walkRequest.objective as JsonObject).metric_source === 'EQUITY_PERFORMANCE'), canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [{ quantity: '1.0000000001' }, { quantity: '2.0000000002' }, { quantity: '3.0000000003' }], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
   return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
     trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: selected === 1 ? candidate_index + 1 : 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate, trainOutcome) })), selected_candidate_index: selected, test_result: native('1790000000000000003', '1790000000000000004', (walkRequest.candidates as JsonObject[])[selected]), status: outcome === 'stopped' ? 'TEST_STOPPED' : 'COMPLETED', reason: outcome === 'stopped' ? 'WALK_FORWARD_TEST_WINDOW_STOPPED' : null }] };
 }
@@ -65,7 +65,7 @@ test('stopped native test windows retain the original evidence but cannot claim 
   assert.throws(() => nativeWalkForwardResult(missing, request), /native_strategy_report_invalid/);
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity', 'paged'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
   const source: JsonObject = behavior === 'scenario' ? { ...(request.candidates as JsonObject[])[0]!, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000' } } : (request.candidates as JsonObject[])[0]!;
   const objective = behavior === 'equity' ? { native_key: 'Sharpe Ratio (365 days)', metric_source: 'EQUITY_PERFORMANCE', annualization_days: 365, direction: 'MAXIMIZE' } : request.objective;
   const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity'].includes(behavior);
@@ -100,6 +100,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       }
       const review = behavior === 'reviewed' || behavior === 'changed' || withSensitivity;
+      let exposureTaskId = 0;
       faux.setResponses([
         ...(behavior === 'full-chain' ? [fauxAssistantMessage(fauxToolCall('native_strategy_brief', {}), { stopReason: 'toolUse' })] : []),
         ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' || behavior.startsWith('winner-') ? strategies : [source.strategy], ...(withSensitivity ? { validationMethod: { split: request.split, objective, neighbourStrategies, ...(behavior === 'winner-uncovered' ? { sensitivityStrategies: [source.strategy] } : {}), costs: behavior === 'changed-method' ? [{ maker_fee: '0', taker_fee: '0.003' }] : costs } } : {}) }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
@@ -108,7 +109,21 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective }), { stopReason: 'toolUse' }),
         ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs, ...(behavior === 'winner-covered' ? { strategies } : {}) }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
-        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes(behavior === 'wf-stopped' ? 'WALK_FORWARD_NO_COMPLETED_TESTS' : 'PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); assert.ok(prompt.includes('UPSTREAM_CANONICAL_REPORT_REFERENCE')); assert.ok(prompt.includes('position_snapshots')); return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
+        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes(behavior === 'wf-stopped' ? 'WALK_FORWARD_NO_COMPLETED_TESTS' : 'PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); assert.ok(prompt.includes('UPSTREAM_CANONICAL_REPORT_REFERENCE')); assert.ok(prompt.includes('position_snapshots')); if (behavior === 'paged') {
+          const user = input.messages.find(message => message.role === 'user'); assert.ok(user && typeof user.content === 'string');
+          exposureTaskId = JSON.parse(user.content).evidence.dataValidation.taskId;
+          return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 0, pageSize: 2 }), { stopReason: 'toolUse' });
+        } return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
+        ...(behavior === 'paged' ? [
+          (input: any) => { const last = input.messages.at(-1); const page = JSON.parse(last.content[0].text); assert.deepEqual(page.rows, [{ quantity: '1.0000000001' }, { quantity: '2.0000000002' }]); assert.equal(page.nextOffset, 2);
+            return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.folds[0].test_result.canonical_result.positions', offset: 2, pageSize: 1 }), { stopReason: 'toolUse' }); },
+          (input: any) => { const page = JSON.parse(input.messages.at(-1).content[0].text); assert.deepEqual(page.rows, [{ quantity: '3.0000000003' }]); assert.equal(page.nextOffset, null);
+            return fauxAssistantMessage(fauxToolCall('native_assessment_read_exposure', { taskId: exposureTaskId, path: '$.request', offset: 0, pageSize: 1 }), { stopReason: 'toolUse' }); },
+          (input: any) => { assert.ok(JSON.stringify(input.messages.at(-1)).includes('assessment_evidence_reference_not_in_manifest'));
+            return fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }); },
+          (input: any) => { assert.ok(JSON.stringify(input.messages.at(-1)).includes('not available'));
+            return fauxAssistantMessage(JSON.stringify({ stars: null, rationale: 'Read only three recorded positions, not margin or peak exposure', risks: [], uncertainties: ['Other evidence unread'], evidenceSufficient: false, dataJudgment: { stars: null, rationale: 'Partial review only', risks: [], uncertainties: [] } })); },
+        ] : []),
         fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
       ]);
       if (receipt) {
@@ -121,12 +136,23 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const validation = await host.harness.snapshot(NativeWalkForward, receipt.conversationId, context); assert.equal(validation?.taskIds.length, behavior === 'repeat' ? 2 : 1);
       const assessment = await host.harness.snapshot(ResearchAssessment, receipt.conversationId, context); assert.equal(assessment?.reportTaskIds.length, 1);
       const task = await host.harness.getTask(assessment!.reportTaskIds[0]!, context);
-      assert.equal(task?.state.outcome?.status, 'completed');
+      assert.equal(task?.state.outcome?.status, 'completed', JSON.stringify(task?.state));
       if (task?.state.outcome?.status !== 'completed') assert.fail('report did not complete');
       assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' || behavior === 'scenario' || behavior === 'equity' ? 4 : null);
       assert.equal(task.state.outcome.result.ratingStatus, behavior === 'scenario' ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' || behavior === 'equity' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
+      if (behavior === 'paged') {
+        const result = task.state.outcome.result;
+        assert.equal((result.exposureReads as any[]).length, 2);
+        assert.deepEqual((result.exposureReads as any[]).map(page => [page.offset, page.endExclusive, page.totalRows]), [[0, 2, 3], [2, 3, 3]]);
+        assert.equal(result.exposureReviewScope, 'RECORDED_TOOL_READS_ONLY_NOT_AUTOMATIC_FULL_AUDIT');
+        assert.ok(result.reviewConversationId);
+        assert.equal((await host.harness.commit(tx => tx.scanConversations({ ownerTaskId: task.id }, 10), context)).items.length, 1);
+        await host.close(); host = await openResearch(options);
+        assert.deepEqual((await host.harness.getTask(task.id, context))!.state.outcome, task.state.outcome);
+      }
+
       if (behavior === 'wf-stopped') {
         assert.equal(evidence.dataValidation.completedTests, 0);
         assert.equal(evidence.dataValidation.status, 'WALK_FORWARD_NO_COMPLETED_TESTS');
