@@ -138,6 +138,8 @@ fn walk_fixture(
                 max_train_size: None,
             },
             objective: NativeWalkForwardObjectiveV1 {
+                metric_source: Default::default(),
+                annualization_days: None,
                 native_key: "PnL (total)".into(),
                 currency: Some("USDT".into()),
                 direction: NativeObjectiveDirectionV1::Maximize,

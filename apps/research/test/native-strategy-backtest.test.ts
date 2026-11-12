@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeStrategyBacktestTask, normalizedNativeStrategyRequest, nativeStrategyResult } from '../plugins/native-strategy-backtest.ts';
+import { NativeStrategyBacktestTask, normalizedNativeStrategyRequest, nativeStrategyResult, nativeEquityMetric, nativeEquityPerformance } from '../plugins/native-strategy-backtest.ts';
 import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
@@ -37,7 +37,7 @@ for (const behavior of ['recover', 'stop', 'mismatch', 'tool', 'tool-finish'] as
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: completed ? 'COMPLETED' : 'UNKNOWN',
       ...(completed ? { result: { schema_version: 1, native_version: '0.69.0',
         request: behavior === 'mismatch' ? { ...original.input as JsonObject, instrument_id: 'OTHER.SIM' } : original.input,
-        instrument_definition: { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
+        instrument_definition: { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: null, returns: [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: '0', observed_utc_days: '0', unpriced_snapshot_count: '0', return_days: '0', notes: ['Protocol fixture, not measured performance'] }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
           accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} },
         data_rows_by_type: { QuoteTick: '2' }, notes: [] } } : { error: 'original_receipt_temporarily_unknown' }) }));
   });
@@ -128,7 +128,7 @@ test('Grid absent optional quantities and expiry match official None echo withou
 test('instrument definition evidence cannot silently upgrade static assumptions into historical rules', () => {
   const request: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }], event_start_ns: '10', event_end_ns: '20', available_end_ns: '20', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS' } };
   const basis = { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' };
-  const result: JsonObject = { schema_version: 1, native_version: '0.69.0', request, instrument_definition: basis, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} }, data_rows_by_type: { QuoteTick: '1' }, notes: [] };
+  const result: JsonObject = { schema_version: 1, native_version: '0.69.0', request, instrument_definition: basis, equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: null, returns: [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: '0', observed_utc_days: '0', unpriced_snapshot_count: '0', return_days: '0', notes: ['Protocol fixture, not measured performance'] }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} }, data_rows_by_type: { QuoteTick: '1' }, notes: [] };
   assert.deepEqual(nativeStrategyResult(result, request).instrument_definition, basis);
   assert.throws(() => nativeStrategyResult({ ...result, instrument_definition: null }, request), /native_instrument_definition/);
   assert.throws(() => nativeStrategyResult({ ...result, instrument_definition: { ...basis, ts_init_ns: '11' } }, request), /binding_mismatch/);
@@ -145,4 +145,18 @@ test('optional official BAR execution preserves explicit false and normalizes on
   const strategy = { kind: 'HURST_VPIN_DIRECTIONAL', bar_type: 'BTC.SIM-100-VALUE-LAST-INTERNAL' };
   assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: false }, strategy }).venue, { base_currency: null, bar_execution: false });
   assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: null }, strategy }).venue, { base_currency: null });
+});
+
+test('official equity metrics keep frequencies separate and unavailable evidence never falls back to positions', () => {
+  const evidence: JsonObject = { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'AVAILABLE', reason: null, currency: 'USDC', returns: [{ ts_event_ns: '10', value: 0.01 }], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: annualization_days === 252 ? 2 : 3 }))), first_snapshot_ns: '0', last_snapshot_ns: '10', snapshot_count: '2', observed_utc_days: '1', unpriced_snapshot_count: '0', return_days: '1', notes: ['Wire-only test, not measured returns'] };
+  const objective = { native_key: 'Sharpe Ratio (365 days)', annualization_days: 365, currency: 'USDC' };
+  assert.equal(nativeEquityMetric(evidence, objective), 3);
+  assert.equal(nativeEquityMetric(evidence, { ...objective, currency: 'USDT' }), null);
+  assert.equal(nativeEquityMetric(evidence, { ...objective, annualization_days: 252 }), null);
+  assert.equal(nativeEquityMetric({ ...evidence, status: 'UNAVAILABLE', reason: 'UNPRICED_PORTFOLIO_SNAPSHOTS', unpriced_snapshot_count: '1' }, objective), null);
+  assert.throws(() => nativeEquityPerformance({ ...evidence, unpriced_snapshot_count: '1' }), /evidence_incomplete/);
+  assert.throws(() => nativeEquityPerformance({ ...evidence, return_days: '2' }), /count_invalid/);
+  assert.throws(() => nativeEquityPerformance({ ...evidence, statistics: [] }), /statistics_incomplete/);
+  assert.throws(() => nativeEquityPerformance({ ...evidence, statistics: [...evidence.statistics as JsonObject[], (evidence.statistics as JsonObject[])[0]!] }), /duplicate/);
+
 });

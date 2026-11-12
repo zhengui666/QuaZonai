@@ -10,14 +10,14 @@ import type { ParameterScanPlan, ParameterScanView } from '../../../packages/con
 import { setup, context } from './support.ts';
 
 // HTTP/Pi protocol only: controlled responses are NOT performance evidence.
-async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' | 'scenario' | 'stopped' = 'complete') {
+async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' | 'scenario' | 'stopped' | 'equity' = 'complete') {
   const state = await setup(); const requests: NativeExecutionRequest[] = []; let deletes = 0; let settle = false;
   const version = '0.69.0';
   const result = (request: JsonObject): JsonObject => {
     if (mode === 'invalid') return { request, simulation: {}, observations: [] };
     const bytes = Buffer.alloc(8); bytes.writeDoubleBE(Number((request.strategy as JsonObject).fast_period));
     return { schema_version: 1, request, native_version: version,
-      instrument_definition: request.instrument_definition ? { ...(request.instrument_definition as JsonObject), scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: mode === 'stopped' && Number((request.strategy as JsonObject).fast_period) === 5 ? 'stopped' : 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': ['rank', 'stopped'].includes(mode) ? bytes.toString('hex') : null }, pnls: {} } },
+      instrument_definition: request.instrument_definition ? { ...(request.instrument_definition as JsonObject), scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: mode === 'equity' ? 'AVAILABLE' : 'UNAVAILABLE', reason: mode === 'equity' ? null : 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: mode === 'equity' ? 'USD' : null, returns: mode === 'equity' ? [{ ts_event_ns: '9007199254740993', value: 0.01 }] : [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: mode === 'equity' ? Number((request.strategy as JsonObject).fast_period) + annualization_days : null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: mode === 'equity' ? '2' : '0', observed_utc_days: mode === 'equity' ? '1' : '0', unpriced_snapshot_count: '0', return_days: mode === 'equity' ? '1' : '0', notes: ['Protocol fixture, not measured performance'] }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: mode === 'stopped' && Number((request.strategy as JsonObject).fast_period) === 5 ? 'stopped' : 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': ['rank', 'stopped'].includes(mode) ? bytes.toString('hex') : null }, pnls: {} } },
       data_rows_by_type: { QuoteTick: '20' }, notes: [] };
   };
   const server = createServer(async (incoming, response) => {
@@ -179,5 +179,20 @@ test('an upstream stopped result preserves its raw statistics but cannot win a c
       assert.equal(original.details.nativeRun.outcome, 'stopped'); assert.equal(original.details.dataRowsByType.QuoteTick, '20');
     }
     assert.equal(p.requests.length, 4, 'projection and restart do not execute replacement candidates');
+  } finally { await p.close(); }
+});
+
+
+test('equity scan objectives select only the explicit official return basis and annualization frequency', async () => {
+  const p = await protocol('equity'); try {
+    const metricId = 'equity-performance:365:Sharpe Ratio (365 days)';
+    const response = await p.state.service.app.inject({ method: 'POST', url: '/api/v3/parameter-scans', headers: p.state.headers, payload: { ...p.plan, requestId: 'equity-source', objective: { metricId, partition: 'FULL_SELECTION', direction: 'maximize' } } });
+    assert.equal(response.statusCode, 202, response.body); const id = response.json().id;
+    await p.state.service.research.harness.waitForTask(response.json().taskId as TaskId, context);
+    const detail = (await p.state.service.app.inject({ method: 'GET', url: `/api/v3/parameter-scans/${id}`, headers: p.state.headers })).json();
+    assert.equal(detail.best.metric.key, metricId); assert.equal(detail.best.metric.value, 370); assert.equal(detail.best.metric.nativeGroup, 'PORTFOLIO_DAILY_EQUITY');
+    const original = (await p.state.service.app.inject({ method: 'GET', url: `/api/v3/parameter-scans/${id}/trials/${detail.best.ordinal}`, headers: p.state.headers })).json();
+    assert.equal(original.details.equityPerformance.return_days, '1'); assert.equal(original.details.equityPerformance.observed_utc_days, '1');
+    assert.equal(original.details.nativeResult.canonical_result.statistics.returns['Sharpe Ratio (252 days)'], null, 'equity sidecar never modifies canonical report');
   } finally { await p.close(); }
 });

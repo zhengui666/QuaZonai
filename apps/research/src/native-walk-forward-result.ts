@@ -9,6 +9,11 @@ function clock(value: JsonValue | undefined): bigint {
   if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) > 9223372036854775807n) throw new Error('walk_forward_clock_invalid');
   return BigInt(value);
 }
+export function normalizedWalkForwardObjective(value: JsonValue | undefined): JsonObject {
+  const result = { ...object(value, 'walk_forward_objective') }; result.currency ??= null; result.metric_source ??= 'CANONICAL'; result.annualization_days ??= null;
+  if (!['CANONICAL', 'EQUITY_PERFORMANCE'].includes(String(result.metric_source)) || (result.metric_source === 'CANONICAL' ? result.annualization_days !== null : ![252, 365].includes(Number(result.annualization_days)) || typeof result.annualization_days !== 'number')) throw new Error('walk_forward_metric_source_invalid');
+  return result;
+}
 function options(value: JsonValue | undefined, fields: string[]) {
   const result = { ...object(value, 'walk_forward_options') }; for (const key of fields) result[key] ??= null; return result;
 }
@@ -23,7 +28,7 @@ export function nativeWalkForwardResult(value: JsonValue, request: JsonObject): 
   if (request.schema_version !== 1 || echo.schema_version !== 1 || !Array.isArray(candidates) || !candidates.length || !Array.isArray(echo.candidates) || echo.candidates.length !== candidates.length
     || !candidates.every((candidate, i) => canonical(normalizedNativeStrategyRequest(object(candidate, 'walk_forward_candidate'))) === canonical(normalizedNativeStrategyRequest(object((echo.candidates as JsonValue[])[i], 'walk_forward_candidate'))))
     || canonical(options(request.split, ['test_size', 'max_train_size'])) !== canonical(options(echo.split, ['test_size', 'max_train_size']))
-    || canonical(options(request.objective, ['currency'])) !== canonical(options(echo.objective, ['currency']))) throw new Error('walk_forward_request_mismatch');
+    || canonical(normalizedWalkForwardObjective(request.objective)) !== canonical(normalizedWalkForwardObjective(echo.objective))) throw new Error('walk_forward_request_mismatch');
   const split = object(request.split, 'walk_forward_split');
   if (result.schema_version !== 1 || result.performance_scope !== walkForwardScope || result.splitter_version !== 'solow-cv 0.7.3 TimeSeriesSplit'
     || typeof result.native_version !== 'string' || !executionVersions.has(result.native_version) || !Array.isArray(result.folds) || result.folds.length !== split.n_splits

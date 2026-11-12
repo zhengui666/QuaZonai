@@ -25,6 +25,9 @@ fn metric(
     result: &contracts::native_strategy::NativeStrategyBacktestResultV1,
     objective: &NativeWalkForwardObjectiveV1,
 ) -> Result<f64> {
+    if objective.metric_source == NativeMetricSourceV1::EquityPerformance {
+        return equity_metric(&result.equity_performance, objective);
+    }
     let statistics = &result.canonical_result["statistics"];
     let mut values = Vec::new();
     if objective.currency.is_none() {
@@ -60,10 +63,52 @@ fn metric(
     ensure!(value.is_finite(), "WALK_FORWARD_METRIC_UNAVAILABLE");
     Ok(value)
 }
+fn equity_metric(
+    performance: &contracts::native_strategy::NativeEquityPerformanceV1,
+    objective: &NativeWalkForwardObjectiveV1,
+) -> Result<f64> {
+    ensure!(
+        performance.status == "AVAILABLE",
+        "WALK_FORWARD_EQUITY_RETURNS_UNAVAILABLE"
+    );
+    ensure!(
+        objective
+            .currency
+            .as_ref()
+            .is_none_or(|currency| performance.currency.as_ref() == Some(currency)),
+        "WALK_FORWARD_EQUITY_CURRENCY_MISMATCH"
+    );
+    let values: Vec<_> = performance
+        .statistics
+        .iter()
+        .filter(|value| {
+            value.native_key == objective.native_key
+                && Some(value.annualization_days) == objective.annualization_days
+        })
+        .collect();
+    ensure!(
+        values.len() == 1,
+        "WALK_FORWARD_METRIC_MISSING_OR_AMBIGUOUS"
+    );
+    values[0]
+        .value
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| anyhow::anyhow!("WALK_FORWARD_METRIC_UNAVAILABLE"))
+}
 pub fn run(
     root: &Path,
     request: NativeStrategyWalkForwardRequestV1,
 ) -> Result<NativeStrategyWalkForwardResultV1> {
+    match request.objective.metric_source {
+        NativeMetricSourceV1::Canonical => ensure!(
+            request.objective.annualization_days.is_none(),
+            "WALK_FORWARD_CANONICAL_ANNUALIZATION_NOT_CONFIGURABLE"
+        ),
+        NativeMetricSourceV1::EquityPerformance => ensure!(
+            matches!(request.objective.annualization_days, Some(252 | 365)),
+            "WALK_FORWARD_EQUITY_ANNUALIZATION_REQUIRED"
+        ),
+    }
     let first = request
         .candidates
         .first()
@@ -187,4 +232,41 @@ pub fn run(
         "Instrument definitions are selected by catalog availability at each window start; this is not an independent source-history audit."
     };
     Ok(NativeStrategyWalkForwardResultV1 { schema_version: SchemaV1, request, native_version: crate::NAUTILUS_VERSION.into(), splitter_version: "solow-cv 0.7.3 TimeSeriesSplit".into(), performance_scope: "INDEPENDENT_COLD_START_TEST_WINDOW_NATIVE_STATISTICS".into(), notes: vec![metadata_note.into(), "Each train/test cold-starts the unchanged compiled upstream strategy, account and indicators. No market data or positions carry across windows; indicators initialize using only rows available within the window.".into(), "Original source event bounds are preserved; inclusive availability bounds select complete same-ts_init batches. An availability gap is not an inferred label/position purge horizon.".into(), "Native PnL and return statistic definitions are unchanged, including native realized-position return semantics and unavailable statistics. These are not newly synthesized daily equity returns or an automatic OOS qualification score.".into(), "Only finite unambiguous native training metrics select candidates. Exact ties use the earlier declared candidate. Failed or unavailable trials remain recorded; test results never re-rank candidates. Multiple trials and repeated inspections can still overfit.".into()], folds })
+}
+
+#[cfg(test)]
+mod equity_objective_tests {
+    use super::*;
+    #[test]
+    fn explicitly_selects_official_source_and_frequency_and_refuses_unavailable() {
+        let mut performance: contracts::native_strategy::NativeEquityPerformanceV1 = serde_json::from_value(serde_json::json!({
+            "source":"NAUTILUS_PORTFOLIO_SNAPSHOTS", "status":"AVAILABLE", "reason":null,"currency":"USD", "returns":[],
+            "statistics":[{"native_key":"Sharpe Ratio (252 days)","annualization_days":252,"value":1.0},{"native_key":"Sharpe Ratio (365 days)","annualization_days":365,"value":2.0}],
+            "first_snapshot_ns":null,"last_snapshot_ns":null,"snapshot_count":"0","observed_utc_days":"0","unpriced_snapshot_count":"0","return_days":"0","notes":[]
+        })).unwrap();
+        let mut objective = NativeWalkForwardObjectiveV1 {
+            native_key: "Sharpe Ratio (365 days)".into(),
+            currency: Some("USD".into()),
+            direction: NativeObjectiveDirectionV1::Maximize,
+            metric_source: NativeMetricSourceV1::EquityPerformance,
+            annualization_days: Some(365),
+        };
+        assert_eq!(equity_metric(&performance, &objective).unwrap(), 2.0);
+        objective.annualization_days = Some(252);
+        assert!(equity_metric(&performance, &objective).is_err());
+        objective.annualization_days = Some(365);
+        performance.status = "UNAVAILABLE".into();
+        assert!(
+            equity_metric(&performance, &objective)
+                .unwrap_err()
+                .to_string()
+                .contains("EQUITY_RETURNS_UNAVAILABLE")
+        );
+        let default: NativeWalkForwardObjectiveV1 = serde_json::from_value(
+            serde_json::json!({"native_key":"PnL (total)","currency":"USD","direction":"MAXIMIZE"}),
+        )
+        .unwrap();
+        assert_eq!(default.metric_source, NativeMetricSourceV1::Canonical);
+        assert_eq!(default.annualization_days, None);
+    }
 }

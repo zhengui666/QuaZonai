@@ -17,6 +17,7 @@ use nautilus_model::{
 };
 use nautilus_persistence::catalog::types::CatalogQuery;
 pub mod registry;
+mod performance;
 use registry::{build_strategy, CompiledNativeStrategy};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -258,7 +259,7 @@ pub fn run(
             None,
             false,
         )?;
-        Ok(NativeStrategyBacktestResultV1 { schema_version: SchemaV1, request: request.clone(), native_version: crate::NAUTILUS_VERSION.into(), instrument_definition: definition_basis, canonical_result: engine.get_canonical_result()?.as_value().clone(), data_rows_by_type: counts, notes: vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()] })
+        Ok(NativeStrategyBacktestResultV1 { schema_version: SchemaV1, request: request.clone(), native_version: crate::NAUTILUS_VERSION.into(), instrument_definition: definition_basis, canonical_result: engine.get_canonical_result()?.as_value().clone(), equity_performance: performance::from_engine(&engine), data_rows_by_type: counts, notes: vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()] })
     })();
     engine.dispose();
     result

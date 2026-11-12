@@ -25,6 +25,9 @@ pub struct NativeWalkForwardSplitV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativeWalkForwardObjectiveV1 {
     pub native_key: String,
+    #[serde(default)]
+    pub metric_source: NativeMetricSourceV1,
+    pub annualization_days: Option<usize>,
     pub currency: Option<String>,
     pub direction: NativeObjectiveDirectionV1,
 }
@@ -64,4 +67,12 @@ pub struct NativeStrategyWalkForwardResultV1 {
     pub performance_scope: String,
     pub notes: Vec<String>,
     pub folds: Vec<NativeWalkForwardFoldV1>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeMetricSourceV1 {
+    #[default]
+    Canonical,
+    EquityPerformance,
 }

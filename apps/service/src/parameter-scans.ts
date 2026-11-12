@@ -1,4 +1,4 @@
-import { NativeStrategyBacktestTask } from '../../research/plugins/native-strategy-backtest.ts';
+import { NativeStrategyBacktestTask, nativeEquityPerformance } from '../../research/plugins/native-strategy-backtest.ts';
 import { randomUUID } from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc, defineDocFamily, defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -151,6 +151,11 @@ function trialMetrics(value: JsonObject): ScanMetric[] {
   };
   for (const group of ['general', 'returns']) if (statistics[group]) append(object(statistics[group]), group);
   if (statistics.pnls) for (const [currency, metrics] of Object.entries(object(statistics.pnls))) append(object(metrics), 'pnls', currency);
+  const equity = nativeEquityPerformance(value.equity_performance);
+  for (const row of equity.statistics as JsonObject[]) {
+    const key = `equity-performance:${row.annualization_days}:${row.native_key}`;
+    rows.push({ ...metricValue({ value: equity.status === 'AVAILABLE' ? row.value : null }, key), nativeGroup: 'PORTFOLIO_DAILY_EQUITY', ...(typeof equity.currency === 'string' ? { currency: equity.currency } : {}) });
+  }
   return rows;
 }
 function selectedMetric(metrics: Metric[], metricId: ParameterScanMetricId): ScanMetric {
@@ -180,7 +185,7 @@ function resultTrial(trial: ScanTrial, child: TaskRecord<unknown, unknown, unkno
     return { ...trial, status: complete ? 'COMPLETED' : 'STOPPED', metrics,
       metric: complete ? selectedMetric(metrics, objective) : unavailable('native_run_stopped_before_completion', objective),
       sampleCounts: sampleCounts(summary), details: { ...(trial.details ?? {}), instrumentDefinition: value.instrument_definition ?? null,
-        nativeRun: report.run!, notes: value.notes ?? null, dataRowsByType: value.data_rows_by_type ?? null },
+        equityPerformance: value.equity_performance ?? null, nativeRun: report.run!, notes: value.notes ?? null, dataRowsByType: value.data_rows_by_type ?? null },
       error: complete ? null : 'native_run_stopped_before_completion' };
   }
   const detail = 'error' in outcome ? classifyExecutionError(outcome.error?.message, 'scientific_execution_failed', outcome.error?.detail && typeof outcome.error.detail === 'object' && !Array.isArray(outcome.error.detail) ? outcome.error.detail : undefined) : null;

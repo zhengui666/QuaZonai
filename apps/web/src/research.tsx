@@ -95,6 +95,7 @@ export function NativeStrategyResultView({ value }: { value: NonNullable<Researc
     <Facts items={[["Nautilus 版本", typeof value.nativeVersion === 'string' ? value.nativeVersion : '未记录'], ["证据范围", typeof value.scientificClaim === 'string' ? value.scientificClaim : '未记录']]} />
     <details><summary>原始策略配置与数据选择</summary><Copy value={JSON.stringify(value.request ?? null, null, 2)} label="复制原始请求" /><pre>{JSON.stringify(value.request ?? null, null, 2)}</pre></details>
     <details><summary>上游原始执行报告</summary><p className="quiet">保留官方统计键和原始编码；未把持仓收益统计转换成日权益收益。</p><Copy value={JSON.stringify(value.canonicalResult ?? null, null, 2)} label="复制原生报告" /><pre>{JSON.stringify(value.canonicalResult ?? null, null, 2)}</pre></details>
+    <details><summary>官方日权益收益与年化口径</summary><p>只读 Nautilus 原生快照权益统计，与原始报告可能回退到持仓收益的统计分开。252/365 是年化频率，不是实际观测天数；短样本 CAGR 是外推，不是已实现一年回报。不可用时不替换为持仓收益。</p><pre>{JSON.stringify(value.equityPerformance ?? null, null, 2)}</pre></details>
     <details><summary>输入记录数与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null, instrumentDefinition: value.instrumentDefinition ?? null }, null, 2)}</pre></details>
   </section>;
 }

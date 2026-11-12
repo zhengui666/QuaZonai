@@ -1,5 +1,5 @@
 //! Explicit configuration for compiled upstream strategies, not a strategy language.
-use crate::{catalog_coverage::NativeCatalogSelectorV1, DbCounter, SchemaV1};
+use crate::{DbCounter, SchemaV1, catalog_coverage::NativeCatalogSelectorV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -115,6 +115,36 @@ pub struct NativeStrategyBacktestResultV1 {
     pub native_version: String,
     pub instrument_definition: NativeInstrumentDefinitionBasisV1,
     pub canonical_result: serde_json::Value,
+    pub equity_performance: NativeEquityPerformanceV1,
     pub data_rows_by_type: std::collections::BTreeMap<String, DbCounter>,
     pub notes: Vec<String>,
+}
+
+/// Official snapshot-only analysis, separate from canonical position-return fallback.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeEquityPerformanceV1 {
+    pub source: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub currency: Option<String>,
+    pub returns: Vec<NativeEquityReturnV1>,
+    pub statistics: Vec<NativeEquityStatisticV1>,
+    pub first_snapshot_ns: Option<String>,
+    pub last_snapshot_ns: Option<String>,
+    pub snapshot_count: String,
+    pub observed_utc_days: String,
+    pub unpriced_snapshot_count: String,
+    pub return_days: String,
+    pub notes: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeEquityReturnV1 {
+    pub ts_event_ns: String,
+    pub value: Option<f64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeEquityStatisticV1 {
+    pub native_key: String,
+    pub annualization_days: usize,
+    pub value: Option<f64>,
 }

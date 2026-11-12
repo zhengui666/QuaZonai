@@ -1,9 +1,9 @@
 import { nativeTargetForData } from '../src/native-execution.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { NativeSensitivity, nativeSensitivityTool } from './native-sensitivity.ts';
-import { nativeStrategyResult, normalizedNativeStrategyRequest } from './native-strategy-backtest.ts';
+import { nativeEquityMetric, nativeStrategyResult, normalizedNativeStrategyRequest } from './native-strategy-backtest.ts';
 import { NativeWalkForward } from './native-walk-forward.ts';
-import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
+import { nativeWalkForwardResult, normalizedWalkForwardObjective } from '../src/native-walk-forward-result.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
@@ -66,6 +66,11 @@ export function nativeAssessmentMetric(statistics: JsonObject, objective: JsonOb
   if (found.length !== 1 || typeof found[0] !== 'string' || !/^[0-9a-f]{16}$/i.test(found[0])) return null;
   const value = Buffer.from(found[0], 'hex').readDoubleBE(0); return Number.isFinite(value) ? value : null;
 }
+function nativeResultObjective(result: JsonObject, objective: JsonObject): number | null {
+  return normalizedWalkForwardObjective(objective).metric_source === 'EQUITY_PERFORMANCE'
+    ? nativeEquityMetric(result.equity_performance, objective)
+    : nativeAssessmentMetric(object(object(result.canonical_result, 'native_report').statistics, 'native_statistics'), objective);
+}
 function methodPart(value: JsonValue | undefined, fields: string[]): JsonObject {
   const result = { ...object(value, 'research_validation_method') }; for (const key of fields) result[key] ??= null; return result;
 }
@@ -118,7 +123,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const eligible = synthesis && object(task.input.evidence.ratingReadiness ?? {}, 'rating_readiness').eligible === true;
     const answer = await runtime.models.completeSimple(model, {
       systemPrompt: `${rubric}\nInstrument assumption: ${staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
-        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Inspect actual fold windows, native data rows, fills and failed trials; a high Sharpe in a short sample does not establish annual return. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
+        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Inspect actual fold windows, native data rows, fills and failed trials; distinguish sampled book snapshots from event-complete incremental feeds, disclose known depth/cadence, dropped empty or malformed books and carry/checkpoint limitations; simulated fills on snapshots do not prove actual high-frequency fillability; a high Sharpe in a short sample does not establish annual return. equityPerformance is the separate official snapshot-only return series: inspect status/reason, actual observed UTC days versus return_days (which can include upstream carry-forward), unpriced counts, currency and 252 versus 365 annualization. CAGR is a short-window extrapolation, not a realized annual return or proof a 500% target was achieved. Never substitute canonical position returns when equityPerformance is unavailable. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
       messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
     }, { signal: runtime.signal });
@@ -212,6 +217,7 @@ export const assessmentReportTool = defineTool({
             folds: (result.folds as JsonObject[]).map(fold => ({ index: fold.index!, trainStartNs: fold.train_start_ns!, trainEndNs: fold.train_end_ns!, testStartNs: fold.test_start_ns!, testEndNs: fold.test_end_ns!, status: fold.status!, reason: fold.reason!, selectedCandidateIndex: fold.selected_candidate_index!,
               trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error!,
                 nativeOutcome: trial.result === null ? null : object(object(object(trial.result, 'training_result').canonical_result, 'training_report').run, 'native_run').outcome!,
+                equityPerformance: trial.result === null ? null : object(trial.result, 'training_result').equity_performance!,
                 instrumentDefinition: trial.result === null ? null : object(trial.result, 'training_result').instrument_definition!,
                 dataRowsByType: trial.result === null ? null : object(trial.result, 'training_result').data_rows_by_type!,
                 notes: trial.result === null ? null : object(trial.result, 'training_result').notes! })),
@@ -220,9 +226,10 @@ export const assessmentReportTool = defineTool({
                 return result === null ? null : object(object(object(result, 'training_result').canonical_result, 'training_report').run, 'native_run').outcome!;
               })(),
               nativeTestStatistics: fold.test_result === null ? null : object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics!,
-              nativeObjectiveValue: fold.test_result === null ? null : nativeAssessmentMetric(object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics, 'native_statistics'), object(object(result.request, 'walk_forward_request').objective, 'native_objective')),
+              nativeObjectiveValue: fold.test_result === null ? null : nativeResultObjective(object(fold.test_result, 'walk_forward_test'), object(object(result.request, 'walk_forward_request').objective, 'native_objective')),
               nativeOutcome: fold.test_result === null ? null : object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').run, 'native_run').outcome!,
               notes: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').notes!,
+              equityPerformance: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').equity_performance!,
               instrumentDefinition: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').instrument_definition!,
               dataRowsByType: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').data_rows_by_type!,
               fills: fold.test_result === null ? null : (object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').fills as JsonValue[]).length })),
@@ -255,8 +262,9 @@ export const assessmentReportTool = defineTool({
             error: task.state.status === 'terminal' && task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null };
           if (task.state.status === 'terminal' && task.state.outcome.status === 'completed') {
             const result = nativeStrategyResult(task.state.outcome.result, actual); const report = object(result.canonical_result, 'native_report');
-            row.nativeStatistics = report.statistics!; row.nativeObjectiveValue = objective ? nativeAssessmentMetric(object(report.statistics, 'native_statistics'), objective) : null;
+            row.nativeStatistics = report.statistics!; row.nativeObjectiveValue = objective ? nativeResultObjective(result, objective) : null;
             row.fills = (report.fills as JsonValue[]).length; row.nativeVersion = result.native_version!;
+            row.equityPerformance = result.equity_performance!;
             row.instrumentDefinition = result.instrument_definition!;
             row.nativeOutcome = object(report.run, 'native_run').outcome!; row.notes = result.notes!; row.dataRowsByType = result.data_rows_by_type!;
           }
@@ -275,7 +283,7 @@ export const assessmentReportTool = defineTool({
       const folds = (dataValidation.folds ?? []) as JsonObject[];
       if (!folds.length || folds.some(fold => fold.status !== 'COMPLETED' || fold.nativeOutcome !== 'completed' || fold.selectedTrainingOutcome !== 'completed' || typeof fold.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_TEST_EVIDENCE_INCOMPLETE');
       if (method && wfRequest && (canonical(methodPart(method.split, ['test_size', 'max_train_size'])) !== canonical(methodPart(wfRequest.split, ['test_size', 'max_train_size']))
-        || canonical(methodPart(method.objective, ['currency'])) !== canonical(methodPart(wfRequest.objective, ['currency'])))) reasons.push('WALK_FORWARD_METHOD_CHANGED_AFTER_REVIEW');
+        || canonical(normalizedWalkForwardObjective(method.objective)) !== canonical(normalizedWalkForwardObjective(wfRequest.objective)))) reasons.push('WALK_FORWARD_METHOD_CHANGED_AFTER_REVIEW');
       const cases = sensitivity.cases as JsonObject[];
       if (sensitivity.status !== 'COMPLETED' || cases.some(row => typeof row.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_SENSITIVITY_EVIDENCE_INCOMPLETE');
       if (!cases.some(row => row.role === 'PARAMETER_NEIGHBOUR' && changedNeighbour(object(row.request, 'case_request').strategy, request.strategy))) reasons.push('PARAMETER_NEIGHBOUR_EVIDENCE_MISSING');
@@ -301,7 +309,8 @@ export const assessmentReportTool = defineTool({
         if (!neighbourTaskIds.length) reasons.push('SELECTED_CANDIDATE_NEIGHBOUR_EVIDENCE_MISSING');
       }
       dataValidation.selectedCandidateSensitivity = selectedCandidateSensitivity;
-      dataValidation.metricInterpretation = { nativeObjective: objective, returnBasis: 'UPSTREAM_NATIVE_STATISTIC_UNCHANGED_NOT_ASSUMED_DAILY_EQUITY',
+      dataValidation.metricInterpretation = { nativeObjective: objective, returnBasis: objective && normalizedWalkForwardObjective(objective).metric_source === 'EQUITY_PERFORMANCE' ? 'OFFICIAL_SNAPSHOT_ONLY_DAILY_EQUITY_NO_POSITION_FALLBACK' : 'UPSTREAM_NATIVE_STATISTIC_UNCHANGED_NOT_ASSUMED_DAILY_EQUITY',
+        annualizationDays: objective ? normalizedWalkForwardObjective(objective).annualization_days! : null,
         selection: 'TRAINING_OBJECTIVE_ONLY_WITH_RECORDED_CANDIDATE_SEARCH', caution: 'MAXIMIZING_SHARPE_CAN_SELECT_NOISY_SHORT_SAMPLES; HIGH_RATIO_IS_NOT_VALIDATION_OR_ESTABLISHED_ANNUAL_RETURN',
         observedScope: 'PER_FOLD_AVAILABILITY_WINDOWS_DATA_ROWS_AND_FILLS; REGISTERED_EVENT_RANGE_IS_NOT_PROOF_OF_CONTINUOUS_COVERAGE' };
       const staticScenario = request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO';

@@ -30,10 +30,11 @@ export interface ParameterScanObjectiveDefinition {
 /** Source-specific paths are discovered from the unchanged native request. */
 export const parameterScanParameters: readonly ParameterScanParameterDefinition[] = [];
 export function parameterScanObjective(metricId: string): ParameterScanObjectiveDefinition {
-  return { metricId, label: metricId, mode: 'STRATEGY', partition: 'FULL_SELECTION', direction: 'maximize', nativeKey: metricId, unit: 'NATIVE' };
+  const equity = /^equity-performance:(252|365):(.+)$/.exec(metricId);
+  return { metricId, label: equity ? `官方日权益 · ${equity[2]}` : metricId, mode: 'STRATEGY', partition: 'FULL_SELECTION', direction: 'maximize', nativeKey: equity?.[2] ?? metricId, unit: 'NATIVE' };
 }
 /** Suggestions only. Any statistic returned by the native analyzer can be selected. */
-export const parameterScanObjectives = ['Sharpe Ratio (252 days)', 'Sortino Ratio (252 days)', 'CAGR (252 days)', 'Max Drawdown', 'Calmar Ratio (252 days)', 'Value at Risk (confidence 0.95)', 'Expected Shortfall (confidence 0.95)', 'Ulcer Index'].map(parameterScanObjective);
+export const parameterScanObjectives = [...[252, 365].flatMap(period => ['CAGR', 'Sharpe Ratio'].map(name => `equity-performance:${period}:${name} (${period} days)`)), 'Sharpe Ratio (252 days)', 'Sortino Ratio (252 days)', 'CAGR (252 days)', 'Max Drawdown', 'Calmar Ratio (252 days)', 'Value at Risk (confidence 0.95)', 'Expected Shortfall (confidence 0.95)', 'Ulcer Index'].map(parameterScanObjective);
 
 export interface ParameterScanSourceView {
   source: ParameterScanSource; label: string; researchId: number;

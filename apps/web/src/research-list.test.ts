@@ -149,3 +149,13 @@ it('keeps static instrument scenarios visibly conditional in original native res
   expect(visibleText(report)).toContain('条件性情景评级'); expect(visibleText(report)).toContain('历史合约规格未核实');
 
 });
+
+it('shows original equity availability and observation scope without inventing annual performance', () => {
+  const value = { equityPerformance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'UNPRICED_PORTFOLIO_SNAPSHOTS', observed_utc_days: '27', return_days: '26', unpriced_snapshot_count: '1' }, canonicalResult: {}, request: {} };
+  const html = renderToStaticMarkup(createElement(NativeStrategyResultView, { value }));
+  expect(visibleText(html)).toContain('252/365 是年化频率，不是实际观测天数');
+  expect(visibleText(html)).toContain('短样本 CAGR 是外推');
+  expect(visibleText(html)).toContain('不可用时不替换为持仓收益');
+  expect(visibleText(html)).toContain('UNPRICED_PORTFOLIO_SNAPSHOTS');
+  expect(visibleText(html)).toContain('observed_utc_days');
+});

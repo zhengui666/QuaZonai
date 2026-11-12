@@ -1,3 +1,4 @@
+import type { JsonValue } from '@earendil-works/chord';
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { bool, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
@@ -123,6 +124,41 @@ export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject
 }
 
 /** Validate the exact bound request and upstream report, never substitute a score. */
+/** Validate the native evidence envelope only; all returns and statistics are upstream calculations. */
+export function nativeEquityPerformance(value: JsonValue | undefined): JsonObject {
+  const report = object(value, 'native_equity_performance');
+  if (report.source !== 'NAUTILUS_PORTFOLIO_SNAPSHOTS' || !['AVAILABLE', 'UNAVAILABLE'].includes(String(report.status))
+    || report.reason !== null && typeof report.reason !== 'string' || report.currency !== null && typeof report.currency !== 'string'
+    || !Array.isArray(report.returns) || !Array.isArray(report.statistics) || !Array.isArray(report.notes) || !report.notes.every(note => typeof note === 'string')) throw new Error('native_equity_performance_invalid');
+  const counter = (value: unknown) => typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value);
+  for (const key of ['snapshot_count', 'observed_utc_days', 'unpriced_snapshot_count', 'return_days']) if (!counter(report[key])) throw new Error('native_equity_count_invalid');
+  for (const key of ['first_snapshot_ns', 'last_snapshot_ns']) if (report[key] !== null && (!counter(report[key]) || BigInt(report[key] as string) > 9223372036854775807n)) throw new Error('native_equity_clock_invalid');
+  if (report.first_snapshot_ns !== null && report.last_snapshot_ns !== null && BigInt(report.first_snapshot_ns as string) > BigInt(report.last_snapshot_ns as string)) throw new Error('native_equity_clock_invalid');
+  if (BigInt(report.return_days as string) !== BigInt(report.returns.length)) throw new Error('native_equity_count_invalid');
+  let last: bigint | undefined;
+  for (const value of report.returns) { const row = object(value, 'native_equity_return');
+    if (!counter(row.ts_event_ns) || BigInt(row.ts_event_ns as string) > 9223372036854775807n || last !== undefined && BigInt(row.ts_event_ns as string) <= last
+      || row.value !== null && (typeof row.value !== 'number' || !Number.isFinite(row.value))) throw new Error('native_equity_return_invalid');
+    last = BigInt(row.ts_event_ns as string);
+  }
+  const keys = new Set<string>();
+  for (const value of report.statistics) { const row = object(value, 'native_equity_statistic');
+    if (![252, 365].includes(Number(row.annualization_days)) || typeof row.annualization_days !== 'number'
+      || ![`CAGR (${row.annualization_days} days)`, `Sharpe Ratio (${row.annualization_days} days)`].includes(String(row.native_key))
+      || row.value !== null && (typeof row.value !== 'number' || !Number.isFinite(row.value))) throw new Error('native_equity_statistic_invalid');
+    const key = `${row.annualization_days}:${row.native_key}`; if (keys.has(key)) throw new Error('native_equity_statistic_duplicate'); keys.add(key);
+  }
+  if (keys.size !== 4) throw new Error('native_equity_statistics_incomplete');
+  if (report.status === 'AVAILABLE' && (!report.returns.length || report.unpriced_snapshot_count !== '0' || report.currency === null || report.reason !== null)) throw new Error('native_equity_evidence_incomplete');
+  return report;
+}
+export function nativeEquityMetric(value: JsonValue | undefined, objective: JsonObject): number | null {
+  const report = nativeEquityPerformance(value);
+  if (report.status !== 'AVAILABLE' || objective.currency != null && objective.currency !== report.currency) return null;
+  const rows = (report.statistics as JsonObject[]).filter(row => row.native_key === objective.native_key && row.annualization_days === objective.annualization_days);
+  return rows.length === 1 && typeof rows[0]!.value === 'number' ? rows[0]!.value : null;
+}
+
 export function nativeStrategyResult(value: Parameters<typeof object>[0], request: JsonObject): JsonObject {
   const result = object(value, 'native_strategy_result');
   const expected = normalizedNativeStrategyRequest(request);
@@ -136,6 +172,7 @@ export function nativeStrategyResult(value: Parameters<typeof object>[0], reques
     || basis.scope !== (scenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START')) throw new Error('native_instrument_definition_scope_mismatch');
   if (scenario ? basis.ts_init_ns !== assumption.ts_init_ns || basis.ts_event_ns !== assumption.ts_event_ns
     : BigInt(basis.ts_init_ns as string) > BigInt(String(request.available_start_ns ?? request.event_start_ns))) throw new Error('native_instrument_definition_binding_mismatch');
+  nativeEquityPerformance(result.equity_performance);
   const report = object(result.canonical_result, 'native_strategy_canonical_result');
   const run = object(report.run, 'native_strategy_run');
   if (report.schema !== 'nautilus-backtest-result/v1' || !['completed', 'stopped'].includes(String(run.outcome))) throw new Error('native_strategy_report_invalid');

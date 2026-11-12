@@ -191,3 +191,6 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 STATIC_SCENARIO 原样贯穿配置、回测、walk-forward 与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和探索扫描保留定义原时间与scope，不能混用严格历史与情景依据。
 
 参数扫描的原生 Task 完成不等于执行窗口完整：`canonical_result.run.outcome=stopped` 保留原报告、统计和原因，但标为 STOPPED，不参与完整窗口排名或热图有效值；重启/投影不重新运行候选。探索扫描使用上游原统计，不把默认 Sharpe 视为已核实日权益收益或年化回报证据。
+
+原生策略结果的 `equity_performance` 只读官方 PortfolioAnalyzer 的 portfolio_returns（原始权益快照），直接调用官方 CAGR/Sharpe 的252与365两种频率，完全独立于可能回退到持仓收益的 canonical 默认统计。官方权益不可用时保留原因，不以持仓收益替代或隐式转换币种。原始快照UTC日期数、收益日数、未定价快照和时间范围同时展示；官方跨日延续不是每天实际观测，短样本CAGR只是外推，不是已实现年收益。WF可显式选择 `EQUITY_PERFORMANCE` 与频率，扫描以独立权益指标ID保持同名canonical值分离；无需新增交易门禁。
+盘口快照不等于逐事件增量数据；报告必须披露已知档位、采样频率、遗漏空簿/异常档位及carry/checkpoint语义，不把快照撮合结果宣称真实高频可成交性。
