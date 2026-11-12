@@ -87,6 +87,7 @@ test('official child Agent tasks isolate logic context, retain evidence identity
 });
 
 test('a real native execution attempt cannot be relabelled as pre-execution logic review', async () => {
+  const previousBinary = process.env.QZ_JOB_BINARY; process.env.QZ_JOB_BINARY = '/nonexistent-native-binary';
   const directory = await mkdtemp(join(tmpdir(), 'qz-assessment-after-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('Please choose a hypothesis.')]);
@@ -95,13 +96,13 @@ test('a real native execution attempt cannot be relabelled as pre-execution logi
     const receipt = await host.start('after', { goal: 'Review', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, native_strategy_backtest_request: request }, policy: {} });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const conversation = await host.harness.conversation(receipt.conversationId, context);
-    const execution = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target: '/nonexistent-native-binary' }, { ownership: { kind: 'conversation' } }), context);
+    const execution = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: { ...request, available_start_ns: null, strategy: { ...request.strategy, base: null } }, catalog: directory, target: '/nonexistent-native-binary' }, { ownership: { kind: 'conversation' } }), context);
     assert.equal((await host.harness.waitForTask(execution, context)).state.outcome.status, 'failed');
     faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Already observed.' }), { stopReason: 'toolUse' }), fauxAssistantMessage('Cannot label this pre-execution.')]);
     const submission = await conversation!.submit({ type: 'input', content: 'Review now', requestId: 'after-review' }, context);
     await submission.wait(context);
     assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.assessment' }, 20), context)).items.length, 0);
-  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); if (previousBinary === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previousBinary; }
 });
 
 

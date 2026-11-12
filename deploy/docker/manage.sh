@@ -152,25 +152,32 @@ qz_deploy() {
     qz_activate "$root" "$file"
 }
 qz_apply_update() {
-    local root=$1 old candidate phase=preparing
+    local root=$1 old candidate phase=preparing backup_policy=${QZ_BACKUP_POLICY:-required} saved_policy backup=null
     qz_configuration "$root"; old="$QZ_WORK/old.json"; cp "$QZ_CONFIG" "$old"
     qz_manifest "$QZ_BUNDLE/release.json"
     if [[ -e "$root/pending.json" ]]; then
         [[ $(qz_get "$root/pending.json" operation) == update && $(qz_get "$root/pending.json" target.version) == "$(qz_get "$QZ_BUNDLE/release.json" version)" ]] || qz_fail 'Retry the original pending target.'
         qz_raw "$root/pending.json" previous > "$old"
         phase=$(qz_get "$root/pending.json" phase)
+        saved_policy=$(qz_get "$root/pending.json" backup_policy 2>/dev/null) || saved_policy=required
+        saved_policy=${saved_policy:-required}
+        [[ "$saved_policy" == "$backup_policy" ]] || qz_fail 'Retry with the original backup policy; --no-backup cannot change a pending update.'
     fi
     qz_prepare "$root" "$old"; candidate=$QZ_PREPARED
     if [[ ! -e "$root/pending.json" && $(qz_get "$old" version) == "$(qz_get "$candidate" version)" ]]; then qz_verify "$old"; return; fi
     [[ $(printf '%s\n%s\n' "$(qz_get "$old" version)" "$(qz_get "$candidate" version)" | sort -V | tail -n1) == "$(qz_get "$candidate" version)" ]] || qz_fail 'Use an explicit matching restore for a downgrade.'
     if [[ "$phase" == preparing ]]; then
-        printf '{"operation":"update","phase":"preparing","previous":%s,"target":%s}\n' "$(qz_raw "$old")" "$(qz_raw "$candidate")" | qz_save "$root/pending.json"
+        printf '{"operation":"update","phase":"preparing","backup_policy":%s,"previous":%s,"target":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" | qz_save "$root/pending.json"
         qz_stop "$old"
         # Refusal leaves the original app stopped, original DB untouched and the
         # original target recorded. Explicit start resumes only the old release.
         qz_idle "$old"
-        qz_backup "$old"
-        printf '{"operation":"update","phase":"starting","previous":%s,"target":%s,"backup":%s}\n' "$(qz_raw "$old")" "$(qz_raw "$candidate")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
+        if [[ "$backup_policy" == required ]]; then
+            qz_backup "$old"; backup=$(qz_quote "$QZ_BACKUP")
+        else
+            printf 'Explicit --no-backup: preserving original data in place without creating a recovery point.\n'
+        fi
+        printf '{"operation":"update","phase":"starting","backup_policy":%s,"previous":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" "$backup" | qz_save "$root/pending.json"
     elif [[ "$phase" != starting ]]; then qz_fail 'Unknown pending update phase.'; fi
     qz_activate "$root" "$candidate"
 }
@@ -214,24 +221,27 @@ qz_unpack() {
     qz_manifest "$destination/release.json"
 }
 qz_help() {
-    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH [--directory PATH] [--port PORT]' \
+    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
+      '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
       'Only schema-5 installations are supported; prior formats are not migrated.'
 }
 qz_main() {
     local command=${1:---help} root="$HOME/.local/share/quazonai" argument= name
     shift || true
     if [[ "$command" == --help || "$command" == -h ]]; then qz_help; return; fi
-    QZ_PORT=8081
+    QZ_PORT=8081; QZ_BACKUP_POLICY=required
     while (($#)); do
         case "$1" in
           --directory|--port) (($#>=2)) || qz_fail 'Missing option value.'; name=$1
             case "$name" in --directory) root=$2;; --port) QZ_PORT=$2;; esac; shift 2;;
+          --no-backup) QZ_BACKUP_POLICY=skip; shift;;
           --help|-h) qz_help; return;;
           -*) qz_fail "Unknown option: $1";;
           *) [[ -z "$argument" ]] || qz_fail 'Unexpected argument.'; argument=$1; shift;;
         esac
     done
+    [[ "$QZ_BACKUP_POLICY" == required || "$command" == update || "$command" == apply-update ]] || qz_fail '--no-backup is only valid for update/apply-update.'
     root=${root/#\~/$HOME}; root=$(realpath -m "$root")
     [[ "$root" != / && "$root" != "$HOME" ]] || qz_fail 'Select a dedicated installation directory.'
     [[ "$QZ_PORT" =~ ^[0-9]{1,5}$ ]] || qz_fail 'Select numeric ports.'
@@ -250,7 +260,9 @@ qz_main() {
         qz_unpack "$QZ_WORK/deploy.tar.gz" "$QZ_WORK/deployment"
         [[ $(qz_get "$QZ_WORK/deployment/release.json" version) == "$argument" ]] || qz_fail 'Downloaded version differs.'
         exec 9>&-
-        bash "$QZ_WORK/deployment/manage.sh" apply-update --directory "$root";;
+        local update_options=()
+        if [[ "$QZ_BACKUP_POLICY" == skip ]]; then update_options+=(--no-backup); fi
+        bash "$QZ_WORK/deployment/manage.sh" apply-update --directory "$root" "${update_options[@]}";;
       start|restart) qz_configuration "$root"
         if [[ -e "$root/pending.json" ]]; then [[ $(qz_get "$root/pending.json" phase) == preparing ]] || qz_fail 'Retry the recorded installation/update target.'; fi
         if [[ "$command" == restart ]]; then qz_stop "$QZ_CONFIG"; fi

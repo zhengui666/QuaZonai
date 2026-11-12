@@ -1,3 +1,4 @@
+import { Study } from '../src/documents.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
@@ -22,9 +23,9 @@ const source: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selec
   strategy: { kind: 'EMA_CROSS', trade_size: '0.001', fast_period: 2, slow_period: 3 } };
 const request: JsonObject = { schema_version: 1, candidates: [source], split: { n_splits: 1, gap: 0 }, objective: { native_key: 'Sharpe Ratio', direction: 'MAXIMIZE' } };
 // Protocol-only native wire. Numerical native execution is tested in the Rust job tests, not mocked here.
-function wire(walkRequest: JsonObject = request) {
+function wire(walkRequest: JsonObject = request, outcome = 'completed') {
   const native = (start: string, end: string, candidate: JsonObject = source) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
-    canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
+    canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
   return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
     trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate) })), selected_candidate_index: 0, test_result: native('1790000000000000003', '1790000000000000004'), status: 'COMPLETED', reason: null }] };
 }
@@ -42,8 +43,8 @@ test('walk-forward evidence binds original strategies, chronology, availability 
   }
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
-  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method'].includes(behavior);
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped'].includes(behavior);
   const neighbourStrategies = [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }];
   const costs = [{ maker_fee: '0', taker_fee: behavior === 'same-cost' ? '0.0010' : '0.002' }];
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-walk-forward-'));
@@ -58,7 +59,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
     if (incoming.method === 'DELETE') { deletes.push(incoming.url!); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
     if (behavior === 'failed-cost' && original.command === 'native-strategy-backtest' && (original.input as any).venue.taker_fee === '0.002') { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'actual_cost_case_failed' })); return; }
     if (behavior === 'repeat' && posts.length === 1) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'recorded_first_attempt_failure' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject) : { ...wire().folds[0]!.trials[0]!.result, request: original.input } } : { error: 'pending_original_receipt' }) }));
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject, behavior === 'wf-stopped' ? 'stopped' : 'completed') : { ...wire().folds[0]!.trials[0]!.result, request: original.input, canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: behavior === 'stopped' ? 'stopped' : 'completed' } } } } : { error: 'pending_original_receipt' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -116,6 +117,32 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         if (behavior === 'changed-method') assert.ok(evidence.ratingReadiness.reasons.includes('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW'));
         if (behavior === 'failed-cost') { assert.equal(evidence.sensitivity.cases[2].status, 'failed'); assert.equal(evidence.sensitivity.cases[2].error, 'actual_cost_case_failed'); }
         if (behavior === 'rated') assert.equal((task.state.outcome.result.dataJudgment as any).stars, 2, 'synthesis is not average of logic and data');
+        if (behavior === 'wf-stopped') { assert.equal(evidence.dataValidation.folds[0].nativeOutcome, 'stopped'); assert.ok(evidence.ratingReadiness.reasons.includes('NATIVE_TEST_EVIDENCE_INCOMPLETE')); }
+        if (behavior === 'stopped') { assert.equal(evidence.sensitivity.status, 'INCOMPLETE'); assert.equal(evidence.sensitivity.cases[0].nativeOutcome, 'stopped'); assert.deepEqual(evidence.sensitivity.cases[0].dataRowsByType, { QuoteTick: '2' }); }
+        if (behavior === 'rated') for (const change of ['catalog', 'target', 'normalized'] as const) {
+          await host.harness.commit(async tx => {
+            const study = await tx.doc(Study, receipt!.conversationId);
+            study.input!.data.catalog = change === 'catalog' ? `${directory}/other-catalog` : directory;
+            study.input!.data.nautilusTarget = change === 'target' ? { ...target, id: 'different-worker', url: `${target.url}/different-root` } : target;
+            study.input!.data.native_strategy_backtest_request = change === 'normalized' ? { ...source, available_start_ns: null, strategy: { ...(source.strategy as JsonObject), base: null } } : source;
+          }, context);
+          faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 4, rationale: 'Protocol judgment', risks: [], uncertainties: [], evidenceSufficient: true, dataJudgment: { stars: 2, rationale: 'Protocol judgment', risks: [], uncertainties: [] } })), fauxAssistantMessage('Report records actual source binding.')]);
+          await (await (await host.harness.conversation(receipt!.conversationId, context))!.submit({ type: 'input', content: 'Assess the current registered source', requestId: `source-${change}` }, context)).wait(context);
+          const latest: any = await host.harness.snapshot(ResearchAssessment, receipt!.conversationId, context);
+          const updated: any = await host.harness.getTask(latest!.reportTaskIds.at(-1)!, context);
+          assert.equal(updated!.state.outcome!.status, 'completed');
+          const output = (updated!.state.outcome as any).result;
+          assert.equal(output.judgment.stars, change === 'normalized' ? 4 : null);
+          assert.equal(output.evidence.ratingReadiness.eligible, change === 'normalized');
+          if (change !== 'normalized') {
+            assert.equal(output.evidence.logic.status, 'MISSING_OR_DIFFERENT_CONFIGURATION');
+            assert.equal(output.evidence.dataValidation.status, 'NOT_RUN');
+            assert.equal(output.evidence.sensitivity.status, 'NOT_RUN');
+            assert.equal(output.evidence.trialHistory.runs[0].sameSource, false);
+            assert.equal(output.evidence.sensitivityHistory[0].sameSource, false);
+          }
+        }
+
       }
       if (review) assert.equal(evidence.dataValidation.logicCoverage, behavior === 'reviewed' || withSensitivity ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW');
       if (behavior === 'history') assert.equal((task.state.outcome.result.evidence as any).historicalNativeExecution.status, 'completed', 'newer walk-forward does not hide a real ordinary backtest');
@@ -159,7 +186,7 @@ for (const behavior of ['recover', 'cancel'] as const) test(`native sensitivity 
     const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!;
     assert.equal(original.command, 'native-strategy-backtest');
     if (incoming.method === 'DELETE') { cancelled.push(original.requestId); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } } : { error: 'original_native_work_unresolved' }) }));
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: { ...wire().folds[0]!.trials[0]!.result, request: original.input, canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: 'completed' } } } } : { error: 'original_native_work_unresolved' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');

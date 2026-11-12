@@ -15,6 +15,8 @@ import package
 class PackageTests(unittest.TestCase):
     def test_node_members_and_retired_runtime(self):
         self.assertIn('runtime/node', package.cli_members('linux-x86_64'))
+        self.assertIn('skill/SKILL.md', package.cli_members('linux-x86_64'))
+        self.assertIn('skill/release.json', package.cli_members('linux-x86_64'))
         self.assertIn('quazonai.cmd', package.cli_members('windows-x86_64'))
         self.assertIn('app/apps/cli/src/main.ts', package.cli_members('linux-x86_64'))
         self.assertNotIn('runtime.sh', package.DEPLOY_FILES)
@@ -78,6 +80,8 @@ class CliEncodingTests(unittest.TestCase):
         inline = {
             'app/package.json': b'{"type":"module"}\n',
             'distribution.json': json.dumps({'version': cls.version}).encode('utf-8'),
+            'skill/SKILL.md': (root / '.agents/skills/quazonai/SKILL.md').read_bytes(),
+            'skill/release.json': json.dumps({'version': cls.version}).encode('utf-8'),
             # smoke_cli invokes the actual bundled Node/launch.mjs directly.
             'quazonai.cmd' if os.name == 'nt' else 'quazonai': b'encoding-test archive\n',
         }

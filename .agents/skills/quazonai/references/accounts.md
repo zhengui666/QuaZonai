@@ -2,14 +2,14 @@
 
 ## 创建和读取账户观测
 
-先读取目标组合、`observation list` 和 `schema show ObservationStart`。观测需要已有的 `connectionId`，模式必须与连接匹配。可从既有观测读取连接身份；不存在时由用户提供或在实例界面配置，CLI 当前没有连接创建/列举命令。
+先读取 `observation list` 和 `schema show ObservationStart`。观测需要已有的 `connectionId`，模式必须与连接匹配。可从既有观测读取连接身份；不存在时由用户提供或在实例界面配置，CLI 当前没有连接创建/列举命令。
 
 形成请求：
 
 ```json
 {
   "requestId": "REPLACE_NEW_UNIQUE_REQUEST_ID",
-  "portfolioId": "REPLACE_PORTFOLIO_ID",
+  "purpose": "ACCOUNT_ONLY",
   "mode": "paper",
   "connectionId": "REPLACE_EXISTING_CONNECTION_ID"
 }
@@ -25,17 +25,20 @@ quazonai observation refresh "$observation_id"
 
 读取 `status`、`updatedAt`、`positions`、`equity`、`cash`、`receipt`、`error` 及 `provenance`。保留 client/account/sequence/nativeClock 身份和时间依据，`null` 数值不补零。`observation stop ID` 停止观测，不是下单、清仓或撤销券商账户。
 
-## 自动配置
+## 显式控制已配置的原生策略
 
-用户要求自动配置时先读 `AutomaticPolicy`。完整请求示例：
-
-```json
-{"enabled":true,"cashBuffer":"1000","maximumSnapshotAgeSeconds":60}
+```sh
+quazonai account-strategy status "$observation_id"
+quazonai account-strategy start "$observation_id" --request-id "$request_id" --account-source-id "$account_source_id" --expected-revision "$strategy_revision"
+quazonai account-strategy stop "$observation_id" --request-id "$stop_request_id"
+quazonai account-strategy receipt "$observation_id" "$request_id"
 ```
 
-将现金缓冲和有效期替换为用户所需值。通过 `observation automatic ID --file POLICY.json` 设置，然后读回 `automaticPolicy`、`allocation.status`、`allocation.reason`、targets、controlRevision 与 receipt。关闭时提交完整策略并设置 `enabled:false`，保留当前其余字段；不要假设关闭等于已清仓。
+START 的 accountSourceId/strategyRevision 必须来自用户决定启动时已读到的 status。过期拒绝后先报告，不自动获取新修订替旧命令重新授权。STOP 不要求修订；仍须明确用户操作意图。当前账户仅已接入官方 EMA_CROSS，OBI 账户运行尚未支持。连接中的策略配置并非由历史回测自动部署；当前 CLI 不是策略代码上传器或连接配置器。
 
-该请求不要求 requestId，不添加统一外壳；配置可能影响后续目标交付，仅在相应操作范围内执行。
+默认启动宿主不等于启动交易。paper/live 使用独立连接；live START 可能实际下单，必须满足用户明确授权及适用确认要求，不能因回测评级良好自行启动。恢复会重新预热，不承诺无缝恢复策略内部指标状态。STOP 沿用上游配置语义，不保证不撤单或不清仓；观测停止也不是策略 STOP。
+
+命令回执分别报告 REJECTED、UNCERTAIN 与真实原生结果。persisted:false 表示回执未持久化，即使结果显示 STOPPED 也不能称已可靠记账或跨重启防重放。网络不确定时查询原 requestId，不自动重发，不用当前 STATUS 冒充旧命令已完成。取消保护、订单预览和仓位计算按实际能力报告，预览不是下单。
 
 ## 资金退出：状态 → 预览 → 命令 → 对账
 

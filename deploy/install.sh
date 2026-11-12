@@ -7,6 +7,8 @@ version='@QUAZONAI_VERSION@'
 directory="$HOME/.local/share/quazonai"
 bin_directory="$HOME/.local/bin"
 cli_only=false
+no_backup=false
+skill_directory=''
 deployment_args=()
 fail() { printf 'Installation failed: %s\n' "$*" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
@@ -14,11 +16,13 @@ while [ "$#" -gt 0 ]; do
     --help|-h)
       cat <<'HELP'
 Usage: bash install.sh [--cli-only] [--version TAG|latest] [--bin-dir PATH] [--directory PATH]
-                       [--port PORT] [--database-port PORT]
+                       [--port PORT] [--no-backup] [--skill-dir PATH]
 Installs the prebuilt CLI into ~/.local/bin. Linux x86_64 also installs or
 updates the Docker stack; macOS installs only the CLI. The source bootstrap
 selects the newest complete published dev release; release installers are pinned.
 --version latest selects the newest complete dev release explicitly.
+--no-backup skips only an update recovery point, never task-idle checks.
+--skill-dir PATH links the same-release bundled skill; existing unmanaged paths are refused.
 --cli-only skips the Linux stack. Existing installations retain their settings.
 Requires Bash 4.4+ for the Linux stack, Bash 3.2+ for CLI-only, curl, tar
 and standard Unix tools; no Python, Node.js or jq.
@@ -26,12 +30,14 @@ No local build, automatic package installation, sudo or file checksum is used.
 HELP
       exit 0 ;;
     --cli-only) cli_only=true; shift ;;
-    --version|--directory|--bin-dir|--port|--database-port)
+    --no-backup) no_backup=true; shift ;;
+    --version|--directory|--bin-dir|--skill-dir|--port|--database-port)
       [ "$#" -ge 2 ] && [ -n "$2" ] || fail "Missing value for $1"
       case "$1" in
         --version) version=$2 ;;
         --directory) directory=$2 ;;
         --bin-dir) bin_directory=$2 ;;
+        --skill-dir) skill_directory=$2 ;;
         *) deployment_args+=("$1" "$2") ;;
       esac
       shift 2 ;;
@@ -43,6 +49,13 @@ expand_home() {
 }
 directory=$(expand_home "$directory")
 bin_directory=$(expand_home "$bin_directory")
+if [ -n "$skill_directory" ]; then
+  skill_directory=$(expand_home "$skill_directory")
+  if [ -e "$skill_directory" ] || [ -L "$skill_directory" ]; then
+    [ -L "$skill_directory" ] || fail 'Skill path is unmanaged; choose a new --skill-dir without replacing existing files.'
+    case "$(readlink "$skill_directory")" in "$HOME/.local/share/quazonai-cli/releases/"*/skill) ;; *) fail 'Refusing to replace an unmanaged skill link.' ;; esac
+  fi
+fi
 valid_version() {
   [[ ${#1} -le 128 && "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || return 1
   if [[ "$1" == *-* ]]; then
@@ -60,10 +73,11 @@ case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) platform=macos-aarch64; cli_only=true ;;
   *) fail 'Supported hosts: Linux x86_64, macOS x86_64 or Apple Silicon. Use install.ps1 on Windows x86_64.' ;;
 esac
+if "$cli_only" && "$no_backup"; then fail '--no-backup applies only to a Docker stack update, not --cli-only.'; fi
 if ! "$cli_only"; then
   [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; } || fail 'The Linux Docker stack requires Bash 4.4 or newer. Upgrade Bash explicitly or use --cli-only.'
 fi
-for tool in curl tar awk sort cmp mktemp; do
+for tool in curl tar awk sort cmp mktemp readlink ln rmdir; do
   command -v "$tool" >/dev/null || fail "$tool is required."
 done
 work=$(mktemp -d)
@@ -250,6 +264,12 @@ mkdir "$work/cli"
 tar -xzf "$work/$archive" -C "$work/cli" || fail 'Could not extract JS/Node CLI.'
 test -f "$work/cli/runtime/node" && test -f "$work/cli/app/apps/cli/src/main.ts" && test -f "$work/cli/distribution.json" || fail 'Incomplete JS/Node CLI.'
 chmod 755 "$work/cli/quazonai" "$work/cli/runtime/node"
+cli_revision=$(json_read field "$work/cli/distribution.json" revision) || fail 'Missing CLI source revision.'
+[[ "$cli_revision" =~ ^[0-9a-f]{40}$ ]] || fail 'Invalid CLI source revision.'
+skill_revision=$(json_read field "$work/cli/skill/release.json" revision) || fail 'Missing skill source revision.'
+[ "$skill_revision" = "$cli_revision" ] || fail 'CLI and skill source revisions differ.'
+skill_version=$(json_read field "$work/cli/skill/release.json" version) || fail 'Missing versioned skill metadata.'
+[ "$skill_version" = "$version" ] && [ -s "$work/cli/skill/SKILL.md" ] || fail 'Bundled skill does not match the requested tag.'
 actual_version=$("$work/cli/quazonai" --version) || fail 'The bundled Node CLI cannot run on this host.'
 [ "$actual_version" = "quazonai $version" ] || fail 'Downloaded CLI does not match the requested tag.'
 if ! "$cli_only"; then
@@ -258,6 +278,7 @@ if ! "$cli_only"; then
     manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md .env.example
   release_version=$(json_read field "$work/deployment/release.json" version) || fail 'Invalid deployment manifest.'
   [ "$release_version" = "$version" ] || fail 'Deployment bundle does not match the requested tag.'
+  [ "$(json_read field "$work/deployment/release.json" revision)" = "$cli_revision" ] || fail 'Deployment and CLI source revisions differ.'
   command=deploy
   if [ -f "$directory/installation.json" ]; then
     command=apply-update
@@ -265,6 +286,10 @@ if ! "$cli_only"; then
       pending=$(json_read field "$directory/pending.json" operation) || fail 'Invalid pending installation record.'
       if [ "$pending" = install ]; then command=deploy; fi
     fi
+  fi
+  if "$no_backup"; then
+    [ "$command" = apply-update ] || fail '--no-backup requires an existing installation update.'
+    deployment_args+=(--no-backup)
   fi
   bash "$work/deployment/manage.sh" "$command" --directory "$directory" ${deployment_args[@]+"${deployment_args[@]}"}
 fi
@@ -277,11 +302,24 @@ if [ ! -d "$cli_root" ]; then
   mv -- "$distribution" "$cli_root"
 fi
 [ "$("$cli_root/quazonai" --version)" = "quazonai $version" ] || fail 'Preserve incomplete CLI distribution before retrying.'
+[ "$(json_read field "$cli_root/distribution.json" revision)" = "$cli_revision" ] &&
+[ "$(json_read field "$cli_root/skill/release.json" revision)" = "$cli_revision" ] &&
+[ "$(json_read field "$cli_root/skill/release.json" version)" = "$version" ] &&
+[ -s "$cli_root/skill/SKILL.md" ] || fail 'Existing CLI/skill distribution is incomplete or differs from this release; preserve it for inspection.'
 bin_directory=$(cd -- "$bin_directory" && pwd -P)
 staged=$(mktemp "$bin_directory/.quazonai.XXXXXX")
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$cli_root/quazonai" > "$staged"
 chmod 755 "$staged"
 mv -f -- "$staged" "$bin_directory/quazonai"
 staged=''
+if [ -n "$skill_directory" ]; then
+  mkdir -p -- "$(dirname -- "$skill_directory")"
+  skill_link=$(mktemp -d "$(dirname -- "$skill_directory")/.quazonai-skill.XXXXXX")
+  ln -s "$cli_root/skill" "$skill_link/link"
+  # Remove only the previously verified managed symlink, never its target.
+  if [ -L "$skill_directory" ]; then rm -- "$skill_directory"; fi
+  mv -- "$skill_link/link" "$skill_directory"; rmdir "$skill_link"
+  printf 'Installed same-release skill from %s: %s\n' "$version" "$skill_directory"
+fi
 printf 'Installed bundled Node CLI from %s: %s/quazonai\n' "$version" "$bin_directory"
 case ":$PATH:" in *":$bin_directory:"*) ;; *) printf 'Add to PATH: export PATH=%q:"$PATH"\n' "$bin_directory";; esac

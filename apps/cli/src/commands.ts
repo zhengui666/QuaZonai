@@ -32,7 +32,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   parameter-scan trials ID [--file QUERY.json] | surface ID --file QUERY.json
   parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
     Native scan: source={kind:"research",researchId}; axes use existing numeric request paths.
-    objective={metricId:<native_key>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency,batchSize}.
+    objective={metricId:<native_key>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency}.
   portfolio list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   portfolio replay-ticks --file REQUEST.json | tick-replay ID

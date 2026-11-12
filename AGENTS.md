@@ -167,3 +167,5 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 事前逻辑工具的 `validationMethod` 记录实际 `split`、`objective`、`neighbourStrategies` 和 `costs`。`native_strategy_sensitivity` 复用官方原生策略 Task 独立运行原请求、指定邻域与 maker/taker 费用场景；只替换指定策略或两项费用，不改变原数据/账户窗口，不将该历史窗口敏感性冒充新增样本外。原始结果、失败与每次调用均留在同一 Pi Conversation，取消和恢复复用原回执。
 
 综合审阅读取真实 Task，核对事前候选/方法与实际执行，并呈现原生分折统计、敏感性、交易笔数及已记录试验。可用证据齐备后由独立 Pi 子 Agent 判断是否足以给出 0–5 星，逻辑与数据分开、综合不取平均；材料不足或 Agent 认为不充分时保持 `null`。有效评级明确标记 `RATED_WITH_DISCLOSED_LIMITATIONS`，只评价本会话已记录方法，不是概率、全面防过拟合认证或交易门禁。CPCV、跨会话试验历史和独立源数据审计未执行时如实披露，不机械禁止有限范围研究判断。官方统计保留原值，IEEE754 十六进制只作展示解码，缺失/非有限数不补零。
+
+审阅绑定同时比较官方归一化请求、实际 catalog 和原生执行 target。省略与官方等义的 null 不构成新策略，不能绕过事前结果检查；相同请求在不同 catalog/target 的结果不拼接为同一研究证据。这里记录的是执行来源，不是数据内容独立审计、不可变快照或证明。报告保留原生 `run.outcome`、notes 与数据行数；官方 `stopped` 是真实停止结果，不冒充完整验证。样本范围按本次原始窗口与实际数据记录说明，不把派生缓存的更长日期范围当原始行情覆盖；USDT/USDC 不由胶水默认等值。

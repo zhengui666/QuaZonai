@@ -36,7 +36,7 @@ def safe_name(name: str) -> bool:
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
 def cli_members(platform: str) -> set[str]:
-    return {'distribution.json', 'runtime/LICENSE',
+    return {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',
         'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
         'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
@@ -53,7 +53,7 @@ def check_cli_archive(path: Path, platform: str) -> None:
             if any(not item.isfile() for item in members):
                 raise ValueError('CLI archives contain only regular files.')
             names = [item.name for item in members]
-    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/'))
+    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'skill/'))
     if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
@@ -83,6 +83,8 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
         shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
         (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
+        shutil.copytree(ROOT / '.agents/skills/quazonai', directory / 'skill')
+        (directory / 'skill/release.json').write_text(json.dumps({'version': version, 'revision': revision}) + '\n')
         if windows:
             (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
         else:
@@ -191,7 +193,12 @@ execution service; installation does not run inference or place trades.
 The bundled `quazonai` CLI is a client of the deployed HTTP service, not a second
 server deployment method. `quazonai --version` prints `quazonai {version}`;
 use `quazonai login --help` to connect it to the deployed service. Client archives
-remain available as release assets.
+remain available as release assets. Every CLI archive includes `skill/` from the
+same release source revision, with `skill/release.json` recording its identity.
+To install that skill at an explicitly chosen path, pass
+`--skill-dir "$HOME/.agents/skills/quazonai"` to the installer. Existing unmanaged
+skill directories are refused rather than replaced; choose an unused path or
+manage your existing skill explicitly.
 
 For updates, use the target release installer with the same installation owner
 and original `--directory`. Preserve the installation root, configuration,
@@ -199,6 +206,21 @@ SQLite, keys, journals, backups and the separate Nautilus data/account directory
 Use the deployment bundle's `bash manage.sh --help` for status, stopped backup,
 restore and start commands. A backup leaves the application stopped; restart it
 explicitly when ready. Container restart does not imply remote work has ended.
+
+If you explicitly do not want a new backup, use this target release's installer:
+
+```bash
+bash install.sh --version {version} --directory "$HOME/.local/share/quazonai" --no-backup --skill-dir "$HOME/.agents/skills/quazonai"
+```
+
+`--no-backup` skips only the recovery-point copy. The existing database, keys,
+configuration and account data remain in place; graceful stop and unresolved-task
+checks are unchanged. A refusal leaves the old application stopped for explicit
+reconciliation or restart. Retry a pending update with the same backup policy.
+Without a backup this update creates no recovery point; do not imply it can undo
+a data migration. CLI, skill and service artifacts are checked against the same
+explicit tag and source revision. An older installed manager may not understand
+this flag; use the target release installer or its downloaded deployment bundle.
 
 This release uses schema-5 installations; earlier installation/database formats
 and retired research workflows are not migrated or executed for compatibility.

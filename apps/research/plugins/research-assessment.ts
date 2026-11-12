@@ -1,3 +1,4 @@
+import { nativeTargetForData } from '../src/native-execution.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { NativeSensitivity, nativeSensitivityTool } from './native-sensitivity.ts';
 import { nativeStrategyResult, normalizedNativeStrategyRequest } from './native-strategy-backtest.ts';
@@ -10,13 +11,26 @@ import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 
-async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject, includeValidation = false) {
+function executionSource(data: JsonObject): JsonObject {
+  let target: JsonValue = null;
+  try { target = nativeTargetForData(data) as JsonValue; }
+  catch (error) { if (!(error instanceof Error) || error.message !== 'nautilus_backtest_not_configured') throw error; }
+  return { catalog: typeof data.catalog === 'string' ? data.catalog : null, target };
+}
+function sameRequest(a: JsonValue | undefined, b: JsonObject): boolean {
+  if (!a || typeof a !== 'object' || Array.isArray(a) || !a.venue || !a.strategy) return false;
+  return canonical(normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(a)))) === canonical(normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(b))));
+}
+function sameSource(invocation: JsonObject, source: JsonObject): boolean {
+  return canonical({ catalog: invocation.catalog ?? null, target: invocation.target ?? null }) === canonical(source);
+}
+async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject, source: JsonObject, includeValidation = false) {
   let cursor; let found: TaskRecord<JsonValue, JsonValue, JsonValue> | undefined;
   do {
     const page = await tx.scanTasks({ conversationId, kind: 'qz.native-strategy.backtest' }, 100, cursor);
     for (const task of page.items) {
       const input = object(task.input, 'native_input');
-      if (canonical((includeValidation ? input.sourceRequest : undefined) ?? input.request ?? null) === canonical(request) && (!found || task.id > found.id)) found = task;
+      if (sameSource(input, source) && sameRequest((includeValidation ? input.sourceRequest : undefined) ?? input.request, request) && (!found || task.id > found.id)) found = task;
     }
     cursor = page.next;
   } while (cursor);
@@ -121,16 +135,17 @@ export const logicReviewTool = defineTool({
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     const request = registeredNativeStrategyRequest(input);
+    const source = executionSource(input.data);
     const candidates = (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }));
     if (candidates?.length === 0) throw new Error('research_assessment_candidates_required');
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
-      if (await upstreamExecution(tx, api.conversationId, request, true)) throw new Error('research_assessment_pre_execution_required');
+      if (await upstreamExecution(tx, api.conversationId, request, source, true)) throw new Error('research_assessment_pre_execution_required');
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
-      if (!currentInput || canonical(registeredNativeStrategyRequest(currentInput)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
+      if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
         configurationTaskId: null,
-        evidence: { hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ?? null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
+        evidence: { executionSource: source, hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ?? null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
       { ownership: { kind: 'task', taskId: api.taskId } });
       (await tx.doc(ResearchAssessment, api.conversationId)).logicTaskId = child.taskId;
       return child.taskId;
@@ -148,16 +163,17 @@ export const assessmentReportTool = defineTool({
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
     const request = registeredNativeStrategyRequest(input);
+    const source = executionSource(input.data);
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
-      if (!currentInput || canonical(registeredNativeStrategyRequest(currentInput)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
+      if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
       const assessment = await tx.doc(ResearchAssessment, api.conversationId);
       const logic = assessment.logicTaskId ? await tx.task(assessment.logicTaskId) : undefined;
       const matchingLogic = logic?.kind === 'qz.research.assessment' && object(logic.input, 'logic_input').mode === 'LOGIC' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'
-        && canonical(object(logic.input, 'logic_input').request ?? null) === canonical(request) && object(logic.input, 'logic_input').configurationTaskId === (null);
-      const native = await upstreamExecution(tx, api.conversationId, request);
-      const nativeMatches = native && native.kind === 'qz.native-strategy.backtest' && canonical(object(native.input, 'native_input').request ?? null) === canonical(request);
+        && sameRequest(object(logic.input, 'logic_input').request, request) && canonical(object(object(logic.input, 'logic_input').evidence, 'logic_evidence').executionSource ?? null) === canonical(source) && object(logic.input, 'logic_input').configurationTaskId === (null);
+      const native = await upstreamExecution(tx, api.conversationId, request, source);
+      const nativeMatches = native && native.kind === 'qz.native-strategy.backtest' && sameRequest(object(native.input, 'native_input').request, request) && sameSource(object(native.input, 'native_input'), source);
       const validation = await tx.doc(NativeWalkForward, api.conversationId);
       const trialHistory: JsonObject = { scope: 'THIS_CONVERSATION_ONLY', crossConversationCoverage: 'NOT_CHECKED', runs: [] };
       for (const id of validation.taskIds) {
@@ -167,7 +183,7 @@ export const assessmentReportTool = defineTool({
         if (invocation.walkForward !== true) continue;
         const submitted = object(invocation.request, 'native_walk_forward_request');
         (trialHistory.runs as JsonObject[]).push({ taskId: id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
-          sameSource: canonical(invocation.sourceRequest ?? null) === canonical(request), request: submitted,
+          sameSource: sameRequest(invocation.sourceRequest, request) && sameSource(invocation, source), request: submitted,
           candidateCount: Array.isArray(submitted.candidates) ? submitted.candidates.length : null,
           error: task.state.status === 'terminal' && task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null });
       }
@@ -177,7 +193,7 @@ export const assessmentReportTool = defineTool({
         const task = await tx.task(id);
         if (!task || task.kind !== 'qz.native-strategy.backtest') continue;
         const invocation = object(task.input, 'native_walk_forward_input');
-        if (invocation.walkForward !== true || canonical(invocation.sourceRequest ?? null) !== canonical(request)) continue;
+        if (invocation.walkForward !== true || (!sameRequest(invocation.sourceRequest, request) || !sameSource(invocation, source))) continue;
         dataValidation = { taskId: id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status, stars: null, missing: ['TIME_LEAKAGE_AUDIT', 'PARAMETER_NEIGHBOURHOOD', 'COST_SENSITIVITY', 'COMPLETE_TRIAL_HISTORY'] };
         if (task.state.status === 'terminal' && task.state.outcome.status === 'completed') {
           const result = nativeWalkForwardResult(task.state.outcome.result, object(invocation.request, 'native_walk_forward_request'));
@@ -188,6 +204,9 @@ export const assessmentReportTool = defineTool({
               trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error! })),
               nativeTestStatistics: fold.test_result === null ? null : object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics!,
               nativeObjectiveValue: fold.test_result === null ? null : nativeAssessmentMetric(object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics, 'native_statistics'), object(object(result.request, 'walk_forward_request').objective, 'native_objective')),
+              nativeOutcome: fold.test_result === null ? null : object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').run, 'native_run').outcome!,
+              notes: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').notes!,
+              dataRowsByType: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').data_rows_by_type!,
               fills: fold.test_result === null ? null : (object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').fills as JsonValue[]).length })),
             logicCoverage: matchingLogic && logic!.id < task.id && reviewedCandidateMatch(object(logic!.input, 'logic_input'), object(result.request, 'walk_forward_request'))
               ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW'  };
@@ -200,7 +219,7 @@ export const assessmentReportTool = defineTool({
       const wfRequest = dataValidation.request ? object(dataValidation.request, 'walk_forward_request') : null;
       const objective = wfRequest ? object(wfRequest.objective, 'native_objective') : null;
       for (const run of sensitivities.runs) {
-        const sameSource = canonical(run.sourceRequest) === canonical(request);
+        let matchingSource = sameRequest(run.sourceRequest, request);
         const cases: JsonObject[] = [];
         let neighbourIndex = 0; let costIndex = 0;
         for (const item of run.tasks) {
@@ -208,21 +227,23 @@ export const assessmentReportTool = defineTool({
           if (!task || task.kind !== 'qz.native-strategy.backtest') throw new Error('native_sensitivity_task_missing');
           const invocation = object(task.input, 'sensitivity_input');
           const actual = object(invocation.request, 'sensitivity_request');
+          matchingSource &&= sameSource(invocation, source);
           const expected = item.role === 'BASELINE' ? run.sourceRequest : item.role === 'PARAMETER_NEIGHBOUR'
             ? { ...run.sourceRequest, strategy: run.neighbourStrategies[neighbourIndex++]! }
             : { ...run.sourceRequest, venue: { ...object(run.sourceRequest.venue, 'source_venue'), ...run.costs[costIndex++]! } };
-          if (invocation.walkForward === true || canonical(invocation.sourceRequest ?? null) !== canonical(run.sourceRequest) || canonical(actual) !== canonical(expected)) throw new Error('native_sensitivity_task_binding_mismatch');
+          if (invocation.walkForward === true || !sameRequest(invocation.sourceRequest, run.sourceRequest) || !sameRequest(actual, expected)) throw new Error('native_sensitivity_task_binding_mismatch');
           const row: JsonObject = { role: item.role, taskId: item.taskId, request: actual, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
             error: task.state.status === 'terminal' && task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null };
           if (task.state.status === 'terminal' && task.state.outcome.status === 'completed') {
             const result = nativeStrategyResult(task.state.outcome.result, actual); const report = object(result.canonical_result, 'native_report');
             row.nativeStatistics = report.statistics!; row.nativeObjectiveValue = objective ? nativeAssessmentMetric(object(report.statistics, 'native_statistics'), objective) : null;
             row.fills = (report.fills as JsonValue[]).length; row.nativeVersion = result.native_version!;
+            row.nativeOutcome = object(report.run, 'native_run').outcome!; row.notes = result.notes!; row.dataRowsByType = result.data_rows_by_type!;
           }
           cases.push(row);
         }
-        sensitivityHistory.push({ toolTaskId: run.toolTaskId, sameSource, cases });
-        if (sameSource) sensitivity = { status: cases.every(row => row.status === 'completed') ? 'COMPLETED' : 'INCOMPLETE', toolTaskId: run.toolTaskId, neighbourStrategies: run.neighbourStrategies, costs: run.costs, cases, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS' };
+        sensitivityHistory.push({ toolTaskId: run.toolTaskId, sameSource: matchingSource, cases });
+        if (matchingSource) sensitivity = { status: cases.every(row => row.status === 'completed' && row.nativeOutcome === 'completed') ? 'COMPLETED' : 'INCOMPLETE', toolTaskId: run.toolTaskId, neighbourStrategies: run.neighbourStrategies, costs: run.costs, cases, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS' };
       }
       const reasons: string[] = [];
       const logicInput = matchingLogic ? object(logic!.input, 'logic_input') : null;
@@ -232,7 +253,7 @@ export const assessmentReportTool = defineTool({
       if (matchingLogic && logic!.state.outcome?.status === 'completed' && object(object(logic!.state.outcome.result, 'logic_result').judgment, 'logic_judgment').stars === null) reasons.push('LOGIC_EVIDENCE_INSUFFICIENT');
       if (dataValidation.logicCoverage !== 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION') reasons.push('PRE_REVIEW_CANDIDATE_MISMATCH');
       const folds = (dataValidation.folds ?? []) as JsonObject[];
-      if (!folds.length || folds.some(fold => fold.status !== 'COMPLETED' || typeof fold.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_TEST_EVIDENCE_INCOMPLETE');
+      if (!folds.length || folds.some(fold => fold.status !== 'COMPLETED' || fold.nativeOutcome !== 'completed' || typeof fold.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_TEST_EVIDENCE_INCOMPLETE');
       if (method && wfRequest && (canonical(methodPart(method.split, ['test_size', 'max_train_size'])) !== canonical(methodPart(wfRequest.split, ['test_size', 'max_train_size']))
         || canonical(methodPart(method.objective, ['currency'])) !== canonical(methodPart(wfRequest.objective, ['currency'])))) reasons.push('WALK_FORWARD_METHOD_CHANGED_AFTER_REVIEW');
       const cases = sensitivity.cases as JsonObject[];
@@ -248,6 +269,7 @@ export const assessmentReportTool = defineTool({
       const ratingReadiness: JsonObject = { eligible: reasons.length === 0, reasons, scope: 'RECORDED_PROTOCOL_AND_THIS_CONVERSATION_ONLY',
         limitations: ['CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
       const evidence: JsonObject = {
+        executionSource: source,
         logic: matchingLogic ? { taskId: logic!.id, result: logic!.state.outcome!.status === 'completed' ? logic!.state.outcome!.result : null } : { status: 'MISSING_OR_DIFFERENT_CONFIGURATION', stars: null },
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
         dataValidation, trialHistory, sensitivity, sensitivityHistory, ratingReadiness,

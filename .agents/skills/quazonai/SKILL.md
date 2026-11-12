@@ -1,27 +1,15 @@
 ---
 name: quazonai
-description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、分析因子与组合、回放 tick、管理 PM mandate/campaign/strategy、交付目标、观测 paper/live 账户、处理资金退出，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
+description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、运行官方原生策略回测、参数扫描和证据评级、观测 paper/live 账户并显式控制已配置策略、处理资金退出，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
 ---
 
 # Quazonai
 
 把用户目标转成原生 `quazonai` 命令，保存请求与回执，再按真实业务状态交付结果。使用 CLI 提供的功能，不直接读写服务数据库或自行拼装另一套 HTTP 客户端。
 
-## 在线安装与更新
+## 安装版本与技能
 
-在项目目录运行以下命令，即可从 GitHub `dev` 分支安装此技能到 Codex：
-
-```sh
-npx skills add https://github.com/zhengui666/QuaZonai/tree/dev/.agents/skills/quazonai --agent codex
-```
-
-更新到 `dev` 的最新版本：
-
-```sh
-npx skills update quazonai
-```
-
-安装后在新对话中调用 `$quazonai`。仅当前项目要使用时，在该项目目录安装；需跨项目使用时添加 `--global`。
+使用与服务、CLI 同一发行版本提供的技能。不要用移动中的 `dev` 技能指导旧版实例；安装与升级按发行包说明执行，不在此技能中自动安装其他 Agent 产品。
 
 ## 1. 连接并识别能力
 
@@ -41,17 +29,17 @@ quazonai identity
 
 | 用户目标 | 先读取 | 操作参考 |
 | --- | --- | --- |
-| 研究一个想法、查进度、恢复研究 | `datasets`、`research models`；已有任务用 `research get ID` | [研究、因子与组合](references/research-and-portfolios.md) |
-| 筛选因子、组合回测、容量分析、tick 经济回放 | `factor list`、`factor get ID`、`datasets` | [研究、因子与组合](references/research-and-portfolios.md) |
-| 管理持续投资目标、研究活动或策略 | `pm list`、`pm get ID`、`pm capabilities` | [PM 操作](references/pm.md) |
-| 绑定模拟/实盘账户、目标交付、自动配置或资金退出 | 对应组合/mandate、`observation list`、`capital status ID` | [账户与资金](references/accounts.md) |
+| 自然语言研究、回测、追问或继续 | `datasets`、`research models`、`research get ID` | [原生研究与扫描](references/research-and-portfolios.md) |
+| 参数扫描与证据评级 | 原研究详情、`parameter-scan options --file QUERY.json` | [原生研究与扫描](references/research-and-portfolios.md) |
+| 绑定账户、显式启停原生策略或资金退出 | `observation list`、`account-strategy status ID`、`capital status ID` | [账户与资金](references/accounts.md) |
+| 读取既有 PM/组合记录 | 实际 `--help`、`pm capabilities` | [保留的历史查询](references/pm.md) |
 | 查用量、设置、扩展或维护模式 | 对应 `get`、`list`、`status` | [命令索引](references/commands.md) |
 
 单独的研究不要求先创建 PM、组合或账户观测。目标已有关联资源时，使用原 ID 继续，不重新提交同一项工作。
 
 ## 3. 形成请求
 
-1. 从实际列表、详情或回执取得数据集、模型、因子和业务 ID。保留原 ID；仅研究 `conversationId`、`submissionId` 使用原生安全整数，其余 ID 按不透明字符串传递。
+1. 从实际列表、详情或回执取得数据集、模型和业务 ID。保留原 ID；仅研究 `conversationId`、`submissionId` 使用原生安全整数，其余 ID 按不透明字符串传递。
 2. 对文件请求先查 `quazonai schema list`，再查 `quazonai schema show NAME`。原生科学合同使用 `--domain`，不要混用两套名称。
 3. 普通 `schema show` 返回 `{format:"typescript", entry, source}`，其中 `source` 包含多份合同；查找目标类型及依赖，不把整个输出作为请求。原生 `--domain` 返回 JSON Schema 及引用组件。Schema 是结构说明，不验证账户权限、数据可用性或科学结论。
 4. 将用户目标、真实资源和已明确的参数写成一个 JSON 对象文件。仅在必需的目标、资金、连接或授权范围无法从当前结果确定时补问；不要编造模型、连接、金额或约束。
@@ -72,9 +60,9 @@ quazonai research get "$research_id"
 
 - 普通业务成功输出通常是一行 JSON；`watch` 输出多行状态 JSON，最后另有总结。`--help`、`--version` 是文本。
 - `watch` / `wait` 不带 `--timeout` 会持续等待。需要一次有限观察时显式设置秒数；超时或中断只分离客户端，不取消远端工作。
-- 研究以原 submission 的 `done` / `unanswered` 判定结束。`done` 仍需检查 `final`、`criterion`、指标及错误，不能等同于科学目标达成。
+- 研究以原 submission 的 `done` / `unanswered` 判定结束。`done` 仍需检查原生结果、证据完整性、指标及错误，不能等同于科学目标达成。
 - 组合以 `COMPUTED` / `FAILED` / `STOPPED` 判定结束。退出码 `0` 本身不能证明正在观察的对象已经完成。
-- 写入出现 `write_outcome_unknown_retain_original_request` 时，先查询原对象或列表。没有回执时保留未知状态；仅在确需显式重放时发送原命令和原文件，不换新 ID 重建工作。
+- 写入出现 `write_outcome_unknown_retain_original_request` 时，先查询原对象或列表。没有回执时保留未知状态；账户策略命令只查询原 requestId，不自动重发；其他操作仅按明确的幂等合同处理。
 - 出现修订冲突时读取当前详情，判断原意是否仍适用；若决定发起新操作，保存新请求并使用新的 `requestId`。不要在未知结果的原请求上偷偷换修订号。
 
 详细退出码与恢复步骤见 [连接、输出与错误](references/connection-and-errors.md)。
@@ -83,6 +71,6 @@ quazonai research get "$research_id"
 
 报告所用实例、资源 ID、当前状态、关键结果、阻塞原因，以及请求/回执文件位置。未完成时附下一条读取原对象的命令。
 
-区分研究结果、组合结果、目标回执和账户事实。paper/live 观测绑定已有账户；目标接收不代表成交，研究完成不代表目标已交付，资金退出命令被接收不代表资金已到账。
+区分历史回测、AI 建议和账户事实。paper/live 观测只绑定已有账户；研究完成不自动启动账户策略，策略启动回执不代表成交，资金退出命令被接收不代表资金已到账。
 
-仅在用户操作范围内执行停止、删除、目标交付和账户控制。`delete` 隐藏符合条件的非活动对象并保留证据；它不停止远端工作、不清仓。遇到活动状态或依赖阻塞，报告原因，不自行追加停止或删除关联资源。
+仅在用户操作范围内执行停止、删除和账户控制。`delete` 隐藏符合条件的非活动对象并保留证据；它不停止远端工作、不清仓。遇到活动状态或依赖阻塞，报告原因，不自行追加停止或删除关联资源。
