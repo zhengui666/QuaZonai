@@ -10,7 +10,7 @@ use nautilus_trading::examples::strategies::{
 
 pub enum CompiledNativeStrategy {
     EmaCross(EmaCross),
-    GridMarketMaker(GridMarketMaker),
+    GridMarketMaker(Box<GridMarketMaker>),
     OrderBookImbalance(OrderBookImbalance),
 }
 
@@ -72,7 +72,7 @@ pub fn build_strategy(
             if let Some(base) = base {
                 config.base = serde_json::from_value(base.clone())?;
             }
-            CompiledNativeStrategy::GridMarketMaker(GridMarketMaker::new(config))
+            CompiledNativeStrategy::GridMarketMaker(Box::new(GridMarketMaker::new(config)))
         }
         NativeCompiledStrategyV1::OrderBookImbalance {
             base,

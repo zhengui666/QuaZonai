@@ -186,9 +186,9 @@ fn source_rows(
                 .checked_add(1)
                 .context("SPOT_SOURCE_CLOSE_RANGE")?;
             ensure!(
-                candle.s.to_string() == response.coin
+                candle.s == response.coin
                     && candle.i.as_str() == "1m"
-                    && candle.t % MINUTE_MS == 0
+                    && candle.t.is_multiple_of(MINUTE_MS)
                     && candle.t.checked_add(MINUTE_MS) == Some(close_ms)
                     && windows.insert(candle.t),
                 "SPOT_SOURCE_RAW_ROW_IDENTITY_OR_BOUNDARY"

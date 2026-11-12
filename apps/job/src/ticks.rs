@@ -2,7 +2,7 @@
 //! Native source decimals remain untouched. Derived statistical marks are finite f64.
 use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
-use contracts::{science::*, ticks::*, DbCounter};
+use contracts::{ticks::*, DbCounter};
 use nautilus_model::{data::TradeTick, enums::AggressorSide};
 use std::collections::BTreeMap;
 
@@ -40,16 +40,6 @@ struct Cohort {
     quantity: f64,
     count: usize,
     signed_quantity: Option<f64>,
-}
-
-impl Cohort {
-    fn feature_event(&self, received: bool) -> u64 {
-        if received {
-            self.event
-        } else {
-            self.source_event_end - 1
-        }
-    }
 }
 
 /// Bound positive source-clock age; unsynchronized venue clocks may be ahead.
@@ -239,26 +229,6 @@ pub fn coverage(
             "VWAP_IS_A_DERIVED_STATISTICAL_MARK_NOT_EXECUTABLE_PRICE".into(),
         ],
         source_evidence: BTreeMap::new(),
-    })
-}
-
-fn clocked_feature(
-    value: f64,
-    event: u64,
-    available: u64,
-    ordinal: u32,
-    observed: bool,
-) -> Result<FeatureValueV1> {
-    ensure!(value.is_finite(), "TICK_FEATURE_NONFINITE");
-    // These are derived receipt-clock observations, not relabeled venue records.
-    let event = if observed { available } else { event };
-    Ok(FeatureValueV1 {
-        value: Some(value),
-        missing_reason: None,
-        event_ns: Some(counter(event)?),
-        observed_available_ns: observed.then(|| counter(available)).transpose()?,
-        effective_available_ns: Some(counter(available)?),
-        sequence: Some(counter(u64::from(ordinal))?),
     })
 }
 

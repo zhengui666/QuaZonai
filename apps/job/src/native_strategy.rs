@@ -187,7 +187,7 @@ pub fn run(
         }
         match build_strategy(id, &request.strategy)? {
             CompiledNativeStrategy::EmaCross(strategy) => engine.add_strategy(strategy)?,
-            CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(strategy)?,
+            CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(*strategy)?,
             CompiledNativeStrategy::OrderBookImbalance(strategy) => {
                 engine.add_strategy(strategy)?
             }

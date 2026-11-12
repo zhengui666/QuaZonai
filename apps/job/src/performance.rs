@@ -535,6 +535,7 @@ mod price_tests {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn native_max_drawdown(returns: &nautilus_analysis::Returns) -> Option<f64> {
     use nautilus_analysis::statistic::PortfolioStatistic;
     if returns.is_empty() {

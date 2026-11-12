@@ -6,8 +6,11 @@ use rust_decimal::Decimal;
 #[derive(Clone)]
 pub(in crate::ticks) struct Snapshot {
     pub deltas: OrderBookDeltas,
+    #[cfg(test)]
     pub midpoint: Option<Decimal>,
+    #[cfg(test)]
     pub bid_depth: Decimal,
+    #[cfg(test)]
     pub ask_depth: Decimal,
 }
 impl Snapshot {
@@ -71,7 +74,7 @@ impl Snapshot {
                 _ => anyhow::bail!("ECONOMIC_BOOK_SIDE_INVALID"),
             }
         }
-        let midpoint = match (bid, ask) {
+        let _midpoint = match (bid, ask) {
             (Some(bid), Some(ask)) => {
                 ensure!(bid <= ask, "ECONOMIC_BOOK_CROSSED");
                 Some((bid + ask) / Decimal::TWO)
@@ -80,14 +83,19 @@ impl Snapshot {
         };
         Ok(Self {
             deltas: batch,
-            midpoint,
+            #[cfg(test)]
+            midpoint: _midpoint,
+            #[cfg(test)]
             bid_depth,
+            #[cfg(test)]
             ask_depth,
         })
     }
+    #[cfg(test)]
     pub fn received(&self) -> u64 {
         self.deltas.ts_init.as_u64()
     }
+    #[cfg(test)]
     pub fn price(&self, buy: bool) -> Option<Decimal> {
         let side = if buy { OrderSide::Sell } else { OrderSide::Buy };
         self.deltas

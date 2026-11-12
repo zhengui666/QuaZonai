@@ -15,9 +15,12 @@ struct FundingManifest {
     source_revision: String,
     start_ns: DbCounter,
     end_ns: DbCounter,
-    instruments: Vec<String>,
-    rows: u64,
-    missing_instruments: Vec<String>,
+    #[serde(rename = "instruments")]
+    _instruments: Vec<String>,
+    #[serde(rename = "rows")]
+    _rows: u64,
+    #[serde(rename = "missing_instruments")]
+    _missing_instruments: Vec<String>,
 }
 const CONTEXT_MANIFEST: &str = "context-prices.manifest.json";
 const EVENT_TIME_CONTEXT_MANIFEST: &str = "event-time-context-prices.manifest.json";

@@ -13,8 +13,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-mod compiler_memory;
-pub use compiler_memory::CompilerMemoryLimit;
 
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(|_| anyhow::anyhow!("NATIVE_COUNTER_RANGE"))
@@ -146,6 +144,7 @@ impl Outputs {
         self.items.push(item);
         Ok(id)
     }
+    #[cfg(test)]
     fn compiled_model(&mut self, bytes: &[u8]) -> Result<Id> {
         self.document(
             "qz.wasm_model",
@@ -397,8 +396,7 @@ mod tests {
         .unwrap()
     }
 
-    // This checks the live mount contract only. The native_oci integration test
-    // separately executes the fixed official rustc image and Runtime scanner.
+    // Exercises output mount and byte-accounting rules; no compiler is run.
     fn scan_flat_output(root: &Path, maximum: u64) -> u64 {
         let mut total = 0;
         for entry in fs::read_dir(root).unwrap() {

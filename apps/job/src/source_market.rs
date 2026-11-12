@@ -238,8 +238,8 @@ impl FlatSnapshot {
             ensure!(size.as_decimal() > Decimal::ZERO, "NONPOSITIVE_BOOK_SIZE");
             sides[index].push((price, size));
         }
-        sides[0].sort_by(|a, b| b.0.cmp(&a.0));
-        sides[1].sort_by(|a, b| a.0.cmp(&b.0));
+        sides[0].sort_by_key(|a| std::cmp::Reverse(a.0));
+        sides[1].sort_by_key(|a| a.0);
         ensure!(
             sides
                 .iter()

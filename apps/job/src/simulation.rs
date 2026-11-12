@@ -12,7 +12,6 @@ use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
 };
-use nautilus_common::actor::DataActorNative;
 use nautilus_common::{
     actor::DataActor,
     logging::logger::LoggerConfig,

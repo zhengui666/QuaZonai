@@ -31,10 +31,6 @@ impl std::error::Error for FillFeeFailure {}
 pub(crate) struct FillFeeObserver(Rc<RefCell<Option<FillFeeFailure>>>);
 
 impl FillFeeObserver {
-    pub(crate) fn clear(&self) {
-        self.0.borrow_mut().take();
-    }
-
     pub(crate) fn wrap(&self, delegate: FeeModelHandle) -> FeeModelHandle {
         FeeModelHandle::new(ObservedFillFee {
             delegate,

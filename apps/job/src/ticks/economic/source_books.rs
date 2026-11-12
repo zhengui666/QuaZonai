@@ -536,15 +536,13 @@ impl Hour {
                         name == "transaction_time" && matches!(value, parquet::record::Field::Null)
                     })
                 };
-                if index == 0 {
-                    if source.observed && received == self.at && transaction_null(&row) {
-                        self.checkpoint = Some(CarryCheckpoint {
-                            event,
-                            received,
-                            rows: 0,
-                            all_transaction_null: true,
-                        });
-                    }
+                if index == 0 && source.observed && received == self.at && transaction_null(&row) {
+                    self.checkpoint = Some(CarryCheckpoint {
+                        event,
+                        received,
+                        rows: 0,
+                        all_transaction_null: true,
+                    });
                 }
                 if let Some(checkpoint) = &mut self.checkpoint {
                     if (checkpoint.event, checkpoint.received) == (event, received) {
@@ -593,6 +591,7 @@ pub(super) struct RawBooks {
     carry_rows: u64,
 }
 impl RawBooks {
+    #[cfg(test)]
     pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
         Self::open_indexed(source(root)?, id, start, end)
     }

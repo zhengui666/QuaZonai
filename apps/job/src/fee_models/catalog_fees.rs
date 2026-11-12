@@ -56,10 +56,7 @@ pub(crate) fn load_file(
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let mut file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) => return Err(error.into()),
-    };
+    let mut file = options.open(path)?;
     ensure!(file.metadata()?.is_file(), "MAKER_TAKER_FEE_SOURCE_INVALID");
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
