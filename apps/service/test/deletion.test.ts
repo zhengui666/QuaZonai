@@ -35,7 +35,8 @@ test('factor deletion removes only its owner projection; original ledger, reques
     const before = structuredClone((await state.service.research.harness.snapshot(Study, id, context))!);
     const deleted = await expectReceipt(await remove(state, 'factors', factor.id), 'factor', factor.id);
     assert.deepEqual(await factors(state), []);
-    for (const suffix of ['', '/capacity']) await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}${suffix}`, headers: state.headers }), 404, 'factor_not_found');
+    await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}`, headers: state.headers }), 404, 'factor_not_found');
+    await expectError(await state.service.app.inject({ url: `${api}/factors/${factor.id}/capacity`, headers: state.headers }), 404, 'not_found');
     const detail = await state.service.app.inject({ url: `${api}/research/${id}`, headers: state.headers });
     assert.equal(detail.statusCode, 200, detail.body); assert.deepEqual(detail.json().factors ?? [], []);
     const after = (await state.service.research.harness.snapshot(Study, id, context))!;
@@ -99,7 +100,7 @@ test('portfolio references block member deletion; deleting portfolio retains fro
     assert.deepEqual((await remove(state, 'portfolios', view.id)).json(), deleted);
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: input }), 404, 'not_found');
     await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
-      payload: { requestId: 'deleted-portfolio-consumer', portfolioId: view.id, mode: 'paper', connectionId: 'not-configured' } }), 404, 'portfolio_not_found');
+      payload: { requestId: 'deleted-portfolio-consumer', portfolioId: view.id, mode: 'paper', connectionId: 'not-configured' } }), 410, 'native_strategy_only');
     await expectReceipt(await remove(state, 'factors', factor.id), 'factor', factor.id);
     await expectReceipt(await remove(state, 'research', id), 'research', id);
   } finally { await state.cleanup(); }
@@ -182,31 +183,25 @@ test('portfolio deletion preserves stopped observation facts and refuses unresol
 });
 
 
-test('observation final admission rechecks a portfolio deleted during the real downstream capability read', async () => {
-  const state = await setup(); const downstream = Fastify(); let offers = 0;
-  let reached!: () => void; const reading = new Promise<void>(resolve => { reached = resolve; });
-  let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
-  downstream.get('/capabilities', () => ({ clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
-    capitalExit: { version: 2, supported: false, readable: true } }));
-  downstream.get('/capital-exits', async () => {
-    reached(); await released;
-    return { clientId: 'test-client', accountId: 'test-account', mode: 'paper', currency: 'USD',
-      accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] };
-  });
-  downstream.post('/targets', () => { offers++; return { error: 'must_not_offer_deleted_portfolio' }; });
+test('retired observation admission never reads downstream or posts targets for saved or deleted portfolios', async () => {
+  const state = await setup(); const downstream = Fastify(); let requests = 0;
+  downstream.addHook('onRequest', async () => { requests++; });
+  downstream.get('/capabilities', () => ({ error: 'must_not_read_retired_admission' }));
+  downstream.get('/capital-exits', () => ({ error: 'must_not_read_retired_admission' }));
+  downstream.post('/targets', () => ({ error: 'must_not_offer_retired_portfolio' }));
   try {
     const url = await downstream.listen({ host: '127.0.0.1', port: 0 });
-    state.options.config.connections = [{ id: 'delete-race', name: 'TEST_ONLY read race', mode: 'paper', url, clientId: 'test-client', accountId: 'test-account' }];
+    state.options.config.connections = [{ id: 'delete-race', name: 'TEST_ONLY retired admission', mode: 'paper', url, clientId: 'test-client', accountId: 'test-account' }];
     await state.restart(); const { view } = await built(state);
-    const admission = state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
-      payload: { requestId: 'original-observation-race', portfolioId: view.id, mode: 'paper', connectionId: 'delete-race' } }).then(value => value);
-    await reading; await expectReceipt(await remove(state, 'portfolios', view.id), 'portfolio', view.id);
-    release(); await expectError(await admission, 409, 'portfolio_deleted');
-    assert.deepEqual((await state.service.work.snapshot())!.observations, {}); assert.equal(offers, 0);
-  } finally { release(); await state.cleanup(); await downstream.close(); }
+    for (const deleted of [false, true]) {
+      if (deleted) await expectReceipt(await remove(state, 'portfolios', view.id), 'portfolio', view.id);
+      await expectError(await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers,
+        payload: { requestId: `retired-observation-${deleted}`, portfolioId: view.id, mode: 'paper', connectionId: 'delete-race' } }), 410, 'native_strategy_only');
+      assert.deepEqual((await state.service.work.snapshot())!.observations, {});
+      assert.equal(requests, 0, 'Retired creation must not contact any downstream endpoint');
+    }
+  } finally { await state.cleanup(); await downstream.close(); }
 });
-
-
 
 test('saved portfolio references only its selected trial; unused factors remain deletable without erasing records', async () => {
   const state = await setup();

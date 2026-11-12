@@ -12,7 +12,7 @@ import { canonical, Requests } from '../../research/src/documents.ts';
 import { ReviewSourceEvidence, ReviewSourceValidationTask, trustedSourceChecks } from '../../research/src/review-source.ts';
 import { Application, json } from '../src/facts.ts';
 import { assertCurrentReviewSource } from '../src/review-source.ts';
-import { downstream, isPreTransportRejection } from '../src/downstream.ts';
+import { downstream } from '../src/downstream.ts';
 import type { ObservationTaskInput } from '../src/downstream.ts';
 import type { CapturedReviewSource } from '../../research/src/review-source.ts';
 import { context, setup, fauxAssistantMessage } from './support.ts';
@@ -20,7 +20,7 @@ import { context, setup, fauxAssistantMessage } from './support.ts';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 // Actual service/owner HTTP, official Durable, and a controlled subprocess wire
 // protocol. This does not establish market PIT or a real Rust validation result.
-test('source evidence crosses original admission and repair with exact bytes and one native receipt', { timeout: 30_000 }, async () => {
+test('source evidence retains admission bytes and original receipt reads after delivery retirement', { timeout: 30_000 }, async () => {
   const state = await setup(); const previous = process.env.QZ_JOB_BINARY; let receiver: Server | undefined;
   try {
     const dataset = state.options.config.datasets[0]!;
@@ -95,7 +95,7 @@ test('source evidence crosses original admission and repair with exact bytes and
       target: { schema_version: 1, valid_until_ns: (BigInt(Date.now()) * 1_000_000n + 60_000_000_000n).toString(), targets: [], cash_weight: '1' },
       reviewSources: [{ configured: structuredClone(dataset), captured }] };
     const signal = new AbortController().signal;
-    assert.equal((await downstream(delivery, 'deliver', signal)).status, 'ACKNOWLEDGED'); assert.equal(posts, 1);
+    await assert.rejects(downstream(delivery, 'deliver', signal), { message: 'native_strategy_only', statusCode: 410 }); assert.equal(posts, 0);
     const revokedBody = JSON.stringify({ ...license, status: 'REVOKED' });
     await writeFile(join(state.directory, 'license.json'), revokedBody);
     const revokedFiles = files.map(file => file.path === 'license.json' ? { ...file, sha256: hash(revokedBody), bytes: String(Buffer.byteLength(revokedBody)) } : file);
@@ -103,14 +103,12 @@ test('source evidence crosses original admission and repair with exact bytes and
     await writeFile(join(state.directory, 'revision.json'), JSON.stringify({ ...revokedManifest, contentDigest: hash(canonical(revokedManifest)) }));
     dataset.reviewSourceEvidence.license.sha256 = hash(revokedBody);
     await assert.rejects(assertCurrentReviewSource(dataset, captured), /review_current_source_authorization_inactive/);
-    await assert.rejects(downstream(delivery, 'deliver', signal), error => {
-      assert.equal((error as Error).message, 'review_source_delivery_authorization_unavailable');
-      assert.equal(isPreTransportRejection(error), true); return true;
-    });
-    assert.equal(posts, 1, 'revoked original source cannot produce another POST');
+    // Delivery stays retired regardless of the source's authorization status.
+    await assert.rejects(downstream(delivery, 'deliver', signal), { message: 'native_strategy_only', statusCode: 410 });
+    assert.equal(posts, 0, 'neither active nor revoked source can admit a new target');
     assert.equal((await downstream(delivery, 'receipt', signal)).id, 'retained-receipt');
     assert.equal((await downstream(delivery, 'account', signal)).status, 'ACKNOWLEDGED');
-    assert.deepEqual(reads, ['/targets/retained-receipt', '/account']); assert.equal(posts, 1);
+    assert.deepEqual(reads, ['/targets/retained-receipt', '/account']); assert.equal(posts, 0);
     assert.equal(captured.license.status, 'ACTIVE');
     assert.deepEqual((await admit(body)).json(), receipt);
     // A fresh source revision must not get past admission merely because its

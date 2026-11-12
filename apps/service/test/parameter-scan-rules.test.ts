@@ -17,13 +17,20 @@ test('large grids stay compact and exact, zero and negative native values remain
   const decimals = normalizeParameterScan(plan([{ key: 'native.threshold', domain: { kind: 'values', values: ['0.10', '0.1', '-1e-7'] } }]), {});
   assert.equal(decimals.total, '2'); assert.equal(parameterScanPoint(decimals, '1').parameters['native.threshold'], '-0.0000001');
 });
-test('explicit batching and objective direction survive parsing; legacy and unsafe inputs do not', () => {
+test('independent scan concurrency and objective direction survive parsing; batching and unsafe inputs do not', () => {
   const input = plan([{ key: 'signal.period', domain: { kind: 'values', values: ['2'] } }]);
-  const parsed = parameterScanStart({ ...input, requestId: 'owner-command', execution: { concurrency: 4, batchSize: 3 } });
-  assert.deepEqual(parsed.execution, { concurrency: 4, batchSize: 3 }); assert.equal(parsed.objective.direction, 'minimize');
+  const parsed = parameterScanStart({ ...input, requestId: 'owner-command', execution: { concurrency: 4 } });
+  assert.deepEqual(parsed.execution, { concurrency: 4 }); assert.equal(parsed.objective.direction, 'minimize');
   assert.throws(() => parameterScanPlan({ ...input, source: { kind: 'factor', factorId: 'old' } }), /source_unsupported/);
   assert.throws(() => parameterScanPlan({ ...input, axes: [{ key: '__proto__.polluted', domain: { kind: 'values', values: ['1'] } }] }), /axis_unsupported/);
-  assert.throws(() => parameterScanPlan({ ...input, execution: { concurrency: 1, batchSize: 0 } }), /batch_size_invalid/);
+  assert.deepEqual(parameterScanPlan({ ...input, execution: undefined }).execution, { concurrency: 1 });
+  for (const concurrency of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '4']) {
+    assert.throws(() => parameterScanPlan({ ...input, execution: { concurrency } }), /parameter_scan_concurrency_invalid: execution.concurrency/);
+  }
+  for (const batchSize of [0, 3]) {
+    assert.throws(() => parameterScanPlan({ ...input, execution: { concurrency: 4, batchSize } }), /parameter_scan_field_unsupported: execution.batchSize/);
+    assert.throws(() => parameterScanStart({ ...input, requestId: 'owner-command', execution: { concurrency: 4, batchSize } }), /parameter_scan_field_unsupported: execution.batchSize/);
+  }
   assert.throws(() => parameterScanPlan({ ...input, objective: { ...input.objective, partition: 'VALIDATION' } }), /objective_unsupported/);
   assert.throws(() => parameterScanPlan({ ...input, axes: [...input.axes, ...input.axes] }), /duplicate_axis/);
 });

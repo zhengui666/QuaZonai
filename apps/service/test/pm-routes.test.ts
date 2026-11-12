@@ -18,8 +18,9 @@ test('PM retained resource reads and account commands stay authenticated with ty
       const payload = { requestId: 'original-command', expectedRevision: '0', decisionId: 'absent:decision' };
       assert.equal((await state.service.app.inject({ method: 'POST', url: `/api/v3${path}`, payload })).statusCode, 401);
       const response = await state.service.app.inject({ method: 'POST', url: `/api/v3${path}`, payload, headers: state.headers });
-      assert.equal(response.statusCode, 404, `${path}: ${response.body}`);
-      assert.match(response.json().error, /not_found$/);
+      assert.equal(response.statusCode, path.endsWith('/targets') ? 410 : 404, `${path}: ${response.body}`);
+      if (path.endsWith('/targets')) assert.equal(response.json().error, 'native_strategy_only');
+      else assert.match(response.json().error, /not_found$/);
     }
     for (const path of ['/mandates', '/campaigns', `/mandates/${missing}/intent-clarifications`, `/campaigns/${missing}/close`, `/campaigns/${missing}/resume`]) {
       const payload = { requestId: 'removed-custom-research' };

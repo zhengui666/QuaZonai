@@ -84,8 +84,9 @@ test('PM deletion preserves original facts and identities through SQLite restart
     for (const write of writes) {
       const response = await f.state.service.app.inject({ method: 'POST', url: write.path, headers: f.state.headers, payload: write.payload });
       const retiredRoute = write.path.endsWith('/intent-clarifications') || write.path === '/api/v3/campaigns' || /\/campaigns\/.*\/(close|resume)$/.test(write.path);
-      assert.equal(response.statusCode, retiredRoute ? 410 : write.path.endsWith('/recompute') ? 404 : 409, `${write.path}: ${response.body}`);
-      assert.equal(response.json().error, retiredRoute ? 'pm_custom_research_removed' : write.path.endsWith('/recompute') ? 'mandate_not_found' : 'mandate_deleted');
+      const retiredTarget = write.path.endsWith('/targets');
+      assert.equal(response.statusCode, retiredRoute || retiredTarget ? 410 : write.path.endsWith('/recompute') ? 404 : 409, `${write.path}: ${response.body}`);
+      assert.equal(response.json().error, retiredTarget ? 'native_strategy_only' : retiredRoute ? 'pm_custom_research_removed' : write.path.endsWith('/recompute') ? 'mandate_not_found' : 'mandate_deleted');
     }
     const replay = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', payload: f.input, headers: f.state.headers });
     assert.equal(replay.statusCode, 410, replay.body);

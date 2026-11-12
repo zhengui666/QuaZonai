@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -40,24 +39,19 @@ test('invalid or ambiguous remote bindings fail instead of selecting another ins
 });
 
 
-test('new portfolio accepts completed research when only its configured transport changed', async () => {
-  const { createNautilusWorker } = await import('../../nautilus/src/server.ts');
-  const { setup, studied, context } = await import('./support.ts');
+test('changing the backtest transport cannot restore retired portfolio creation', async () => {
+  const { setup } = await import('./support.ts');
   const state = await setup();
-  const worker = await createNautilusWorker({ binary: state.options.config.jobBinary, dataDir: join(state.directory, 'remote'), catalogRoots: [state.directory] });
-  worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening');
   try {
-    const { receipt } = await studied(state, 'completed-before-remote');
-    const target = { id: 'new-backtest', url: `http://127.0.0.1:${(worker.server.address() as import('node:net').AddressInfo).port}` };
+    const target = { id: 'new-backtest', url: 'http://127.0.0.1:1' };
     const saved = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
       payload: { expectedRevision: 0, backtest: target, connections: [] } });
     assert.equal(saved.statusCode, 200, saved.body);
-    const dataset = state.service.config.datasets[0]!;
+    assert.deepEqual(scienceTarget(state.service.config), target);
+    const before = await state.service.work.snapshot();
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: {
-      requestId: 'new-remote-backtest', name: 'Existing evidence via selected remote worker', researchIds: [receipt.conversationId], datasetId: dataset.id, capital: '1000' } });
-    assert.equal(response.statusCode, 202, response.body);
-    await state.service.research.harness.waitForTask(response.json().taskId, context);
-    const result = await state.service.work.getPortfolio(response.json().id);
-    assert.equal(result.view.status, 'COMPUTED', result.view.error ?? '');
-  } finally { await state.cleanup(); await worker.close(); }
+      requestId: 'new-remote-backtest', name: 'Retired portfolio creation', researchIds: [], datasetId: 'controlled', capital: '1000' } });
+    assert.equal(response.statusCode, 404, response.body);
+    assert.deepEqual((await state.service.work.snapshot())!.portfolios, before!.portfolios);
+  } finally { await state.cleanup(); }
 });

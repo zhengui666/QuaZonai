@@ -141,7 +141,7 @@ test('capital scenarios match positive native NUMERIC(38,18) and raw length boun
   }
 });
 
-test('HTTP rejects out-of-native-range capacity scenarios before research, factor lookup or native execution', async () => {
+test('HTTP validates research capital and leaves retired factor capacity unavailable', async () => {
   const state = await setup();
   try {
     for (const scenario of ['100000000000000000000', '0'.repeat(64) + '1', '0.0000000000000000001']) {
@@ -151,7 +151,11 @@ test('HTTP rejects out-of-native-range capacity scenarios before research, facto
         ['/api/v3/research', { requestId: `invalid-${scenario}`, goal: specification.question, specification: { ...specification, capital }, model: state.model, datasetId: 'controlled' }],
       ] as const) {
         const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload });
-        assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, 'research_capital_scenarios_invalid');
+        if (url.endsWith('/capacity')) {
+          assert.equal(response.statusCode, 404, response.body); assert.equal(response.json().error, 'not_found');
+        } else {
+          assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, 'research_capital_scenarios_invalid');
+        }
       }
     }
     assert.equal(state.faux.state.callCount, 0);
