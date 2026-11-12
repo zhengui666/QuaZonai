@@ -25,7 +25,8 @@ it('retains real target delivery, exact capital, and account capital management 
   const html = render(false);
   expect(html).toContain('1000.000000000000000001');
   expect(html).toContain('BTCUSDT.BINANCE');
-  expect(html).toContain('交付目标');
+  expect(html).not.toContain('交付目标');
+  expect(html).toContain('历史目标仅供查阅');
   expect(html).toContain('#/observations/o-original?section=capital');
   expect(html).not.toContain('重评原组合容量');
   expect(html).not.toContain('评审结论');

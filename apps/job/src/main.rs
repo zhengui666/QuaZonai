@@ -41,8 +41,6 @@ enum Operation {
         #[arg(long, default_value = "/output")]
         output_root: PathBuf,
     },
-    /// Solve one frozen allocation request read from stdin.
-    Allocate,
     /// Read native catalog file coverage; inclusive ts_init bounds, not event completeness.
     CatalogCoverage {
         #[arg(long)]
@@ -68,20 +66,6 @@ enum Operation {
     SizeAccount,
     /// Validate an original capital-exit V1 document; does not control an owner.
     ValidateCapitalExit,
-    /// Predict using one immutable native catalog and a bounded Wasm artifact.
-    Forecast {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
-    /// Predict research scores from observed price/volume BARs, without trading definitions.
-    ForecastFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
     /// Explicit segregated-cash/margin economic estimate over derived cohorts.
     ReplayTickEconomic {
         #[arg(long)]
@@ -131,13 +115,6 @@ enum Operation {
         #[arg(long, value_parser = parse_id)]
         dataset_revision_id: Option<contracts::Id>,
     },
-    /// Recompute rolling portfolio targets inside one native simulated account.
-    StudyPortfolio {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
-    },
     /// Matched no-trade HOLD and target replay from original observed spot balances.
     CompareObservedSpot {
         #[arg(long)]
@@ -155,13 +132,6 @@ enum Operation {
     },
     /// Optimize inside the observed spot inventory at every causal decision cutoff.
     StudyObservedSpot {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
-    },
-    /// One as-of model allocation from observed spot balances, without replay or delivery.
-    BuildObservedSpot {
         #[arg(long)]
         catalog: PathBuf,
         #[arg(long)]
@@ -236,7 +206,6 @@ fn run(operation: Operation) -> Result<()> {
             job::managed::execute(&input_root, &output_root)?;
             Ok(())
         }
-        Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::ReviewSource => output(&job::catalog::validate_source(&input()?)?),
         Operation::CapitalCurve {
             catalog,
@@ -257,16 +226,6 @@ fn run(operation: Operation) -> Result<()> {
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
-        Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
-        Operation::ForecastFactor { catalog, model } => output(&job::forecast::forecast_factor(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
         Operation::ReplayTickEconomic {
             catalog,
             funding_catalog,
@@ -325,11 +284,6 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             dataset_revision_id,
         )?),
-        Operation::StudyPortfolio { catalog, objects } => {
-            output(&job::study::evaluate(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
-        }
         Operation::CompareObservedSpot { catalog } => {
             output(&job::observed_spot::compare(&catalog, &input()?)?)
         }
@@ -341,11 +295,6 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::StudyObservedSpot { catalog, objects } => {
             output(&job::observed_spot::study(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
-        }
-        Operation::BuildObservedSpot { catalog, objects } => {
-            output(&job::observed_spot::build(&catalog, &input()?, |id| {
                 model_bytes(&objects.join(id.to_string()))
             })?)
         }

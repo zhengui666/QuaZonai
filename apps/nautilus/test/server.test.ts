@@ -51,7 +51,7 @@ console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUT
   let url = await listen();
   const headers = { authorization: `Bearer ${options.token}`, 'content-type': 'application/json' };
   function request(input: NativeExecutionRequest['input'], args: string[] = [], files: Record<string, string> = {}): NativeExecutionRequest {
-    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command: 'allocate', input, args, files };
+    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command: 'review-source', input, args, files };
     return { ...body, requestId: executionId(body) };
   }
   return { directory, catalog, count, options, headers, request, get worker() { return worker; }, get url() { return url; },
@@ -73,7 +73,7 @@ test('removed scientific commands are absent from capabilities and rejected befo
   const f = await fixture();
   try {
     const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
-    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch']) {
+    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot']) {
       assert.equal(capabilities.commands.includes(command), false);
       const body = f.request({}); body.command = command;
       const { requestId: _previous, ...input } = body; body.requestId = executionId(input);

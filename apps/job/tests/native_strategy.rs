@@ -412,8 +412,8 @@ fn a_completely_empty_replay_is_not_a_computed_backtest() {
 }
 
 #[test]
-fn retired_custom_indicator_commands_are_not_executable() {
-    for command in ["simulate-indicator-strategy", "simulate-indicator-strategy-batch"] {
+fn retired_custom_research_commands_are_not_executable() {
+    for command in ["simulate-indicator-strategy", "simulate-indicator-strategy-batch", "forecast", "forecast-factor", "allocate", "study-portfolio", "build-observed-spot"] {
         let result = std::process::Command::new(env!("CARGO_BIN_EXE_job"))
             .args([command, "--help"]).output().unwrap();
         assert!(!result.status.success());

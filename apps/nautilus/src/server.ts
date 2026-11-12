@@ -16,9 +16,9 @@ type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: st
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
-export const commands = ['review-source', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
-  'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
-  'capital-curve', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
+export const commands = ['review-source', 'replay-tick-economic', 'evaluate-experiment', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
+  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
+  'capital-curve', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot',
   'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
 const flags = new Set(['--summary-only', '--plan-only']);
 const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);

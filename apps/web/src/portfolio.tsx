@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
-import { Button, Table, Tabs, Tooltip } from 'antd';
-import { ArrowLeftIcon, ArrowUpRightIcon } from '@phosphor-icons/react';
+import { Table, Tabs, Tooltip } from 'antd';
+import { ArrowLeftIcon } from '@phosphor-icons/react';
 import type { ObservationView } from '../../../packages/contracts/src/index.ts';
 import { usePortfolioDetail, useResource } from './data-hooks';
 import { href, navigate, type Route } from './router';
@@ -81,12 +81,12 @@ function PortfolioDetail({ id, route }: { id: string; route: Route }) {
     <BacktestProgress portfolio={value} />
     <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} initialCapital={value.capital} /></Suspense></section>
     <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>
-    <section className="result-section"><div className="section-heading"><h3>目标权重</h3>{value.status === 'COMPUTED' && value.targets.length > 0 && (value.targetExpired ? <span className="quiet">目标已过期</span> : <Button onClick={() => navigate(`/observations/new?portfolio=${encodeURIComponent(value.id)}`)}>交付目标 <ArrowUpRightIcon size={14} /></Button>)}</div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
+    <section className="result-section"><div className="section-heading"><h3>目标权重</h3><span className="quiet">历史目标仅供查阅，不再交付账户</span></div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
     <PortfolioAccounts portfolioId={id} />
   </div>}</article></div>;
 }
 function PortfolioAccounts({ portfolioId }: { portfolioId: string }) {
   const query = useResource<ObservationView[]>('/observations');
   const accounts = query.data?.filter(row => row.portfolioId === portfolioId);
-  return <section className="result-section"><h3>已连接账户与退出资金</h3><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !accounts?.length ? <p className="quiet">尚无关联账户。<a href={href('/observations/new')}>绑定已有账户管理退出资金</a>，或交付本组合目标。</p> : <ul>{accounts.map(row => <li key={row.id}><a href={href(`/observations/${encodeURIComponent(row.id)}?section=capital`)}>{row.name} · {row.mode === 'live' ? '实盘' : '模拟'} · {row.connectionName ?? row.connectionId ?? '账户观测'} · 管理退出资金</a></li>)}</ul>}</section>;
+  return <section className="result-section"><h3>已连接账户与退出资金</h3><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !accounts?.length ? <p className="quiet">尚无关联账户。<a href={href('/observations/new')}>绑定已有账户管理退出资金</a>。</p> : <ul>{accounts.map(row => <li key={row.id}><a href={href(`/observations/${encodeURIComponent(row.id)}?section=capital`)}>{row.name} · {row.mode === 'live' ? '实盘' : '模拟'} · {row.connectionName ?? row.connectionId ?? '账户观测'} · 管理退出资金</a></li>)}</ul>}</section>;
 }

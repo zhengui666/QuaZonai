@@ -151,26 +151,6 @@ impl Outputs {
         self.items.push(item);
         Ok(id)
     }
-    fn history(
-        &mut self,
-        request: &contracts::science::NativePortfolioStudyRequestV1,
-        result: &contracts::science::NativePortfolioStudyResultV1,
-    ) -> Result<()> {
-        use contracts::portfolio_history as history;
-        let expected = history::batch(request, result)?;
-        let id = self.document(
-            history::NAME,
-            RuntimeOutputKind::Targets,
-            history::MEDIA_TYPE,
-            |stream| Ok(history::write(stream, &expected)?),
-        )?;
-        let bytes = read(&self.root.join(id.to_string()))?;
-        ensure!(
-            history::read(&bytes)? == expected,
-            "PORTFOLIO_HISTORY_ROUNDTRIP"
-        );
-        Ok(())
-    }
     fn compiled_model(&mut self, bytes: &[u8]) -> Result<Id> {
         self.document(
             "qz.wasm_model",
@@ -368,14 +348,6 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     };
     let selections = match &parameters {
         NativeTaskParametersV1::ValidateData { selections, .. } => selections.clone(),
-        NativeTaskParametersV1::StudyPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => vec![contracts::execution::NativeDatasetSelectionV1 {
-            dataset_revision_id: *dataset_revision_id,
-            selection: request.source_selection.clone(),
-        }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
@@ -467,33 +439,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             })?;
             outputs.json("qz.forward_evaluation", RuntimeOutputKind::Report, &result)?;
         }
-        NativeTaskParametersV1::EvaluateAlpha {
-            dataset_revision_id,
-            model_artifact_id,
-            request,
-            ..
-        } => {
-            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
-            let result = crate::forecast::forecast(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                &bytes,
-            )?;
-            outputs.json("qz.native_forecast", RuntimeOutputKind::Report, &result)?;
-        }
-        NativeTaskParametersV1::StudyPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = crate::study::evaluate(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                |id| read(&input.join("objects").join(id.to_string())),
-            )?;
-            outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
-            outputs.history(&request, &result)?;
-        }
+        // Original task documents remain readable, but Execute cannot revive retired research.
+        NativeTaskParametersV1::EvaluateAlpha { .. }
+        | NativeTaskParametersV1::StudyPortfolio { .. }
+        | NativeTaskParametersV1::BuildPortfolio { .. } => anyhow::bail!("NATIVE_RESEARCH_OPERATION_RETIRED"),
         NativeTaskParametersV1::ComposeStrategyTargets {
             dataset_revision_id,
             request,
@@ -518,22 +467,6 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 |id| read(&input.join("objects").join(id.to_string())),
             )?;
             outputs.json("qz.strategy_portfolio", RuntimeOutputKind::Report, &result)?;
-        }
-        NativeTaskParametersV1::BuildPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            // An infeasible solve is a real diagnostic report, not fabricated fallback targets.
-            outputs.json(
-                "qz.native_portfolio",
-                RuntimeOutputKind::Report,
-                &crate::portfolio::build(
-                    &input.join("catalogs").join(dataset_revision_id.to_string()),
-                    &request,
-                    |id| read(&input.join("objects").join(id.to_string())),
-                )?,
-            )?;
         }
         NativeTaskParametersV1::SimulatePortfolio {
             dataset_revision_id,

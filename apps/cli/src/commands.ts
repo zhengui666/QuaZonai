@@ -5,7 +5,7 @@ import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
 import { observe, observeParameterScan, observePortfolio } from './watch.ts';
 import { schemas } from './schema.ts';
-import type { ObservationStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
+import type { AccountObservationStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
 
 const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   login [--origin URL] [--name NAME] [--replace] [--ca-certificate FILE]
@@ -36,7 +36,10 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
-  observation automatic ID --file POLICY.json
+  account-strategy status OBSERVATION_ID | receipt OBSERVATION_ID ORIGINAL_REQUEST_ID
+  account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID
+  account-strategy stop OBSERVATION_ID --request-id ORIGINAL_ID
+    Explicit commands operate the configured native strategy (EMA_CROSS account wiring only); live START can place real orders.
   observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
   capital status OBSERVATION_ID | context OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
   observation cancel-protection OBSERVATION_ID
@@ -110,7 +113,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (positionals[0] === 'client') positionals.shift();
   if (values.version) { process.stdout.write('quazonai 3.0.0-dev.1\n'); return 0; }
   if (values.help || positionals.length === 0) { process.stdout.write(help); return 0; }
-  if (positionals.length > 3 && !(positionals[0] === 'capital' && positionals[1] === 'get' && positionals.length === 4)) throw new CliError('unexpected_argument');
+  if (positionals.length > 3 && !((positionals[0] === 'capital' && positionals[1] === 'get' || positionals[0] === 'account-strategy' && positionals[1] === 'receipt') && positionals.length === 4)) throw new CliError('unexpected_argument');
   const [group, action, id, exitId] = positionals;
   if (group === 'schema') {
     if (!['list', 'show'].includes(action) || (action === 'show' && !id)) throw new CliError('schema_command_required');
@@ -212,7 +215,8 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   } else if (group === 'observation') {
     if (action === 'start') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
-      const input = file.body as unknown as ObservationStart;
+      const input = file.body as unknown as AccountObservationStart;
+      if (input.purpose !== 'ACCOUNT_ONLY') throw new CliError('native_strategy_only_account_binding_required');
       if (!['paper', 'live'].includes(input.mode)) throw new CliError('observed_mode_paper_or_live_required');
       body = file.bytes; method = 'POST'; path = '/observations';
     } else if (action === 'list' || action === 'get') {
@@ -220,9 +224,16 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       path = '/observations'; // Get is optional server-side; select from the actual list.
     }
     else if (action === 'size' || action === 'preview-order') { method = 'POST'; path = `/observations/${resourceId(id)}/${action === 'size' ? 'sizing/fixed-risk' : 'orders/preview'}`; body = (await fileBody(values.file)).bytes; }
-    else if (action === 'automatic') { method = 'POST'; path = `/observations/${resourceId(id)}/automatic`; body = (await fileBody(values.file)).bytes; }
     else if (action === 'refresh' || action === 'stop' || action === 'cancel-protection') { method = 'POST'; path = `/observations/${resourceId(id)}/${action}`; }
     else throw new CliError('unknown_observation_command');
+  } else if (group === 'account-strategy') {
+    path = `/observations/${resourceId(id)}/strategy`;
+    if (action === 'receipt') path += `/commands/${resourceId(exitId)}`;
+    else if (action === 'start' || action === 'stop') {
+      if (!values['request-id']?.trim()) throw new CliError('original_request_id_required');
+      method = 'POST'; path += '/commands';
+      body = JSON.stringify({ requestId: values['request-id'], action: action.toUpperCase() });
+    } else if (action !== 'status') throw new CliError('unknown_account_strategy_command');
   } else if (group === 'capital') {
     path = `/observations/${resourceId(id)}/capital-exits`;
     if (action === 'context') path += '/planning-context';

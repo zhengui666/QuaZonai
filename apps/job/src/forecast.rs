@@ -74,28 +74,6 @@ pub(crate) fn forecast_market(
     )?))
 }
 
-/// Price-only research never creates simulation instrument definitions.
-pub fn forecast_factor(
-    catalog_root: &Path,
-    request: &NativeForecastRequestV1,
-    module: &[u8],
-) -> Result<NativeForecastResultV1> {
-    domain::execution::forecast_request(request)?;
-    let series = crate::catalog::load_price_bars(catalog_root, &request.selection)?;
-    let rows = series.iter().map(|(_, bars)| bars.len()).sum();
-    let points = forecast_bar_points(
-        series
-            .iter()
-            .map(|(kind, bars)| (kind.instrument_id().to_string(), bars.as_slice())),
-        rows,
-        series.len(),
-        request,
-        module,
-        false,
-    )?;
-    Ok(forecast_result(points))
-}
-
 fn forecast_result(
     (consumed_fuel, points): (Option<DbCounter>, Vec<NativeForecastPointV1>),
 ) -> NativeForecastResultV1 {
