@@ -28,7 +28,7 @@ test('local runtime image overlay follows owner configuration without rewriting 
 });
 for (const running of ['true', 'false']) test(`runtime update requires an already stopped original worker (${running})`, async t => {
   const f = await fixture(t);
-  const result = f.run(`qz_compose() { if [[ "$*" == *'config --services' ]]; then echo nautilus; else echo original-container; fi; }; docker() { echo ${running}; }; qz_runtime_stopped "$ROOT/installation.json"`);
+  const result = f.run(`qz_compose() { if [[ "$*" == *'config --services' ]]; then echo nautilus; elif [[ "$*" == *'config --format json' ]]; then echo '{"services":{"nautilus":{"environment":{}}}}'; else echo original-container; fi; }; docker() { if [[ "$*" == *'.State.Running'* ]]; then echo ${running}; elif [[ "$*" == *'.Config.Entrypoint'* ]]; then echo '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]'; fi; }; qz_runtime_stopped "$ROOT/installation.json"`);
   assert.equal(result.status === 0, running === 'false', result.stderr);
   if (running === 'true') assert.match(result.stderr, /never cancels remote work/);
 });
@@ -84,4 +84,19 @@ test('restore also refuses to replace a managed runtime while it is running', as
     docker() { echo true; }; qz_restore "$ROOT" "$ROOT"`);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /never cancels remote work/);
   assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
+});
+
+for (const configured of ['old', 'candidate', 'invalid', 'unknown-entrypoint']) test(`stopped runtime is not automatically safe to replace (${configured})`, async t => {
+  const f = await fixture(t);
+  const effective = { services: { nautilus: { environment: configured === 'candidate' ? { QZ_NAUTILUS_ACCOUNTS: '[{"mode":"live"}]' } : {} } } };
+  await writeFile(join(f.root, 'effective.json'), JSON.stringify(effective));
+  const result = f.run(`qz_compose() { if [[ "$*" == *'config --services' ]]; then echo nautilus; elif [[ "$*" == *'config --format json' ]]; then cat "$ROOT/effective.json"; else echo original-container; fi; };
+    docker() { if [[ "$*" == *'.State.Running'* ]]; then echo false;
+      elif [[ "$*" == *'.Config.Entrypoint'* ]]; then echo '${configured === 'unknown-entrypoint' ? '["custom"]' : '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]'}';
+      else echo '${configured === 'old' ? 'QZ_NAUTILUS_ACCOUNTS=[{"mode":"paper"}]' : configured === 'invalid' ? 'QZ_NAUTILUS_ACCOUNTS=invalid' : ''}'; fi; };
+    qz_runtime_stopped "$ROOT/installation.json"`);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /[Aa]ccount|recovery plan/);
+  assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
+  assert.equal(await readFile(join(f.root, 'compose.override.yaml'), 'utf8'), f.original);
 });

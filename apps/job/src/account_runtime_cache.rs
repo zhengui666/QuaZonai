@@ -61,14 +61,35 @@ impl AccountCacheFactory {
         cache: Rc<RefCell<Cache>>,
         trader: TraderId,
         instance: UUID4,
+        config: CacheConfig,
     ) -> Result<()> {
-        let database = self
-            .create(trader, instance, CacheConfig::default())
-            .await?;
-        cache.borrow_mut().set_database(database);
-        cache.borrow_mut().cache_all().await?;
-        cache.borrow_mut().build_index();
-        restore_order_list_index(&mut cache.borrow_mut())?;
+        let database = self.create(trader, instance, config).await?;
+        let mut cache = cache
+            .try_borrow_mut()
+            .map_err(|_| anyhow!("account_native_cache_busy"))?;
+        cache.set_database(database);
+        // Our file adapter's load_all and every load_* it awaits execute only
+        // synchronous reads. Poll the official restoration once without yielding
+        // a RefCell guard. This is NOT support for an asynchronous remote adapter:
+        // an unexpected Pending aborts startup rather than running a partial cache.
+        let loaded = {
+            use std::{
+                future::Future,
+                task::{Context, Waker},
+            };
+            let mut future = std::pin::pin!(cache.cache_all());
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+        };
+        match loaded {
+            std::task::Poll::Ready(result) => result?,
+            std::task::Poll::Pending => {
+                bail!("account_native_file_cache_restore_unexpectedly_pending")
+            }
+        }
+        cache.build_index();
+        restore_order_list_index(&mut cache)?;
         Ok(())
     }
     pub fn restored_balances(&self, account: &AccountId) -> Result<Option<Vec<Money>>> {
@@ -332,9 +353,8 @@ impl AccountCache {
             "account_native_cache_write_failed"
         );
         let key = key.to_string();
-        let value = serde_json::to_value(value).map_err(|error| {
+        let value = serde_json::to_value(value).inspect_err(|_| {
             self.failed.store(true, Ordering::SeqCst);
-            error
         })?;
         if let Err(e) = atomic_value(
             &self.file(kind, &key),
@@ -433,13 +453,13 @@ impl CacheDatabaseAdapter for AccountCache {
         self.read("synthetics", &id.to_string())
     }
     async fn load_account(&self, id: &AccountId) -> Result<Option<AccountAny>> {
-        self.read("accounts", &id.to_string())
+        self.read("accounts", id.as_ref())
     }
     async fn load_order(&self, id: &ClientOrderId) -> Result<Option<OrderAny>> {
         self.read("orders", id.as_str())
     }
     async fn load_position(&self, id: &PositionId) -> Result<Option<Position>> {
-        self.read("positions", &id.to_string())
+        self.read("positions", id.as_ref())
     }
     fn load_actor(&self, id: &ActorId) -> Result<AHashMap<String, Bytes>> {
         let prefix = format!("{id}:");
@@ -467,7 +487,7 @@ impl CacheDatabaseAdapter for AccountCache {
         self.read("order_snapshots", id.as_str())
     }
     fn load_position_snapshot(&self, id: &PositionId) -> Result<Option<PositionSnapshot>> {
-        self.read("position_snapshots", &id.to_string())
+        self.read("position_snapshots", id.as_ref())
     }
     fn load_quotes(&self, id: &InstrumentId) -> Result<Vec<QuoteTick>> {
         Ok(self.read("quotes", &id.to_string())?.unwrap_or_default())
@@ -553,7 +573,7 @@ impl CacheDatabaseAdapter for AccountCache {
         self.remove("orders", id.as_str())
     }
     fn delete_position(&self, id: &PositionId) -> Result<()> {
-        self.remove("positions", &id.to_string())
+        self.remove("positions", id.as_ref())
     }
     fn delete_account_event(&self, _: &AccountId, _: &str) -> Result<()> {
         bail!("account_native_event_deletion_forbidden")
@@ -596,9 +616,8 @@ impl CacheDatabaseAdapter for AccountCache {
         let mut order: OrderAny = self
             .read("orders", id.as_str())?
             .ok_or_else(|| anyhow!("account_native_order_initialization_missing"))?;
-        order.apply(event.clone()).map_err(|error| {
+        order.apply(event.clone()).inspect_err(|_| {
             self.failed.store(true, Ordering::SeqCst);
-            error
         })?;
         self.put("orders", id, &order)?;
         // Exact process cut after the official fill is durable, before subsequent
@@ -701,6 +720,68 @@ mod order_list_tests {
         Ok(orders)
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn synchronous_official_restore_preserves_registered_clients_and_routes() -> Result<()> {
+        use nautilus_model::identifiers::Venue;
+        let directory = tempfile::tempdir()?;
+        let factory = AccountCacheFactory::new(directory.path().to_path_buf());
+        let trader = TraderId::from("RECOVERY-001");
+        let orders = bracket();
+        let database = factory
+            .create(trader, UUID4::new(), CacheConfig::default())
+            .await?;
+        for order in &orders {
+            database.add_order(order, None)?;
+        }
+        drop(database);
+        let cache = Rc::new(RefCell::new(Cache::default()));
+        let client = ClientId::from("ORIGINAL");
+        let account = AccountId::from("ORIGINAL-001");
+        let venue = Venue::from("ORIGINAL");
+        {
+            let mut cache = cache.borrow_mut();
+            cache.add_client_account(client, account);
+            cache.add_client_route(client, venue);
+            cache.set_default_client(client);
+            cache.add_external_data_client(client);
+            cache.add_external_exec_client(client);
+        }
+        factory
+            .install(cache.clone(), trader, UUID4::new(), CacheConfig::default())
+            .await?;
+        let restored = cache.borrow();
+        ensure!(
+            restored.account_id_for_client(&client) == Some(&account),
+            "client account lost"
+        );
+        ensure!(
+            restored.client_id_for_venue(&venue) == Some(&client),
+            "client route lost"
+        );
+        ensure!(
+            restored.client_id_for_venue(&Venue::from("OTHER")) == Some(&client),
+            "default client lost"
+        );
+        ensure!(
+            restored.is_external_data_client(&client) && restored.is_external_exec_client(&client),
+            "external client registration lost"
+        );
+        for order in &orders {
+            ensure!(
+                serde_json::to_value(&*restored.order(&order.client_order_id()).unwrap())?
+                    == serde_json::to_value(order)?,
+                "order changed on restore"
+            );
+        }
+        ensure!(
+            restored
+                .order_list(&orders[0].order_list_id().unwrap())
+                .is_some(),
+            "bracket index lost"
+        );
+        Ok(())
+    }
+
     #[test]
     fn native_index_reconstruction_is_idempotent_and_preserves_orders() -> Result<()> {
         let mut cache = Cache::default();
@@ -757,7 +838,12 @@ mod order_list_tests {
                 let factory = AccountCacheFactory::new(directory.into());
                 let cache = Rc::new(RefCell::new(Cache::default()));
                 factory
-                    .install(cache.clone(), TraderId::from("RECOVERY-001"), UUID4::new())
+                    .install(
+                        cache.clone(),
+                        TraderId::from("RECOVERY-001"),
+                        UUID4::new(),
+                        CacheConfig::default(),
+                    )
                     .await?;
                 let limit = std::env::var("QZ_ORDER_RECOVERY_TEST_TRUNCATE")
                     .ok()
@@ -807,7 +893,12 @@ mod order_list_tests {
                     let factory = AccountCacheFactory::new(directory.path().into());
                     let cache = Rc::new(RefCell::new(Cache::default()));
                     factory
-                        .install(cache.clone(), TraderId::from("RECOVERY-001"), UUID4::new())
+                        .install(
+                            cache.clone(),
+                            TraderId::from("RECOVERY-001"),
+                            UUID4::new(),
+                            CacheConfig::default(),
+                        )
                         .await?;
                     ensure!(
                         cache.borrow().order_lists(None, None, None, None).len() == 1,
@@ -865,7 +956,12 @@ mod order_list_tests {
                     let factory = AccountCacheFactory::new(directory.path().into());
                     let cache = Rc::new(RefCell::new(Cache::default()));
                     let error = factory
-                        .install(cache.clone(), TraderId::from("RECOVERY-001"), UUID4::new())
+                        .install(
+                            cache.clone(),
+                            TraderId::from("RECOVERY-001"),
+                            UUID4::new(),
+                            CacheConfig::default(),
+                        )
                         .await
                         .unwrap_err();
                     ensure!(

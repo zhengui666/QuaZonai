@@ -379,33 +379,35 @@ impl AccountController {
     }
     fn refresh_snapshot(&mut self) -> Result<()> {
         let account = self.account;
-        let cache = self.cache();
-        let account_event = cache
-            .account(&account)
-            .and_then(|v| v.last_event())
-            .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
-        let mut stamp = account_event.event_id.to_string();
-        for id in &self.ids {
-            if let Some(q) = cache.quote(id) {
-                stamp.push_str(&format!(":{}:{}", id, q.ts_init));
+        let stamp = {
+            let cache = self.cache();
+            let account_event = cache
+                .account(&account)
+                .and_then(|v| v.last_event())
+                .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
+            let mut stamp = account_event.event_id.to_string();
+            for id in &self.ids {
+                if let Some(q) = cache.quote(id) {
+                    stamp.push_str(&format!(":{}:{}", id, q.ts_init));
+                }
+                if let Some(book) = cache.order_book(id) {
+                    stamp.push_str(&format!(":book:{}", book.ts_last));
+                }
             }
-            if let Some(book) = cache.order_book(id) {
-                stamp.push_str(&format!(":book:{}", book.ts_last));
+            let orders = cache.orders(None, None, None, Some(&account), None);
+            for o in &orders {
+                stamp.push_str(&format!(
+                    ":{}:{}:{}",
+                    o.client_order_id(),
+                    o.status(),
+                    o.filled_qty()
+                ));
             }
-        }
-        let orders = cache.orders(None, None, None, Some(&account), None);
-        for o in &orders {
-            stamp.push_str(&format!(
-                ":{}:{}:{}",
-                o.client_order_id(),
-                o.status(),
-                o.filled_qty()
-            ));
-        }
+            stamp
+        };
         if stamp == self.stamp {
             return Ok(());
         }
-        drop(cache);
         let native = self
             .portfolio_rc()
             .try_borrow_mut()
@@ -1343,21 +1345,6 @@ fn fee_rounding_reserve(
         .checked_mul(maximum_fills)
         .ok_or_else(|| anyhow!("account_native_decimal_range"))
 }
-fn buy_cost_per_unit(
-    price: Decimal,
-    fee_bound: Decimal,
-    size_increment: Decimal,
-) -> Result<Decimal> {
-    price
-        .checked_mul(Decimal::ONE + fee_bound)
-        .and_then(|v| {
-            half_fee_quantum(fee_bound)
-                .checked_div(size_increment)
-                .and_then(|rounding| v.checked_add(rounding))
-        })
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))
-}
-
 // Keep the official risk engine and queued dispatch. Cache persistence failures
 // are otherwise log-only upstream; halt at the execution boundary, not a timer.
 fn install_cache_failure_risk_fence(node: &LiveNode, failed: Arc<AtomicBool>) {
@@ -1426,7 +1413,10 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         "account_native_paper_execution_requires_paper"
     );
     ensure!(
-        !matches!(config.native_strategy.strategy, NativeCompiledStrategyV1::GridMarketMaker { .. }),
+        !matches!(
+            config.native_strategy.strategy,
+            NativeCompiledStrategyV1::GridMarketMaker { .. }
+        ),
         "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
     );
     ensure!(
@@ -1497,6 +1487,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     };
     let cache_factory = AccountCacheFactory::new(config.data_dir.clone());
     let cache_failed = cache_factory.failed.clone();
+    let cache_config = CacheConfig {
+        flush_on_start: false,
+        save_market_data: false,
+        ..Default::default()
+    };
     let mut builder = LiveNode::builder(
         trader,
         if config.mode == "paper" {
@@ -1511,11 +1506,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     })
     .with_load_state(true)
     .with_save_state(true)
-    .with_cache_config(CacheConfig {
-        flush_on_start: false,
-        save_market_data: false,
-        ..Default::default()
-    })
+    .with_cache_config(cache_config.clone())
     .with_risk_engine_config(config.risk.native(&config.instruments)?)
     .with_reconciliation(true)
     .with_exec_engine_config(LiveExecutionEngineConfig {
@@ -1600,7 +1591,12 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     }
     let mut node = builder.build()?;
     cache_factory
-        .install(node.kernel().cache(), trader, node.instance_id())
+        .install(
+            node.kernel().cache(),
+            trader,
+            node.instance_id(),
+            cache_config,
+        )
         .await?;
     install_cache_failure_risk_fence(&node, cache_failed.clone());
     let handle = node.handle();
@@ -1679,7 +1675,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(s) => {
             s.strategy_core().config.manage_stop
         }
-        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => anyhow::bail!("account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"),
+        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+            )
+        }
         crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(s) => {
             s.strategy_core().config.manage_stop
         }
@@ -1688,7 +1688,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
             node.add_strategy(strategy)?
         }
-        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => anyhow::bail!("account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"),
+        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+            )
+        }
         crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(strategy) => {
             node.add_strategy(strategy)?
         }
@@ -1815,8 +1819,13 @@ mod tests {
             "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"GRID_MARKET_MAKER","trade_size":"1","num_levels":2,"grid_step_bps":10,"skew_factor":0.1,"max_position":"2","requote_threshold_bps":5,"expire_time_secs":null,"on_cancel_resubmit":true}},
             "instruments":["BTC-USDC-SPOT.HYPERLIQUID"],"source_id":"unused","data_dir":"/tmp/unused"
         })).unwrap();
-        let error = super::run_config(config, "unused".into()).await.unwrap_err();
-        assert_eq!(error.to_string(), "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker");
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+        );
     }
     #[test]
     fn native_paper_models_validate_probabilities_and_exact_nanoseconds() {
@@ -1943,6 +1952,11 @@ mod tests {
         let starting = factory
             .restored_balances(&account)?
             .unwrap_or(vec![Money::from("1000 USDC")]);
+        let cache_config = CacheConfig {
+            flush_on_start: false,
+            save_market_data: false,
+            ..Default::default()
+        };
         let mut node = LiveNode::builder(trader, Environment::Sandbox)?
             .with_logging(LoggerConfig {
                 bypass_logging: true,
@@ -1950,11 +1964,7 @@ mod tests {
             })
             .with_load_state(true)
             .with_save_state(true)
-            .with_cache_config(CacheConfig {
-                flush_on_start: false,
-                save_market_data: false,
-                ..Default::default()
-            })
+            .with_cache_config(cache_config.clone())
             .with_reconciliation(true)
             .with_exec_engine_config(LiveExecutionEngineConfig {
                 load_cache: true,
@@ -1983,7 +1993,12 @@ mod tests {
             )?
             .build()?;
         factory
-            .install(node.kernel().cache(), trader, node.instance_id())
+            .install(
+                node.kernel().cache(),
+                trader,
+                node.instance_id(),
+                cache_config,
+            )
             .await?;
         install_cache_failure_risk_fence(&node, factory.failed.clone());
         let (tx, rx) = mpsc::sync_channel(64);
@@ -2472,16 +2487,6 @@ mod tests {
                 Decimal::new(1, 2)
             )? == Decimal::from_str("0.01000005")?,
             "per_fill_rounding_cost_bound_incorrect"
-        );
-        ensure!(
-            buy_cost_per_unit(Decimal::from(100), Decimal::new(1, 3), Decimal::new(1, 2))?
-                == Decimal::from_str("100.1000005")?,
-            "buy_per_unit_rounding_reserve_incorrect"
-        );
-        ensure!(
-            buy_cost_per_unit(Decimal::from(100), Decimal::ZERO, Decimal::new(1, 2))?
-                == Decimal::from(100),
-            "zero_fee_buy_invented_rounding_cost"
         );
         Ok(())
     }

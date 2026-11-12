@@ -64,6 +64,21 @@ qz_runtime_stopped() {
     id=$(qz_compose "$file" ps --all --quiet nautilus)
     [[ -n "$id" && "$id" != *$'\n'* ]] || qz_fail 'Inspect the original single nautilus container before enrolling/updating its runtime.'
     [[ $(docker inspect --format '{{.State.Running}}' "$id") == false ]] || qz_fail 'Local nautilus is running. Finish and reconcile its work, then safely stop it before updating; this command never cancels remote work.'
+    # Stopped is not evidence that an account's native orders/strategy are safe to restart.
+    # This automated path supports only the standard science-only worker, both before and after.
+    local previous effective="$QZ_WORK/runtime-effective.json" candidate entrypoint
+    entrypoint=$(docker inspect --format '{{json .Config.Entrypoint}}' "$id") || qz_fail 'Cannot inspect the original runtime entrypoint.'
+    [[ "$entrypoint" == '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]' ]] || qz_fail 'Nonstandard runtime entrypoint requires an explicit account and task recovery plan.'
+    previous=$(docker inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "QZ_NAUTILUS_ACCOUNTS"}}{{println .}}{{end}}{{end}}' "$id") || qz_fail 'Cannot inspect the original runtime account configuration.'
+    previous=${previous#QZ_NAUTILUS_ACCOUNTS=}
+    [[ -z "$previous" || "$previous" =~ ^[[:space:]]*\[[[:space:]]*\][[:space:]]*$ ]] || qz_fail 'Account-enabled runtime requires explicit original strategy/order/exit reconciliation; this updater never stops or restarts account hosts.'
+    qz_compose "$file" config --format json > "$effective" || qz_fail 'Cannot resolve candidate runtime configuration.'
+    qz_raw "$effective" >/dev/null || qz_fail 'Invalid candidate runtime configuration.'
+    candidate=$(qz_get "$effective" services.nautilus.environment.QZ_NAUTILUS_ACCOUNTS 2>/dev/null || true)
+    [[ -z "$candidate" || "$candidate" =~ ^[[:space:]]*\[[[:space:]]*\][[:space:]]*$ ]] || qz_fail 'Candidate runtime enables accounts; use a separate explicitly authorized account deployment.'
+    entrypoint=$(qz_raw "$effective" services.nautilus.entrypoint 2>/dev/null || true)
+    [[ -z "$entrypoint" || "$entrypoint" == null || "$entrypoint" == '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]' ]] || qz_fail 'Candidate runtime overrides its standard worker entrypoint; account safety is not established.'
+
 }
 qz_runtime_verify() {
     local file=$1 id expected

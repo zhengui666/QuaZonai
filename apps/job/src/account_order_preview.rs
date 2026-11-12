@@ -14,14 +14,6 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc, str::FromStr};
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativeBracketProtection {
-    pub enabled: bool,
-    pub stop_loss: String,
-    pub take_profit: String,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum OrderPreview {
     StopLoss {

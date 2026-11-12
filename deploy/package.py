@@ -218,8 +218,12 @@ bash install.sh --version {version} --directory "$HOME/.local/share/quazonai" --
 
 For an existing local `nautilus` service in `compose.override.yaml`, add
 `--local-runtime` to enroll it for same-release runtime image updates. First
-finish and reconcile its tasks and safely stop that container. The installer
-refuses a running runtime rather than cancelling work. It retains the owner's
+finish and reconcile its tasks and safely stop that container. This automatic
+path is limited to standard science-only workers: both original and candidate
+account configurations must be empty. Account hosts require a separate explicit
+strategy/order/exit reconciliation plan; stopped does not prove financial safety.
+The installer refuses a running runtime rather than cancelling work, and cannot
+certify remote task settlement from an empty account configuration. It retains the owner's
 Compose environment, mounts, CPU settings and credentials, overriding only the
 image from the same release manifest. Enrollment persists for later updates.
 Independent remote servers are not changed. Runtime image revision/version and

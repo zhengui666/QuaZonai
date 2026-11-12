@@ -23,7 +23,7 @@ updates the Docker stack; macOS installs only the CLI. The source bootstrap
 selects the newest complete published dev release; release installers are pinned.
 --version latest selects the newest complete dev release explicitly.
 --no-backup skips only an update recovery point, never task-idle checks.
---local-runtime updates an existing, safely stopped local nautilus service to this same release.
+--local-runtime updates an existing, safely stopped science-only nautilus service; account hosts require separate reconciliation.
 --skill-dir PATH links the same-release bundled skill; unmanaged paths are refused; a matching QuaZonai skills-lock directory is updated in place.
 --cli-only skips the Linux stack. Existing installations retain their settings.
 Requires Bash 4.4+ for the Linux stack, Bash 3.2+ for CLI-only, curl, tar
