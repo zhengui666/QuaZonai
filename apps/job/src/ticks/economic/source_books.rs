@@ -705,12 +705,23 @@ pub fn export_catalog(
     start: u64,
     end: u64,
 ) -> Result<serde_json::Value> {
+    export_catalog_selected(root, output, start, end, &[])
+}
+
+pub fn export_catalog_selected(root: &Path, output: &Path, start: u64, end: u64, selected: &[InstrumentId]) -> Result<serde_json::Value> {
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let header: Header = serde_json::from_reader(BufReader::new(File::open(
         root.join("book-snapshots.source.json"),
     )?))?;
     let instruments = crate::catalog::currencies::instruments_from_value(header.instrument_source)?;
     let indexed = source(root)?;
+    let requested = selected.iter().copied().collect::<BTreeSet<_>>();
+    for id in &requested {
+        ensure!(instruments.iter().any(|instrument| instrument.id() == *id), "PUBLISHED_BOOK_INSTRUMENT_UNKNOWN: {id}");
+        ensure!(indexed.instruments.contains(id), "PUBLISHED_BOOK_INSTRUMENT_UNSUPPORTED: {id}");
+    }
+    let instruments = instruments.into_iter().filter(|instrument| requested.is_empty() || requested.contains(&instrument.id())).collect::<Vec<_>>();
+    let exported_ids = instruments.iter().map(|instrument| instrument.id().to_string()).collect::<Vec<_>>();
     // Publish only after all source reads and native writes succeeded. Existing data is never replaced.
     ensure!(!output.exists(), "OUTPUT_MUST_BE_NEW");
     let parent = output
@@ -730,6 +741,7 @@ pub fn export_catalog(
         if !indexed.instruments.contains(&instrument.id()) {
             continue;
         }
+        let before_frames = frames;
         let mut books = RawBooks::open_indexed(indexed.clone(), instrument.id(), start, end)?;
         // Native engines require the declared instrument precision. Existing parsing checks
         // exact Decimal equality and refuses any value that would be rounded.
@@ -748,13 +760,14 @@ pub fn export_catalog(
         if !pending.is_empty() {
             catalog.write_to_parquet(&pending, None, None, None)?;
         }
+        if !requested.is_empty() { ensure!(frames > before_frames, "PUBLISHED_BOOK_SELECTED_INSTRUMENT_EMPTY: {}", instrument.id()); }
         let counts = books.checkpoint_counts();
         checkpoints.0 += counts.0;
         checkpoints.1 += counts.1;
     }
     ensure!(frames > 0, "PUBLISHED_BOOK_SELECTION_EMPTY");
     let report = serde_json::json!({
-        "native_catalog":"catalog", "available_start_ns":start.to_string(),
+        "native_catalog":"catalog", "instrument_ids":exported_ids, "available_start_ns":start.to_string(),
         "available_end_ns":end.to_string(), "frames":frames,"rows":rows,
         "validated_carry_snapshots":checkpoints.0,"validated_carry_rows":checkpoints.1,
         "clock_semantics":"ORIGINAL_TS_EVENT_AND_PROVIDER_RECEIPT_TS_INIT",
@@ -1090,6 +1103,48 @@ mod tests {
             before,
             std::fs::read(root.path().join("book-snapshots.source.json")).unwrap()
         );
+    }
+
+    #[test]
+    fn published_books_select_exact_native_instruments_without_touching_other_data() {
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let (root, btc) = source(false);
+        let eth = InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::currency_pair_ethusdt());
+        let eth_id = eth.id();
+        let relative = "hyperliquid_spot/2026-01-01/00/ETH_USDT_orderbook.parquet";
+        let file = root.path().join("archive").join(relative);
+        write_hour_transactions_with_symbol(&file, &[(START/1_000_000, START+456, "bid", "20.12", "1"), (START/1_000_000, START+456, "ask", "20.13", "2")], "ETH_USDT", None);
+        let path = root.path().join("book-snapshots.source.json");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest["instrument_source"]["instruments"].as_array_mut().unwrap().push(serde_json::to_value(&eth).unwrap());
+        manifest["instrument_source"]["symbol_ids"]["ETH_USDT"] = eth_id.to_string().into();
+        manifest["instrument_source"]["currencies"] = serde_json::to_value(crate::catalog::currencies::definitions(&[InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::currency_pair_btcusdt()),eth])).unwrap();
+        let metadata = file.metadata().unwrap();
+        manifest["files"].as_array_mut().unwrap().push(serde_json::json!({"path":relative,"size":metadata.len(),"stream":"books","file_identity":FileIdentity::metadata(&metadata).unwrap().to_string()}));
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let original_manifest = std::fs::read(&path).unwrap();
+        let original_eth = std::fs::read(&file).unwrap();
+        for id in [btc, eth_id] {
+            let output = root.path().join(id.symbol.to_string());
+            let report = export_catalog_selected(root.path(), &output, START, START+2*HOUR, &[id]).unwrap();
+            assert_eq!(report["instrument_ids"], serde_json::json!([id.to_string()]));
+            let mut native = ParquetDataCatalog::new(&output.join("catalog"), None,None,None,None);
+            let definitions = native.query_instruments(None).unwrap();
+            assert_eq!(definitions.len(),1); assert_eq!(definitions[0].id(),id);
+            let actual = native.query::<nautilus_model::data::OrderBookDelta>(None,None,None,None,None,false).unwrap();
+            let mut original = RawBooks::open(root.path(),id,START,START+2*HOUR).unwrap();
+            let mut expected = Vec::new();
+            while let Some(frame)=original.next().unwrap() { expected.extend(frame.deltas.deltas); }
+            assert_eq!(actual,expected);
+        }
+        let unknown = root.path().join("unknown");
+        assert!(export_catalog_selected(root.path(),&unknown,START,START+HOUR,&["UNKNOWN.SIM".parse().unwrap()]).unwrap_err().to_string().contains("INSTRUMENT_UNKNOWN"));
+        assert!(!unknown.exists());
+        let empty = root.path().join("empty-selected");
+        assert!(export_catalog_selected(root.path(),&empty,START+HOUR,START+2*HOUR,&[btc,eth_id]).is_err());
+        assert!(!empty.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), original_manifest);
+        assert_eq!(std::fs::read(&file).unwrap(), original_eth);
     }
 
     #[test]

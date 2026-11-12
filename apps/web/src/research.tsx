@@ -129,8 +129,8 @@ export function ResearchConversation({ messages }: { messages: ResearchDetail['m
 export function canContinueResearch(detail: ResearchDetail, active: boolean): boolean {
   if (detail.toolPolicy !== 'NAUTILUS_ONLY' || active || !detail.submission) return false;
   const stopped = detail.final?.status === 'STOPPED' && detail.final.trialId === null;
-  const ownerStopped = stopped && detail.final?.reason === 'owner_stop'
-    && detail.submission.status === 'unanswered' && detail.submission.reason === 'aborted';
+  const ownerStopped = detail.submission.status === 'unanswered' && detail.submission.reason === 'aborted'
+    && (stopped && detail.final?.reason === 'owner_stop' || !!detail.final?.nativeStrategyResult);
   return !!ownerStopped || detail.submission.status === 'done'
     && (!detail.final || !!detail.final.nativeStrategyResult || stopped);
 }

@@ -131,3 +131,10 @@ it('keeps stopping available for live validation after a completed historical na
   expect(hasActiveResearchExecution({ ...detail, tasks: [detail.tasks[0]!], submission: { id: 3, status: 'done' } })).toBe(false);
   expect(hasActiveResearchExecution({ ...detail, tasks: [] })).toBe(true);
 });
+
+it('allows explicit continuation after owner stops validation following a historical native result', () => {
+  const detail = { toolPolicy: 'NAUTILUS_ONLY', final: { status: 'COMPUTED', trialId: null, reason: 'explicit_native_strategy_backtest_completed', metrics: [], nativeStrategyResult: {} }, submission: { id: 3, status: 'unanswered', reason: 'aborted' } } as unknown as ResearchDetail;
+  expect(canContinueResearch(detail, false)).toBe(true);
+  expect(canContinueResearch(detail, true)).toBe(false);
+  expect(canContinueResearch({ ...detail, submission: { id: 3, status: 'unanswered', reason: 'model_error' } }, false)).toBe(false);
+});

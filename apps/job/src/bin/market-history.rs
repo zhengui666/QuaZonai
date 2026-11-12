@@ -39,6 +39,9 @@ struct Arguments {
 enum Command {
     /// Convert an existing published-hour source into a new native L2 catalog, preserving both clocks.
     PublishedBooks {
+        /// Exact official instrument ID from the source definitions; repeat to select several. Omit for all.
+        #[arg(long = "instrument-id")]
+        instrument_ids: Vec<InstrumentId>,
         #[arg(long)]
         source: PathBuf,
         #[arg(long)]
@@ -1632,15 +1635,17 @@ fn trade_memory_limit() -> Result<()> {
 fn main() {
     let result = match Arguments::parse().command {
         Command::PublishedBooks {
+            instrument_ids,
             source,
             output,
             available_start_ns,
             available_end_ns,
-        } => job::ticks::economic::export_published_books(
+        } => job::ticks::economic::export_published_books_selected(
             &source,
             &output,
             available_start_ns,
             available_end_ns,
+            &instrument_ids,
         )
         .and_then(|report| {
             println!("{}", serde_json::to_string_pretty(&report)?);

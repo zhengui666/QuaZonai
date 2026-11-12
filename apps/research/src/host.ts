@@ -1,7 +1,7 @@
 import nativeWalkForward from '../plugins/native-walk-forward.ts';
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
-import { assertResearchRunSettled, ResearchConfiguration } from './research-configuration.ts';
+import { assertResearchRunSettled } from './research-configuration.ts';
 import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
@@ -210,8 +210,14 @@ export async function openResearch(options: {
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
     const current = await state(id);
-    const nativeRun = await harness.snapshot(ResearchConfiguration, handle.id, context);
-    if (nativeRun?.evaluationTaskId) await reconcileNativeRemoteTasks(harness, [{ id: nativeRun.evaluationTaskId, conversationId: handle.id }], context);
+    const nativeTasks = async (tx: Tx) => {
+      const records = []; let cursor: Cursor | undefined;
+      do { const page = await tx.scanTasks({ conversationId: handle.id }, 100, cursor);
+        records.push(...page.items.filter(task => task.kind === 'qz.native-strategy.backtest' || task.kind === NativeExecutionTask.definition.name)); cursor = page.next;
+      } while (cursor);
+      return records;
+    };
+    await reconcileNativeRemoteTasks(harness, await harness.commit(nativeTasks, context), context);
     const nextId = await harness.commit(async (tx) => {
       await options.authorizeResume?.(tx, handle.id);
       const study = await tx.doc(Study, handle.id);
@@ -219,11 +225,11 @@ export async function openResearch(options: {
       const intent = requests.requests[key];
       if (!study.input) throw new Error('research_not_found');
       if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || intent.recovery.instruction !== instruction || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
+      const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
       const nativeContinuation = study.toolPolicy === 'NAUTILUS_ONLY' && !study.input.campaign && !study.trials.length
-        && current.submission?.status === 'done' && instruction !== undefined
+        && (current.submission?.status === 'done' && instruction !== undefined || ownerAborted)
         && (!study.final || study.final.scientificClaim === 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
       if (nativeContinuation) await assertResearchRunSettled(tx, handle.id);
-      const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
       const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
         && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');
       if (study.final && (intent || !stopped && !nativeContinuation)) throw new Error('research_already_final');
@@ -231,10 +237,15 @@ export async function openResearch(options: {
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop && !nativeContinuation) throw new Error('research_not_recoverable_conflict');
-      if (stopped && study.final?.reason === 'owner_stop') await settleOwnerStopFacts(tx, handle.id);
+      if (study.toolPolicy === 'NAUTILUS_ONLY' && (stopped || nativeContinuation)) for (const task of await nativeTasks(tx)) {
+        if (task.state.status !== 'terminal') throw Object.assign(new Error('native_strategy_execution_unsettled'), { statusCode: 409 });
+        await assertNativeRemoteTaskSettled(tx, handle.id, task.id);
+      }
+      if (stopped && study.final?.reason === 'owner_stop' || nativeContinuation && ownerAborted) await settleOwnerStopFacts(tx, handle.id);
       const mode = intent?.recovery?.mode ?? (nativeContinuation ? 'native' : stopped ? 'stopped' : 'model_error');
       const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
       if (!intent) {
+        delete (await tx.doc(CampaignResearchDoc, handle.id)).ownerStopTaskId;
         if (study.final && mode === 'native') { study.previousNativeResults = [...(study.previousNativeResults ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode, ...(instruction !== undefined ? { instruction } : {}) } };
