@@ -17,7 +17,7 @@ function validReference(reference: JsonObject, taskId: number) {
  * Unavailable, mismatched and nonterminal receipts keep their original state.
  * No transport diagnostic, credentials, native result or replacement identity
  * is exposed or persisted by this read-only operation. */
-export async function reconcileNativeRemoteTasks(harness: Harness, tasks: readonly NativeRemoteTaskReference[], context: Context): Promise<void> {
+export async function reconcileNativeRemoteTasks(harness: Pick<Harness, 'snapshot' | 'commit'>, tasks: readonly NativeRemoteTaskReference[], context: Context): Promise<void> {
   const deadline = AbortSignal.timeout(5000);
   const signal = context.abortSignal ? AbortSignal.any([deadline, context.abortSignal]) : deadline;
   const seen = new Set<string>();

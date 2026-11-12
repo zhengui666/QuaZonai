@@ -9,6 +9,7 @@ import { canonical, Study } from '../src/documents.ts';
 import { executeNativeValue, nativeTargetForData, retainNativeRemoteUncertainty, withNativeRemoteTracking, cancelUnsettledNativeExecutions, nativeUncertainTaskId, reconcileNativeExecution } from '../src/native-execution.ts';
 import type { NativeScanCheckpoint, NativeScanContext } from '../src/native-execution.ts';
 import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
+import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { tickEconomicPolicy } from '../src/input.ts';
 import { object } from '../src/trials.ts';
@@ -61,7 +62,7 @@ export const TickEconomicTask = defineTask<EconomicInput, NativeScanCheckpoint, 
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
-      const nativeTaskId = task.input.scanContext ? nativeUncertainTaskId(error) : null;
+      const nativeTaskId = nativeUncertainTaskId(error);
       if (nativeTaskId !== null) {
         await runtime.commit(() => ({ status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'reconcile', nativeTaskId } }), context);
         return;
@@ -83,7 +84,7 @@ export const TickEconomicTask = defineTask<EconomicInput, NativeScanCheckpoint, 
       : { status: 'sleeping', until: runtime.now() + 1000, checkpoint: task.state.checkpoint }, context);
   } },
   async abort(task, runtime, context) {
-    if (task.input.scanContext) await cancelUnsettledNativeExecutions(task.id, runtime, context);
+    await cancelUnsettledNativeExecutions(task.id, runtime, context);
     await runtime.commit(async tx => {
       if (task.input.partition !== 'HELDOUT' && !task.input.scanContext) {
         const trial = (await tx.doc(Study, task.conversationId)).trials.find(row => row.taskId === task.input.trialId)!;
@@ -118,13 +119,18 @@ export async function runTickEconomic(api: ResearchRuntime, context: Context, tr
   const proposal = object(trial.proposal, 'trial_proposal');
   if (typeof proposal.model !== 'string' || canonical(object(trial.result, 'trial_result').request!) !== canonical(iterationRequest(input.data))) throw new Error('tick_economic_original_request_mismatch');
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
+  const previousEconomic = trial.economic ? object(trial.economic, 'tick_economic') : null;
+  if (previousEconomic && ['FAILED', 'STOPPED'].includes(String(previousEconomic.status))) {
+    await reconcileNativeRemoteTasks(api, [{ id: previousEconomic.taskId as number, conversationId: api.conversationId }], context);
+  }
   await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
   const id = await api.commit(async tx => {
     const current = await tx.doc(Study, api.conversationId);
     if (current.final !== null || current.reviewSelection) throw new Error('research_search_closed');
     const source = current.trials.find(row => row.taskId === trialId)!;
     const economic = source.economic ? object(source.economic, 'tick_economic') : null;
-    if (economic && economic.status !== 'FAILED' && economic.status !== 'STOPPED') return economic.taskId as TaskId<JsonObject>;
+    if (economic && (economic.taskId !== previousEconomic?.taskId || economic.status !== 'FAILED' && economic.status !== 'STOPPED')) return economic.taskId as TaskId<JsonObject>;
+    if (economic) await assertNativeRemoteTaskSettled(tx, api.conversationId, economic.taskId as number);
     const taskId = await tx.createTask(TickEconomicTask, { trialId, model: proposal.model as string, catalog: input.data.catalog as string,
       target: nativeTargetForData(input.data), request, bookCores: bookCores as number }, { ownership: { kind: 'task', taskId: api.taskId } });
     source.economic = { taskId, status: 'STARTED', summary: null, error: null };
