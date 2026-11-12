@@ -1,5 +1,5 @@
 //! Explicit configuration for compiled upstream strategies, not a strategy language.
-use crate::{DbCounter, SchemaV1, catalog_coverage::NativeCatalogSelectorV1};
+use crate::{catalog_coverage::NativeCatalogSelectorV1, DbCounter, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

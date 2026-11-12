@@ -1,7 +1,6 @@
 //! Native scientific DTOs and the immutable file protocol consumed by job.
 #![forbid(unsafe_code)]
 
-pub mod native_strategy;
 pub mod account_observation;
 pub mod brief;
 pub mod capacity;
@@ -19,8 +18,9 @@ pub mod execution_assumptions;
 pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
-pub mod native_walk_forward;
 pub mod lifecycle;
+pub mod native_strategy;
+pub mod native_walk_forward;
 pub mod observed_spot;
 pub mod portfolio;
 pub mod portfolio_history;

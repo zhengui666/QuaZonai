@@ -13,8 +13,8 @@
 //! ambiguous/short positions are rejected. Sandbox evidence is not a claim of live
 //! exchange execution validation, nor generic strategy recovery compatibility.
 use crate::{account_observer::project_snapshot, account_runtime_cache::AccountCacheFactory};
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use contracts::{Id, native_strategy::NativeCompiledStrategyV1};
+use anyhow::{anyhow, bail, ensure, Context, Result};
+use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
 use indexmap::IndexMap;
 use nautilus_common::{
     actor::DataActor,
@@ -31,13 +31,13 @@ use nautilus_execution::models::{
     latency::{LatencyModelAny, StaticLatencyModel},
 };
 use nautilus_hyperliquid::{
-    HyperliquidDataClientConfig, HyperliquidDataClientFactory, HyperliquidExecutionClientConfig,
-    HyperliquidExecutionClientFactory,
     common::{
         consts::HYPERLIQUID_CLIENT_ID,
         enums::{HyperliquidEnvironment, HyperliquidProductType},
     },
     http::client::HyperliquidHttpClient,
+    HyperliquidDataClientConfig, HyperliquidDataClientFactory, HyperliquidExecutionClientConfig,
+    HyperliquidExecutionClientFactory,
 };
 use nautilus_live::{
     config::{LiveExecutionEngineConfig, LiveRiskEngineConfig},
@@ -61,7 +61,7 @@ use nautilus_trading::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     io::{self, BufRead, Write},
@@ -69,9 +69,9 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
+        Arc,
     },
 };
 use ustr::Ustr;
@@ -1792,10 +1792,10 @@ mod tests {
             native.max_notional_per_order["BTC-USDC-SPOT.HYPERLIQUID"],
             "1000.25"
         );
-        assert!(
-            serde_json::from_value::<super::AccountRiskConfig>(serde_json::json!({"bypass":true}))
-                .is_err()
-        );
+        assert!(serde_json::from_value::<super::AccountRiskConfig>(
+            serde_json::json!({"bypass":true})
+        )
+        .is_err());
     }
     #[tokio::test]
     async fn live_rejects_paper_scenario_before_connecting() {
@@ -1912,7 +1912,7 @@ mod tests {
     use nautilus_common::{
         cache::database::CacheDatabaseFactory, live::get_data_event_sender, messages::DataEvent,
     };
-    use nautilus_core::{UUID4, UnixNanos};
+    use nautilus_core::{UnixNanos, UUID4};
     use nautilus_live::node::NodeRunMode;
     use nautilus_model::{
         data::{BookOrder, Data},

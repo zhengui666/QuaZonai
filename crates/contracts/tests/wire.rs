@@ -210,12 +210,22 @@ fn generated_bigint_schemas_share_the_native_postgres_boundary() {
 
 #[test]
 fn schema_keeps_upstream_strategies_without_retired_indicator_execution() {
-    let schema: serde_json::Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    let schema: serde_json::Value =
+        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
     let types = schema["components"]["schemas"].as_object().unwrap();
-    for retired in ["NativeIndicatorStrategyRequestV1", "NativeIndicatorStrategyResultV1", "NativeIndicatorStrategyBatchRequestV1", "NativeIndicatorStrategyBatchResultV1"] {
+    for retired in [
+        "NativeIndicatorStrategyRequestV1",
+        "NativeIndicatorStrategyResultV1",
+        "NativeIndicatorStrategyBatchRequestV1",
+        "NativeIndicatorStrategyBatchResultV1",
+    ] {
         assert!(!types.contains_key(retired), "{retired}");
     }
-    for native in ["NativeStrategyBacktestRequestV1", "NativeStrategyBacktestResultV1", "NativeStrategyWalkForwardRequestV1"] {
+    for native in [
+        "NativeStrategyBacktestRequestV1",
+        "NativeStrategyBacktestResultV1",
+        "NativeStrategyWalkForwardRequestV1",
+    ] {
         assert!(types.contains_key(native), "{native}");
     }
 }

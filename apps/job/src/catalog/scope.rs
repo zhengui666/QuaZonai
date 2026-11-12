@@ -2,7 +2,11 @@
 use anyhow::{ensure, Result};
 use nautilus_model::data::BarType;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use std::{collections::HashSet, fs::{self, File}, path::{Path, PathBuf}};
+use std::{
+    collections::HashSet,
+    fs::{self, File},
+    path::{Path, PathBuf},
+};
 
 fn series_paths(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();

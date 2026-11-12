@@ -1,8 +1,8 @@
 //! Thin chronological selection over the existing Nautilus strategy runner.
 //! Every train candidate and every subsequent test owns a fresh native account.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::{
-    DbCounter, SchemaV1, native_strategy::NativeStrategyBacktestRequestV1, native_walk_forward::*,
+    native_strategy::NativeStrategyBacktestRequestV1, native_walk_forward::*, DbCounter, SchemaV1,
 };
 use nautilus_model::data::HasTsInit;
 use std::path::Path;
@@ -31,8 +31,14 @@ fn require_completed_training(outcome: Option<&str>) -> Result<()> {
 fn test_status(outcome: Option<&str>) -> (&'static str, Option<String>) {
     match outcome {
         Some("completed") => ("COMPLETED", None),
-        Some("stopped") => ("TEST_STOPPED", Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into())),
-        _ => ("TEST_FAILED", Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into())),
+        Some("stopped") => (
+            "TEST_STOPPED",
+            Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into()),
+        ),
+        _ => (
+            "TEST_FAILED",
+            Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into()),
+        ),
     }
 }
 fn metric(
@@ -216,9 +222,10 @@ pub fn run(
             let test_request = window(&request.candidates[selected], test_start, test_end)?;
             match crate::native_strategy::run(root, test_request) {
                 Ok(result) => {
-                    let (status, reason) = test_status(result.canonical_result["run"]["outcome"].as_str());
+                    let (status, reason) =
+                        test_status(result.canonical_result["run"]["outcome"].as_str());
                     (Some(result), status, reason)
-                },
+                }
                 Err(error) => (None, "TEST_FAILED", Some(format!("{error:#}"))),
             }
         } else {
@@ -258,9 +265,21 @@ mod equity_objective_tests {
     #[test]
     fn only_completed_test_outcomes_are_complete() {
         assert_eq!(test_status(Some("completed")), ("COMPLETED", None));
-        assert_eq!(test_status(Some("stopped")), ("TEST_STOPPED", Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into())));
+        assert_eq!(
+            test_status(Some("stopped")),
+            (
+                "TEST_STOPPED",
+                Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into())
+            )
+        );
         for outcome in [None, Some("unknown"), Some("failed")] {
-            assert_eq!(test_status(outcome), ("TEST_FAILED", Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into())));
+            assert_eq!(
+                test_status(outcome),
+                (
+                    "TEST_FAILED",
+                    Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into())
+                )
+            );
         }
     }
 
@@ -294,12 +313,10 @@ mod equity_objective_tests {
         assert!(equity_metric(&performance, &objective).is_err());
         objective.annualization_days = Some(365);
         performance.status = "UNAVAILABLE".into();
-        assert!(
-            equity_metric(&performance, &objective)
-                .unwrap_err()
-                .to_string()
-                .contains("EQUITY_RETURNS_UNAVAILABLE")
-        );
+        assert!(equity_metric(&performance, &objective)
+            .unwrap_err()
+            .to_string()
+            .contains("EQUITY_RETURNS_UNAVAILABLE"));
         let default: NativeWalkForwardObjectiveV1 = serde_json::from_value(
             serde_json::json!({"native_key":"PnL (total)","currency":"USD","direction":"MAXIMIZE"}),
         )

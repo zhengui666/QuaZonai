@@ -5,7 +5,7 @@ use nautilus_model::{
     data::{BookOrder, OrderBookDelta, TradeTick},
     enums::{BookAction, OrderSide, RecordFlag},
     identifiers::InstrumentId,
-    instruments::{InstrumentAny, stubs::currency_pair_btcusdt},
+    instruments::{stubs::currency_pair_btcusdt, InstrumentAny},
     types::{Price, Quantity},
 };
 use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
@@ -167,11 +167,10 @@ fn genuine_native_training_selects_past_only_and_test_is_independent_cold_start(
         assert!(fold.train_end_ns < fold.test_start_ns);
         let selected = fold.selected_candidate_index.unwrap();
         let best = fold.trials[selected].metric_value.unwrap();
-        assert!(
-            fold.trials
-                .iter()
-                .all(|trial| trial.metric_value.unwrap() <= best)
-        );
+        assert!(fold
+            .trials
+            .iter()
+            .all(|trial| trial.metric_value.unwrap() <= best));
         for trial in &fold.trials {
             let run = trial.result.as_ref().unwrap();
             assert_eq!(run.canonical_result["run"]["outcome"], "completed");
@@ -183,12 +182,10 @@ fn genuine_native_training_selects_past_only_and_test_is_independent_cold_start(
         assert_eq!(test.data_rows_by_type["QuoteTick"].get(), 8); // four complete two-row availability batches
         let independent = job::native_strategy::run(dir.path(), test.request.clone()).unwrap();
         assert_eq!(test.canonical_result, independent.canonical_result);
-        assert!(
-            !test.canonical_result["fills"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(!test.canonical_result["fills"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
     let (changed, changed_request) = walk_fixture(true);
     let changed_result = job::native_walk_forward::run(changed.path(), changed_request).unwrap();
@@ -347,12 +344,10 @@ fn actual_walk_forward_preserves_static_scenario_in_every_training_and_test_resu
     );
     let result: contracts::native_walk_forward::NativeStrategyWalkForwardResultV1 =
         serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        result
-            .notes
-            .iter()
-            .any(|note| note.contains("HYPOTHETICAL_STATIC_RULES"))
-    );
+    assert!(result
+        .notes
+        .iter()
+        .any(|note| note.contains("HYPOTHETICAL_STATIC_RULES")));
     for fold in result.folds {
         assert_eq!(fold.status, "COMPLETED");
         for result in fold
@@ -374,12 +369,10 @@ fn actual_walk_forward_preserves_static_scenario_in_every_training_and_test_resu
                 result.request.instrument_definition,
                 Some(NativeInstrumentDefinitionV1::StaticScenario { .. })
             ));
-            assert!(
-                !result.canonical_result["fills"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty()
-            );
+            assert!(!result.canonical_result["fills"]
+                .as_array()
+                .unwrap()
+                .is_empty());
         }
     }
 }
@@ -431,13 +424,11 @@ fn cli_equity_objective_never_substitutes_canonical_position_returns() {
         assert!(fold.test_result.is_none());
         for trial in fold.trials {
             assert!(trial.metric_value.is_none());
-            assert!(
-                trial
-                    .error
-                    .as_deref()
-                    .unwrap()
-                    .contains("EQUITY_RETURNS_UNAVAILABLE")
-            );
+            assert!(trial
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("EQUITY_RETURNS_UNAVAILABLE"));
             let actual = trial.result.unwrap();
             assert_eq!(actual.equity_performance.status, "UNAVAILABLE");
             assert_eq!(

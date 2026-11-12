@@ -1,8 +1,11 @@
 use super::*;
-use contracts::{science::NativeFeeRateV1, Id};
 use crate::test_execution_models as models;
+use contracts::{science::NativeFeeRateV1, Id};
 
-type ValuationFailureCase = (fn(&mut NativeSpotValuationFrameV1), ReportValuationFailureV1);
+type ValuationFailureCase = (
+    fn(&mut NativeSpotValuationFrameV1),
+    ReportValuationFailureV1,
+);
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()

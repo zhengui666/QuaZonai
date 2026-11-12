@@ -224,7 +224,9 @@ fn public_failure(error: &anyhow::Error) -> String {
     format!("{}\n{detail}", public_error_code(error))
 }
 
-fn failure_exit_code(_error: &anyhow::Error) -> i32 { 1 }
+fn failure_exit_code(_error: &anyhow::Error) -> i32 {
+    1
+}
 
 fn main() {
     let args = Arguments::parse();

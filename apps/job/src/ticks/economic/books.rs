@@ -1,6 +1,9 @@
 //! Validate complete original L2 snapshots before native catalog publication.
 use anyhow::{ensure, Context, Result};
-use nautilus_model::{data::OrderBookDeltas, enums::{BookAction, OrderSide, RecordFlag}};
+use nautilus_model::{
+    data::OrderBookDeltas,
+    enums::{BookAction, OrderSide, RecordFlag},
+};
 use rust_decimal::Decimal;
 
 #[derive(Clone)]

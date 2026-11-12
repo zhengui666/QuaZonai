@@ -383,8 +383,10 @@ fn observed_cash_fixed_buy_preserves_starting_balances_and_pays_native_base_fee(
     source.target_points[0].targets[0].weight = money("0.5");
     source.target_points[0].cash_weight = money("0.5");
     let request = NativeObservedSpotComparisonRequestV1 {
-        schema_version: SchemaV1, dataset_revision_id: dataset,
-        initial_state: projected_initial_state(&cash), simulation: source,
+        schema_version: SchemaV1,
+        dataset_revision_id: dataset,
+        initial_state: projected_initial_state(&cash),
+        simulation: source,
     };
     let comparison = job::observed_spot::compare(root.path(), &request).unwrap();
     let hold = completed(&comparison.hold);
@@ -392,8 +394,15 @@ fn observed_cash_fixed_buy_preserves_starting_balances_and_pays_native_base_fee(
     assert_eq!(hold.orders.get(), 0);
     assert!(bought.orders.get() > 0);
     let account = &bought.canonical_result["accounts"][0]["Cash"]["base"];
-    assert_eq!(account["balances_starting"], hold.canonical_result["accounts"][0]["Cash"]["base"]["balances_starting"]);
+    assert_eq!(
+        account["balances_starting"],
+        hold.canonical_result["accounts"][0]["Cash"]["base"]["balances_starting"]
+    );
     assert!(!account["commissions"].as_object().unwrap().is_empty());
     assert!(account["commissions"].to_string().contains("BTC"));
-    assert!(bought.canonical_result["orders"].as_array().unwrap().iter().any(|order| order.to_string().contains("BUY")));
+    assert!(bought.canonical_result["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|order| order.to_string().contains("BUY")));
 }

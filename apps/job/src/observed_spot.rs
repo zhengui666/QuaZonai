@@ -245,8 +245,7 @@ fn replay(
     dataset: Id,
     rows: Vec<ClosedBarSourceRow>,
 ) -> Result<NativeSimulationResultV1> {
-    let result =
-        crate::simulation::run_observed_spot(catalog, request, dataset, rows, initial)?;
+    let result = crate::simulation::run_observed_spot(catalog, request, dataset, rows, initial)?;
     domain::execution::check_observed_spot_simulation(request, &result, initial)?;
     Ok(result)
 }

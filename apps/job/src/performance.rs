@@ -100,9 +100,16 @@ mod tests {
     #[test]
     fn native_drawdown_preserves_account_return_semantics() {
         let observed = |values: &[f64]| -> nautilus_analysis::Returns {
-            values.iter().enumerate().map(|(index, value)|
-                (nautilus_core::UnixNanos::from(1_700_000_000_000_000_000 + index as u64), *value)
-            ).collect()
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    (
+                        nautilus_core::UnixNanos::from(1_700_000_000_000_000_000 + index as u64),
+                        *value,
+                    )
+                })
+                .collect()
         };
         let baseline = super::native_max_drawdown(&observed(&[-0.2, 0.25])).unwrap();
         let candidate = super::native_max_drawdown(&observed(&[-0.1, 1.0 / 9.0])).unwrap();
@@ -110,7 +117,10 @@ mod tests {
         assert!((candidate - baseline - 0.1).abs() < 1e-14);
         assert_eq!(super::native_max_drawdown(&observed(&[-1.0])), Some(-1.0));
         assert_eq!(super::native_max_drawdown(&observed(&[])), None);
-        assert_eq!(super::native_max_drawdown(&observed(&[f64::MAX, f64::MAX])), None);
+        assert_eq!(
+            super::native_max_drawdown(&observed(&[f64::MAX, f64::MAX])),
+            None
+        );
     }
 
     use super::*;

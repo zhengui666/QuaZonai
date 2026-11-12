@@ -2,7 +2,6 @@
 use anyhow::{ensure, Result};
 use ndarray::Array2;
 
-
 /// Apply saved native OLS coefficients; linregress 0.5.4 has no model decoder.
 /// No labels or fitting inputs are accepted by this fixed ndarray operation.
 pub fn predict_frozen_calibration(

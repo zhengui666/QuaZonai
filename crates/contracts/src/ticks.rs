@@ -1,7 +1,5 @@
 //! Explicit exploratory native TradeTick factor inputs. BAR contracts are unchanged.
-use crate::{
-    DbCounter, SchemaV1,
-};
+use crate::{DbCounter, SchemaV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::{PartialSchema, ToSchema};

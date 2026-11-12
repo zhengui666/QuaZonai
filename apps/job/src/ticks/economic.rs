@@ -8,7 +8,10 @@ use std::{fs::File, io::BufReader, path::Path};
 pub(super) mod books;
 pub mod closes;
 mod source_books;
-pub use source_books::{export_catalog as export_published_books, export_catalog_selected as export_published_books_selected};
+pub use source_books::{
+    export_catalog as export_published_books,
+    export_catalog_selected as export_published_books_selected,
+};
 
 #[derive(Deserialize)]
 struct FundingManifest {
@@ -230,7 +233,6 @@ pub(crate) fn funding_sources(
     }
     Ok(files)
 }
-
 
 #[cfg(test)]
 mod tests;

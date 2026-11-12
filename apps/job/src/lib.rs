@@ -23,7 +23,6 @@ pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
-pub mod native_walk_forward;
 pub mod catalog_prefix;
 mod fee_models;
 pub mod forward;
@@ -33,6 +32,7 @@ pub mod managed;
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
+pub mod native_walk_forward;
 pub mod observed_spot;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;

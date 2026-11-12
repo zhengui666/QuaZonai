@@ -1,7 +1,7 @@
 //! Read-only discovery through the pinned official catalog API.
 use super::open_catalog;
-use anyhow::{Result, ensure};
-use contracts::{DbCounter, SchemaV1, catalog_coverage::*};
+use anyhow::{ensure, Result};
+use contracts::{catalog_coverage::*, DbCounter, SchemaV1};
 use nautilus_model::{
     data::{BarType, NautilusDataType},
     instruments::Instrument,

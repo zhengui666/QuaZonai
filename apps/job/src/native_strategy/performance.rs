@@ -85,7 +85,7 @@ fn analyze(ids: &[AccountId], snapshots: &[PortfolioSnapshot]) -> NativeEquityPe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nautilus_core::{UUID4, UnixNanos};
+    use nautilus_core::{UnixNanos, UUID4};
     use nautilus_model::{
         enums::AccountType,
         identifiers::InstrumentId,

@@ -1,22 +1,22 @@
 //! Native Cache persistence in the existing worker account directory. Values are
 //! official Nautilus objects; event application and recovery remain in Nautilus.
 use ahash::AHashMap;
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
 use nautilus_common::{
     cache::{
-        Cache, CacheConfig,
         database::{
-            CacheDatabaseAdapter, CacheDatabaseFactory, CacheMap, register_loaded_currencies,
+            register_loaded_currencies, CacheDatabaseAdapter, CacheDatabaseFactory, CacheMap,
         },
+        Cache, CacheConfig,
     },
     signal::Signal,
 };
-use nautilus_core::{UUID4, UnixNanos};
+use nautilus_core::{UnixNanos, UUID4};
 use nautilus_model::{
     accounts::AccountAny,
     data::{Bar, CustomData, DataType, FundingRateUpdate, InstrumentClose, QuoteTick, TradeTick},
-    events::{OrderEventAny, OrderSnapshot, position::snapshot::PositionSnapshot},
+    events::{position::snapshot::PositionSnapshot, OrderEventAny, OrderSnapshot},
     identifiers::{
         AccountId, ActorId, ClientId, ClientOrderId, InstrumentId, PositionId, StrategyId,
         TraderId, VenueOrderId,
@@ -27,7 +27,7 @@ use nautilus_model::{
     position::Position,
     types::{Currency, Money},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     cell::RefCell,
@@ -36,8 +36,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     },
 };
 use ustr::Ustr;
@@ -1013,11 +1013,9 @@ mod pin_guard_tests {
         let error = factory
             .restored_balances(&AccountId::from("HYPERLIQUID-001"))
             .unwrap_err();
-        ensure!(
-            error
-                .to_string()
-                .contains("account_native_cache_version_unsupported")
-        );
+        ensure!(error
+            .to_string()
+            .contains("account_native_cache_version_unsupported"));
         ensure!(fs::read(root.join("metadata.json"))? == before);
         Ok(())
     }

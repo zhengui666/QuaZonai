@@ -1,8 +1,5 @@
 //! Registered data partitions retained by catalog preparation; no IC/result contract.
-use crate::{
-    science::NativeForecastRequestV1,
-    DbCounter, SchemaV1,
-};
+use crate::{science::NativeForecastRequestV1, DbCounter, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

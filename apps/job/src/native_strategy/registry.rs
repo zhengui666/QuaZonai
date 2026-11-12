@@ -76,8 +76,18 @@ pub fn build_strategy(
             }
             CompiledNativeStrategy::GridMarketMaker(Box::new(GridMarketMaker::new(config)))
         }
-        NativeCompiledStrategyV1::HurstVpinDirectional { base, bar_type, trade_size, hurst_window, hurst_lags,
-            hurst_enter, hurst_exit, vpin_window, vpin_threshold, max_holding_secs } => {
+        NativeCompiledStrategyV1::HurstVpinDirectional {
+            base,
+            bar_type,
+            trade_size,
+            hurst_window,
+            hurst_lags,
+            hurst_enter,
+            hurst_exit,
+            vpin_window,
+            vpin_threshold,
+            max_holding_secs,
+        } => {
             let mut config = HurstVpinDirectionalConfig::builder()
                 .instrument_id(id)
                 .bar_type(bar_type.parse().map_err(anyhow::Error::msg)?)
@@ -90,8 +100,12 @@ pub fn build_strategy(
                 .vpin_threshold(*vpin_threshold)
                 .max_holding_secs(*max_holding_secs)
                 .build();
-            if let Some(base) = base { config.base = serde_json::from_value(base.clone())?; }
-            CompiledNativeStrategy::HurstVpinDirectional(Box::new(HurstVpinDirectional::new_checked(config)?))
+            if let Some(base) = base {
+                config.base = serde_json::from_value(base.clone())?;
+            }
+            CompiledNativeStrategy::HurstVpinDirectional(Box::new(
+                HurstVpinDirectional::new_checked(config)?,
+            ))
         }
         NativeCompiledStrategyV1::OrderBookImbalance {
             base,

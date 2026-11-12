@@ -3,6 +3,7 @@ use super::super::{
     equity_curve::portfolio_equity_curve, experiment_summary::native_simulation_summary,
 };
 use super::*;
+use crate::test_execution_models as models;
 use contracts::{
     equity_curve::EquityCurveQuery,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
@@ -11,7 +12,6 @@ use contracts::{
     DbCounter, Id, SchemaV1,
 };
 use serde_json::json;
-use crate::test_execution_models as models;
 const DAY: u64 = 86_400_000_000_000;
 const INSTRUMENT: &str = "BTC-USDC.HYPERLIQUID";
 const BAR: &str = "BTC-USDC.HYPERLIQUID-1-MINUTE-LAST-EXTERNAL";
@@ -179,7 +179,12 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         has_expiration: false,
         multiplier: amount("1"),
     };
-    let context = SpotCashContext::new(&settings, session.clone(), std::slice::from_ref(&instrument)).unwrap();
+    let context = SpotCashContext::new(
+        &settings,
+        session.clone(),
+        std::slice::from_ref(&instrument),
+    )
+    .unwrap();
     let mut observations = vec![snapshot(
         &session,
         &context,

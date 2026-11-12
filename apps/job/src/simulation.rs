@@ -1,9 +1,9 @@
 //! Apply explicit frozen target instructions in one Nautilus account.
-use crate::catalog::{NativeMarketData, load_catalog};
+use crate::catalog::{load_catalog, NativeMarketData};
 pub use crate::fee_models::FillFeeFailure;
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
+use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_analysis::{
     analyzer::PortfolioAnalyzer,
     statistics::{cagr::CAGR, max_drawdown::MaxDrawdown},
@@ -76,8 +76,7 @@ pub(crate) struct ReplayStatus {
 
 impl ReplayStatus {
     fn replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
-        self.failure.is_none()
-            && data_complete && self.consumed == expected_targets
+        self.failure.is_none() && data_complete && self.consumed == expected_targets
     }
 
     fn record_callback_error(&mut self, error: anyhow::Error) {
@@ -456,7 +455,6 @@ impl TargetReplay {
         // Most BARs only establish readiness. Own the target only once the
         // complete decision can use settled positions and native equity.
         let point = point.clone();
-
 
         let mut reductions = Vec::<OrderAny>::new();
         let mut increases = Vec::<OrderAny>::new();
@@ -1091,14 +1089,12 @@ fn run_with_strategy_and_spot(
                             })
                             .collect::<Result<Vec<_>>>()?
                     } else {
-                        vec![
-                            Money::from_str_exact(&format!(
-                                "{} {}",
-                                settings.starting_capital.as_decimal().to_plain_string(),
-                                settings.base_currency
-                            ))
-                            .map_err(anyhow::Error::msg)?,
-                        ]
+                        vec![Money::from_str_exact(&format!(
+                            "{} {}",
+                            settings.starting_capital.as_decimal().to_plain_string(),
+                            settings.base_currency
+                        ))
+                        .map_err(anyhow::Error::msg)?]
                     })
                     .default_leverage(native_decimal(&settings.leverage)?)
                     // Every fee model can fail at the actual fill, including a
