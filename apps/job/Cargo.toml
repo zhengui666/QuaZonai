@@ -54,7 +54,7 @@ tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "=0.4.45", features = ["serde"] }
-nautilus-backtest = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-backtest = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["streaming"] }
 nautilus-analysis = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
 nautilus-common = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["indicators"] }
 nautilus-core = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
