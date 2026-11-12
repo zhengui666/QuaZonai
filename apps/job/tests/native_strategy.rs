@@ -825,3 +825,36 @@ fn upstream_hurst_replays_native_bars_quotes_and_trades_without_custom_signals()
     invalid["strategy"]["hurst_window"] = json!(0);
     assert!(job::native_strategy::run(dir.path(), serde_json::from_value(invalid).unwrap()).unwrap_err().to_string().contains("hurst_window"));
 }
+
+
+#[test]
+fn l2_frames_cross_catalog_batches_files_and_engine_batches_without_loss() {
+    // 4,101 complete frames span several 4,096-row catalog batches and two engine
+    // frame batches. Three rows/frame makes a catalog batch end inside a frame.
+    let count = 4101u64;
+    let mut books = Vec::new();
+    for index in 0..count {
+        let time = SECOND + index * 1_000_000;
+        books.extend(snapshot(time, time, if index + 1 == count { "10.000000" } else { "1.000000" }, if index + 1 == count { "0.100000" } else { "1.000000" }));
+    }
+    let split = 2000 * 3;
+    let dir = catalog(&books[..split], &[]);
+    let native = job::catalog::open_catalog(dir.path()).unwrap();
+    native.write_to_parquet(&books[split..], None, None, None).unwrap();
+    let result = job::native_strategy::run(dir.path(), request(6 * SECOND)).unwrap();
+    assert_eq!(result.data_rows_by_type["OrderBookDelta"].get(), count * 3);
+    assert_eq!(result.canonical_result["run"]["outcome"], "completed");
+    assert!(!result.canonical_result["fills"].as_array().unwrap().is_empty(), "Only the final frame is imbalanced, so it must reach the real strategy");
+}
+
+#[test]
+fn incomplete_book_tail_after_a_full_engine_batch_still_fails() {
+    let mut books = (0..4097u64).flat_map(|index| {
+        let time = SECOND + index * 1_000_000;
+        snapshot(time, time, "1.000000", "1.000000")
+    }).collect::<Vec<_>>();
+    books.last_mut().unwrap().flags &= !(RecordFlag::F_LAST as u8);
+    let dir = catalog(&books, &[]);
+    let error = job::native_strategy::run(dir.path(), request(6 * SECOND)).unwrap_err();
+    assert!(error.to_string().contains("NATIVE_BOOK_INCOMPLETE_EVENT_BATCH"), "{error:#}");
+}

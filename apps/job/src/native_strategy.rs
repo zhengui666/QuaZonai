@@ -223,6 +223,9 @@ pub fn run(
             )?;
             let mut rows = 0u64;
             let mut pending = Vec::<OrderBookDelta>::new();
+            // Each engine insertion creates an upstream replay stream and rebuilds its heap.
+            // Batch complete frames rather than creating one stream per book event.
+            let mut frames = Vec::<OrderBookDeltas>::new();
             while let Some(batch) = session.next_batch()? {
                 rows += batch.len() as u64;
                 if let DataBatch::BookDelta(values) = batch {
@@ -231,12 +234,15 @@ pub fn run(
                         if delta.flags & RecordFlag::F_LAST as u8 != 0 {
                             let grouped =
                                 OrderBookDeltas::new_checked(id, std::mem::take(&mut pending))?;
-                            engine.add_data_batch(
-                                DataBatch::BookDeltas(vec![grouped].into()),
-                                None,
-                                true,
-                                true,
-                            )?;
+                            frames.push(grouped);
+                            if frames.len() == 4096 {
+                                engine.add_data_batch(
+                                    DataBatch::BookDeltas(std::mem::take(&mut frames).into()),
+                                    None,
+                                    true,
+                                    true,
+                                )?;
+                            }
                         }
                     }
                 } else {
@@ -244,6 +250,9 @@ pub fn run(
                 }
             }
             ensure!(pending.is_empty(), "NATIVE_BOOK_INCOMPLETE_EVENT_BATCH");
+            if !frames.is_empty() {
+                engine.add_data_batch(DataBatch::BookDeltas(frames.into()), None, true, true)?;
+            }
             counts.insert(
                 kind.to_string(),
                 DbCounter::new(counts.get(&kind.to_string()).map_or(0, |count| count.get()).checked_add(rows).ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_ROW_COUNT_OVERFLOW"))?).map_err(anyhow::Error::msg)?,
