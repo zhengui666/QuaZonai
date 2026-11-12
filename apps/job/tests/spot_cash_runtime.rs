@@ -1,6 +1,5 @@
 //! Controlled native CASH/fee/replay closure, never real market/account evidence.
-#[path = "../../../tests/support/execution_models.rs"]
-mod models;
+use spot_fixture::models;
 use contracts::{
     portfolio::NativeModelRefV1, science::*, spot_cash::*, spot_fees::*, DbCounter, Id, SchemaV1,
 };

@@ -1,7 +1,7 @@
 //! Shared controlled native spot source; never production evidence.
 #![allow(dead_code)]
 #[path = "../../../../tests/support/execution_models.rs"]
-mod models;
+pub mod models;
 use contracts::{
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
