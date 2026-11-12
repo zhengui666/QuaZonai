@@ -1,8 +1,10 @@
+import { PmTargetTask } from '../src/pm-target.ts';
+import { assertAccountTargetControl } from '../src/account-target-control.ts';
 import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
 import type { ObservationFact, PortfolioFact } from '../src/facts.ts';
 import { Application, json, nowNs, nsTime, object, observation } from '../src/facts.ts';
@@ -19,25 +21,17 @@ async function fixture(keepMonitor = false) {
   const state = await setup(); const remote = Fastify(); const posts: JsonObject[] = [];
   const source = accountSourceFixture();
   try {
-    let receiverBasis: JsonObject | null = null;
     let remoteAccount = structuredClone(source.snapshot);
-    const accepted: JsonObject[] = [], gets: string[] = [], receipts = new Map<string, JsonObject>();
+    const gets: string[] = [], receipts = new Map<string, JsonObject>();
     for (const prefix of ['', '/alias']) {
       const identity = { clientId: prefix ? 'alias-client' : source.connection.clientId, accountId: prefix ? 'alias-account' : source.connection.accountId, mode: 'paper', currency: 'USDC' };
       remote.get(`${prefix}/capabilities`, () => ({ ...identity, capitalExit: { version: 2, supported: false, readable: true },
         automaticTargets: { supported: true, revisionBound: true, snapshotBound: true } }));
       remote.get(`${prefix}/capital-exits`, () => ({ ...identity, accountSourceId: remoteAccount.accountSourceId, observationId: remoteAccount.observationId,
         controlRevision: remoteAccount.controlRevision, reserved: '0', blocked: false, exits: [] }));
-      remote.post(`${prefix}/targets`, request => {
-        const body = json(request.body); posts.push(body); const allocation = object(body.allocation);
-        // An actual atomic receiver-side contract: it uses its own current
-        // physical state, not an echoed caller assertion of readiness.
-        const matches = receiverBasis !== null && ['accountSourceId', 'observationId', 'snapshotSequence', 'nativeClockNs', 'controlRevision', 'reserved']
-          .every(key => allocation[key] === receiverBasis![key]);
-        if (matches) accepted.push(body);
-        const receipt = { ...body, status: matches ? 'ACKNOWLEDGED' : 'REJECTED', externalId: `receiver:${body.id}`,
-          reason: matches ? 'original_snapshot_group_matched_atomically' : 'snapshot_group_changed' };
-        receipts.set(String(body.id), receipt); return receipt;
+      remote.post(`${prefix}/targets`, (request, reply) => {
+        posts.push(json(request.body));
+        return reply.code(410).send({ error: 'retired_target_submission_must_not_be_called' });
       });
       remote.get<{ Params: { id: string } }>(`${prefix}/targets/:id`, (request, reply) => { gets.push(request.params.id); return request.params.id === 'controller:expired-prior'
         ? { id: request.params.id, clientId: prefix ? 'alias-client' : source.connection.clientId, accountId: prefix ? 'alias-account' : source.connection.accountId,
@@ -88,9 +82,9 @@ async function fixture(keepMonitor = false) {
         await state.service.research.harness.waitForTask(record.monitorTaskId as TaskId, context);
       }
     };
-    return { state, connections, posts, accepted, gets, start, stopMonitors,
+    return { state, connections, posts, gets, start, stopMonitors,
+      retainReceipt(receipt: JsonObject) { receipts.set(String(receipt.id), structuredClone(receipt)); },
       receiptStatus(id: string, status: 'REVOKED') { const original = receipts.get(id); assert.ok(original); receipts.set(id, { ...original, status }); },
-      receiverCurrentBasis(value: JsonObject) { receiverBasis = structuredClone(value); },
       accountSnapshot(value: JsonObject) { remoteAccount = structuredClone(value); },
       async cleanup() { await state.cleanup(); await remote.close(); } };
   } catch (error) { await state.cleanup(); await remote.close(); throw error; }
@@ -200,13 +194,12 @@ test('legacy target expiry needs a later native flat account, whose original han
     held.openOrders = { schema_version: 1, account_id: heldNative.account_id!, asof_ns: heldAt, available_ns: heldAt, count: 0 };
     f.accountSnapshot(held); assert.equal((await refresh()).statusCode, 200);
     await f.state.restart();
-    const decisionId = 'TEST_ONLY_LEGACY_HANDOVER_CONTINUED';
-    f.receiverCurrentBasis(await controlledTarget(f, id, decisionId));
-    const offered = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
-      payload: { requestId: 'controller:original-handover-remains-closed', expectedRevision: '0', decisionId } });
-    assert.equal(offered.statusCode, 202, offered.body);
-    await until(async () => f.accepted.length === 1, 'The original handover proof must survive restart and permit the same PM controller to manage its later inventory.');
-    assert.equal(f.posts.length, 1);
+    const checkOwnership = () => f.state.service.research.harness.commit(async tx => {
+      assertAccountTargetControl(await tx.doc(Application), pmState(await tx.doc(PmDocument)), f.connections[1]!,
+        { kind: 'PM', mandateId: id, accountBindingId: f.connections[1]!.id });
+    }, context);
+    await checkOwnership();
+    assert.equal(f.posts.length, 0, 'Checking an original handover proof never sends a new target.');
     const laterExpiry = (BigInt(nowNs()) - 1_000_000n).toString();
     assert.ok(BigInt(laterExpiry) > BigInt(closedAt));
     await f.state.service.research.harness.commit(async tx => {
@@ -214,11 +207,8 @@ test('legacy target expiry needs a later native flat account, whose original han
       legacy.view.receipt = { id: 'legacy:another-later-target', status: 'ACKNOWLEDGED', externalId: 'legacy:later-external',
         expiresAt: nsTime(laterExpiry), acknowledgedAt: null }; app.observations[f.connections[0]!.id] = json(legacy);
     }, context);
-    const laterDecision = 'TEST_ONLY_LATER_LEGACY_AUTHORITY'; await controlledTarget(f, id, laterDecision);
-    const blocked = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
-      payload: { requestId: 'controller:no-blanket-handover', expectedRevision: '0', decisionId: laterDecision } });
-    assert.equal(blocked.statusCode, 409, blocked.body);
-    assert.equal(f.posts.length, 1, 'The initial flat proof cannot close a different target expiring after that proof.');
+    await assert.rejects(checkOwnership(), /previous_account_controller_requires_post_expiry_flat_account/);
+    assert.equal(f.posts.length, 0, 'The initial flat proof cannot close a different target expiring after that proof.');
   } finally { await f.cleanup(); }
 });
 
@@ -239,14 +229,15 @@ test('an admitted PM controller also blocks legacy automatic enablement on its a
     }, context);
     const response = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${encodeURIComponent(f.connections[1]!.id)}/automatic`, headers: f.state.headers,
       payload: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } });
-    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.statusCode, 410, response.body);
+    assert.equal(response.json().error, 'native_strategy_only');
     const prior = observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connections[1]!.id]);
     assert.notEqual(prior.view.automaticPolicy?.enabled, true);
     assert.equal(f.posts.length, 0);
   } finally { await f.cleanup(); }
 });
 
-async function controlledTarget(f: Awaited<ReturnType<typeof fixture>>, id: string, decisionId: string, ttlSeconds = 60) {
+async function retainedDecision(f: Awaited<ReturnType<typeof fixture>>, id: string, decisionId: string, ttlSeconds = 60) {
   let originalBasis!: JsonObject;
   await f.state.service.research.harness.commit(async tx => {
     const record = pmState(await tx.doc(PmDocument)).mandates[id]!;
@@ -259,8 +250,8 @@ async function controlledTarget(f: Awaited<ReturnType<typeof fixture>>, id: stri
     originalBasis = { accountSourceId: basis.accountSourceId, observationId: basis.observationId, snapshotSequence: basis.sequence,
       nativeClockNs: basis.observedAtNs, controlRevision: basis.controlRevision, reserved: basis.reserved!.amount };
     const money = (amount: string) => ({ amount, currency: basis.currency });
-    // As in the existing operations protocol suite, explicit controlled
-    // eligibility isolates transport. It is never a native investment claim.
+    // Retained historical decision facts only. No current qualification or
+    // ability to produce/send another target is asserted.
     const decision: PortfolioDecision = { ...fact(decisionId), cycleId: 'TEST_ONLY_CYCLE', mandateRevisionId: id,
       strategyVersionId: record.latestStrategyId, ensembleRevisionId: null, strategyAllocations: [], policyRevisionId: record.policy.id,
       basisRevision: record.basisRevision, incumbentDecisionId: null, accountBasis: basis, researchStartingStateRef: null, action: 'CASH', status: 'CURRENT',
@@ -278,42 +269,55 @@ async function controlledTarget(f: Awaited<ReturnType<typeof fixture>>, id: stri
       objectKey: 'TEST_ONLY_ORIGINAL_TARGET', contentDigest: digest(target), mediaType: 'application/json', sourceRevision: decision.basisRevision,
       eventInterval: null, availableAtNs: nowNs(), clockPrecision: 'NANOSECOND', schemaId: 'TEST_ONLY_CONTROLLED_TARGET', visibility: 'OWNER_ONLY' };
     record.decisions[decisionId] = decision; record.currentDecisionId = decisionId; record.gaps = {};
-    const assessment = { ...fact('TEST_ONLY_PAPER_ASSESSMENT'), strategyVersionId: record.latestStrategyId, stage: 'PAPER' as const, outcome: 'READY' as const,
-      evaluatedAtNs: nowNs(), requirementsVersion: 'qz.pm.paper-shadow-source-target-qualification/1', evidenceRefs: [],
-      reasonCodes: ['TEST_ONLY_TRANSPORT_ELIGIBILITY'], nextPermittedActions: [] };
-    record.assessments[assessment.id] = assessment; record.strategies[record.latestStrategyId]!.pipelineAssessmentId = assessment.id;
+
   }, context);
   return originalBasis;
 }
 
-test('snapshot-bound receiver rejects a newer inventory sequence even when the capital-control revision is unchanged', { timeout: 30_000 }, async () => {
+test('an original snapshot rejection is recovered unchanged without sending a replacement target', { timeout: 30_000 }, async () => {
   const f = await fixture();
   try {
     const response = await f.start('controller:snapshot-bound', 1); assert.equal(response.statusCode, 202, response.body); await f.stopMonitors();
-    const view = response.json<PmMandateView>(), id = view.mandate.id, decisionId = 'TEST_ONLY_CONTROLLER_DELIVERY';
-    const originalBasis = await controlledTarget(f, id, decisionId);
-    // The provider moves to a new inventory revision after QZ's last receipt.
-    // QZ cannot know that change yet; only an actual receiver fence can reject it.
-    f.receiverCurrentBasis({ ...originalBasis, snapshotSequence: (BigInt(String(originalBasis.snapshotSequence)) + 1n).toString() });
-    const offered = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
-      payload: { requestId: 'controller:original-send', expectedRevision: '0', decisionId } });
-    assert.equal(offered.statusCode, 202, offered.body);
-    const deadline = Date.now() + 10_000; let record = pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
-    while (Date.now() < deadline && Object.values(record.commands)[0]?.state !== 'REJECTED') {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      record = pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
-    }
-    assert.equal(f.posts.length, 1); assert.equal(f.accepted.length, 0);
-    const command = Object.values(record.commands)[0]!; assert.equal(command.state, 'REJECTED');
-    assert.equal(object(f.posts[0]!.allocation).snapshotSequence, originalBasis.snapshotSequence);
-    assert.equal(object(f.posts[0]!.allocation).controlRevision, originalBasis.controlRevision);
-    assert.deepEqual(record.artifacts[command.externalReceiptRef!]!.allocation, f.posts[0]!.allocation);
-    assert.equal(record.artifacts[command.externalReceiptRef!]!.reason, 'snapshot_group_changed');
+    const id = response.json<PmMandateView>().mandate.id;
+    const { basis, commandId, taskId } = await retainOriginalCommand(f, id, 'TEST_ONLY_CONTROLLER_DELIVERY', 'REJECTED');
+    await f.state.service.research.harness.waitForTask(taskId, context);
+    const record = pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
+    const command = record.commands[commandId]!; assert.equal(command.state, 'REJECTED');
+    const receipt = record.artifacts[command.externalReceiptRef!]!;
+    assert.equal(object(receipt.allocation).snapshotSequence, basis.snapshotSequence);
+    assert.equal(object(receipt.allocation).controlRevision, basis.controlRevision);
+    assert.equal(receipt.reason, 'snapshot_group_changed');
+    assert.ok(f.gets.includes(command.idempotencyKey));
+    assert.equal(f.posts.length, 0);
     await f.state.restart();
-    assert.equal(Object.values(pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!.commands)[0]!.state, 'REJECTED');
-    assert.equal(f.posts.length, 1, 'Definitive rejection cannot turn into an unsafe replacement after restart.');
+    assert.equal(pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!.commands[commandId]!.state, 'REJECTED');
+    assert.equal(f.posts.length, 0, 'Definitive rejection cannot turn into an unsafe replacement after restart.');
   } finally { await f.cleanup(); }
 });
+
+// Explicit pre-existing command and receiver receipt. This does not claim a new
+// target was accepted by this test. Only the production GET recovery path runs.
+async function retainOriginalCommand(f: Awaited<ReturnType<typeof fixture>>, id: string, decisionId: string,
+  status: 'ACKNOWLEDGED' | 'REJECTED', ttlSeconds = 60) {
+  const basis = await retainedDecision(f, id, decisionId, ttlSeconds);
+  const commandId = `retained:${decisionId}`;
+  const taskId = await f.state.service.research.harness.commit(async tx => {
+    const record = pmState(await tx.doc(PmDocument)).mandates[id]!;
+    const decision = record.decisions[decisionId]!;
+    const payload = record.artifacts.TEST_ONLY_ORIGINAL_TARGET!;
+    record.commands[commandId] = { ...fact(commandId), decisionId, idempotencyKey: commandId,
+      accountBindingId: f.connections[1]!.id, basisRevision: record.basisRevision,
+      controlRevision: String(basis.controlRevision), payloadEvidenceRef: 'TEST_ONLY_ORIGINAL_TARGET',
+      validUntilNs: decision.validUntilNs!, state: 'UNCERTAIN', externalReceiptRef: null };
+    record.artifacts[`target-allocation:${commandId}`] = basis;
+    f.retainReceipt({ id: commandId, clientId: f.connections[1]!.clientId, accountId: f.connections[1]!.accountId,
+      expiresAt: nsTime(decision.validUntilNs!), externalId: `original:${commandId}`, status,
+      target: json(payload), allocation: basis, reason: status === 'REJECTED' ? 'snapshot_group_changed' : 'retained_original_receiver_ack' });
+    return tx.createTask(PmTargetTask, { mandateId: id, commandId, reconcileOnly: true },
+      { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+  }, context);
+  return { basis, commandId, taskId };
+}
 
 
 for (const end of ['TTL', 'REVOKED'] as const) {
@@ -328,17 +332,14 @@ test(`an acknowledged target requires actual ${end} authority termination and a 
     assert.equal(paused.statusCode, 202, paused.body);
     await until(async () => pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!
       .artifacts[`campaign-control:${campaignId}`]?.state === 'APPLIED', 'Original research must pause while its real PM monitor continues.');
-    f.receiverCurrentBasis(await controlledTarget(f, id, decisionId, end === 'TTL' ? 15 : 60));
-    const offered = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
-      payload: { requestId: 'controller:accepted-unexpired', expectedRevision: '0', decisionId } });
-    assert.equal(offered.statusCode, 202, offered.body);
+    await retainOriginalCommand(f, id, decisionId, 'ACKNOWLEDGED', end === 'TTL' ? 15 : 60);
     const read = async () => pmState(await f.state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
     let record = await read(); const deadline = Date.now() + 10_000;
     while (Date.now() < deadline && Object.values(record.commands)[0]?.state !== 'ACKNOWLEDGED') {
       await new Promise(resolve => setTimeout(resolve, 20)); record = await read();
     }
     const command = Object.values(record.commands)[0]!;
-    assert.equal(command.state, 'ACKNOWLEDGED'); assert.equal(f.accepted.length, 1);
+    assert.equal(command.state, 'ACKNOWLEDGED'); assert.ok(f.gets.includes(command.idempotencyKey));
     assert.ok(BigInt(command.validUntilNs) > BigInt(nowNs()));
     const retired = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/retire`, headers: f.state.headers,
       payload: { requestId: 'controller:retire-accepted', expectedRevision: record.mandate.revision } });
@@ -369,7 +370,7 @@ test(`an acknowledged target requires actual ${end} authority termination and a 
     assert.equal((await f.start('controller:ack-is-not-handover')).statusCode, 409);
     await f.state.restart();
     assert.equal((await f.start('controller:ack-is-not-handover-after-restart')).statusCode, 409);
-    assert.equal(f.posts.length, 1, 'Retirement must not submit a substitute liquidation or resend the acknowledged target.');
+    assert.equal(f.posts.length, 0, 'Retirement must not submit a substitute liquidation or resend the acknowledged target.');
     if (end === 'TTL') {
       const remainingMs = Number((BigInt(command.validUntilNs) - BigInt(nowNs())) / 1_000_000n);
       if (remainingMs > 0) await new Promise(resolve => setTimeout(resolve, remainingMs + 20));
@@ -405,7 +406,7 @@ test(`an acknowledged target requires actual ${end} authority termination and a 
     assert.equal(object(object(source.json().payload).snapshot).sequence, closedSequence);
     const successor = await f.start('controller:authoritative-flat-handover');
     assert.equal(successor.statusCode, 202, successor.body); await f.stopMonitors();
-    assert.equal(f.posts.length, 1, 'A reconciled handover does not resend or liquidate the historical target.');
+    assert.equal(f.posts.length, 0, 'A reconciled handover does not resend or liquidate the historical target.');
   } finally { await f.cleanup(); }
 });
 }

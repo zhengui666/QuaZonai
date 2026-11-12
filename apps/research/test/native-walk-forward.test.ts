@@ -11,7 +11,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 import { NativeWalkForward } from '../plugins/native-walk-forward.ts';
-import { ResearchAssessment } from '../plugins/research-assessment.ts';
+import { ResearchAssessment, nativeAssessmentMetric } from '../plugins/research-assessment.ts';
 import { nativeWalkForwardResult, walkForwardScope } from '../src/native-walk-forward-result.ts';
 import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
@@ -42,7 +42,10 @@ test('walk-forward evidence binds original strategies, chronology, availability 
   }
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method'].includes(behavior);
+  const neighbourStrategies = [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }];
+  const costs = [{ maker_fee: '0', taker_fee: behavior === 'same-cost' ? '0.0010' : '0.002' }];
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-walk-forward-'));
   const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let complete = behavior !== 'recover' && behavior !== 'stop';
   const strategies = behavior === 'reviewed' || behavior === 'changed' ? [source.strategy, { ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }] : [source.strategy];
@@ -51,10 +54,11 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
     response.setHeader('content-type', 'application/json');
     if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
     if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
-    const original = posts.at(-1)!; assert.ok(['native-walk-forward', 'native-strategy-backtest'].includes(original.command));
+    const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!; assert.ok(['native-walk-forward', 'native-strategy-backtest'].includes(original.command));
     if (incoming.method === 'DELETE') { deletes.push(incoming.url!); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
+    if (behavior === 'failed-cost' && original.command === 'native-strategy-backtest' && (original.input as any).venue.taker_fee === '0.002') { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'actual_cost_case_failed' })); return; }
     if (behavior === 'repeat' && posts.length === 1) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'recorded_first_attempt_failure' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject) : { ...wire().folds[0]!.trials[0]!.result, request: source } } : { error: 'pending_original_receipt' }) }));
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject) : { ...wire().folds[0]!.trials[0]!.result, request: original.input } } : { error: 'pending_original_receipt' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -70,13 +74,14 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         receipt = await host.start('walk-forward-tools', { goal: 'Check chronology, not profitability claims', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
         await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       }
-      const review = behavior === 'reviewed' || behavior === 'changed';
+      const review = behavior === 'reviewed' || behavior === 'changed' || withSensitivity;
       faux.setResponses([
-        ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' ? strategies : [source.strategy] }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
+        ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' ? strategies : [source.strategy], ...(withSensitivity ? { validationMethod: { split: request.split, objective: request.objective, neighbourStrategies, costs: behavior === 'changed-method' ? [{ maker_fee: '0', taker_fee: '0.003' }] : costs } } : {}) }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
         ...(behavior === 'repeat' ? [fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective: request.objective }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective: request.objective }), { stopReason: 'toolUse' }),
+        ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
-        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes('PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ stars: 5, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
+        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes('PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
         fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
       ]);
       if (receipt) {
@@ -91,13 +96,28 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const task = await host.harness.getTask(assessment!.reportTaskIds[0]!, context);
       assert.equal(task?.state.outcome?.status, 'completed');
       if (task?.state.outcome?.status !== 'completed') assert.fail('report did not complete');
-      assert.equal((task.state.outcome.result.judgment as any).stars, null);
+      assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' ? 4 : null);
+      assert.equal(task.state.outcome.result.ratingStatus, behavior === 'rated' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
       assert.equal(evidence.trialHistory.scope, 'THIS_CONVERSATION_ONLY'); assert.equal(evidence.trialHistory.crossConversationCoverage, 'NOT_CHECKED');
       assert.equal(evidence.trialHistory.runCount, behavior === 'repeat' ? 2 : 1);
       if (behavior === 'repeat') { assert.deepEqual(evidence.trialHistory.runs.map((run: any) => run.status), ['failed', 'completed']); assert.equal(evidence.trialHistory.runs[0].error, 'recorded_first_attempt_failure'); }
-      if (review) assert.equal(evidence.dataValidation.logicCoverage, behavior === 'reviewed' ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW');
+      if (withSensitivity) {
+        assert.equal(evidence.sensitivity.cases.length, 3);
+        assert.equal(evidence.sensitivity.cases[0].request.strategy.trade_size, '0.001');
+        assert.equal(evidence.sensitivity.cases[1].request.strategy.fast_period, 3);
+        assert.equal(evidence.sensitivity.cases[2].request.venue.taker_fee, costs[0]!.taker_fee);
+        assert.equal(evidence.sensitivity.cases[0].nativeObjectiveValue, 1);
+        assert.equal(evidence.ratingReadiness.notTradingPermission, true);
+        assert.ok(evidence.ratingReadiness.limitations.includes('CPCV_NOT_RUN'));
+        assert.equal(evidence.ratingReadiness.eligible, behavior === 'rated' || behavior === 'insufficient');
+        if (behavior === 'same-cost') assert.ok(evidence.ratingReadiness.reasons.includes('COST_VARIATION_EVIDENCE_MISSING'));
+        if (behavior === 'changed-method') assert.ok(evidence.ratingReadiness.reasons.includes('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW'));
+        if (behavior === 'failed-cost') { assert.equal(evidence.sensitivity.cases[2].status, 'failed'); assert.equal(evidence.sensitivity.cases[2].error, 'actual_cost_case_failed'); }
+        if (behavior === 'rated') assert.equal((task.state.outcome.result.dataJudgment as any).stars, 2, 'synthesis is not average of logic and data');
+      }
+      if (review) assert.equal(evidence.dataValidation.logicCoverage, behavior === 'reviewed' || withSensitivity ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW');
       if (behavior === 'history') assert.equal((task.state.outcome.result.evidence as any).historicalNativeExecution.status, 'completed', 'newer walk-forward does not hide a real ordinary backtest');
     } else {
       const root = await host.harness.root(context);
@@ -116,6 +136,55 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         const result = await host.harness.waitForTask(id, context); assert.equal(result.state.outcome.status, 'completed');
       }
     }
-    assert.equal(posts.length, behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.at(-1)!.input, planned);
+    assert.equal(posts.length, withSensitivity ? 4 : behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.find(post => post.command === 'native-walk-forward')!.input, planned);
+  } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+ test('assessment decodes only unambiguous finite original native metrics without manufacturing zeros', () => {
+  const objective = { native_key: 'metric' };
+  assert.equal(nativeAssessmentMetric({ returns: { metric: '0000000000000000' } }, objective), 0);
+  assert.equal(nativeAssessmentMetric({ returns: { metric: '3ff0000000000000' } }, objective), 1);
+  for (const statistics of [{}, { returns: { metric: '7ff8000000000000' } }, { returns: { metric: '7ff0000000000000' } }, { returns: { metric: '1.0' } }, { general: { metric: '3ff0000000000000' }, returns: { metric: '3ff0000000000000' } }]) assert.equal(nativeAssessmentMetric(statistics as JsonObject, objective), null);
+  assert.equal(nativeAssessmentMetric({ pnls: { USD: { metric: '3ff0000000000000' }, EUR: { metric: '4000000000000000' } } }, { ...objective, currency: 'EUR' }), 2);
+});
+
+for (const behavior of ['recover', 'cancel'] as const) test(`native sensitivity ${behavior} retains owned official Tasks and original receipts`, { timeout: 20_000 }, async () => {
+  const { NativeSensitivity } = await import('../plugins/native-sensitivity.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-sensitivity-'));
+  const posts: NativeExecutionRequest[] = []; const cancelled: string[] = []; let complete = false;
+  const server = createServer(async (incoming, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
+    if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
+    const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!;
+    assert.equal(original.command, 'native-strategy-backtest');
+    if (incoming.method === 'DELETE') { cancelled.push(original.requestId); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } } : { error: 'original_native_work_unresolved' }) }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies: [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }], costs: [{ maker_fee: '0', taker_fee: '0.002' }] }), { stopReason: 'toolUse' }), fauxAssistantMessage('Actual cases completed; no OOS claim.')]);
+  const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
+  try {
+    const receipt = await host.start(`sensitivity-${behavior}`, { goal: 'Check real task lifecycle', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: { id: 'sensitivity-protocol', url: `http://127.0.0.1:${address.port}` }, native_strategy_backtest_request: source }, policy: {} });
+    let run;
+    for (let tries = 0; ; tries++) {
+      run = (await host.harness.snapshot(NativeSensitivity, receipt.conversationId, context))?.runs[0];
+      if (run && posts.length === 3 && (await Promise.all(run.tasks.map(item => host.harness.getTask(item.taskId, context)))).every(task => task?.state.status === 'sleeping')) break;
+      assert.ok(tries < 500); await delay(10);
+    }
+    const ids = run.tasks.map(item => item.taskId);
+    if (behavior === 'recover') {
+      await host.close(); complete = true; host = await openResearch(options);
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      for (const id of ids) assert.equal((await host.harness.getTask(id, context))?.state.outcome?.status, 'completed', 'original native child resumes, without replacement work');
+    } else {
+      await host.harness.abortTask(run.toolTaskId as typeof ids[number], context);
+      for (const id of ids) assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
+      assert.deepEqual([...new Set(cancelled)].sort(), posts.map(post => post.requestId).sort());
+    }
+    assert.equal(posts.length, 3, 'restart/cancellation never posts replacement native work');
+    assert.deepEqual((await host.harness.snapshot(NativeSensitivity, receipt.conversationId, context))!.runs[0]!.tasks.map(item => item.taskId), ids);
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
