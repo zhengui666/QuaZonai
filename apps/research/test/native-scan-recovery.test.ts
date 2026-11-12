@@ -1,32 +1,37 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
-import { defineExtension } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
-import { openResearch } from '../src/host.ts';
-import { FactorTask } from '../plugins/native-factor-task.ts';
-import { PortfolioEvaluationTask } from '../plugins/native-portfolio-task.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
+import { IndicatorStrategyTask } from '../plugins/indicator-strategy.ts';
 import { CatalogScopeTask } from '../plugins/native-catalog-scope.ts';
 import { readNativeEvidence } from '../plugins/native-evidence.ts';
-import { NativeRemoteUncertainty } from '../src/native-execution.ts';
+import { NativeRemoteUncertainty, executeNativeValue, withNativeRemoteTracking, cancelUnsettledNativeExecutions } from '../src/native-execution.ts';
 import { reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { NativeExecutionRequest, NativeJson } from '../../../packages/contracts/src/nautilus.ts';
 
 // These exercise the real Durable lifecycle and HTTP receipt protocol, not scientific results.
 const context = BACKGROUND_CONTEXT;
 const implementationDigest = `sha256:${'a'.repeat(64)}`;
-const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: {
-  schema_version: 1, selection: { schema_version: 1, event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] },
-  parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1 },
-} };
-const policy = { name: 'Receipt protocol only', kind: 'factor-threshold' as const, instrumentId: 'TEST.SIM', threshold: 0, investedWeight: '1', targetTtlNs: '5',
-  simulationSettings: { base_currency: 'USD', starting_capital: '1000' } };
+const version = JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8')).components.schemas.NativeModelRefV1.oneOf[0].properties.upstream_version.enum[0] as string;
+const request: JsonObject = { schema_version: 1, selection: { schema_version: 1, event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] },
+  settings: { fee_model: { upstream_version: version }, fill_model: { upstream_version: version }, latency_model: { upstream_version: version } },
+  signal: { kind: 'EMA_CROSS', fast_period: 2, slow_period: 3 }, decision_start_ns: '10', long_weight: '1', target_ttl_seconds: 1 };
+function wireResult(original: JsonObject, large = false): JsonObject {
+  const summary = { 'orders.open': '0', 'orders.inflight': '0' };
+  return { request: original, observations: [], performance_scope: 'FULL_SELECTION_INCLUDING_PRE_DECISION_CASH', decision_policy: 'BATCH_LAST_SETTLED_ACCOUNT_ONLY', skipped_unsettled_decisions: '0', merged_same_time_bars: '0',
+    simulation: { schema_version: 1, native_version: version, iterations: '20', events: '0', orders: '0', positions: '0', consumed_target_points: '1', settled_replay_ns: '20', summary,
+      statistics: [], returns_kind: 'PORTFOLIO_DAILY', returns_status: 'INSUFFICIENT_DATA', returns_reason: 'PORTFOLIO_DAILY_RETURNS_UNAVAILABLE', returns: [],
+      canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'stopped', iterations: '20', total_events: '0', total_orders: '0', total_positions: '0' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: {}, summary,
+        ...(large ? { payload: 'x'.repeat(2 * 1024 * 1024) } : {}) } } };
+}
 
 async function waitingForOriginalReceipt(host: Awaited<ReturnType<typeof openResearch>>, id: TaskId) {
   const deadline = Date.now() + 5000;
@@ -40,21 +45,17 @@ async function waitingForOriginalReceipt(host: Awaited<ReturnType<typeof openRes
   }
 }
 
-for (const mode of ['factor', 'strategy', 'scope'] as const) test(`scan ${mode} adopts an original UNKNOWN receipt after restart without repeating earlier calls`, { timeout: 20_000 }, async () => {
+for (const mode of ['indicator', 'batch', 'scope'] as const) test(`scan ${mode} adopts an original UNKNOWN receipt after restart without repeating earlier calls`, { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-receipt-'));
   const posts: NativeExecutionRequest[] = [];
   let completed = false;
-  const uncertainCommand = mode === 'factor' ? 'evaluate-factor' : mode === 'scope' ? 'catalog-factor-scope' : 'simulate';
-  const value = (original: NativeExecutionRequest): NativeJson => {
-    if (original.command === 'catalog-factor-scope') return ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'];
-    if (original.command === 'evaluate-factor') return { request: original.input, partitions: [], acceptedOriginal: true };
-    if (original.command === 'forecast') return { points: [{ instrument_id: 'TEST.SIM', event_ns: '10', available_ns: '11', forecast: 1 }] };
-    if (original.command === 'blend-targets') return { target_points: ((original.input as JsonObject).rows as JsonObject[][]).map(row => row[0]!) };
-    return { native_version: 'receipt-protocol-only', statistics: [], canonical_result: { original: true, payload: 'x'.repeat(2 * 1024 * 1024) } };
-  };
+  const uncertainCommand = mode === 'scope' ? 'catalog-factor-scope' : mode === 'batch' ? 'simulate-indicator-strategy-batch' : 'simulate-indicator-strategy';
+  const value = (original: NativeExecutionRequest): NativeJson => original.command === 'catalog-factor-scope' ? ['TEST.SIM-1-MINUTE-LAST-EXTERNAL']
+    : mode === 'batch' ? { schema_version: 1, native_version: version, reuse: 'NAUTILUS_ENGINE_RESET', results: ((original.input as JsonObject).requests as JsonObject[]).map(row => wireResult(row, true)) }
+    : wireResult(original.input as JsonObject);
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-factor', 'forecast', 'blend-targets', 'simulate', 'catalog-factor-scope'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'catalog-factor-scope'] })); return; }
     let original: NativeExecutionRequest | undefined;
     if (incoming.method === 'POST') {
       let body = ''; for await (const chunk of incoming) body += chunk;
@@ -69,16 +70,15 @@ for (const mode of ['factor', 'strategy', 'scope'] as const) test(`scan ${mode} 
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-receipt-protocol', url: `http://127.0.0.1:${address.port}` };
   const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider);
-  const options = { database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-receipt-protocol', tasks: [FactorTask, PortfolioEvaluationTask, CatalogScopeTask] })] };
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-receipt-protocol', tasks: [CatalogScopeTask] })] };
   let host = await openResearch(options);
   try {
     const root = await host.harness.root(context);
     const data = { catalog: directory, request, nautilusTarget: target };
     const scanContext = { scanId: 'original-scan', ordinal: '0', implementationDigest };
-    const id = await root.commit(tx => mode === 'factor'
-      ? tx.createTask(FactorTask, { model: '(module)', data, binary: target, scanContext }, { ownership: { kind: 'conversation' } })
-      : mode === 'scope' ? tx.createTask(CatalogScopeTask, { catalog: directory, binary: target, scanContext }, { ownership: { kind: 'conversation' } })
-      : tx.createTask(PortfolioEvaluationTask, { members: [{ model: '(module)', weight: '1' }], policy, data, partition: 'VALIDATION', binary: target, scanContext }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(tx => mode === 'scope'
+      ? tx.createTask(CatalogScopeTask, { catalog: directory, binary: target, scanContext }, { ownership: { kind: 'conversation' } })
+      : tx.createTask(IndicatorStrategyTask, { request: mode === 'batch' ? { schema_version: 1, requests: [request] } : request, batch: mode === 'batch', catalog: directory, target, scanContext }, { ownership: { kind: 'conversation' } }), context);
     await waitingForOriginalReceipt(host, id);
     const before = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
     const uncertain = before.items.find(item => (item.input as JsonObject).command === uncertainCommand)!;
@@ -95,16 +95,15 @@ for (const mode of ['factor', 'strategy', 'scope'] as const) test(`scan ${mode} 
     assert.equal(result.state.outcome.status, 'completed');
     if (result.state.outcome.status === 'completed') {
       const output = result.state.outcome.result as JsonObject;
-      if (mode === 'factor') assert.equal(output.acceptedOriginal, true);
+      if (mode === 'indicator') assert.deepEqual(output.request, request);
       else if (mode === 'scope') {
         const evidence = await readNativeEvidence(host.harness, root.id, id, output.native as JsonObject, context);
         assert.deepEqual(evidence.barTypes, ['TEST.SIM-1-MINUTE-LAST-EXTERNAL']);
         assert.equal(output.count, '1'); assert.equal(output.taskId, id); assert.equal(output.conversationId, root.id);
       } else {
-        const evidence = await readNativeEvidence(host.harness, root.id, id, output.native as JsonObject, context);
-        assert.equal(((evidence.simulation as JsonObject).canonical_result as JsonObject).original, true);
-        assert.equal((((evidence.simulation as JsonObject).canonical_result as JsonObject).payload as string).length, 2 * 1024 * 1024);
-        assert.ok(JSON.stringify(output).length < 10_000, 'strategy task keeps original native evidence by reference');
+        const row = (output.results as JsonObject[])[0]!;
+        assert.equal((((row.simulation as JsonObject).canonical_result as JsonObject).payload as string).length, 2 * 1024 * 1024);
+        assert.deepEqual(row.request, request);
       }
     }
     assert.deepEqual(posts, originalPosts, 'only GET observes the original invocation; completed preparation is reused');
@@ -123,7 +122,7 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
   let original: NativeExecutionRequest | undefined; let posts = 0; let lateCompletion = false; const cancelled: string[] = [];
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-factor'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['simulate-indicator-strategy'] })); return; }
     if (incoming.method === 'POST') {
       posts++; let body = ''; for await (const chunk of incoming) body += chunk; original = JSON.parse(body) as NativeExecutionRequest;
     }
@@ -140,10 +139,10 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-cancellation-protocol', url: `http://127.0.0.1:${address.port}` };
   const models = createModels(); models.setProvider(fauxProvider().provider);
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-cancellation-protocol', tasks: [FactorTask] })] });
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [] });
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(FactorTask, { model: '(module)', data: { catalog: directory, request }, binary: target,
+    const id = await root.commit(tx => tx.createTask(IndicatorStrategyTask, { request, catalog: directory, target,
       scanContext: { scanId: 'stopped-scan', ordinal: '0' } }, { ownership: { kind: 'conversation' } }), context);
     await waitingForOriginalReceipt(host, id);
     await host.harness.abortTask(id, context);
@@ -165,12 +164,12 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
   }
 });
 
-test('ordinary factor UNKNOWN behavior stays terminal and scan implementation changes reject before POST', { timeout: 15_000 }, async () => {
+test('ordinary indicator UNKNOWN retains its original receipt and scan implementation changes reject before POST', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-version-'));
   let posts = 0;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-factor'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['simulate-indicator-strategy'] })); return; }
     posts++; let body = ''; for await (const chunk of incoming) body += chunk;
     const original = JSON.parse(body) as NativeExecutionRequest;
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'UNKNOWN', error: 'receipt_unavailable' }));
@@ -179,18 +178,19 @@ test('ordinary factor UNKNOWN behavior stays terminal and scan implementation ch
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-version-protocol', url: `http://127.0.0.1:${address.port}` };
   const models = createModels(); models.setProvider(fauxProvider().provider);
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-version-protocol', tasks: [FactorTask] })] });
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [] });
   try {
     const root = await host.harness.root(context);
-    const input = { model: '(module)', data: { catalog: directory, request }, binary: target };
-    const ordinary = await root.commit(tx => tx.createTask(FactorTask, input, { ownership: { kind: 'conversation' } }), context);
-    assert.equal((await host.harness.waitForTask(ordinary, context)).state.outcome.status, 'failed');
+    const input = { request, catalog: directory, target };
+    const ordinary = await root.commit(tx => tx.createTask(IndicatorStrategyTask, input, { ownership: { kind: 'conversation' } }), context);
+    await waitingForOriginalReceipt(host, ordinary);
     assert.equal(posts, 1);
-    const changed = await root.commit(tx => tx.createTask(FactorTask, { ...input, scanContext: { scanId: 'changed-build', ordinal: '0', implementationDigest: 'unmatched-existing-build-identity' } }, { ownership: { kind: 'conversation' } }), context);
+    const changed = await root.commit(tx => tx.createTask(IndicatorStrategyTask, { ...input, scanContext: { scanId: 'changed-build', ordinal: '0', implementationDigest: 'unmatched-existing-build-identity' } }, { ownership: { kind: 'conversation' } }), context);
     const result = await host.harness.waitForTask(changed, context);
     assert.equal(result.state.outcome.status, 'failed');
     if (result.state.outcome.status === 'failed') assert.match(result.state.outcome.error.message, /nautilus_scan_implementation_changed/);
     assert.equal(posts, 1, 'a scan does not start science on a changed implementation');
+    await host.harness.abortTask(ordinary, context);
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
@@ -202,7 +202,7 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
   let original: NativeExecutionRequest | undefined; let posts = 0; let reads = 0; const cancelled: string[] = [];
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-factor'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['simulate-indicator-strategy'] })); return; }
     if (incoming.method === 'POST') {
       posts++; let body = ''; for await (const chunk of incoming) body += chunk;
       original = JSON.parse(body) as NativeExecutionRequest;
@@ -219,16 +219,16 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-active-cancellation-protocol', url: `http://127.0.0.1:${address.port}` };
   const models = createModels(); models.setProvider(fauxProvider().provider);
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-active-cancellation-protocol', tasks: [FactorTask] })] });
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [] });
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(FactorTask, { model: '(module)', data: { catalog: directory, request }, binary: target,
+    const id = await root.commit(tx => tx.createTask(IndicatorStrategyTask, { request, catalog: directory, target,
       ...(scan ? { scanContext: { scanId: 'active-stopped-scan', ordinal: '0' } } : {}) }, { ownership: { kind: 'conversation' } }), context);
     const deadline = Date.now() + 5000;
     for (;;) {
       const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
       if (reads > 0 && tasks.items[0]?.state.status === 'sleeping') {
-        assert.equal((tasks.items[0].input as JsonObject).receiptRequired, scan ? true : undefined); break;
+        assert.equal((tasks.items[0].input as JsonObject).receiptRequired, true); break;
       }
       assert.ok(Date.now() < deadline, 'original invocation did not reach RUNNING receipt polling');
       await delay(5);
@@ -239,8 +239,8 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
     assert.ok(cancelled.every(path => path === `/v1/executions/${original!.requestId}`));
     assert.equal(posts, 1);
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context);
-    assert.equal(facts!.requests[0]!.status, scan ? 'UNKNOWN' : 'CANCELLED');
-    if (scan) {
+    assert.equal(facts!.requests[0]!.status, 'UNKNOWN');
+    {
       assert.equal(facts!.requests[0]!.error, 'nautilus_cancellation_unknown');
       await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
       assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, 'UNKNOWN', 'a still-running GET is not a cancellation confirmation');
@@ -252,12 +252,12 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
   }
 });
 
-for (const retrying of [false, true]) test(`scan capacity cancellation preserves ${retrying ? 'an in-flight retry' : 'explicit non-admission'}`, { timeout: 15_000 }, async () => {
+for (const retrying of [false, true]) test(`economic replay capacity cancellation preserves ${retrying ? 'an in-flight retry' : 'explicit non-admission'}`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-capacity-stop-'));
   let posts = 0; let deletes = 0;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['evaluate-tick-factor'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['replay-tick-economic'] })); return; }
     if (incoming.method === 'POST') {
       posts++; let body = ''; for await (const chunk of incoming) body += chunk;
       const original = JSON.parse(body) as NativeExecutionRequest;
@@ -274,14 +274,21 @@ for (const retrying of [false, true]) test(`scan capacity cancellation preserves
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-capacity-stop-protocol', url: `http://127.0.0.1:${address.port}` };
   const models = createModels(); models.setProvider(fauxProvider().provider);
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-capacity-stop-protocol', tasks: [FactorTask] })] });
+  const ReplayProbe = defineTask<{}, { phase: 'compute' }, null>({
+    name: 'test.replay-capacity-probe', version: 1, initial: () => ({ phase: 'compute' }),
+    phases: { async compute(task, runtime, ctx) {
+      await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'replay-tick-economic', {}, [], directory, ctx));
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
+    } },
+    async abort(task, runtime, ctx) {
+      await cancelUnsettledNativeExecutions(task.id, runtime, ctx);
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx);
+    },
+  });
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-capacity-stop-protocol', tasks: [ReplayProbe] })] });
   try {
     const root = await host.harness.root(context);
-    const tickRequest = { schema_version: 1, input: { modality: 'TRADE_TICK', instrument_ids: ['TEST.SIM'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', source_revision: 'capacity-protocol', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
-      sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 },
-      parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '10', validation_end_ns: '20' };
-    const id = await root.commit(tx => tx.createTask(FactorTask, { model: '(module)', data: { catalog: directory, nativeInput: { modality: 'TRADE_TICK', request: tickRequest } }, binary: target,
-      scanContext: { scanId: 'capacity-stopped-scan', ordinal: '0' } }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(tx => tx.createTask(ReplayProbe, {}, { ownership: { kind: 'conversation' } }), context);
     const deadline = Date.now() + 8000;
     for (;;) {
       const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);

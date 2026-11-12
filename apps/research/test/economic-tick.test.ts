@@ -148,3 +148,35 @@ test('scenario decision clock preserves legacy requests and agrees with an optio
     assert.throws(() => validateNativeTickEconomicRequest({ ...economicRequest(), scenario: { ...economicRequest().scenario, decision_clock: clock } }), /tick_economic_decision_clock_invalid/);
   }
 });
+
+// Migrated from the retired service product's HTTP test: these exact-decimal
+// wire checks still protect the retained native replay/data protocol.
+test('retained economic wire preserves missing cash and margin balances without Number conversion', () => {
+  const result = { schema_version: 1, request: economicRequest(), model: 'wire-only', methods: {}, coverage: {}, assets: [],
+    days: [{ day_start_ns: '0', equity_usdt: null, net_return: null, unknown_reason: 'missing_mark',
+      missing_balances: [{ ledger: 'CASH', currency: 'BTC', amount: '0.2' }, { ledger: 'MARGIN', currency: 'ETH', amount: '1' }] }], metrics: [],
+    conversion_ns: null, initial_usdc_after_cost: null, funding_usdc: '0', fees_usdc_equivalent: null, fees_by_currency: {},
+    initial_conversion_cost_usdc: '0', nominal_usd_settled_usdc: '0', native_fills: '0', native_rejections: '0',
+    native_perp_pnl_rounding_events: '0', perp_pnl_rounding_bound_usdc: '0', funding_missing_instruments: [], targets: [],
+    target_asof_ns: null, target_cash_weight: null, skipped_cash: '0', skipped_minimum: '0', consumed_fuel: null, limitations: [] };
+  assert.deepEqual(validateNativeTickEconomicResult(result).days[0]!.missing_balances, result.days[0]!.missing_balances);
+  for (const amount of ['999999999999999999999999999.12345678', '0', '-12.34', '+1', '.5', '1.']) {
+    result.days[0]!.missing_balances[0]!.amount = amount;
+    assert.equal(validateNativeTickEconomicResult(result).days[0]!.missing_balances![0]!.amount, amount);
+  }
+  for (const amount of ['', '1e3', '1..2', '1\n']) {
+    result.days[0]!.missing_balances[0]!.amount = amount;
+    assert.throws(() => validateNativeTickEconomicResult(result), /tick_economic_result_days_invalid/);
+  }
+  result.days[0]!.missing_balances[0]!.amount = '1'; result.days[0]!.missing_balances[0]!.ledger = 'OTHER';
+  assert.throws(() => validateNativeTickEconomicResult(result), /tick_economic_result_days_invalid/);
+});
+test('retained economic wire validates explicit per-instrument fees and funding paths', () => {
+  const request = economicRequest();
+  const scenario = { ...request.scenario, taker_fee_bps_by_instrument: { 'BTC-USDT0.HYPERLIQUID': '1.23' } };
+  assert.deepEqual(validateNativeTickEconomicRequest({ ...request, scenario }).scenario.taker_fee_bps_by_instrument, scenario.taker_fee_bps_by_instrument);
+  for (const fee of ['-1', '9998.5', 'NaN', 9]) assert.throws(() => validateNativeTickEconomicRequest({ ...request,
+    scenario: { ...scenario, taker_fee_bps_by_instrument: { 'BTC-USDT0.HYPERLIQUID': fee } } }));
+  assert.equal(validateNativeTickEconomicRequest({ ...request, spot_valuation_source: 'spot-valuation.jsonl' }).spot_valuation_source, 'spot-valuation.jsonl');
+  assert.throws(() => validateNativeTickEconomicRequest({ ...request, spot_valuation_source: '../spot-valuation.jsonl' }), /spot_valuation_source_invalid/);
+});

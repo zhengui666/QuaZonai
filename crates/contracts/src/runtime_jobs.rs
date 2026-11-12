@@ -165,16 +165,6 @@ pub const NATIVE_OUTPUT_CONTRACTS: &[NativeOutputContract] = &[
         media_type: "application/json",
     },
     NativeOutputContract {
-        name: "qz.alpha_validation",
-        kind: RuntimeOutputKind::Report,
-        media_type: "application/json",
-    },
-    NativeOutputContract {
-        name: "qz.alpha_sealed",
-        kind: RuntimeOutputKind::Report,
-        media_type: "application/json",
-    },
-    NativeOutputContract {
         name: "qz.native_portfolio",
         kind: RuntimeOutputKind::Report,
         media_type: "application/json",

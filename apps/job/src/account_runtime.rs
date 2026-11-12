@@ -1,7 +1,7 @@
 //! Account execution adapter hosted by the existing remote worker. Business
 //! intents stay in TypeScript; every financial call below uses the official node.
 use crate::{account_observer::project_snapshot, account_runtime_cache::AccountCacheFactory};
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use contracts::Id;
 use indexmap::IndexMap;
 use nautilus_common::{
@@ -9,25 +9,33 @@ use nautilus_common::{
     timer::TimeEvent,
 };
 use nautilus_core::DurationNanos;
-use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+use nautilus_execution::models::{
+    fee::{FeeModelAny, MakerTakerFeeModel},
+    fill::{DefaultFillModel, FillModelAny},
+    latency::{LatencyModelAny, StaticLatencyModel},
+};
 use nautilus_hyperliquid::{
-    common::{consts::HYPERLIQUID_CLIENT_ID, enums::HyperliquidEnvironment},
-    http::client::HyperliquidHttpClient,
     HyperliquidDataClientConfig, HyperliquidDataClientFactory, HyperliquidExecutionClientConfig,
     HyperliquidExecutionClientFactory,
+    common::{
+        consts::HYPERLIQUID_CLIENT_ID,
+        enums::{HyperliquidEnvironment, HyperliquidProductType},
+    },
+    http::client::HyperliquidHttpClient,
 };
 use nautilus_live::{
-    config::LiveExecutionEngineConfig,
+    config::{LiveExecutionEngineConfig, LiveRiskEngineConfig},
+    execution::submission::SubmissionRecoveryPolicy,
     node::{LiveNode, LiveNodeHandle},
 };
 use nautilus_model::{
     data::QuoteTick,
-    enums::{AccountType, BookType, OrderSide, TimeInForce},
+    enums::{AccountType, BookType, OrderSide, OrderType, TimeInForce},
     events::OrderEventAny,
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, TraderId, Venue},
     instruments::{Instrument, InstrumentAny},
     orders::Order,
-    types::{Currency, Money},
+    types::{Currency, Money, Price},
 };
 use nautilus_portfolio::config::PortfolioConfig;
 use nautilus_sandbox::{SandboxExecutionClientConfig, SandboxExecutionClientFactory};
@@ -37,7 +45,7 @@ use nautilus_trading::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     io::{self, BufRead, Write},
@@ -45,9 +53,9 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
-        Arc,
     },
 };
 use ustr::Ustr;
@@ -62,11 +70,86 @@ pub struct AccountRuntimeConfig {
     pub instruments: Vec<String>,
     pub starting_balance: Option<String>,
     pub paper_fee_rate: Option<String>,
+    #[serde(default)]
+    pub risk: AccountRiskConfig,
+    pub paper_execution: Option<PaperExecutionConfig>,
     pub source_id: String,
     pub trader_id: Option<String>,
     pub data_dir: PathBuf,
     #[serde(default)]
     pub testnet: bool,
+    /// Omitted retains all products, including existing external orders during recovery.
+    pub execution_product_types: Option<Vec<HyperliquidProductType>>,
+}
+/// Only expose native limits, never the native bypass switch.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AccountRiskConfig {
+    pub max_order_submit_rate: Option<String>,
+    pub max_order_modify_rate: Option<String>,
+    pub max_notional_per_order: std::collections::HashMap<String, String>,
+}
+impl AccountRiskConfig {
+    fn native(&self, instruments: &[String]) -> Result<LiveRiskEngineConfig> {
+        ensure!(
+            self.max_notional_per_order
+                .keys()
+                .all(|id| instruments.contains(id)),
+            "account_native_risk_instrument_scope"
+        );
+        let mut config = LiveRiskEngineConfig::default();
+        if let Some(rate) = &self.max_order_submit_rate {
+            config.max_order_submit_rate = rate.clone();
+        }
+        if let Some(rate) = &self.max_order_modify_rate {
+            config.max_order_modify_rate = rate.clone();
+        }
+        config.max_notional_per_order = self.max_notional_per_order.clone();
+        Ok(config)
+    }
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaperExecutionConfig {
+    pub prob_fill_on_limit: f64,
+    pub prob_slippage: f64,
+    pub random_seed: String,
+    // Decimal strings retain nanosecond precision across the JSON boundary.
+    pub base_latency_ns: String,
+    pub insert_latency_ns: String,
+    pub update_latency_ns: String,
+    pub cancel_latency_ns: String,
+    #[serde(default)]
+    pub queue_position: bool,
+}
+impl PaperExecutionConfig {
+    fn models(&self) -> Result<(FillModelAny, LatencyModelAny)> {
+        let base = self.base_latency_ns.parse::<u64>()?;
+        let insert = self.insert_latency_ns.parse::<u64>()?;
+        let update = self.update_latency_ns.parse::<u64>()?;
+        let cancel = self.cancel_latency_ns.parse::<u64>()?;
+        // The upstream constructor adds each delay to base; reject overflow
+        // before entering that infallible constructor.
+        ensure!(
+            [insert, update, cancel]
+                .iter()
+                .all(|delay| base.checked_add(*delay).is_some()),
+            "account_native_latency_overflow"
+        );
+        Ok((
+            FillModelAny::Default(DefaultFillModel::new(
+                self.prob_fill_on_limit,
+                self.prob_slippage,
+                Some(self.random_seed.parse()?),
+            )?),
+            LatencyModelAny::Static(StaticLatencyModel::new(
+                DurationNanos::new(base),
+                DurationNanos::new(insert),
+                DurationNanos::new(update),
+                DurationNanos::new(cancel),
+            )),
+        ))
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 struct Request {
@@ -132,7 +215,19 @@ struct TargetAcceptance {
     submitted: Vec<String>,
     receipt: Option<Value>,
 }
+// New submissions remain unavailable until native recovery can cover every
+// persisted fill/position/contingency-command cut, not merely settled restarts.
+fn native_bracket_admission(mode: &str) -> Result<()> {
+    bail!(if mode == "paper" {
+        "account_native_paper_bracket_recovery_unverified"
+    } else {
+        "account_native_live_brackets_not_supported"
+    })
+}
+
 struct AccountStrategy {
+    #[cfg(test)]
+    diagnostic_brackets: bool,
     core: StrategyCore,
     config: AccountRuntimeConfig,
     ids: Vec<InstrumentId>,
@@ -320,7 +415,11 @@ impl AccountStrategy {
             for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
             json!({"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
                 "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
-                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags())})
+                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
+                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
+                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
+                "contingency_type":o.contingency_type().map(|v|v.to_string()),
+                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
         }).collect();
         let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
             let quote=cache.quote(&p.instrument_id);
@@ -366,6 +465,54 @@ impl AccountStrategy {
     }
     fn process(&mut self, r: &Request) -> Result<Value> {
         match r.operation.as_str() {
+            "FIXED_RISK_SIZE" => {
+                let id = InstrumentId::from_str(r.text("instrument_id")?)?;
+                ensure!(self.ids.contains(&id), "account_native_instrument_scope");
+                let instrument = self
+                    .cache()
+                    .instrument(&id)
+                    .ok_or_else(|| anyhow!("account_native_instrument_unavailable"))?;
+                let risk = r.decimal("risk")?;
+                ensure!(
+                    risk > Decimal::ZERO && risk <= Decimal::ONE,
+                    "account_native_risk_fraction"
+                );
+                let quantity = nautilus_risk::sizing::calculate_fixed_risk_position_size(
+                    &instrument,
+                    Price::from_str(r.text("entry")?).map_err(anyhow::Error::msg)?,
+                    Price::from_str(r.text("stop_loss")?).map_err(anyhow::Error::msg)?,
+                    Money::from_decimal_exact(
+                        Decimal::from_str_exact(r.text("equity")?)?,
+                        Currency::from_str(r.text("currency")?)?,
+                    )?,
+                    risk,
+                    r.decimal("commission_rate")?,
+                    r.decimal("exchange_rate")?,
+                    if r.value("hard_limit").is_null() {
+                        None
+                    } else {
+                        Some(r.decimal("hard_limit")?)
+                    },
+                    r.decimal("unit_batch_size")?,
+                    1,
+                )?;
+                Ok(
+                    json!({"instrument_id":id.to_string(),"quantity":quantity.to_string(),"model":"NAUTILUS_FIXED_RISK","preview_only":true,"input_source":"REQUEST_SCENARIO","account_balance_verified":false}),
+                )
+            }
+            "ORDER_PREVIEW" => {
+                let id = InstrumentId::from_str(r.text("instrument_id")?)?;
+                ensure!(
+                    self.ids.contains(&id),
+                    "account_native_instrument_not_configured"
+                );
+                let request = serde_json::from_value(r.value("order").clone())?;
+                let cache = self.cache();
+                let instrument = cache
+                    .instrument(&id)
+                    .ok_or_else(|| anyhow!("account_native_instrument_unavailable"))?;
+                crate::account_order_preview::preview(&instrument, request, &self.config.mode)
+            }
             "QUANTIZE_MONEY" => {
                 ensure!(r.text("currency")? == "USDC", "account_native_currency");
                 let money = Money::from_decimal(r.decimal("amount")?, Currency::USDC())?;
@@ -454,6 +601,7 @@ impl AccountStrategy {
             },
             "TARGET_STATUS" => self.target_status(r),
             "CANCEL_EXIT" => self.cancel_exit(r),
+            "CANCEL_PROTECTION" => self.cancel_protection(r),
             "SHUTDOWN" => {
                 self.control = None;
                 self.handle.stop();
@@ -678,6 +826,10 @@ impl AccountStrategy {
                 .any(|o| !o.is_closed() && exit_id(o.tags()).is_some()),
             "account_native_previous_exit_order_unsettled"
         );
+        ensure!(
+            self.protection_orders(None).is_empty(),
+            "account_native_cancel_protection_before_exit"
+        );
         let (instrument, quote) = self.quote_and_instrument(id)?;
         let quantity = r.decimal("quantity")?;
         let floor = r.decimal("minimum_price")?;
@@ -845,6 +997,36 @@ impl AccountStrategy {
         }
         Ok(json!({"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
+    fn protection_orders(&self, target: Option<&str>) -> Vec<ClientOrderId> {
+        self.cache()
+            .orders(None, None, None, None, None)
+            .iter()
+            .filter(|o| {
+                !o.is_closed()
+                    && o.tags().is_some_and(|tags| {
+                        tags.iter().any(|tag| {
+                            tag.as_str()
+                                .strip_prefix("QZ-PROTECTION:")
+                                .is_some_and(|id| target.is_none_or(|target| target == id))
+                        })
+                    })
+            })
+            .map(|o| o.client_order_id())
+            .collect()
+    }
+    fn cancel_protection(&mut self, r: &Request) -> Result<Value> {
+        let target = r.text("id")?;
+        ensure!(
+            self.target_acceptances.contains_key(target),
+            "account_native_target_unknown"
+        );
+        let ids = self.protection_orders(Some(target));
+        for id in &ids {
+            self.cancel_order(*id, Some(self.client), None)?;
+        }
+        self.stamp.clear();
+        Ok(json!({"target_id":target,"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
+    }
     fn submit_target(&mut self, r: &Request) -> Result<Value> {
         let target_id = r.text("id")?.to_owned();
         if let Some(old) = self.target_acceptances.get(&target_id) {
@@ -866,6 +1048,10 @@ impl AccountStrategy {
         ensure!(
             expires > self.clock().timestamp_ns().as_u64(),
             "account_native_target_expired"
+        );
+        ensure!(
+            self.protection_orders(None).is_empty(),
+            "account_native_cancel_protection_before_rebalance"
         );
         let capital = r.decimal("capital")?;
         ensure!(capital >= Decimal::ZERO, "account_native_target_capital");
@@ -900,6 +1086,63 @@ impl AccountStrategy {
             parsed.insert(id, weight);
         }
         ensure!(sum <= Decimal::ONE, "account_native_weight_budget");
+        // Explicit per-request opt-in; the default target path remains IOC only.
+        let configured: BTreeMap<String, crate::account_order_preview::NativeBracketProtection> =
+            if r.value("brackets").is_null() {
+                BTreeMap::new()
+            } else {
+                serde_json::from_value(r.value("brackets").clone())?
+            };
+        if !configured.is_empty() {
+            #[cfg(not(test))]
+            let diagnostic = false;
+            #[cfg(test)]
+            let diagnostic = self.diagnostic_brackets;
+            if !diagnostic {
+                native_bracket_admission(&self.config.mode)?;
+            }
+            ensure!(
+                self.config.mode == "paper",
+                "account_native_live_brackets_not_supported"
+            );
+        }
+        let mut brackets = BTreeMap::new();
+        for (instrument_id, protection) in configured {
+            ensure!(
+                protection.enabled,
+                "account_native_bracket_requires_explicit_enable"
+            );
+            let id = InstrumentId::from_str(&instrument_id)?;
+            ensure!(
+                parsed
+                    .get(&id)
+                    .is_some_and(|weight| *weight > Decimal::ZERO),
+                "account_native_bracket_target_missing"
+            );
+            let (instrument, quote) = self.quote_and_instrument(id)?;
+            ensure!(
+                self.cache()
+                    .positions(None, Some(&id), None, Some(&self.account), None)
+                    .iter()
+                    .all(|p| !p.is_open()),
+                "account_native_bracket_requires_new_position"
+            );
+            let stop_raw = Decimal::from_str(&protection.stop_loss)?;
+            let tp_raw = Decimal::from_str(&protection.take_profit)?;
+            let stop = instrument.try_make_price_from_decimal(stop_raw)?;
+            let tp = instrument.try_make_price_from_decimal(tp_raw)?;
+            ensure!(
+                stop.as_decimal() == stop_raw
+                    && tp.as_decimal() == tp_raw
+                    && stop_raw % instrument.price_increment().as_decimal() == Decimal::ZERO
+                    && tp_raw % instrument.price_increment().as_decimal() == Decimal::ZERO
+                    && stop_raw > Decimal::ZERO
+                    && stop < quote.bid_price
+                    && tp > quote.ask_price,
+                "account_native_bracket_prices_invalid"
+            );
+            brackets.insert(id, (stop, tp));
+        }
         self.target_acceptances.insert(
             target_id.clone(),
             TargetAcceptance {
@@ -981,12 +1224,24 @@ impl AccountStrategy {
             };
             let quantity = diff.min(max);
             if quantity < instrument.size_increment().as_decimal() {
+                ensure!(
+                    !brackets.contains_key(id),
+                    "account_native_bracket_quantity_too_small"
+                );
+                ensure!(
+                    !brackets.contains_key(id),
+                    "account_native_bracket_no_entry_order"
+                );
                 continue;
             }
             let mut qty = instrument.try_make_qty_from_decimal(quantity, Some(true))?;
             if qty.as_decimal() <= Decimal::ZERO
                 || instrument.min_quantity().is_some_and(|m| qty < m)
             {
+                ensure!(
+                    !brackets.contains_key(id),
+                    "account_native_bracket_no_entry_order"
+                );
                 continue;
             }
             let raw = if side == OrderSide::Buy {
@@ -1010,10 +1265,18 @@ impl AccountStrategy {
                         )?,
                 );
                 if quantity < instrument.size_increment().as_decimal() {
+                    ensure!(
+                        !brackets.contains_key(id),
+                        "account_native_bracket_no_entry_order"
+                    );
                     continue;
                 }
                 qty = instrument.try_make_qty_from_decimal(quantity, Some(true))?;
                 if qty.as_decimal() <= Decimal::ZERO {
+                    ensure!(
+                        !brackets.contains_key(id),
+                        "account_native_bracket_no_entry_order"
+                    );
                     continue;
                 }
             }
@@ -1021,10 +1284,18 @@ impl AccountStrategy {
                 .min_notional()
                 .is_some_and(|m| qty.as_decimal() * price.as_decimal() < m.as_decimal())
             {
+                ensure!(
+                    !brackets.contains_key(id),
+                    "account_native_bracket_no_entry_order"
+                );
                 continue;
             }
             let client = ClientOrderId::new_checked(&format!("QZT-{}-{index}", r.text("id")?))?;
             if self.cache().order(&client).is_some() {
+                ensure!(
+                    !brackets.contains_key(id),
+                    "account_native_bracket_no_entry_order"
+                );
                 continue;
             }
             let buy_debit = if side == OrderSide::Buy {
@@ -1048,6 +1319,48 @@ impl AccountStrategy {
                 Decimal::ZERO
             };
             self.fence(epoch)?;
+            if let Some((stop, profit)) = brackets.get(id) {
+                ensure!(
+                    side == OrderSide::Buy && current == Decimal::ZERO,
+                    "account_native_bracket_requires_new_position"
+                );
+                let tag = Ustr::from(&format!("QZ-PROTECTION:{target_id}"));
+                let sl_id = ClientOrderId::new_checked(&format!("QZSL-{}-{index}", r.text("id")?))?;
+                let tp_id = ClientOrderId::new_checked(&format!("QZTP-{}-{index}", r.text("id")?))?;
+                let orders = self
+                    .order_factory()
+                    .bracket()
+                    .instrument_id(*id)
+                    .order_side(side)
+                    .quantity(qty)
+                    .entry_order_type(OrderType::Limit)
+                    .entry_price(price)
+                    .time_in_force(TimeInForce::Ioc)
+                    .entry_client_order_id(client)
+                    .entry_tags(vec![tag])
+                    .sl_trigger_price(*stop)
+                    .sl_client_order_id(sl_id)
+                    .sl_tags(vec![tag])
+                    .tp_order_type(OrderType::MarketIfTouched)
+                    .tp_trigger_price(*profit)
+                    .tp_post_only(false)
+                    .tp_client_order_id(tp_id)
+                    .tp_tags(vec![tag])
+                    .call();
+                for order in &orders {
+                    nautilus_hyperliquid::execution::validate_order_for_hyperliquid(order)?;
+                }
+                self.target_acceptances
+                    .get_mut(&target_id)
+                    .unwrap()
+                    .submitted
+                    .extend([client, sl_id, tp_id].iter().map(ToString::to_string));
+                self.persist_acceptances()?;
+                self.submit_order_list(orders, None, Some(self.client), None)?;
+                available -= buy_debit;
+                result.extend([client, sl_id, tp_id].iter().map(ToString::to_string));
+                continue;
+            }
             let order = self.order_factory().limit(
                 *id,
                 side,
@@ -1080,7 +1393,8 @@ impl AccountStrategy {
         }
         self.budget_target_epoch = Some(epoch);
         self.stamp.clear();
-        let receipt = json!({"applied":true,"acknowledged":true,"target_id":r.text("id")?,"submitted_client_order_ids":result,"epoch":epoch.to_string(),"remaining_trading":"BUDGET_AWARE"});
+        let receipt = json!({"applied":true,"acknowledged":true,"target_id":r.text("id")?,"submitted_client_order_ids":result,"epoch":epoch.to_string(),"remaining_trading":"BUDGET_AWARE",
+            "native_protection":if brackets.is_empty(){Value::Null}else{json!({"requested_brackets":brackets.len(),"acknowledgement":"NATIVE_SUBMIT_ONLY","semantics":"UPSTREAM_OTO_OUO_NOT_ATOMIC_OCO","fill_guaranteed":false})}});
         self.target_acceptances.get_mut(&target_id).unwrap().receipt = Some(receipt.clone());
         self.persist_acceptances()?;
         Ok(receipt)
@@ -1326,6 +1640,26 @@ pub async fn run() -> Result<()> {
     }
     result
 }
+fn execution_product_types(config: &AccountRuntimeConfig) -> Result<Vec<HyperliquidProductType>> {
+    let products = config
+        .execution_product_types
+        .clone()
+        .unwrap_or_else(|| HyperliquidExecutionClientConfig::default().product_types);
+    ensure!(
+        !products.is_empty(),
+        "account_native_execution_product_types_empty"
+    );
+    for instrument in &config.instruments {
+        let id = InstrumentId::from_str(instrument)?;
+        let product = HyperliquidProductType::from_symbol(id.symbol.as_str())?;
+        ensure!(
+            products.contains(&product),
+            "account_native_instrument_outside_execution_scope"
+        );
+    }
+    Ok(products)
+}
+
 async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
@@ -1334,6 +1668,10 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     ensure!(
         !config.instruments.is_empty() && config.instruments.len() <= 256,
         "account_native_instrument_count"
+    );
+    ensure!(
+        config.mode == "paper" || config.paper_execution.is_none(),
+        "account_native_paper_execution_requires_paper"
     );
     let _: Id = config
         .source_id
@@ -1353,6 +1691,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         ids.iter().all(|id| id.venue == Venue::from("HYPERLIQUID")),
         "account_native_hyperliquid_scope"
     );
+    let execution_product_types = execution_product_types(&config)?;
     let environment = if config.testnet {
         HyperliquidEnvironment::Testnet
     } else {
@@ -1414,10 +1753,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         save_market_data: false,
         ..Default::default()
     })
-    .with_cache_database_factory(Box::new(cache_factory.clone()))
+    .with_risk_engine_config(config.risk.native(&config.instruments)?)
     .with_reconciliation(true)
     .with_exec_engine_config(LiveExecutionEngineConfig {
         load_cache: true,
+        submission_recovery_policy: SubmissionRecoveryPolicy::RetainUnresolved,
         open_check_interval_secs: Some(10.0),
         position_check_interval_secs: Some(30.0),
         ..Default::default()
@@ -1450,6 +1790,14 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         let balances = cache_factory
             .restored_balances(&account)?
             .unwrap_or(vec![Money::from_decimal(initial, Currency::USDC())?]);
+        let models = config
+            .paper_execution
+            .as_ref()
+            .map(PaperExecutionConfig::models)
+            .transpose()?;
+        let (fill_model, latency_model) = models
+            .map(|(fill, latency)| (Some(fill), Some(latency)))
+            .unwrap_or_default();
         builder = builder.add_simulated_exec_client(
             Some("QZ-PAPER".into()),
             Box::new(SandboxExecutionClientFactory::new()),
@@ -1462,6 +1810,12 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
                 fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
                     fee_rate, fee_rate,
                 ))),
+                fill_model,
+                latency_model,
+                queue_position: config
+                    .paper_execution
+                    .as_ref()
+                    .is_some_and(|scenario| scenario.queue_position),
                 liquidity_consumption: true,
                 ..Default::default()
             }),
@@ -1471,6 +1825,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
             Some("HYPERLIQUID".into()),
             Box::new(HyperliquidExecutionClientFactory::new()),
             Box::new(HyperliquidExecutionClientConfig {
+                product_types: execution_product_types,
                 account_id: account,
                 account_address: config.account_address.clone(),
                 environment,
@@ -1481,6 +1836,9 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         )?;
     }
     let mut node = builder.build()?;
+    cache_factory
+        .install(node.kernel().cache(), trader, node.instance_id())
+        .await?;
     let handle = node.handle();
     let session = node.instance_id().to_string();
     let (sender, inbox) = mpsc::sync_channel::<Request>(64);
@@ -1545,7 +1903,13 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         .saturating_add(60_000_000_000)
     };
     node.add_strategy(AccountStrategy {
+        #[cfg(test)]
+        diagnostic_brackets: false,
         core: StrategyCore::new(StrategyConfig {
+            // Sandbox dispatches execution events asynchronously. The official strategy
+            // manager reconciles OTO quantities after fills reach the shared cache.
+            // Do not double-manage Hyperliquid adapter-staged child orders.
+            manage_contingent_orders: config.mode == "paper",
             strategy_id: Some(strategy_id),
             external_order_instrument_ids: Some(ids.clone()),
             log_events: false,
@@ -1582,11 +1946,103 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_risk_defaults_and_explicit_limits() {
+        let defaults = super::AccountRiskConfig::default().native(&[]).unwrap();
+        assert!(!defaults.bypass);
+        assert_eq!(
+            defaults,
+            nautilus_live::config::LiveRiskEngineConfig::default()
+        );
+        let config: super::AccountRiskConfig = serde_json::from_value(serde_json::json!({
+            "max_order_submit_rate":"10/00:00:01", "max_order_modify_rate":"5/00:00:01",
+            "max_notional_per_order":{"BTC-USDC-SPOT.HYPERLIQUID":"1000.25"}
+        }))
+        .unwrap();
+        assert!(config.native(&[]).is_err());
+        let native = config
+            .native(&["BTC-USDC-SPOT.HYPERLIQUID".into()])
+            .unwrap();
+        assert_eq!(native.max_order_submit_rate, "10/00:00:01");
+        assert_eq!(native.max_order_modify_rate, "5/00:00:01");
+        assert_eq!(
+            native.max_notional_per_order["BTC-USDC-SPOT.HYPERLIQUID"],
+            "1000.25"
+        );
+        assert!(
+            serde_json::from_value::<super::AccountRiskConfig>(serde_json::json!({"bypass":true}))
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn live_rejects_paper_scenario_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"live",
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"], "source_id":"unused", "data_dir":"/tmp/unused",
+            "paper_execution":{"prob_fill_on_limit":1.0,"prob_slippage":0.0,"random_seed":"1",
+                "base_latency_ns":"0","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_paper_execution_requires_paper"
+        );
+    }
+    #[test]
+    fn native_paper_models_validate_probabilities_and_exact_nanoseconds() {
+        let mut scenario = super::PaperExecutionConfig {
+            prob_fill_on_limit: 0.5,
+            prob_slippage: 0.2,
+            random_seed: "18446744073709551615".into(),
+            base_latency_ns: "9007199254740993".into(),
+            insert_latency_ns: "1".into(),
+            update_latency_ns: "2".into(),
+            cancel_latency_ns: "3".into(),
+            queue_position: true,
+        };
+        assert!(scenario.models().is_ok());
+        scenario.prob_slippage = 1.1;
+        assert!(scenario.models().is_err());
+        scenario.prob_slippage = 0.2;
+        scenario.base_latency_ns = u64::MAX.to_string();
+        assert!(scenario.models().is_err());
+        scenario.base_latency_ns = "-1".into();
+        assert!(scenario.models().is_err());
+    }
     use super::*;
+
+    #[test]
+    fn execution_scope_preserves_legacy_product_visibility_and_accepts_explicit_spot() {
+        let mut value = json!({
+            "client_id": "QZ", "account_id": "HYPERLIQUID-001", "mode": "live",
+            "instruments": ["HYPE-USDC-SPOT.HYPERLIQUID"],
+            "source_id": "source", "data_dir": "/tmp/account"
+        });
+        let config: AccountRuntimeConfig = serde_json::from_value(value.clone()).unwrap();
+        let products = execution_product_types(&config).unwrap();
+        assert!(products.contains(&HyperliquidProductType::Spot));
+        assert!(products.contains(&HyperliquidProductType::Perp));
+        assert!(products.contains(&HyperliquidProductType::Outcome));
+        value["execution_product_types"] = json!(["SPOT"]);
+        let config = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            execution_product_types(&config).unwrap(),
+            vec![HyperliquidProductType::Spot]
+        );
+        value["execution_product_types"] = json!([]);
+        assert!(execution_product_types(&serde_json::from_value(value.clone()).unwrap()).is_err());
+        value["execution_product_types"] = json!(["PERP"]);
+        assert!(execution_product_types(&serde_json::from_value(value.clone()).unwrap()).is_err());
+        value["execution_product_types"] = json!(["INVALID"]);
+        assert!(serde_json::from_value::<AccountRuntimeConfig>(value).is_err());
+    }
+
     use nautilus_common::{
         cache::database::CacheDatabaseFactory, live::get_data_event_sender, messages::DataEvent,
     };
-    use nautilus_core::{UnixNanos, UUID4};
+    use nautilus_core::{UUID4, UnixNanos};
     use nautilus_live::node::NodeRunMode;
     use nautilus_model::{
         data::{BookOrder, Data},
@@ -1670,7 +2126,6 @@ mod tests {
                 save_market_data: false,
                 ..Default::default()
             })
-            .with_cache_database_factory(Box::new(factory.clone()))
             .with_reconciliation(true)
             .with_exec_engine_config(LiveExecutionEngineConfig {
                 load_cache: true,
@@ -1698,10 +2153,15 @@ mod tests {
                 }),
             )?
             .build()?;
+        factory
+            .install(node.kernel().cache(), trader, node.instance_id())
+            .await?;
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
         node.add_strategy(AccountStrategy {
+            diagnostic_brackets: true,
             core: StrategyCore::new(StrategyConfig {
+                manage_contingent_orders: true,
                 strategy_id: Some(StrategyId::from("QZ-ACCOUNT-OWNER-001")),
                 external_order_instrument_ids: Some(ids.clone()),
                 log_events: false,
@@ -1716,10 +2176,13 @@ mod tests {
                 instruments: ids.iter().map(ToString::to_string).collect(),
                 starting_balance: Some("1000".into()),
                 paper_fee_rate: Some("0.001".into()),
+                risk: AccountRiskConfig::default(),
+                paper_execution: None,
                 source_id: Id::new().to_string(),
                 trader_id: None,
                 data_dir: directory.into(),
                 testnet: false,
+                execution_product_types: None,
             },
             ids,
             client: ClientId::from("QZ-PAPER"),
@@ -1774,6 +2237,9 @@ mod tests {
         }
     }
     fn publish(cache: &Rc<RefCell<nautilus_common::cache::Cache>>) -> Result<()> {
+        publish_sized(cache, "1000.00")
+    }
+    fn publish_sized(cache: &Rc<RefCell<nautilus_common::cache::Cache>>, size: &str) -> Result<()> {
         let now = UnixNanos::from(u64::try_from(
             chrono::Utc::now().timestamp_nanos_opt().unwrap(),
         )?);
@@ -1783,7 +2249,7 @@ mod tests {
         ] {
             let id = InstrumentId::from(id);
             let price = Price::from(price);
-            let size = Quantity::from("1000.00");
+            let size = Quantity::from_str(size).map_err(anyhow::Error::msg)?;
             let mut book = OrderBook::new(id, BookType::L2_MBP);
             book.add(BookOrder::new(OrderSide::Buy, price, size, 1), 0, 1, now);
             book.add(BookOrder::new(OrderSide::Sell, price, size, 2), 0, 2, now);
@@ -1827,6 +2293,36 @@ mod tests {
                     && quantized["precision"] == Currency::USDC().precision,
                 "official_money_quantization"
             );
+            // Reject both native-scale loss and Decimal parser underflow before sizing.
+            for equity in [
+                "1000.000000000000000001",
+                "1000.000000000000000000000000000001",
+            ] {
+                ensure!(
+                    request(&tx, &replies, "FIXED_RISK_SIZE", json!({
+                        "instrument_id":"BTC-USDC-SPOT.HYPERLIQUID", "entry":"100", "stop_loss":"95",
+                        "equity":equity, "currency":"USDC", "risk":"0.01",
+                        "commission_rate":"0", "exchange_rate":"1", "unit_batch_size":"0"
+                    })).await.is_err(),
+                    "native_fixed_risk_equity_precision_must_not_round"
+                );
+            }
+            let sizing = request(
+                &tx,
+                &replies,
+                "FIXED_RISK_SIZE",
+                json!({
+                    "instrument_id":"BTC-USDC-SPOT.HYPERLIQUID", "entry":"100", "stop_loss":"95",
+                    "equity":"1000", "currency":"USDC", "risk":"0.01", "commission_rate":"0",
+                    "exchange_rate":"1", "unit_batch_size":"0", "hard_limit":"1.5"
+                }),
+            )
+            .await?;
+            ensure!(
+                Decimal::from_str(sizing["quantity"].as_str().unwrap())? == Decimal::new(15, 1),
+                "native_fixed_risk_hard_limit"
+            );
+            ensure!(sizing["preview_only"] == true, "native_fixed_risk_preview");
             request(&tx, &replies, "CONTROL", control("1", "NORMAL", "0")).await?;
             let expiry = (u64::try_from(chrono::Utc::now().timestamp_nanos_opt().unwrap())?
                 + 60_000_000_000)
@@ -2281,5 +2777,420 @@ mod tests {
         run?;
         native.dispose();
         result
+    }
+    #[test]
+    fn production_bracket_admission_is_disabled_for_all_modes() {
+        assert_eq!(
+            native_bracket_admission("paper").unwrap_err().to_string(),
+            "account_native_paper_bracket_recovery_unverified"
+        );
+        assert_eq!(
+            native_bracket_admission("live").unwrap_err().to_string(),
+            "account_native_live_brackets_not_supported"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn official_bracket_cancel_then_rebalance() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(directory.path()).await?;
+        let handle = native.handle();
+        let cache = native.kernel().cache();
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_sized(&cache, "0.50")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            request(&tx, &replies, "CONTROL", control("1", "NORMAL", "0")).await?;
+            let expiry =
+                (chrono::Utc::now().timestamp_nanos_opt().unwrap() + 60_000_000_000).to_string();
+            let target = json!({"epoch":"1","id":"bracket-original","expires_at":expiry,"capital":"1000","signal_capital":"1000",
+                "weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.2"}],
+                "brackets":{"BTC-USDC-SPOT.HYPERLIQUID":{"enabled":true,"stop_loss":"90.00","take_profit":"110.00"}}});
+            let accepted = request(&tx, &replies, "TARGET", target).await?;
+            ensure!(
+                accepted["acknowledged"] == true,
+                "bracket target was not submitted: {accepted}"
+            );
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let parent = ClientOrderId::from("QZT-bracket-original-0");
+            ensure!(
+                cache.borrow().order(&parent).is_some_and(|o| o.status()
+                    == nautilus_model::enums::OrderStatus::Canceled
+                    && o.filled_qty() == Quantity::from("0.50")),
+                "native IOC entry did not partially fill then cancel remainder"
+            );
+            for child in ["QZSL-bracket-original-0", "QZTP-bracket-original-0"] {
+                ensure!(
+                    cache
+                        .borrow()
+                        .order(&ClientOrderId::from(child))
+                        .is_some_and(|order| order.quantity() == Quantity::from("0.50")
+                            && order.is_reduce_only()),
+                    "native OUO child did not resize to partial fill: {child}: {:?}",
+                    cache.borrow().order(&ClientOrderId::from(child))
+                );
+            }
+            let mut rebalance = json!({"epoch":"1","id":"bracket-blocked","expires_at":expiry,"capital":"1000","signal_capital":"1000","weights":[]});
+            let blocked = request(&tx, &replies, "TARGET", rebalance.clone()).await?;
+            ensure!(
+                blocked["reason"] == "account_native_cancel_protection_before_rebalance",
+                "rebalance did not honor native protection: {blocked}"
+            );
+            request(
+                &tx,
+                &replies,
+                "CANCEL_PROTECTION",
+                json!({"id":"bracket-original"}),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let settled = request(
+                &tx,
+                &replies,
+                "CANCEL_PROTECTION",
+                json!({"id":"bracket-original"}),
+            )
+            .await?;
+            ensure!(
+                settled["settled"] == true,
+                "native protection cancellation not settled: {settled}"
+            );
+            rebalance["id"] = json!("bracket-rebalanced");
+            let result = request(&tx, &replies, "TARGET", rebalance).await?;
+            ensure!(
+                result["acknowledged"] == true,
+                "rebalance after cancellation failed: {result}"
+            );
+            request(&tx, &replies, "SHUTDOWN", json!({})).await?;
+            Ok::<_, anyhow::Error>(())
+        };
+        let stop = handle.clone();
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+        run?;
+        native.dispose();
+        result
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn official_bracket_exit_closes_ouo_peer() -> Result<()> {
+        for (trigger, winner, peer) in [("89.00", "QZSL", "QZTP"), ("111.00", "QZTP", "QZSL")] {
+            let directory = tempfile::tempdir()?;
+            let (mut native, tx, replies) = node(directory.path()).await?;
+            let handle = native.handle();
+            let cache = native.kernel().cache();
+            let drive = async {
+                while !handle.is_running() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                publish_sized(&cache, "0.50")?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                request(&tx, &replies, "CONTROL", control("1", "NORMAL", "0")).await?;
+                let expiry = (chrono::Utc::now().timestamp_nanos_opt().unwrap() + 60_000_000_000)
+                    .to_string();
+                let target = json!({"epoch":"1","id":"bracket-original","expires_at":expiry,"capital":"1000","signal_capital":"1000",
+                "weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.2"}],
+                "brackets":{"BTC-USDC-SPOT.HYPERLIQUID":{"enabled":true,"stop_loss":"90.00","take_profit":"110.00"}}});
+                let accepted = request(&tx, &replies, "TARGET", target).await?;
+                ensure!(
+                    accepted["acknowledged"] == true,
+                    "bracket target was not submitted: {accepted}"
+                );
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                let parent = ClientOrderId::from("QZT-bracket-original-0");
+                ensure!(
+                    cache.borrow().order(&parent).is_some_and(|o| o.status()
+                        == nautilus_model::enums::OrderStatus::Canceled
+                        && o.filled_qty() == Quantity::from("0.50")),
+                    "native IOC entry did not partially fill then cancel remainder"
+                );
+                for child in ["QZSL-bracket-original-0", "QZTP-bracket-original-0"] {
+                    ensure!(
+                        cache
+                            .borrow()
+                            .order(&ClientOrderId::from(child))
+                            .is_some_and(|order| order.quantity() == Quantity::from("0.50")
+                                && order.is_reduce_only()),
+                        "native OUO child did not resize to partial fill: {child}: {:?}",
+                        cache.borrow().order(&ClientOrderId::from(child))
+                    );
+                }
+                let now = UnixNanos::from(u64::try_from(
+                    chrono::Utc::now().timestamp_nanos_opt().unwrap(),
+                )?);
+                let id = InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID");
+                let price = Price::from_str(trigger).map_err(anyhow::Error::msg)?;
+                let size = Quantity::from("1.00");
+                get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
+                    id, price, price, size, size, now, now,
+                ))))?;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let cache = cache.borrow();
+                let winner_id = ClientOrderId::from(format!("{winner}-bracket-original-0"));
+                let peer_id = ClientOrderId::from(format!("{peer}-bracket-original-0"));
+                ensure!(
+                    cache
+                        .order(&winner_id)
+                        .is_some_and(|o| o.status() == nautilus_model::enums::OrderStatus::Filled
+                            && o.filled_qty() == Quantity::from("0.50")),
+                    "protection did not close actual filled entry: {:?}",
+                    cache.order(&winner_id)
+                );
+                ensure!(
+                    cache.order(&peer_id).is_some_and(|o| o.status()
+                        == nautilus_model::enums::OrderStatus::Canceled
+                        && o.filled_qty().is_zero()),
+                    "OUO peer not canceled: {:?}",
+                    cache.order(&peer_id)
+                );
+                ensure!(
+                    cache
+                        .positions_open(None, None, None, None, None)
+                        .is_empty(),
+                    "protected position remains open"
+                );
+                drop(cache);
+                request(&tx, &replies, "SHUTDOWN", json!({})).await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let stop = handle.clone();
+            let controlled = async {
+                let result = drive.await;
+                stop.stop();
+                result
+            };
+            let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+            run?;
+            native.dispose();
+            result?;
+        }
+        Ok(())
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_bracket_restart_process_child() -> Result<()> {
+        let Ok(directory) = std::env::var("QZ_BRACKET_PROCESS_DIRECTORY") else {
+            return Ok(());
+        };
+        let recovering = std::env::var("QZ_BRACKET_PROCESS_PHASE").as_deref() == Ok("recover");
+        let (mut native, tx, replies) = node(std::path::Path::new(&directory)).await?;
+        let handle = native.handle();
+        let cache = native.kernel().cache();
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_sized(&cache, "0.50")?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            request(&tx, &replies, "CONTROL", control("1", "NORMAL", "0")).await?;
+            let expiry =
+                (chrono::Utc::now().timestamp_nanos_opt().unwrap() + 60_000_000_000).to_string();
+            if recovering {
+                let parent_id = ClientOrderId::from("QZT-restart-bracket-0");
+                ensure!(
+                    cache
+                        .borrow()
+                        .order(&parent_id)
+                        .is_some_and(|order| order.status()
+                            == nautilus_model::enums::OrderStatus::Canceled
+                            && order.filled_qty() == Quantity::from("0.50")),
+                    "recovered IOC partial fill changed"
+                );
+                for child in ["QZSL-restart-bracket-0", "QZTP-restart-bracket-0"] {
+                    ensure!(
+                        cache
+                            .borrow()
+                            .order(&ClientOrderId::from(child))
+                            .is_some_and(|order| order.quantity() == Quantity::from("0.50")
+                                && order.is_reduce_only()),
+                        "recovered native OUO quantity changed: {child}: {:?}",
+                        cache.borrow().order(&ClientOrderId::from(child))
+                    );
+                }
+            }
+            if !recovering {
+                let target = json!({"epoch":"1","id":"restart-bracket","expires_at":expiry,"capital":"1000","signal_capital":"1000",
+                    "weights":[{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","weight":"0.2"}],
+                    "brackets":{"BTC-USDC-SPOT.HYPERLIQUID":{"enabled":true,"stop_loss":"90.00","take_profit":"110.00"}}});
+                let result = request(&tx, &replies, "TARGET", target).await?;
+                ensure!(
+                    result["acknowledged"] == true,
+                    "bracket admission failed: {result}"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                ensure!(
+                    cache
+                        .borrow()
+                        .orders_open(None, None, None, None, None)
+                        .len()
+                        == 2,
+                    "children not active"
+                );
+                if std::env::var("QZ_TEST_PERSISTED_FILL_CUT").as_deref()
+                    == Ok("QZTP-restart-bracket-0")
+                {
+                    let now = UnixNanos::from(u64::try_from(
+                        chrono::Utc::now().timestamp_nanos_opt().unwrap(),
+                    )?);
+                    let price = Price::from("111.00");
+                    let size = Quantity::from("1.00");
+                    get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
+                        InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"),
+                        price,
+                        price,
+                        size,
+                        size,
+                        now,
+                        now,
+                    ))))?;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    bail!("expected durable exit fill cut was not reached");
+                }
+                if std::env::var("QZ_BRACKET_PROCESS_ABRUPT").as_deref() == Ok("1") {
+                    std::process::exit(17);
+                }
+            } else {
+                ensure!(
+                    cache.borrow().order_lists(None, None, None, None).len() == 1,
+                    "restored list absent"
+                );
+                ensure!(
+                    cache
+                        .borrow()
+                        .orders_open(None, None, None, None, None)
+                        .len()
+                        == 2,
+                    "restored active children absent"
+                );
+                request(
+                    &tx,
+                    &replies,
+                    "CANCEL_PROTECTION",
+                    json!({"id":"restart-bracket"}),
+                )
+                .await?;
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                let settled = request(
+                    &tx,
+                    &replies,
+                    "CANCEL_PROTECTION",
+                    json!({"id":"restart-bracket"}),
+                )
+                .await?;
+                ensure!(
+                    settled["settled"] == true,
+                    "restored protection cannot cancel: {settled}"
+                );
+                let rebalance = json!({"epoch":"1","id":"after-restart","expires_at":expiry,"capital":"1000","signal_capital":"1000","weights":[]});
+                let result = request(&tx, &replies, "TARGET", rebalance).await?;
+                ensure!(
+                    result["acknowledged"] == true,
+                    "restored target could not rebalance: {result}"
+                );
+            }
+            request(&tx, &replies, "SHUTDOWN", json!({})).await?;
+            Ok::<_, anyhow::Error>(())
+        };
+        let stop = handle.clone();
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+        run?;
+        native.dispose();
+        result
+    }
+
+    #[test]
+    fn persisted_fill_cut_exposes_unsettled_native_contingencies() -> Result<()> {
+        for filled in ["QZT-restart-bracket-0", "QZTP-restart-bracket-0"] {
+            let directory = tempfile::tempdir()?;
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "account_runtime::tests::native_bracket_restart_process_child",
+                    "--nocapture",
+                ])
+                .env("QZ_BRACKET_PROCESS_DIRECTORY", directory.path())
+                .env("QZ_BRACKET_PROCESS_PHASE", "create")
+                .env("QZ_TEST_PERSISTED_FILL_CUT", filled)
+                .status()?;
+            ensure!(
+                status.code() == Some(19),
+                "precise fill persistence cut not reached"
+            );
+            let mut original = Vec::new();
+            let mut orders = serde_json::Map::new();
+            for entry in std::fs::read_dir(directory.path().join("native-cache/orders"))? {
+                let path = entry?.path();
+                let bytes = std::fs::read(&path)?;
+                let row: Value = serde_json::from_slice(&bytes)?;
+                orders.insert(
+                    row["key"].as_str().unwrap().to_owned(),
+                    row["value"].clone(),
+                );
+                original.push((path, bytes));
+            }
+            let filled_order: nautilus_model::orders::OrderAny =
+                serde_json::from_value(orders[filled].clone())?;
+            let sl: nautilus_model::orders::OrderAny =
+                serde_json::from_value(orders["QZSL-restart-bracket-0"].clone())?;
+            ensure!(
+                filled_order.filled_qty() == Quantity::from("0.50"),
+                "fill not persisted at cut"
+            );
+            if filled == "QZT-restart-bracket-0" {
+                ensure!(
+                    sl.quantity() == Quantity::from("2.00"),
+                    "cut missed the pre-resize window: parent={filled_order:?}, sl={sl:?}"
+                );
+            } else {
+                ensure!(
+                    !sl.is_closed() && sl.quantity() == Quantity::from("0.50"),
+                    "cut missed pending peer cancellation"
+                );
+            }
+            ensure!(
+                native_bracket_admission("paper").is_err(),
+                "unsupported recovery must prevent new production brackets"
+            );
+            for (path, bytes) in original {
+                ensure!(
+                    std::fs::read(path)? == bytes,
+                    "inspection must preserve native facts"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sandbox_bracket_normal_and_abrupt_process_restart() -> Result<()> {
+        for abrupt in [false, true] {
+            let directory = tempfile::tempdir()?;
+            for phase in ["create", "recover"] {
+                let status = std::process::Command::new(std::env::current_exe()?)
+                    .args([
+                        "--exact",
+                        "account_runtime::tests::native_bracket_restart_process_child",
+                        "--nocapture",
+                    ])
+                    .env("QZ_BRACKET_PROCESS_DIRECTORY", directory.path())
+                    .env("QZ_BRACKET_PROCESS_PHASE", phase)
+                    .env("QZ_BRACKET_PROCESS_ABRUPT", if abrupt { "1" } else { "0" })
+                    .status()?;
+                ensure!(
+                    status.code() == Some(if abrupt && phase == "create" { 17 } else { 0 }),
+                    "native restart phase {phase} failed"
+                );
+            }
+        }
+        Ok(())
     }
 }

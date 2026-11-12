@@ -1,9 +1,5 @@
 //! Explicit exploratory native TradeTick factor inputs. BAR contracts are unchanged.
 use crate::{
-    factors::{
-        NativeFactorAssetMetricV1, NativeFactorMetricV1, NativeFactorPartitionReportV1,
-        NativeFactorPartitionV1, NativeFactorPointV1,
-    },
     DbCounter, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
@@ -276,40 +272,6 @@ pub enum NativeTickRegimeV1 {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-pub struct NativeTickLabelSpanBucketV1 {
-    pub lower_ns: DbCounter,
-    pub upper_ns: Option<DbCounter>,
-    pub count: DbCounter,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-pub struct NativeTickLabelSpansV1 {
-    pub count: DbCounter,
-    pub min_ns: Option<DbCounter>,
-    pub max_ns: Option<DbCounter>,
-    pub buckets: Vec<NativeTickLabelSpanBucketV1>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-pub struct NativeTickRegimeMetricV1 {
-    pub regime: NativeTickRegimeV1,
-    pub days: DbCounter,
-    pub metric: NativeFactorMetricV1,
-    pub assets: Vec<NativeFactorAssetMetricV1>,
-    pub observed_assets: DbCounter,
-    pub included_assets: DbCounter,
-    pub label_spans: NativeTickLabelSpansV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-pub struct NativeTickRegimePartitionV1 {
-    pub partition: NativeFactorPartitionV1,
-    pub start_ns: DbCounter,
-    pub end_ns: DbCounter,
-    pub regimes: Vec<NativeTickRegimeMetricV1>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTradeTickInstrumentCoverageV1 {
     pub instrument_id: String,
@@ -342,21 +304,4 @@ pub struct NativeTradeTickCoverageV1 {
     /// Selected streams, source paths and definition/availability limitations.
     /// Contains no original trade observations or independent labels.
     pub source_evidence: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NativeTradeTickFactorEvaluationResultV1 {
-    pub schema_version: SchemaV1,
-    pub request: NativeTradeTickFactorEvaluationRequestV1,
-    pub native_versions: BTreeMap<String, String>,
-    pub methods: BTreeMap<String, String>,
-    pub consumed_fuel: Option<DbCounter>,
-    pub coverage: NativeTradeTickCoverageV1,
-    pub partitions: Vec<NativeFactorPartitionReportV1>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub regime_partitions: Option<Vec<NativeTickRegimePartitionV1>>,
-    /// Omitted on the summary-only path; labels remain evaluation evidence.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub points: Option<Vec<NativeFactorPointV1>>,
 }

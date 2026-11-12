@@ -12,6 +12,14 @@ use contracts::{
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 
+// Results must name the exact supported native implementations.
+fn exact_native_versions(
+    actual: &BTreeMap<String, String>,
+    expected: &BTreeMap<String, String>,
+) -> bool {
+    actual == expected
+}
+
 mod experiment;
 mod experiment_summary;
 mod strategy_summary;
@@ -88,7 +96,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
         .timestamp_nanos_opt()
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| bad("native_output.checked_at"))?;
-    if value.native_version != "nautilus-persistence/0.68.0"
+    if value.native_version != "nautilus-persistence/0.69.0"
         || value.datasets.is_empty()
         || !value
             .checked_at
@@ -196,9 +204,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
-        "qz.alpha_validation" => validation::shape(&decode(bytes)?),
         "qz.experiment_evaluation" => experiment::shape(&decode(bytes)?),
-        "qz.alpha_sealed" => sealed::shape(&decode(bytes)?),
         "qz.strategy_portfolio" => {
             let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
                 decode(bytes)?;
@@ -223,7 +229,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
 /// PARAMETERS bytes, not a remote report's description of what it claims to have run.
 pub fn output_bindings(
     parameters: &NativeTaskParametersV1,
-    calibration: Option<&contracts::science::NativeFrozenCalibrationV1>,
+    _calibration: Option<&contracts::science::NativeFrozenCalibrationV1>,
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
     outputs: &[(RuntimeOutputV1, Vec<u8>)],
@@ -369,19 +375,6 @@ pub fn output_bindings(
                 &decode(body("qz.experiment_evaluation")?.1)?,
             )?;
         }
-        NativeTaskParametersV1::ValidateAlpha { request, .. } => {
-            validation::binding(request, &decode(body("qz.alpha_validation")?.1)?)?;
-        }
-        NativeTaskParametersV1::EvaluateSealedAlpha {
-            request,
-            calibration_artifact_id,
-            ..
-        } => {
-            if calibration_artifact_id.is_some() != calibration.is_some() {
-                return Err(bad("sealed.calibration_input"));
-            }
-            sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
-        }
         NativeTaskParametersV1::ComposeStrategyTargets {
             dataset_revision_id,
             request,
@@ -421,4 +414,21 @@ pub fn output_bindings(
         }
     }
     Ok(())
+}
+
+// Benchmark adapters return explicit unavailable causes, not zero statistics.
+fn benchmark_unavailable(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some(
+            "BENCHMARK_CURRENCY_MISMATCH"
+                | "BENCHMARK_WINDOW_MISMATCH"
+                | "BENCHMARK_RETURNS_INCOMPLETE"
+                | "BENCHMARK_SINGLE_SERIES_REQUIRED"
+                | "BENCHMARK_CATALOG_UNAVAILABLE"
+                | "BENCHMARK_CLOSE_CONVENTION_UNAVAILABLE"
+                | "BENCHMARK_PRICE_INVALID"
+                | "BENCHMARK_DUPLICATE_BOUNDARY"
+        )
+    )
 }

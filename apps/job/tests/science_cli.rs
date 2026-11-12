@@ -603,3 +603,52 @@ fn native_cli_blend_targets_rejects_bad_weights_and_original_point_misalignment(
         assert!(output.stdout.is_empty(), "case {case}");
     }
 }
+
+#[test]
+fn retired_ensemble_and_review_allocation_commands_are_not_executable() {
+    for operation in [
+        "fit-ensemble",
+        "apply-ensemble",
+        "freeze-ensemble-calibrations",
+        "review-allocate",
+        "review-science",
+        "evaluate-factor",
+        "evaluate-tick-factor",
+        "scan-factor-catalog",
+        "validate-alpha",
+        "evaluate-sealed-alpha",
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_job"))
+            .arg(operation)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "retired operation {operation}");
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
+    }
+}
+
+#[test]
+fn source_cli_rejects_missing_source_owner_metadata_without_success_output() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .arg("review-source")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"schema_version":1,"metadata":{},"observed_at":"2026-11-02T00:00:00Z"}"#)
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("QZ_NATIVE_JOB_FAILED"));
+}

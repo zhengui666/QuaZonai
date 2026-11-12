@@ -1,3 +1,4 @@
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
@@ -28,10 +29,8 @@ test('campaign account: real current source 503 stays unknown while original his
       app.accountControls = json(f.application.accountControls) as typeof app.accountControls;
       return captureAccount(app, connection.id);
     }, context);
-    const admission = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
-      payload: { requestId: 'frozen-account-start', goal: 'Test historical source isolation, no financial performance evidence.', datasetId: dataset.id,
-        funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model } });
-    assert.equal(admission.statusCode, 202, admission.body); const view = admission.json<Pm.PmMandateView>();
+    const view = await retainPmControlRecord(state, { requestId: 'frozen-account-start', goal: 'Retain original account evidence without granting target authority.', datasetId: dataset.id,
+      funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model });
     const campaignId = view.campaigns[0]!.id; const id = view.mandate.id; const key = campaignAccountKey(campaignId);
     let record = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
     assert.deepEqual(campaignAccount(record, record.campaigns[campaignId]!), original);
@@ -43,10 +42,14 @@ test('campaign account: real current source 503 stays unknown while original his
     const current = captureAccount(app, connection.id); assert.equal(current.basis.reserved, null);
     assert.equal(object(current.artifact.capitalControlFailure).code, 'downstream_control_503');
     assert.notEqual(current.evidence.id, original.evidence.id);
-    const recompute = await state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/recompute`, headers: state.headers,
-      payload: { requestId: 'after-real-source-failure', expectedRevision: view.mandate.revision } });
-    assert.equal(recompute.statusCode, 202, recompute.body); const cycle = recompute.json<Pm.PmMandateView>().lastCycle!;
-    await state.service.research.harness.waitForTask(cycle.runtime.taskId as TaskId, context);
+    // Persist the original captured historical basis; no retired scientific
+    // recomputation is invoked merely to reconstruct this account fact.
+    const cycle = { id: 'existing:historical-cycle' };
+    await state.service.research.harness.commit(async tx => {
+      const retained = pmState(await tx.doc(PmDocument)).mandates[id]!;
+      retained.cycles[cycle.id] = { id: cycle.id, accountBasis: original.basis, datasetRevisionIds: [...retained.datasets], state: 'WAITING_EVIDENCE' } as Pm.DecisionCycle;
+      retained.artifacts[cycle.id] = { campaignId, operatingForward: false };
+    }, context);
     record = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
     assert.deepEqual(record.cycles[cycle.id]!.accountBasis, original.basis);
     assert.deepEqual(record.artifacts[key], originalMarker);

@@ -18,6 +18,8 @@ export type ResearchInput = JsonObject & {
 export const Study = defineDoc<{
   input: ResearchInput | null;
   trials: JsonObject[];
+  toolPolicy?: 'NAUTILUS_ONLY';
+  previousNativeResults?: { previousSubmissionId: number; final: JsonObject }[];
   final: JsonObject | null;
   reviewSelection?: { trialId: number; version: string };
   deletedAt?: string;
@@ -34,7 +36,7 @@ export const Requests = defineDoc<{ requests: Record<string, {
   submissionId?: SubmissionId | null;
   metadata?: JsonObject;
   sourceEvidence?: JsonObject;
-  recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' | 'selected'; instruction?: string };
+  recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' | 'native'; instruction?: string };
 }> }>({
   kind: 'qz.research-requests', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'session',
   initial: () => ({ requests: {} }),

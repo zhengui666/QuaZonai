@@ -5,7 +5,10 @@ use contracts::{
 };
 use nautilus_analysis::{
     analyzer::PortfolioAnalyzer,
-    statistics::{cagr::CAGR, max_drawdown::MaxDrawdown},
+    statistics::{
+        cagr::CAGR, calmar_ratio::CalmarRatio, expected_shortfall::ExpectedShortfall,
+        max_drawdown::MaxDrawdown, ulcer_index::UlcerIndex, value_at_risk::ValueAtRisk,
+    },
 };
 use std::sync::Arc;
 
@@ -22,6 +25,12 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
     let mut native = PortfolioAnalyzer::default();
     native.register_statistic(Arc::new(MaxDrawdown::new()));
     native.register_statistic(Arc::new(CAGR::new(Some(252))));
+    // Match the explicitly registered upstream tail-risk set and its real
+    // empty-input behavior; never substitute a fixed statistic count or zeros.
+    native.register_statistic(Arc::new(CalmarRatio::new(Some(252))));
+    native.register_statistic(Arc::new(ValueAtRisk::new(Some(0.95))));
+    native.register_statistic(Arc::new(ExpectedShortfall::new(Some(0.95))));
+    native.register_statistic(Arc::new(UlcerIndex::new()));
     let expected = native.get_performance_stats_portfolio_returns();
     let observed = result
         .statistics
@@ -40,13 +49,13 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
             (!value.is_finite()).then_some("NATIVE_STATISTIC_UNAVAILABLE")
         );
     }
-    // Supplementary QZ account summaries do not replace the exact native set.
+    // Account completeness metadata do not replace the exact native set.
     let calendar = result
         .statistics
         .iter()
         .filter(|statistic| statistic.native_key.starts_with("Calendar "))
         .collect::<Vec<_>>();
-    assert_eq!(calendar.len(), 11);
+    assert_eq!(calendar.len(), 6);
     assert_eq!(
         calendar
             .iter()
@@ -55,16 +64,12 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
             .value,
         Some(0.0)
     );
-    for key in [
-        "Calendar Geometric Daily Return",
-        "Calendar Minimum Daily Return",
-        "Calendar Maximum Daily Return",
-        "Calendar Maximum Absolute Deviation",
-        "Calendar Negative Days",
-        "Calendar Zero Days",
-    ] {
-        let row = calendar.iter().find(|row| row.native_key == key).unwrap();
-        assert!(row.value.is_none(), "{key}");
-        assert!(row.reason_code.is_some());
-    }
+    assert_eq!(
+        calendar
+            .iter()
+            .find(|row| row.native_key == "Calendar Complete Priced Coverage")
+            .unwrap()
+            .value,
+        Some(0.0)
+    );
 }

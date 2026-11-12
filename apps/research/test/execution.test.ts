@@ -1,17 +1,16 @@
-import { reviewSourceChecks } from '../src/review-workflow.ts';
 import type { ResearchInput } from '../src/documents.ts';
 import { subscriptionSpeed } from '../src/models.ts';
 import { createModels, fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { iterationRequest, evaluateWasm } from '../plugins/native-wasm.ts';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { indicatorStrategyResult } from '../src/indicator-result.ts';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { FactorTask } from '../plugins/native-factor-task.ts';
-import { executeNative } from '../plugins/native-portfolio.ts';
+import { IndicatorStrategyTask } from '../plugins/indicator-strategy.ts';
+import { executeNativeValue as executeNative } from '../src/native-execution.ts';
 import { classifyExecutionError, ExecutionFailure } from '../src/execution-errors.ts';
 import { researchSettings } from '../src/settings.ts';
 
@@ -21,21 +20,11 @@ test('research uses provider defaults and forwards explicitly configured native 
   assert.equal(researchSettings().stream?.maxRetries, 0);
 });
 
-test('native preparation preserves absent/null fuel and explicit scientific budgets', () => {
-  for (const parameters of [{}, { total_fuel: null }, { total_fuel: '23' }] as JsonObject[]) {
-    const data = { request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters } } };
-    const original = structuredClone(data);
-    const request = iterationRequest(data);
-    assert.deepEqual((request.forecast as { parameters: unknown }).parameters, parameters.total_fuel === null ? {} : parameters);
-    assert.deepEqual(data, original);
-  }
-});
-
-test('factor cancellation propagates without attempting to commit a scientific failure', async () => {
+test('indicator cancellation propagates without attempting to commit a scientific failure', async () => {
   const controller = new AbortController(); controller.abort();
-  const compute = FactorTask.definition.phases.compute;
+  const compute = IndicatorStrategyTask.definition.phases.compute;
   let commits = 0;
-  const task = { input: { model: '(module)', data: { catalog: '/unused', request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: {} } } } } } as unknown as Parameters<typeof compute>[0];
+  const task = { input: { request: {}, catalog: '/unused', target: '/unused' } } as unknown as Parameters<typeof compute>[0];
   const runtime = { signal: controller.signal, async commit() { commits++; } } as unknown as Parameters<typeof compute>[1];
   await assert.rejects(compute(task, runtime, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
   assert.equal(commits, 0, 'official suspend/abort protocol, not a FAILED scientific outcome');
@@ -60,22 +49,18 @@ test('native stderr takes precedence over broken stdout, while a successful proc
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('execution accepts the retained native serializer omitting null fuel without changing admitted input', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-fuel-protocol-')); const binary = join(directory, 'job'); const script = join(directory, 'echo.mjs');
-  const previous = process.env.QZ_JOB_BINARY;
+test('native serialization preserves exact input and uses the configured isolated temporary root', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-indicator-protocol-')); const binary = join(directory, 'job'); const script = join(directory, 'echo.mjs');
   try {
-    // Protocol-only child: mirrors NativeForecastParametersV1's skip_serializing_if.
-    await writeFile(script, `import { tmpdir } from 'node:os'; let input=''; for await (const chunk of process.stdin) input += chunk; const request=JSON.parse(input); if (request.forecast.parameters.total_fuel == null) delete request.forecast.parameters.total_fuel; console.log(JSON.stringify({request,consumed_fuel:null,temporaryRoot:tmpdir(),cwd:process.cwd()}));`);
+    await writeFile(script, `import { tmpdir } from 'node:os'; let input=''; for await (const chunk of process.stdin) input += chunk; const request=JSON.parse(input); console.log(JSON.stringify({request,temporaryRoot:tmpdir(),cwd:process.cwd()}));`);
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-    process.env.QZ_JOB_BINARY = binary;
-    const data = { catalog: directory, request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: { total_fuel: '1' } } } };
-    const original = structuredClone(data);
-    const result = await evaluateWasm('(module)', data, BACKGROUND_CONTEXT);
-    assert.equal(result.consumed_fuel, null);
-    assert.equal(result.temporaryRoot, result.cwd);
-    assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '1');
-    assert.deepEqual(data, original);
-  } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }
+    const request = { schema_version: 1, selection: { event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', maximum_rows: 1 }, signal: { kind: 'EMA_CROSS', fast_period: 2, slow_period: 3 }, long_weight: '0.500000000000000001' };
+    const original = structuredClone(request);
+    const result = await executeNative(binary, 'simulate-indicator-strategy', request, [], directory, BACKGROUND_CONTEXT) as JsonObject;
+    const canonicalPath = async (path: string) => join(await realpath(dirname(path)), basename(path));
+    assert.equal(await canonicalPath(String(result.temporaryRoot)), await canonicalPath(String(result.cwd)));
+    assert.deepEqual(result.request, request); assert.deepEqual(request, original);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('provider dispatch preserves explicit pi-ai options without a legacy checkpoint shim', async () => {
@@ -89,36 +74,18 @@ test('provider dispatch preserves explicit pi-ai options without a legacy checkp
   assert.equal(result.stopReason, 'stop'); assert.equal(faux.state.callCount, 1);
 });
 
-test('native request echoes bind exact row and fuel contracts and scientific clocks', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-row-echo-')); const binary = join(directory, 'job'); const script = join(directory, 'echo.mjs');
-  const echo = `let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input);`;
-  try {
-    await writeFile(script, echo + `console.log(JSON.stringify({request,consumed_fuel:null}));`);
-    await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-    for (const legacy of [{}, { maximum_rows: 0 }, { maximum_rows: 1 }] as JsonObject[]) {
-      const data: JsonObject = { catalog: directory, request: { train_end_ns: '10', validation_end_ns: '20', forecast: {
-        selection: { event_start_ns: '0', event_end_ns: '30', ...legacy }, parameters: { total_fuel: '1' } } } };
-      const original = structuredClone(data);
-      const result = await evaluateWasm('(module)', data, BACKGROUND_CONTEXT, undefined, binary);
-      assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '1');
-      assert.deepEqual(data, original, 'execution normalization never rewrites the frozen request');
-    }
-    await writeFile(script, echo + `request.forecast.selection.event_end_ns='31';console.log(JSON.stringify({request,consumed_fuel:null}));`);
-    const data: JsonObject = { catalog: directory, request: { train_end_ns: '10', validation_end_ns: '20', forecast: {
-      selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: {} } } };
-    await assert.rejects(evaluateWasm('(module)', data, BACKGROUND_CONTEXT, undefined, binary), /native_result_request_mismatch/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
-});
-
-test('review causality rejects changed fuel, rows and scientific clocks', () => {
-  const input: ResearchInput = { goal: 'Protocol-only source review', model: { provider: 'test', modelId: 'test' }, policy: {}, data: {
-    request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: { total_fuel: '1' } } } } };
-  const original = structuredClone(input);
-  const request = iterationRequest(input.data); const forecast = request.forecast as JsonObject;
-  const trial: JsonObject = { taskId: 1, status: 'COMPUTED', proposal: { model: '(module)' }, result: { request, partitions: [{ partition: 'VALIDATION' }] } };
-  const checks = reviewSourceChecks(input, trial, [trial], 'test:validation');
-  assert.equal(checks.find(check => check.id === 'no_leakage')?.status, 'PASS');
-  assert.deepEqual(input, original);
-  (forecast.selection as JsonObject).event_end_ns = '21';
-  assert.equal(reviewSourceChecks(input, trial, [trial], 'test:validation').find(check => check.id === 'no_leakage')?.status, 'UNKNOWN');
+test('native indicator echoes reject changed exact rows, decimal weights and nanosecond clocks before accepting results', () => {
+  // Request binding is checked before other output fields; intentionally incomplete results cannot imply successful backtests.
+  for (const maximum_rows of [undefined, 0, 1]) {
+    const request: JsonObject = { selection: { event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', ...(maximum_rows === undefined ? {} : { maximum_rows }) }, settings: {}, long_weight: '0.500000000000000001' };
+    const original = structuredClone(request);
+    const mutations = [
+      { ...request, selection: { ...(request.selection as JsonObject), event_end_ns: '1790000000000000032' } },
+      { ...request, selection: { ...(request.selection as JsonObject), maximum_rows: 2 } },
+      { ...request, long_weight: '0.500000000000000002' },
+    ];
+    for (const echoed of mutations) assert.throws(() => indicatorStrategyResult({ request: echoed }, request), /indicator_strategy_request_mismatch/);
+    assert.throws(() => indicatorStrategyResult({ request }, request), /indicator_strategy_result_invalid/, 'matching request alone is never successful evidence');
+    assert.deepEqual(request, original);
+  }
 });

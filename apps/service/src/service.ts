@@ -1,7 +1,12 @@
+import { accountStrategyWorkbench } from './account-strategy.ts';
+import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { boundScienceTarget } from './science-binding.ts';
+import { nativeJob } from './native.ts';
 import { pathToFileURL } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Cursor, Extension, TaskId } from '@earendil-works/pi-durable';
@@ -12,7 +17,6 @@ import type { ExtensionView, ResearchSummary, WorkspaceView, UsageView } from '.
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
-import { tickEconomicExtension, tickEconomicWorkbench, registerTickEconomicRoutes } from './economic-tick.ts';
 import { createParameterScanExtension, parameterScanWorkbench, registerParameterScanRoutes } from './parameter-scans.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
@@ -33,12 +37,7 @@ import { maintenanceExtension, createMaintenance } from './pm-maintenance.ts';
 import { registerMaintenanceRoutes } from './pm-maintenance-routes.ts';
 import { Study } from '../../research/src/documents.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
-import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
-import { reviewAllocationExtension, registerReviewAllocationRoutes } from './review-allocation.ts';
-import { freezeReviewedFactors } from './reviewed-factor-admission.ts';
-import { canonical } from '../../research/src/documents.ts';
 import { assertBusinessAdmission } from './pm-maintenance.ts';
-import { registerReviewPolicyRoutes } from './review-policy.ts';
 import { registerListRoutes } from './lists.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -50,7 +49,7 @@ export async function createService(options: ServiceOptions) {
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension, sources.extension];
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -58,8 +57,6 @@ export async function createService(options: ServiceOptions) {
     definitions.set(extension.name, extension); defaults.set(extension.name, enabled); installed.push(extension);
     extensions.set(extension.name, { name: extension.name, version, enabled, kind, state: 'loaded', error: null });
   }
-  install(tickEconomicExtension, true, '1', 'science');
-  requiredExtensions.add(tickEconomicExtension.name);
   for (const extension of options.extensions ?? []) install(extension);
   for (const path of config.research.modules ?? []) {
     install((await import(pathToFileURL(path).href)).default as Extension);
@@ -76,8 +73,6 @@ export async function createService(options: ServiceOptions) {
         kind: configured.kind ?? 'research', state: 'error', error: 'extension_load_failed' });
     }
   }
-  if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
-  requiredExtensions.add(fittedEnsemble.name);
   const scans = createParameterScanExtension(() => research.harness);
   const scientificTasks = new Map(scans.scientificTasks.map(task => [task.definition.name, task]));
   // Pi Durable permits one provider for a task name. Keep these exact shared
@@ -96,14 +91,9 @@ export async function createService(options: ServiceOptions) {
   install(scans.extension, true, '1', 'science');
   requiredExtensions.add(scans.extension.name);
   const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage, deferResume: true,
-    authorizeAdmission: async (tx, input, metadata) => {
+    authorizeAdmission: async (tx, input) => {
       assertBusinessAdmission(await tx.doc(Application));
       if (input.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), input.campaign.mandateRevisionId));
-      const original = metadata?.original;
-      if (original && typeof original === 'object' && !Array.isArray(original) && original.reviewedFactorIds !== undefined) {
-        const current = await freezeReviewedFactors(tx, original.reviewedFactorIds, input.data, config);
-        if (canonical(json(current)) !== canonical(input.policy.reviewedFactorSources ?? null)) throw new Problem('reviewed_factor_admission_changed', 409);
-      }
     },
     authorizeResume: async (tx, id) => {
       const parent = (await tx.doc(Study, id)).input?.campaign?.mandateRevisionId;
@@ -161,11 +151,8 @@ export async function createService(options: ServiceOptions) {
   await app.register(cookie);
   registerAuth(app, research, config);
   registerListRoutes(app, research, config);
-  registerReviewAllocationRoutes(app, research, config);
-  registerReviewPolicyRoutes(app, research);
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
-  registerTickEconomicRoutes(app, tickEconomicWorkbench(research, config));
   registerParameterScanRoutes(app, research, parameterScanWorkbench(research, config, scans.stopTask), eventStreams);
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
@@ -178,12 +165,32 @@ export async function createService(options: ServiceOptions) {
     app.delete<{ Params: { id: string } }>(`${API}/${path}/:id`, request => remove(request.params.id));
   }
   const capital = capitalWorkbench(research, config);
+  const strategies = accountStrategyWorkbench(research);
+  app.get<{ Params: { id: string } }>(`${API}/observations/:id/strategy`, request => strategies.status(request.params.id));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/strategy/commands`, async (request, reply) => reply.code(202).send(await strategies.command(request.params.id, request.body)));
+  app.get<{ Params: { id: string; requestId: string } }>(`${API}/observations/:id/strategy/commands/:requestId`, request => strategies.receipt(request.params.id, request.params.requestId));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/sizing/fixed-risk`, request => capital.previewFixedRisk(request.params.id, request.body));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/orders/preview`, request => capital.previewOrder(request.params.id, request.body));
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
   app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => {
     const researchSettings = view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
     return { ...view, nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
   }));
+  // Read-only native file metadata; never admits a dataset or triggers backfill.
+  app.post<{ Params: { id: string } }>(`${API}/datasets/:id/coverage`, async request => {
+    const dataset = config.datasets.find(row => row.id === request.params.id);
+    if (!dataset) throw new Problem('dataset_not_found', 404);
+    const catalog = dataset.data.catalog;
+    if (typeof catalog !== 'string' || !catalog) throw new Problem('dataset_catalog_required', 422);
+    const input = object(request.body, 'catalog_coverage_request');
+    // Capture the dataset and transport together before I/O yields to settings changes.
+    const target = boundScienceTarget(config, dataset.data);
+    const directory = await mkdtemp(join(config.dataDir, 'catalog-coverage-'));
+    try {
+      return await nativeJob(target, 'catalog-coverage', input, ['--catalog', catalog], directory, context);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
     const [page, facts, inspection] = await Promise.all([research.list(cursor), readResearchAdmissions(research), research.harness.inspect(context)]);
@@ -239,7 +246,6 @@ export async function createService(options: ServiceOptions) {
     const assumptions = researchCapital(request.body);
     return portfolioCapacity(await work.getPortfolio(request.params.id), config, context, assumptions);
   });
-  app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
   app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatusForBinding(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]), fact.connection) } }); }); });
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits`, request => capital.refreshCapital(request.params.id));
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/planning-context`, request => capital.planningContext(request.params.id));
@@ -247,6 +253,7 @@ export async function createService(options: ServiceOptions) {
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/preview`, request => capital.previewCapital(request.params.id, request.body));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/commands`, async (request, reply) => reply.code(202).send(await capital.commandCapital(request.params.id, request.body)));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/automatic`, async request => observationView({ ...(await work.getObservation(request.params.id)), view: await work.configureAutomatic(request.params.id, request.body) }));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/cancel-protection`, async request => cancelNativeProtection(await work.getObservation(request.params.id)));
   app.post(`${API}/observations`, async (request, reply) => { const view = await work.startObservation(request.body); return reply.code(202).send(observationView(await work.getObservation(view.id))); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/refresh`, async (request) => { await work.refreshObservation(request.params.id); return observationView(await work.getObservation(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/stop`, async (request) => {

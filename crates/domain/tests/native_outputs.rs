@@ -69,7 +69,7 @@ fn quality() -> (NativeTaskParametersV1, NativeDataQualityReportV1) {
         },
         NativeDataQualityReportV1 {
             schema_version: SchemaV1,
-            native_version: "nautilus-persistence/0.68.0".into(),
+            native_version: "nautilus-persistence/0.69.0".into(),
             checked_at: clock(),
             datasets: vec![NativeDatasetQualityV1 {
                 dataset_revision_id: dataset,
@@ -420,8 +420,8 @@ fn forecast() -> (NativeTaskParametersV1, NativeForecastResultV1) {
         NativeForecastResultV1 {
             schema_version: SchemaV1,
             native_versions: BTreeMap::from([
-                ("nautilus-indicators".into(), "0.68.0".into()),
-                ("nautilus-persistence".into(), "0.68.0".into()),
+                ("nautilus-indicators".into(), "0.69.0".into()),
+                ("nautilus-persistence".into(), "0.69.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
             consumed_fuel: Some(count(10)),

@@ -1,9 +1,9 @@
-//! Apply frozen targets in one native Nautilus simulated account.
-use crate::catalog::{load_catalog, NativeMarketData};
+//! Apply frozen targets or explicit native indicator signals in one Nautilus account.
+use crate::catalog::{NativeMarketData, load_catalog};
 pub use crate::fee_models::FillFeeFailure;
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
+use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
 use nautilus_analysis::{
     analyzer::PortfolioAnalyzer,
     statistics::{cagr::CAGR, max_drawdown::MaxDrawdown},
@@ -12,6 +12,7 @@ use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
 };
+use nautilus_common::actor::DataActorNative;
 use nautilus_common::{
     actor::DataActor,
     logging::logger::LoggerConfig,
@@ -50,6 +51,23 @@ use std::{
 };
 
 pub(crate) mod calendar_returns;
+
+#[derive(Default)]
+struct ReplayReuse {
+    engine: Option<BacktestEngine>,
+    market: Option<NativeMarketData>,
+    fill_fees: crate::fee_models::FillFeeObserver,
+    bar_ends: BTreeMap<InstrumentId, u64>,
+    batch_boundary_bars: Vec<nautilus_model::data::Bar>,
+    first_event: Option<nautilus_core::UnixNanos>,
+}
+impl Drop for ReplayReuse {
+    fn drop(&mut self) {
+        if let Some(engine) = self.engine.as_mut() {
+            engine.dispose();
+        }
+    }
+}
 
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
@@ -125,6 +143,7 @@ pub(crate) struct StudyInput {
 
 pub(crate) struct TargetReplay {
     core: StrategyCore,
+    indicator_strategy: Option<crate::indicator_strategy::IndicatorStrategy>,
     instruments: Vec<InstrumentAny>,
     bar_types: Vec<BarType>,
     latest: BTreeMap<InstrumentId, Bar>,
@@ -289,8 +308,12 @@ impl TargetReplay {
         let data_complete = ends
             .iter()
             .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
-        let finished =
-            status.replay_terminal(data_complete, self.points.len()) && self.orders_settled();
+        let batches_complete = self
+            .indicator_strategy
+            .as_ref()
+            .is_none_or(|strategy| strategy.batches_complete());
+        let finished = status.replay_terminal(data_complete && batches_complete, self.points.len())
+            && self.orders_settled();
         if finished && !status.study_infeasible {
             status
                 .settled_replay_ns
@@ -695,6 +718,12 @@ impl TargetReplay {
 impl DataActor for TargetReplay {
     fn on_start(&mut self) -> Result<()> {
         for kind in self.bar_types.clone() {
+            if let Some(strategy) = &self.indicator_strategy {
+                let indicators = strategy.indicators();
+                for indicator in indicators {
+                    self.core_mut().register_indicator_for_bars(kind, indicator);
+                }
+            }
             self.subscribe_bars(kind, None, None);
         }
 
@@ -702,7 +731,31 @@ impl DataActor for TargetReplay {
     }
 
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
-        let result = self.apply_bar(bar, bar.ts_init.as_u64());
+        let result = (|| -> Result<()> {
+            let settled =
+                self.orders_settled() && self.status.borrow().consumed == self.points.len();
+            if let Some(strategy) = &mut self.indicator_strategy {
+                strategy.observe(bar)?;
+                if strategy.batch_complete(bar)
+                    && strategy.initialized()
+                    && strategy.can_trade_at(bar)
+                {
+                    if !settled {
+                        *strategy.skipped_unsettled.borrow_mut() += 1;
+                    } else if let Some(point) = strategy.target(bar)? {
+                        validate_point(&self.settings, &point, &self.instruments)?;
+                        ensure!(
+                            self.points
+                                .last()
+                                .is_none_or(|previous| previous.asof_ns < point.asof_ns),
+                            "INDICATOR_STRATEGY_DUPLICATE_DECISION"
+                        );
+                        self.points.push(point);
+                    }
+                }
+            }
+            self.apply_bar(bar, bar.ts_init.as_u64())
+        })();
         if let Err(error) = result {
             // Native actor callbacks may log rather than propagate. Keep an explicit
             // in-process failure observation that the outer adapter MUST inspect.
@@ -888,6 +941,7 @@ fn portfolio_return_analysis(
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     let period = 252;
+    crate::performance::register_tail_risk(&mut analyzer, period);
     analyzer.register_statistic(Arc::new(CAGR::new(Some(period))));
 
     analyzer.set_portfolio_returns_from_snapshots(&account_ids, &snapshots);
@@ -936,6 +990,94 @@ pub fn simulate(
     run(root, request, Vec::new())?
         .0
         .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+}
+
+/// Historical single-series native signal strategy. Does not configure an account host.
+pub fn simulate_indicator_strategy(
+    root: &Path,
+    request: &contracts::indicator_strategy::NativeIndicatorStrategyRequestV1,
+) -> Result<contracts::indicator_strategy::NativeIndicatorStrategyResultV1> {
+    simulate_indicator_with_reuse(root, request, None)
+}
+
+/// Reuse only within this invocation. No global cache, cross-task state or new scheduler.
+pub fn simulate_indicator_strategy_batch(
+    root: &Path,
+    request: &contracts::indicator_strategy::NativeIndicatorStrategyBatchRequestV1,
+) -> Result<contracts::indicator_strategy::NativeIndicatorStrategyBatchResultV1> {
+    let first = request
+        .requests
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("INDICATOR_BATCH_EMPTY"))?;
+    let shared_selection = serde_json::to_value(&first.selection)?;
+    let shared_settings = serde_json::to_value(&first.settings)?;
+    for item in &request.requests {
+        ensure!(
+            serde_json::to_value(&item.selection)? == shared_selection
+                && serde_json::to_value(&item.settings)? == shared_settings,
+            "INDICATOR_BATCH_REQUIRES_SAME_SELECTION_AND_SETTINGS"
+        );
+    }
+    let mut reuse = ReplayReuse::default();
+    let results = request
+        .requests
+        .iter()
+        .map(|item| simulate_indicator_with_reuse(root, item, Some(&mut reuse)))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(
+        contracts::indicator_strategy::NativeIndicatorStrategyBatchResultV1 {
+            schema_version: SchemaV1,
+            native_version: crate::NAUTILUS_VERSION.into(),
+            reuse: "NAUTILUS_ENGINE_RESET".into(),
+            results,
+        },
+    )
+}
+
+fn simulate_indicator_with_reuse(
+    root: &Path,
+    request: &contracts::indicator_strategy::NativeIndicatorStrategyRequestV1,
+    reuse: Option<&mut ReplayReuse>,
+) -> Result<contracts::indicator_strategy::NativeIndicatorStrategyResultV1> {
+    ensure!(
+        request.settings.multi_currency_spot_cash.is_none(),
+        "INDICATOR_STRATEGY_SPOT_CASH_UNSUPPORTED"
+    );
+    let strategy = crate::indicator_strategy::IndicatorStrategy::new(request)?;
+    let observations = strategy.rows.clone();
+    let skipped_unsettled = strategy.skipped_unsettled.clone();
+    let merged_same_time = strategy.merged_same_time.clone();
+    let simulation = NativeSimulationRequestV1 {
+        schema_version: contracts::SchemaV1,
+        selection: request.selection.clone(),
+        settings: request.settings.clone(),
+        target_points: Vec::new(),
+    };
+    let simulation = run_with_reuse(
+        root,
+        &simulation,
+        Vec::new(),
+        None,
+        None,
+        Some(strategy),
+        reuse,
+    )?
+    .0
+    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))?;
+    let observations = observations.borrow().clone();
+    let skipped_unsettled_decisions = count(*skipped_unsettled.borrow())?;
+    let merged_same_time_bars = count(*merged_same_time.borrow())?;
+    Ok(
+        contracts::indicator_strategy::NativeIndicatorStrategyResultV1 {
+            performance_scope: "FULL_SELECTION_INCLUDING_PRE_DECISION_CASH".into(),
+            decision_policy: "BATCH_LAST_SETTLED_ACCOUNT_ONLY".into(),
+            skipped_unsettled_decisions,
+            merged_same_time_bars,
+            request: request.clone(),
+            simulation,
+            observations,
+        },
+    )
 }
 
 pub(crate) fn run(
@@ -988,6 +1130,7 @@ pub fn simulate_spot_cash_candidate(
             closed_rows,
             observed_start: None,
         }),
+        None,
     )?
     .0
     .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
@@ -1022,6 +1165,7 @@ pub(crate) fn run_observed_spot(
             closed_rows,
             observed_start: Some(initial_state.clone()),
         }),
+        None,
     )
 }
 
@@ -1038,7 +1182,14 @@ fn run_with_strategy(
     Option<NativeSimulationResultV1>,
     Vec<NativePortfolioStudyFrameV1>,
 )> {
-    run_with_strategy_and_spot(root, request, study_inputs, strategy_constraints, None)
+    run_with_strategy_and_spot(
+        root,
+        request,
+        study_inputs,
+        strategy_constraints,
+        None,
+        None,
+    )
 }
 
 fn run_with_strategy_and_spot(
@@ -1050,7 +1201,35 @@ fn run_with_strategy_and_spot(
         String,
         DecimalValue,
     )>,
+    spot_inputs: Option<crate::spot_cash_runtime::SpotReplayInputs>,
+    indicator_strategy: Option<crate::indicator_strategy::IndicatorStrategy>,
+) -> Result<(
+    Option<NativeSimulationResultV1>,
+    Vec<NativePortfolioStudyFrameV1>,
+)> {
+    run_with_reuse(
+        root,
+        request,
+        study_inputs,
+        strategy_constraints,
+        spot_inputs,
+        indicator_strategy,
+        None,
+    )
+}
+
+fn run_with_reuse(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    study_inputs: Vec<StudyInput>,
+    strategy_constraints: Option<(
+        contracts::portfolio::PortfolioConstraintsV1,
+        String,
+        DecimalValue,
+    )>,
     mut spot_inputs: Option<crate::spot_cash_runtime::SpotReplayInputs>,
+    mut indicator_strategy: Option<crate::indicator_strategy::IndicatorStrategy>,
+    mut reuse: Option<&mut ReplayReuse>,
 ) -> Result<(
     Option<NativeSimulationResultV1>,
     Vec<NativePortfolioStudyFrameV1>,
@@ -1067,6 +1246,13 @@ fn run_with_strategy_and_spot(
                 .all(|point| point.rebalance_instrument_ids.is_none()),
         "TARGET_SCOPE_BACKTEST_ONLY"
     );
+    let indicator_end = indicator_strategy
+        .as_ref()
+        .map(|strategy| strategy.replay_end())
+        .transpose()?;
+    let generated = indicator_strategy
+        .as_ref()
+        .map(|strategy| strategy.generated.clone());
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let observed_balances = spot_inputs
         .as_ref()
@@ -1085,8 +1271,16 @@ fn run_with_strategy_and_spot(
     let spot_end = is_spot
         .then(|| crate::spot_cash_runtime::execution_horizon(request))
         .transpose()?;
-    let wake_order_arrivals = scoped_replay || is_spot;
-    let market = if !request.target_points.is_empty()
+    let wake_order_arrivals = scoped_replay || is_spot || indicator_end.is_some();
+    let reused = reuse.as_ref().is_some_and(|state| state.engine.is_some());
+    let mut market = if reused {
+        reuse
+            .as_mut()
+            .unwrap()
+            .market
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("BATCH_REPLAY_MARKET_MISSING"))?
+    } else if !request.target_points.is_empty()
         && request
             .target_points
             .iter()
@@ -1096,10 +1290,38 @@ fn run_with_strategy_and_spot(
     } else {
         load_catalog(root, &request.selection)?
     };
+    let batch_boundary_bars = if reused {
+        reuse.as_ref().unwrap().batch_boundary_bars.clone()
+    } else if reuse.is_some() {
+        // Only repeated availability clocks need boundary state. Retain those
+        // source rows, not a second copy of the entire replay dataset.
+        let mut counts = BTreeMap::new();
+        for bar in &market.series[0].bars {
+            *counts.entry(bar.ts_init).or_insert(0usize) += 1;
+        }
+        market.series[0]
+            .bars
+            .iter()
+            .filter(|bar| counts[&bar.ts_init] > 1)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if let Some(strategy) = &mut indicator_strategy {
+        strategy.set_bar_batches(if reused {
+            &batch_boundary_bars
+        } else {
+            &market.series[0].bars
+        });
+    }
     let currency = if is_spot {
         domain::spot_cash::execution_settings(&request.settings)?;
         let currency = Currency::from_str(&request.settings.base_currency)?;
         validate_settings_with_currency(&market, request, currency, observed_balances.is_some())?
+    } else if indicator_strategy.is_some() {
+        let currency = execution_market(&market, &request.settings)?;
+        validate_settings_with_currency(&market, request, currency, true)?
     } else {
         validate_settings(&market, request)?
     };
@@ -1140,8 +1362,38 @@ fn run_with_strategy_and_spot(
             "OBSERVED_SPOT_UNVALUED_CURRENCY"
         );
     }
+    let first_event = if reused {
+        reuse
+            .as_ref()
+            .unwrap()
+            .first_event
+            .ok_or_else(|| anyhow::anyhow!("BATCH_REPLAY_CLOCK_MISSING"))?
+    } else {
+        market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .map(|bar| bar.ts_init)
+            .min()
+            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?
+    };
+    let bar_ends = if reused {
+        reuse.as_ref().unwrap().bar_ends.clone()
+    } else {
+        market.series.iter().flat_map(|series| &series.bars).fold(
+            BTreeMap::<InstrumentId, u64>::new(),
+            |mut ends, bar| {
+                let time = bar.ts_init.as_u64();
+                ends.entry(bar.bar_type.instrument_id())
+                    .and_modify(|end| *end = (*end).max(time))
+                    .or_insert(time);
+                ends
+            },
+        )
+    };
     let status = Rc::new(RefCell::new(ReplayStatus::default()));
     let mut strategy = TargetReplay {
+        indicator_strategy,
         core: StrategyCore::new_checked(
             StrategyConfig::builder()
                 .strategy_id(StrategyId::from("TARGET-001"))
@@ -1175,18 +1427,7 @@ fn run_with_strategy_and_spot(
         outstanding_orders: BTreeSet::new(),
         // Every selected series must deliver its own final real BAR before
         // shutdown, even when the markets' observation clocks differ.
-        replay_bar_ends: wake_order_arrivals.then(|| {
-            market.series.iter().flat_map(|series| &series.bars).fold(
-                BTreeMap::<InstrumentId, u64>::new(),
-                |mut ends, bar| {
-                    let time = bar.ts_init.as_u64();
-                    ends.entry(bar.bar_type.instrument_id())
-                        .and_modify(|end| *end = (*end).max(time))
-                        .or_insert(time);
-                    ends
-                },
-            )
-        }),
+        replay_bar_ends: wake_order_arrivals.then(|| bar_ends.clone()),
         status: status.clone(),
     };
     let config = BacktestEngineConfig {
@@ -1209,21 +1450,30 @@ fn run_with_strategy_and_spot(
         run_analysis: false,
         ..BacktestEngineConfig::default()
     };
-    let mut engine = BacktestEngine::new(config)?;
-    let live_progress = crate::live_progress::LiveProgress::attach();
+    let mut engine = if reused {
+        let mut engine = reuse.as_mut().unwrap().engine.take().unwrap();
+        if let Err(error) = engine.reset().and_then(|()| engine.clear_strategies()) {
+            engine.dispose();
+            return Err(error);
+        }
+        engine
+    } else {
+        BacktestEngine::new(config)?
+    };
+    let fill_fees = reuse
+        .as_ref()
+        .map(|state| state.fill_fees.clone())
+        .unwrap_or_default();
+    fill_fees.clear();
+    // A batch has separate accounts/runs; never merge their curves into one preview.
+    let live_progress = if reuse.is_none() {
+        crate::live_progress::LiveProgress::attach()
+    } else {
+        None
+    };
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
-        let fill_fees = crate::fee_models::FillFeeObserver::default();
 
-        let fee = if is_spot {
-            crate::spot_cash_runtime::fee_model(request, &market)?
-        } else {
-            crate::fee_models::catalog_fees::fee_model(
-                &market,
-                settings,
-                engine.kernel().clock.clone(),
-            )?
-        };
         let default_fill = DefaultFillModel::new(
             fill.prob_fill_on_limit
                 .as_decimal()
@@ -1236,61 +1486,70 @@ fn run_with_strategy_and_spot(
             Some(fill.random_seed.get()),
         )?;
         let fill_model = FillModelHandle::new(default_fill);
-        engine.add_venue(
-            SimulatedVenueConfig::builder()
-                .venue(venue)
-                .oms_type(OmsType::Netting)
-                .account_type(match settings.account_kind {
-                    NativeAccountKind::Cash => AccountType::Cash,
-                    NativeAccountKind::Margin => AccountType::Margin,
-                })
-                .book_type(BookType::L1_MBP)
-                .maybe_base_currency((!is_spot).then_some(currency))
-                .allow_cash_borrowing(false)
-                .starting_balances(if let Some(balances) = &observed_balances {
-                    balances
-                        .iter()
-                        .map(|balance| {
+        if reused {
+            // Native reset preserves the fill model's RNG; restore the explicit seed.
+            engine.change_fill_model(venue, fill_model);
+        } else {
+            let fee = if is_spot {
+                crate::spot_cash_runtime::fee_model(request, &market)?
+            } else {
+                crate::fee_models::catalog_fees::fee_model(
+                    &market,
+                    settings,
+                    engine.kernel().clock.clone(),
+                )?
+            };
+            engine.add_venue(
+                SimulatedVenueConfig::builder()
+                    .venue(venue)
+                    .oms_type(OmsType::Netting)
+                    .account_type(match settings.account_kind {
+                        NativeAccountKind::Cash => AccountType::Cash,
+                        NativeAccountKind::Margin => AccountType::Margin,
+                    })
+                    .book_type(BookType::L1_MBP)
+                    .maybe_base_currency((!is_spot).then_some(currency))
+                    .allow_cash_borrowing(false)
+                    .starting_balances(if let Some(balances) = &observed_balances {
+                        balances
+                            .iter()
+                            .map(|balance| {
+                                Money::from_str_exact(&format!(
+                                    "{} {}",
+                                    balance.amount.as_decimal().to_plain_string(),
+                                    balance.currency
+                                ))
+                                .map_err(anyhow::Error::msg)
+                            })
+                            .collect::<Result<Vec<_>>>()?
+                    } else {
+                        vec![
                             Money::from_str_exact(&format!(
                                 "{} {}",
-                                balance.amount.as_decimal().to_plain_string(),
-                                balance.currency
+                                settings.starting_capital.as_decimal().to_plain_string(),
+                                settings.base_currency
                             ))
-                            .map_err(anyhow::Error::msg)
-                        })
-                        .collect::<Result<Vec<_>>>()?
-                } else {
-                    vec![Money::from_str_exact(&format!(
-                        "{} {}",
-                        settings.starting_capital.as_decimal().to_plain_string(),
-                        settings.base_currency
-                    ))
-                    .map_err(anyhow::Error::msg)?]
-                })
-                .default_leverage(native_decimal(&settings.leverage)?)
-                // Every fee model can fail at the actual fill, including a
-                // delayed fill after a frozen maker/taker policy has expired.
-                // Preserve that original cause before native shutdown or the
-                // generic unsettled-order checks can obscure it.
-                .fee_model(fill_fees.wrap(fee))
-                .fill_model(fill_model)
-                .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
-                    DurationNanos::new(latency.base_latency_ns.get()),
-                    DurationNanos::new(latency.insert_latency_ns.get()),
-                    DurationNanos::new(latency.update_latency_ns.get()),
-                    DurationNanos::new(latency.cancel_latency_ns.get()),
-                )))
-                .bar_execution(true)
-                .liquidity_consumption(true)
-                .build()?,
-        )?;
-        let first_event = market
-            .series
-            .iter()
-            .flat_map(|series| &series.bars)
-            .map(|bar| bar.ts_init)
-            .min()
-            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+                            .map_err(anyhow::Error::msg)?,
+                        ]
+                    })
+                    .default_leverage(native_decimal(&settings.leverage)?)
+                    // Every fee model can fail at the actual fill, including a
+                    // delayed fill after a frozen maker/taker policy has expired.
+                    // Preserve that original cause before native shutdown or the
+                    // generic unsettled-order checks can obscure it.
+                    .fee_model(fill_fees.wrap(fee))
+                    .fill_model(fill_model)
+                    .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
+                        DurationNanos::new(latency.base_latency_ns.get()),
+                        DurationNanos::new(latency.insert_latency_ns.get()),
+                        DurationNanos::new(latency.update_latency_ns.get()),
+                        DurationNanos::new(latency.cancel_latency_ns.get()),
+                    )))
+                    .bar_execution(true)
+                    .liquidity_consumption(true)
+                    .build()?,
+            )?;
+        }
         ensure!(
             market
                 .series
@@ -1298,8 +1557,10 @@ fn run_with_strategy_and_spot(
                 .all(|series| series.instrument.ts_init() <= first_event),
             "SIMULATION_BASELINE_FROM_FUTURE"
         );
-        for series in &market.series {
-            engine.add_instrument(&series.instrument)?;
+        if !reused {
+            for series in &market.series {
+                engine.add_instrument(&series.instrument)?;
+            }
         }
         let mut spot_capture = if let Some(input) = spot_inputs.take() {
             let capture = crate::spot_cash_capture::Capture::prepare(
@@ -1320,7 +1581,7 @@ fn run_with_strategy_and_spot(
             None
         };
         engine.add_strategy(strategy)?;
-        for series in market.series {
+        for series in &mut market.series {
             // Native replay merges these streams by receive time and retains
             // insertion priority on ties, matching the original series order.
             // Scoped selections may legitimately have an empty asset series.
@@ -1328,8 +1589,7 @@ fn run_with_strategy_and_spot(
                 // Frozen source evidence keeps INTERNAL/RightOpen semantics.
                 // The consuming native engine requires explicitly external
                 // delivery with a closed event label; no quote/trade is invented.
-                let bars = series
-                    .bars
+                let bars = std::mem::take(&mut series.bars)
                     .into_iter()
                     .map(crate::catalog::runtime_bar)
                     .collect::<Result<Vec<_>>>()?;
@@ -1343,7 +1603,10 @@ fn run_with_strategy_and_spot(
         // shutdown still prevents manufacturing an empty account-return tail.
         // Final latency alerts must run with the strategy active: end() stops
         // it before draining commands and therefore cannot consume their callbacks.
-        let replay_end = scoped_end.or(spot_end.map(|end| end.get())).map(Into::into);
+        let replay_end = scoped_end
+            .or(spot_end.map(|end| end.get()))
+            .or(indicator_end)
+            .map(Into::into);
         let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;
@@ -1357,11 +1620,18 @@ fn run_with_strategy_and_spot(
         if observed.study_infeasible {
             return Ok(None);
         }
+        let expected_targets = generated
+            .as_ref()
+            .map_or(request.target_points.len(), |count| *count.borrow());
         ensure!(
-            observed.consumed == request.target_points.len(),
+            generated.is_none() || expected_targets > 0,
+            "INDICATOR_STRATEGY_NO_READY_DECISIONS"
+        );
+        ensure!(
+            observed.consumed == expected_targets,
             "NATIVE_TARGETS_NOT_CONSUMED: consumed={} expected={}",
             observed.consumed,
-            request.target_points.len()
+            expected_targets
         );
         let native = engine.get_result();
         ensure!(
@@ -1369,7 +1639,7 @@ fn run_with_strategy_and_spot(
                 && native.summary.get("orders.inflight").map(String::as_str) == Some("0"),
             "NATIVE_ORDERS_NOT_SETTLED"
         );
-        let spot_cash_report = if let Some(capture) = spot_capture.take() {
+        let mut spot_cash_report = if let Some(capture) = spot_capture.take() {
             let tape = capture.finish(&engine)?;
             Some(crate::spot_cash_runtime::finish_report(
                 &engine,
@@ -1420,13 +1690,86 @@ fn run_with_strategy_and_spot(
                 if is_spot {
                     Default::default()
                 } else {
-                    daily.get_performance_stats_returns()
+                    daily.get_performance_stats_portfolio_returns()
                 },
             ),
             (NativeStatisticGroup::General, native.stats_general),
         ] {
             for (key, value) in values {
-                statistics.push(statistic(group, key, None, value));
+                let mut entry = statistic(group, key, None, value);
+                if group == NativeStatisticGroup::Returns && !fully_priced {
+                    entry.value = None;
+                    entry.reason_code = Some("NATIVE_STATISTIC_UNAVAILABLE".into());
+                }
+                statistics.push(entry);
+            }
+        }
+        if let Some(benchmark) = &request.settings.price_benchmark {
+            if let Some(report) = &mut spot_cash_report {
+                let days = report
+                    .daily_returns
+                    .days
+                    .iter()
+                    .map(|d| {
+                        (
+                            d.day_start_ns.get(),
+                            d.day_end_ns.get(),
+                            if d.reason.is_none() { d.value } else { None },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                report
+                    .statistics
+                    .extend(crate::performance::versus_catalog_price(
+                        root,
+                        benchmark,
+                        &request.selection,
+                        &report.daily_returns.report_currency,
+                        usize::from(report.daily_returns.annualization_days),
+                        &days,
+                    ));
+                report
+                    .statistics
+                    .sort_by(|a, b| a.native_key.cmp(&b.native_key));
+            } else {
+                let accounts = engine.kernel().cache.borrow().accounts_all_owned();
+                let snapshots = engine
+                    .kernel()
+                    .portfolio
+                    .borrow()
+                    .snapshots(&accounts[0].id());
+                let boundaries: std::collections::BTreeSet<_> =
+                    snapshots.iter().map(|s| s.ts_event.as_u64()).collect();
+                let days = daily
+                    .portfolio_returns()
+                    .iter()
+                    .map(|(time, value)| {
+                        let start = time.as_u64();
+                        let end = start.saturating_add(86_400_000_000_000);
+                        (
+                            start,
+                            end,
+                            (fully_priced
+                                && boundaries.contains(&start)
+                                && boundaries.contains(&end))
+                            .then_some(*value),
+                        )
+                    })
+                    // Partial start/end calendar days are not part of the
+                    // complete UTC daily comparison window.
+                    .filter(|(start, end, _)| {
+                        *start >= request.selection.event_start_ns.get()
+                            && *end <= request.selection.event_end_ns.get()
+                    })
+                    .collect::<Vec<_>>();
+                statistics.extend(crate::performance::versus_catalog_price(
+                    root,
+                    benchmark,
+                    &request.selection,
+                    &request.settings.base_currency,
+                    252,
+                    &days,
+                ));
             }
         }
         statistics.sort_by(|a, b| (&a.native_key, &a.currency).cmp(&(&b.native_key, &b.currency)));
@@ -1482,7 +1825,19 @@ fn run_with_strategy_and_spot(
         }))
     })();
     drop(live_progress);
-    engine.dispose();
+    if result.is_ok() {
+        if let Some(state) = reuse {
+            state.engine = Some(engine);
+            state.market = Some(market);
+            state.bar_ends = bar_ends;
+            state.batch_boundary_bars = batch_boundary_bars;
+            state.first_event = Some(first_event);
+        } else {
+            engine.dispose();
+        }
+    } else {
+        engine.dispose();
+    }
     let frames = std::mem::take(&mut status.borrow_mut().frames);
     Ok((result?, frames))
 }

@@ -20,11 +20,7 @@ export function scanFixedParameters(value: string | null): Record<string, string
   } catch { return; }
 }
 
-/** Scanning displays its declared selection partition, never heldout-first summaries. */
-export function scanValidationMetrics(metrics: readonly Metric[]): Metric[] {
-  return metrics.filter(metric => {
-    const prefix = /^(TRAIN|VALIDATION|HELDOUT|TEST)\./.exec(metric.key)?.[1];
-    if (metric.partition !== undefined && metric.partition !== 'VALIDATION' || prefix !== undefined && prefix !== 'VALIDATION') return false;
-    return metric.partition === 'VALIDATION' || prefix === 'VALIDATION';
-  });
+/** Display only the native run's declared full-selection statistics. */
+export function scanNativeMetrics(metrics: readonly Metric[]): Metric[] {
+  return metrics.filter(metric => metric.partition === 'FULL_SELECTION');
 }

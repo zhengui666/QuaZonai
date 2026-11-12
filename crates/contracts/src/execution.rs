@@ -52,19 +52,6 @@ pub enum NativeTaskParametersV1 {
         model_artifact_id: Id,
         request: NativeForecastRequestV1,
     },
-    ValidateAlpha {
-        schema_version: SchemaV1,
-        dataset_revision_id: Id,
-        model_artifact_id: Id,
-        request: Box<crate::science::NativeAlphaValidationRequestV1>,
-    },
-    EvaluateSealedAlpha {
-        schema_version: SchemaV1,
-        dataset_revision_id: Id,
-        model_artifact_id: Id,
-        calibration_artifact_id: Option<Id>,
-        request: Box<crate::science::NativeAlphaSealedRequestV1>,
-    },
     ComposeStrategyTargets {
         schema_version: SchemaV1,
         dataset_revision_id: Id,
@@ -117,9 +104,7 @@ impl NativeTaskParametersV1 {
             Self::CompileModel { .. }
             | Self::CompileFeatureModel { .. }
             | Self::ValidateData { .. } => RunKind::DataValidate,
-            Self::EvaluateAlpha { .. }
-            | Self::ValidateAlpha { .. }
-            | Self::EvaluateSealedAlpha { .. } => RunKind::AlphaEvaluate,
+            Self::EvaluateAlpha { .. } => RunKind::AlphaEvaluate,
             Self::BuildPortfolio { .. } | Self::ComposeStrategyTargets { .. } => {
                 RunKind::PortfolioBuild
             }
@@ -140,8 +125,6 @@ impl NativeTaskParametersV1 {
             Self::ValidateData { .. } => &["qz.data_quality"],
             Self::EvaluateForward { .. } => &["qz.forward_evaluation"],
             Self::EvaluateAlpha { .. } => &["qz.native_forecast"],
-            Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
-            Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
             Self::ComposeStrategyTargets { .. } => &["qz.strategy_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],

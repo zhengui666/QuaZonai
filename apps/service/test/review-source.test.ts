@@ -6,8 +6,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { canonical } from '../../research/src/documents.ts';
 import { trustedSourceChecks } from '../../research/src/review-source.ts';
-import { iterationRequest } from '../../research/plugins/native-wasm.ts';
-import { reviewSourceChecks } from '../../research/src/review-workflow.ts';
 import { assertCurrentReviewSource, prepareReviewSourceEvidence } from '../src/review-source.ts';
 import type { DatasetConfig } from '../src/config.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -77,9 +75,6 @@ test('source evidence cannot silently rewrite an omitted scientific row limit to
 test('unconfigured and caller-authored claims cannot manufacture source provenance', async () => {
   const f = await fixture(); try {
     const { reviewSourceEvidence: _descriptor, ...unconfigured } = f.configured; assert.equal(await prepareReviewSourceEvidence(unconfigured), null);
-    const checks = reviewSourceChecks({ goal: 'boundary', model: { provider: 'fixture', modelId: 'fixture' }, policy: {}, data: { ...f.configured.data, provenance: { verified: true, pit_verified: true } } },
-      { taskId: 1, status: 'COMPUTED', proposal: {}, result: {} }, [], 'trial:fixture');
-    assert.equal(checks.find(check => check.id === 'provenance')!.status, 'UNKNOWN');
     await writeFile(join(f.root, 'metadata.json'), JSON.stringify({ ...f.metadata, origin: 'FIXTURE' }));
     await assert.rejects(prepareReviewSourceEvidence(f.configured), /source_manifest_file_(?:digest_)?mismatch/);
   } finally { await f.close(); }
@@ -114,20 +109,6 @@ test('new use rechecks current source revocation and retraction instead of trust
     await assert.rejects(assertCurrentReviewSource(revoked, captured), /review_current_source_authorization_inactive/);
     const retracted = await f.replaceLicense('ACTIVE', 'RETRACTION');
     await assert.rejects(assertCurrentReviewSource(retracted, captured), /review_source_retracted/);
-  } finally { await f.close(); }
-});
-
-test('an empty native HELDOUT partition is distinct from leaked heldout observations', async () => {
-  const f = await fixture(); try {
-    const raw = f.configured.data.request as JsonObject;
-    const data = { ...f.configured.data, request: { ...raw, schema_version: 1, forecast: { ...(raw.forecast as JsonObject), schema_version: 1, parameters: {} } } };
-    const counts = { observations: '0', included: '0', excluded: '0', indicator_warmup: '0', incomplete_labels: '0', cross_boundary_labels: '0', prediction_outside_partition: '0' };
-    const empty = { partition: 'HELDOUT', metric: { counts, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES' } } };
-    const trial = { taskId: 1, status: 'COMPUTED', proposal: {}, result: { request: iterationRequest(data), partitions: [{ partition: 'TRAIN' }, { partition: 'VALIDATION' }, empty] } };
-    const input = { goal: 'boundary only', model: { provider: 'fixture', modelId: 'fixture' }, policy: {}, data };
-    assert.equal(reviewSourceChecks(input, trial, [trial], 'trial:fixture').find(check => check.id === 'no_leakage')!.status, 'PASS');
-    const leaked = { ...trial, result: { ...trial.result, partitions: [{ ...empty, metric: { ...empty.metric, counts: { ...counts, observations: '1' } } }] } };
-    assert.equal(reviewSourceChecks(input, leaked, [leaked], 'trial:fixture').find(check => check.id === 'no_leakage')!.status, 'FAIL');
   } finally { await f.close(); }
 });
 

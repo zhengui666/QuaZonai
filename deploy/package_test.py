@@ -20,6 +20,21 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('runtime.sh', package.DEPLOY_FILES)
         self.assertNotIn('SHA256SUMS', package.REQUIRED_ASSETS)
 
+    def test_release_readme_documents_docker_and_preserves_cli_clients(self):
+        text = package.readme({'version': 'v3.0.0-doc-test', 'revision': 'abc123'})
+        for phrase in ('Docker Engine', 'Docker Compose', '/v3.0.0-doc-test/install.sh',
+                       'bash install.sh --directory "$HOME/.local/share/quazonai" --port 8081',
+                       'client of the deployed HTTP service', 'quazonai login --help',
+                       'loopback interface', 'separate Nautilus data/account directory',
+                       'retired research workflows'):
+            self.assertIn(phrase, text)
+        for route in ('macOS (CLI)', 'install.ps1', '--cli-only', 'npm start', 'cargo run'):
+            self.assertNotIn(route, text)
+        # Only deployment documentation changes; remote client assets remain.
+        self.assertIn('windows-x86_64', package.CLI_ARCHIVES)
+        self.assertIn('macos-aarch64', package.CLI_ARCHIVES)
+        self.assertIn('install.ps1', package.REQUIRED_ASSETS)
+
     def test_incomplete_cli_is_not_a_distribution(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as temporary:
             archive = Path(temporary) / 'old.tar.gz'

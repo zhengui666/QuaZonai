@@ -1,3 +1,4 @@
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { writeFile } from 'node:fs/promises';
@@ -98,9 +99,8 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
       funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model,
       businessPreference: 'NET_RETURN', operatingAuthority,
     };
-    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: input });
-    assert.equal(admitted.statusCode, 202, admitted.body);
-    const id = admitted.json<PmMandateView>().mandate.id;
+    const retained = await retainPmControlRecord(state, input as import('../../../packages/contracts/src/pm.ts').PmMandateStart);
+    const id = retained.mandate.id;
     const snapshot = pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id);
     if (!keepMonitor) {
       // Isolate receipt/eligibility cases from unrelated research monitoring.
@@ -356,7 +356,7 @@ function flatSnapshot(original: JsonObject, sequence: string, orders?: number): 
   const money = (amount: string) => ({ amount, currency: 'USD' });
   snapshot.controlRevision = '3';
   snapshot.nativeObservation = { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.68.0' },
+    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.69.0' },
     sequence, dropped_events: '0', observed_at_ns: snapshot.nativeClockNs!, connection: 'CONNECTED',
     snapshot: { account_id: 'CONTROLLED-ACCOUNT', account_type: 'CASH', base_currency: null,
       balances: [{ total: money('1000.000000000000000001'), locked: money('0'), free: money('1000.000000000000000001') }],

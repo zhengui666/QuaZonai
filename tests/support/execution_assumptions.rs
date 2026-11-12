@@ -52,7 +52,7 @@ pub async fn prepare(
     cap.engine_versions
         .insert("simulation-models".into(), "1".into());
     cap.engine_versions
-        .insert("nautilus".into(), "0.68.0".into());
+        .insert("nautilus".into(), "0.69.0".into());
     cap.engine_versions
         .insert("bar-notional".into(), "1".into());
     cap.engine_versions
@@ -88,6 +88,7 @@ pub async fn prepare(
         bar_liquidity: None,
         rolling_liquidity: None,
         settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USD".into(),

@@ -47,35 +47,36 @@ async-trait = "=0.1.92"
 bytes = { version = "=1.12.1", features = ["serde"] }
 ustr = "=1.1.0"
 indexmap = "=2.14.2"
-nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
-nautilus-live = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["node"], optional = true }
-nautilus-sandbox = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
+nautilus-hyperliquid = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, optional = true }
+nautilus-live = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["node"], optional = true }
+nautilus-sandbox = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, optional = true }
 tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "=0.4.45", features = ["serde"] }
 clarabel = "=0.11.1"
-nautilus-backtest = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-analysis = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-common = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-core = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-execution = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-portfolio = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-persistence = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-indicators = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
+nautilus-backtest = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-analysis = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-common = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["indicators"] }
+nautilus-core = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-execution = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-portfolio = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-persistence = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-indicators = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-risk = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
 tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"], optional = true }
 # Native Parquet decoding uses the exact Arrow family of the official catalog.
 arrow-native = { package = "arrow-array", version = "=59.3.2" }
 parquet = { version = "=59.3.2", default-features = false, features = ["arrow", "zstd"] }
-nautilus-serialization = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["arrow"] }
+nautilus-serialization = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["arrow"] }
 sha2 = { version = "=0.10.9", optional = true }
 csv = { version = "=1.4.0", optional = true }
 lz4_flex = { version = "=0.14.0", optional = true }
 zstd = { version = "=0.13.3", default-features = false }
-nautilus-data = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, optional = true }
+nautilus-data = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, optional = true }
 rust_decimal = "=1.43.0"
-nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
-nautilus-trading = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false }
+nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
+nautilus-trading = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["examples"] }
 anyhow = "=1.0.104"
 clap = { version = "=4.5.46", features = ["derive"] }
 contracts = { path = "../../crates/contracts" }
@@ -88,7 +89,6 @@ rustix = { version = "=1.1.4", features = ["fs", "process"] }
 nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
 ndarray = "=0.17.1"
 ndarray-stats = "=0.7.0"
-linregress = "=0.5.4"
 # Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
 wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "portable-dispatch"] }
 
@@ -98,7 +98,7 @@ toml = "=1.1.8"
 [dev-dependencies]
 async-trait = "=0.1.92"
 arrow-array = "=56.2.0"
-nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "dc69438c2a5f936760db845d7a4bfc786da23276", default-features = false, features = ["test-support"] }
+nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["test-support"] }
 wat = "=1.258.0"
 
 [[example]]

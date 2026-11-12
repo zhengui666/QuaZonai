@@ -1,12 +1,7 @@
-//! Thin adapters over native splitters and estimators; no qualification authority.
+//! Existing account forecast arithmetic and split adapters; no model fitting.
 use anyhow::{ensure, Result};
-use linregress::{FormulaRegressionBuilder, RegressionDataBuilder, RegressionModel};
 use ndarray::Array2;
 
-mod alpha;
-pub use alpha::validate_alpha;
-mod sealed;
-pub use sealed::evaluate_sealed_alpha;
 
 /// Apply saved native OLS coefficients; linregress 0.5.4 has no model decoder.
 /// No labels or fitting inputs are accepted by this fixed ndarray operation.
@@ -131,64 +126,4 @@ pub fn aligned_portfolio_forecast(
             .map(|member| &member.ensemble_weight)
             .collect::<Vec<_>>(),
     )
-}
-
-/// A real fitted estimator, not a caller-provided multiplier masquerading as calibration.
-pub struct ScoreCalibration {
-    model: RegressionModel,
-    observations: usize,
-}
-impl ScoreCalibration {
-    /// Inputs must be selected from the same authorized training fold, with complete labels.
-    pub fn fit(scores: &[f64], returns: &[f64]) -> Result<Self> {
-        ensure!(
-            scores.len() >= 3 && scores.len() == returns.len(),
-            "CALIBRATION_SAMPLE_LIMIT"
-        );
-        ensure!(
-            scores.iter().chain(returns).all(|value| value.is_finite()),
-            "CALIBRATION_NONFINITE"
-        );
-        ensure!(
-            scores.iter().any(|value| *value != scores[0]),
-            "CALIBRATION_CONSTANT_SCORE"
-        );
-        let data = RegressionDataBuilder::new().build_from(vec![
-            ("return", returns.to_vec()),
-            ("score", scores.to_vec()),
-        ])?;
-        let model = FormulaRegressionBuilder::new()
-            .data(&data)
-            .formula("return ~ score")
-            .fit()?;
-        ensure!(
-            model.parameters().len() == 2 && model.parameters().iter().all(|v| v.is_finite()),
-            "CALIBRATION_FIT_INVALID"
-        );
-        Ok(Self {
-            model,
-            observations: scores.len(),
-        })
-    }
-
-    pub fn predict(&self, scores: &[f64]) -> Result<Vec<f64>> {
-        ensure!(
-            !scores.is_empty() && scores.iter().all(|value| value.is_finite()),
-            "CALIBRATION_INPUT_INVALID"
-        );
-        let values = self.model.predict(vec![("score", scores.to_vec())])?;
-        ensure!(
-            values.len() == scores.len() && values.iter().all(|value| value.is_finite()),
-            "CALIBRATION_PREDICTION_INVALID"
-        );
-        Ok(values)
-    }
-
-    pub fn coefficients(&self) -> [f64; 2] {
-        [self.model.parameters()[0], self.model.parameters()[1]]
-    }
-
-    pub fn observations(&self) -> usize {
-        self.observations
-    }
 }

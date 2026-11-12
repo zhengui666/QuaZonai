@@ -74,7 +74,37 @@ test('PM observed native: original solver frames use actual current inventory an
     assert.ok(compareDecimal(String(firstAsset.current_weight), '0') > 0); assert.notEqual(first.current_cash_weight, '1');
     const failed = await compareObservedSpotAccount({ ...f.common, operation: { kind: 'STUDY', study: object(f.source.infeasibleStudy), objectsDirectory } }, BACKGROUND_CONTEXT);
     assert.equal(failed.hold.status, 'COMPLETED'); assert.equal(failed.rebalance.status, 'FAILED');
+    for (const frame of failed.rebalance.result!.frames as JsonObject[]) if (object(frame.allocation).solver_status === 'INFEASIBLE') assertExactFundingInfeasibility(frame);
     assert.ok(failed.rebalance.reason); assert.ok(Array.isArray(failed.rebalance.result?.frames) && failed.rebalance.result.frames.length > 0,
       'Original infeasible solver evidence cannot be discarded or changed into a successful replay.');
   } finally { await f.cleanup(); }
 });
+
+function assertExactFundingInfeasibility(frame: JsonObject) {
+  // Independent exact arithmetic for this single-asset native fixture. This
+  // checks the original QP's funding row, without using its status as proof or
+  // treating output exposure tolerance as permission to finance the shortfall.
+  const exact = (value: unknown) => {
+    assert.equal(typeof value, 'string'); assert.match(value as string, /^\d+(?:\.\d+)?$/);
+    const [whole, fraction = ''] = (value as string).split('.');
+    return { n: BigInt(`${whole}${fraction}`), d: 10n ** BigInt(fraction.length) };
+  };
+  const less = (a: ReturnType<typeof exact>, b: ReturnType<typeof exact>) => a.n * b.d < b.n * a.d;
+  const input = object(frame.input), constraints = object(input.constraints), allocation = object(frame.allocation);
+  assert.equal(allocation.solver_status, 'INFEASIBLE'); assert.equal(allocation.reason_code, 'NATIVE_PRIMAL_INFEASIBLE');
+  assert.equal(allocation.targets, null); assert.equal(allocation.cash_weight, null); assert.equal(allocation.objective_value, null);
+  assert.equal(constraints.cash_funding, 'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1');
+  assert.equal(constraints.long_only, true); assert.equal(constraints.min_asset_weight, '0');
+  assert.deepEqual(constraints.asset_overrides, []);
+  const assets = input.assets as JsonObject[]; assert.equal(assets.length, 1);
+  const current = exact(assets[0]!.current_weight), cost = exact(assets[0]!.transaction_cost_rate);
+  const maximum = exact(constraints.max_asset_weight), floor = exact(constraints.min_cash_weight);
+  assert.ok(cost.n > 0n && cost.n < cost.d); assert.ok(less(maximum, current));
+  assert.ok(floor.n >= 0n && floor.n <= floor.d);
+  // With 0 <= w <= cap < current and cost < 1, w + cost*(current-w)
+  // is minimized at w=0. Even this deployed-plus-fee minimum exceeds
+  // 1-minCash, so no point can satisfy sum(w)+cash=1 and cash-fee>=minCash.
+  const minimumDeployedPlusFee = { n: cost.n * current.n, d: cost.d * current.d };
+  const fundingLimit = { n: floor.d - floor.n, d: floor.d };
+  assert.ok(less(fundingLimit, minimumDeployedPlusFee), 'The original registered QP must be independently proven funding-infeasible.');
+}

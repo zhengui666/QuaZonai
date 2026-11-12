@@ -36,21 +36,20 @@ test('PM commands retain original revisions and bytes across uncertain writes; b
       ['pm', 'capabilities'], ['pm', 'list'], ['pm', 'get', 'mandate:one'], ['pm', 'decision', 'mandate:one'], ['pm', 'history', 'mandate:one'],
       ['pm', 'cycle', 'cycle:one'], ['pm', 'capacity', 'capacity:one'], ['campaign', 'compare', 'campaign:one'],
       ['pm', 'targets', 'mandate:one', '--file', file], ['pm', 'refresh-data', 'mandate:one', '--file', file],
-      ['pm', 'clarify-intent', 'mandate:one', '--file', file],
       ['maintenance', 'status'], ['maintenance', 'enter', '--file', file],
-      ['campaign', 'close', 'campaign:one', '--file', file], ['strategy', 'assessments', 'strategy:one'], ['strategy', 'pause', 'strategy:one', '--file', file],
+      ['campaign', 'pause', 'campaign:one', '--file', file], ['strategy', 'assessments', 'strategy:one'], ['strategy', 'pause', 'strategy:one', '--file', file],
     ]) await run(args, () => {});
     assert.deepEqual(requests.slice(2).map(row => [row.method, row.path]), [
       ['GET', '/api/v3/capabilities'], ['GET', '/api/v3/mandates'], ['GET', '/api/v3/mandates/mandate%3Aone'], ['GET', '/api/v3/mandates/mandate%3Aone/decision'], ['GET', '/api/v3/mandates/mandate%3Aone/decisions'],
       ['GET', '/api/v3/cycles/cycle%3Aone'], ['GET', '/api/v3/capacity-estimates/capacity%3Aone'], ['GET', '/api/v3/campaigns/campaign%3Aone/decision'],
       ['POST', '/api/v3/mandates/mandate%3Aone/targets'], ['POST', '/api/v3/mandates/mandate%3Aone/refresh-data'],
-      ['POST', '/api/v3/mandates/mandate%3Aone/intent-clarifications'],
       ['GET', '/api/v3/maintenance'], ['POST', '/api/v3/maintenance/enter'],
-      ['POST', '/api/v3/campaigns/campaign%3Aone/close'], ['GET', '/api/v3/strategies/strategy%3Aone/assessments'], ['POST', '/api/v3/strategies/strategy%3Aone/pause'],
+      ['POST', '/api/v3/campaigns/campaign%3Aone/pause'], ['GET', '/api/v3/strategies/strategy%3Aone/assessments'], ['POST', '/api/v3/strategies/strategy%3Aone/pause'],
     ]);
     const admitted = requests.length;
     await writeFile(file, '{"requestId":"same-request"}');
-    await assert.rejects(run(['campaign', 'resume', 'campaign:one', '--file', file]), /expected_revision_required/);
+    await assert.rejects(run(['campaign', 'pause', 'campaign:one', '--file', file]), /expected_revision_required/);
+    for (const args of [['campaign','start'], ['campaign','resume','id'], ['campaign','close','id'], ['pm','start'], ['pm','clarify-intent','id']]) await assert.rejects(run(args), /unknown_/);
     assert.equal(requests.length, admitted);
     const schema = await schemas('MandateRevision'); assert.equal(schema.entry, 'MandateRevision'); assert.match(schema.source!, /interface OperatingComparison/);
   } finally {

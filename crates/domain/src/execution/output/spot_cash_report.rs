@@ -71,14 +71,16 @@ pub(super) fn shape(report: &NativeSpotCashReportV1) -> Result<(), DomainError> 
     }
     let mut keys = BTreeSet::new();
     for statistic in &report.statistics {
-        crate::control::text(&statistic.native_key, 1, 200, false)?;
+        crate::control::text(&statistic.native_key, 1, 512, false)?;
         if statistic.group != NativeStatisticGroup::Returns
             || statistic.currency.is_some()
             || !keys.insert(&statistic.native_key)
             || statistic.value.is_some_and(|x| !x.is_finite())
             || (statistic.value.is_some() && statistic.reason_code.is_some())
             || (statistic.value.is_none()
-                && statistic.reason_code.as_deref() != Some("NATIVE_STATISTIC_UNAVAILABLE"))
+                && statistic.reason_code.as_deref() != Some("NATIVE_STATISTIC_UNAVAILABLE")
+                && !(statistic.native_key.contains(" vs ")
+                    && super::benchmark_unavailable(statistic.reason_code.as_deref())))
         {
             return Err(bad("spot_report.statistics"));
         }
@@ -111,6 +113,20 @@ pub(super) fn shape(report: &NativeSpotCashReportV1) -> Result<(), DomainError> 
             "Calendar Partial Days" => (start < end)
                 .then(|| (end.div_ceil(day_ns) - start / day_ns - expected.unwrap_or(0)) as f64),
             "Calendar Partial Return Days" => Some(0.0),
+            "Calendar Complete Priced Coverage" => Some(
+                if expected.is_some_and(|n| observed == n as f64)
+                    && !report.daily_returns.days.is_empty()
+                    && report
+                        .daily_returns
+                        .days
+                        .iter()
+                        .all(|day| day.value.is_some() && day.reason.is_none())
+                {
+                    1.0
+                } else {
+                    0.0
+                },
+            ),
             _ => return None,
         })
     };
@@ -237,7 +253,7 @@ pub(super) fn binding_with_balances(
             native_version,
             parameters,
             ..
-        } if native_version == "0.68.0"
+        } if native_version == contracts::portfolio::NAUTILUS_EXECUTION_VERSION
             && parameters.acceptance == report.fee_acceptance
             && parameters.schedule == report.fee_schedule => {}
         _ => return Err(bad("spot_report.frozen_fee_model")),
@@ -416,7 +432,7 @@ pub(super) fn binding_with_balances(
                 clocks.push(observation.native_clock_ns);
             }
         }
-        if source.native_version != "0.68.0"
+        if source.native_version != contracts::portfolio::NAUTILUS_EXECUTION_VERSION
             || clocks.len() as u64 != source.selected_row_count.get()
             || responses.len() as u64 != source.response_count.get()
             || clocks.iter().min().copied() != Some(source.first_received_ns)

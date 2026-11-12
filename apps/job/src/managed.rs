@@ -481,40 +481,6 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             )?;
             outputs.json("qz.native_forecast", RuntimeOutputKind::Report, &result)?;
         }
-        NativeTaskParametersV1::ValidateAlpha {
-            dataset_revision_id,
-            model_artifact_id,
-            request,
-            ..
-        } => {
-            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
-            let result = crate::validation::validate_alpha(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                &bytes,
-            )?;
-            outputs.json("qz.alpha_validation", RuntimeOutputKind::Report, &result)?;
-        }
-        NativeTaskParametersV1::EvaluateSealedAlpha {
-            dataset_revision_id,
-            model_artifact_id,
-            calibration_artifact_id,
-            request,
-            ..
-        } => {
-            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
-            let calibration: Option<contracts::science::NativeFrozenCalibrationV1> =
-                calibration_artifact_id
-                    .map(|id| document(&input.join("objects").join(id.to_string())))
-                    .transpose()?;
-            let result = crate::validation::evaluate_sealed_alpha(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                &bytes,
-                calibration.as_ref(),
-            )?;
-            outputs.json("qz.alpha_sealed", RuntimeOutputKind::Report, &result)?;
-        }
         NativeTaskParametersV1::StudyPortfolio {
             dataset_revision_id,
             request,

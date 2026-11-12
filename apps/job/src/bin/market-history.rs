@@ -2641,27 +2641,6 @@ mod tests {
                 10_000_000,
             )
             .unwrap();
-            let model = wat::parse_str(r#"(module
-                (global $value (mut f64) (f64.const 0))
-                (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
-                    local.get 0 i32.eqz if local.get 1 global.set $value end)
-                (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#).unwrap();
-            assert_eq!(
-                serde_json::to_value(
-                    job::ticks::evaluate(&mono.join("catalog"), &request, &model, true).unwrap()
-                )
-                .unwrap(),
-                serde_json::to_value(
-                    job::ticks::evaluate(
-                        &prepared.join("independent/catalog"),
-                        &request,
-                        &model,
-                        true
-                    )
-                    .unwrap()
-                )
-                .unwrap()
-            );
             let relative = tempfile::Builder::new()
                 .prefix(".qz-relative-compose-")
                 .tempdir_in(std::env::current_dir().unwrap())

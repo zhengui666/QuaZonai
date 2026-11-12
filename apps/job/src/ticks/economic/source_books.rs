@@ -1125,7 +1125,6 @@ mod tests {
             START + 123
         ))
         .unwrap();
-        crate::ticks::evaluate(&root, &request.research, &wasm, true).unwrap();
         for model in [
             None,
             Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::ObservedL2IocV1),
@@ -1197,7 +1196,7 @@ mod tests {
         let metadata = cohort_cache::prepare_views(&root, &clipped, &prepared, 1_000_000).unwrap();
         clipped = serde_json::from_value(metadata["research_request"].clone()).unwrap();
         let result =
-            crate::ticks::evaluate(&prepared.join("research/catalog"), &clipped, &wasm, true)
+            cohort_cache::load(&prepared.join("research/catalog"), &clipped)
                 .unwrap();
         let empty = result
             .coverage
@@ -1209,16 +1208,7 @@ mod tests {
         assert_eq!(empty.cohort_count.get(), 0);
         assert_eq!(empty.first_event_ns, None);
         assert_eq!(empty.last_event_ns, None);
-        assert!(result.partitions.iter().all(|partition| partition
-            .assets
-            .iter()
-            .find(|asset| asset.instrument_id == empty_id.to_string())
-            .unwrap()
-            .metric
-            .counts
-            .observations
-            .get()
-            == 0));
+
     }
 
     #[test]

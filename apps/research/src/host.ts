@@ -1,3 +1,7 @@
+import researchAssessment from '../plugins/research-assessment.ts';
+import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
+import indicatorStrategy, { assertIndicatorRunSettled, IndicatorConfiguration } from '../plugins/indicator-strategy.ts';
+import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Models } from '@earendil-works/pi-ai/models';
@@ -11,13 +15,8 @@ import { mkdir } from 'node:fs/promises';
 import { canonicalJsonDigest } from './native-json.ts';
 import { canonical, Requests, Study } from './documents.ts';
 import { ReviewLedger } from './review-documents.ts';
-import { freezeReviewPolicies } from './review-workflow.ts';
-import { reviewExtensionWithUsage } from '../plugins/review.ts';
-import { ReviewFactorAccountTask } from './review-factor-account.ts';
 import { bindReviewSourceEvidence, ReviewSourceValidationTask, reviewSourceCaptureIdentity } from './review-source.ts';
 import type { CapturedReviewSource } from './review-source.ts';
-import { ReviewNativeTask } from './review-native-task.ts';
-import { IndependentReviewTask } from './review-runtime.ts';
 import { defineExtension } from '@earendil-works/pi-durable';
 import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
@@ -27,7 +26,6 @@ import { configuredModels, subscriptionSpeed, supportsServiceTier, ModelTiers } 
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from './native-remote-receipts.ts';
-import { Continuation, researchContinuation } from './continuation.ts';
 import { CampaignResearchDoc } from './pm-campaign.ts';
 import { settleCampaignTrial } from './pm-ledger.ts';
 
@@ -76,12 +74,14 @@ export async function openResearch(options: {
       const module = await import(pathToFileURL(resolve(path)).href);
       registry.install(module.default as Extension);
     }
-    registry.install(reviewExtensionWithUsage(() => harness));
-    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
-    registry.install(researchContinuation(() => harness));
+    registry.install(indicatorStrategy);
+    registry.install(researchAssessment);
+    registry.install(nativeStrategyBacktest);
+    registry.install(nativeResearchExtension(registry.snapshot().installed().find(extension => extension.name === 'qz.research') ?? researchTools));
+    registry.install(defineExtension({ name: 'qz.research-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, ReviewSourceValidationTask] }));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
-    harness = await Harness.open(storage, { models, registry, settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => extension.name !== 'qz.review') } }, context);
+    harness = await Harness.open(storage, { models, registry, settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => !['qz.review', 'qz.research-native'].includes(extension.name)) } }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
@@ -121,13 +121,15 @@ export async function openResearch(options: {
         return existing.taskId;
       }
       await options.authorizeAdmission?.(tx, input, metadata);
+      if (input.campaign) throw Object.assign(new Error('custom_research_campaign_retired'), { statusCode: 410 });
+      if (['reviewPolicy', 'reviewPolicies', 'reviewedFactorSources'].some(key => input.policy[key] !== undefined)) throw Object.assign(new Error('legacy_research_scoring_retired'), { statusCode: 410 });
     const model = models.getModel(input.model.provider, input.model.modelId);
     if (!model) throw new Error('model_unavailable');
     if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
     if (input.serviceTier !== undefined && !supportsServiceTier(model)) throw new Error('service_tier_unsupported');
     const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const source = sourceEvidence ? JSON.parse(JSON.stringify(sourceEvidence)) : undefined;
-      const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
+      const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, toolPolicy: 'NAUTILUS_ONLY', ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
       requests.requests[key] = { input, inputDigest, conversationId: null, submissionId: null, taskId, ...(source ? { sourceEvidence: source } : {}), ...(metadata ? { metadata } : {}) };
       return taskId;
     }, context);
@@ -207,6 +209,8 @@ export async function openResearch(options: {
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
     const current = await state(id);
+    const nativeRun = await harness.snapshot(IndicatorConfiguration, handle.id, context);
+    if (nativeRun?.evaluationTaskId) await reconcileNativeRemoteTasks(harness, [{ id: nativeRun.evaluationTaskId, conversationId: handle.id }], context);
     const nextId = await harness.commit(async (tx) => {
       await options.authorizeResume?.(tx, handle.id);
       const study = await tx.doc(Study, handle.id);
@@ -214,27 +218,24 @@ export async function openResearch(options: {
       const intent = requests.requests[key];
       if (!study.input) throw new Error('research_not_found');
       if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || intent.recovery.instruction !== instruction || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
+      const nativeContinuation = study.toolPolicy === 'NAUTILUS_ONLY' && !study.input.campaign && !study.trials.length
+        && current.submission?.status === 'done' && instruction !== undefined
+        && (!study.final || study.final.scientificClaim === 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
+      if (nativeContinuation) await assertIndicatorRunSettled(tx, handle.id);
       const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
-      const selected = study.final?.status === 'STOPPED' && study.final.reason === 'independent_review_not_passed'
-        && study.final.result === null && typeof study.final.trialId === 'number' && study.reviewSelection?.trialId === study.final.trialId
-        && study.input.data.sealed !== undefined && current.submission?.status === 'done'
-        && study.trials.some(trial => trial.taskId === study.final!.trialId && trial.status === 'COMPUTED');
-      const stopped = selected || study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
+      const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
         && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');
-      if (study.final && (intent || !stopped)) throw new Error('research_already_final');
+      if (study.final && (intent || !stopped && !nativeContinuation)) throw new Error('research_already_final');
       if (current.submission?.id !== previousId) throw new Error('research_not_recoverable_conflict');
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
-      if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
+      if (!stopped && !failed && !interruptedStop && !nativeContinuation) throw new Error('research_not_recoverable_conflict');
       if (stopped && study.final?.reason === 'owner_stop') await settleOwnerStopFacts(tx, handle.id);
-      const mode = intent?.recovery?.mode ?? (selected ? 'selected' : stopped ? 'stopped' : 'model_error');
-      const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode, study.reviewSelection?.trialId) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
+      const mode = intent?.recovery?.mode ?? (nativeContinuation ? 'native' : stopped ? 'stopped' : 'model_error');
+      const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
       if (!intent) {
-        const campaign = await tx.doc(CampaignResearchDoc, handle.id);
+        if (study.final && mode === 'native') { study.previousNativeResults = [...(study.previousNativeResults ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
-        if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
-        campaign.state = mode === 'selected' ? 'CLOSING' : 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = mode === 'selected' ? 'independent_evaluation' : null; delete campaign.ownerStopTaskId;
-        delete (await tx.doc(Continuation, handle.id)).evidenceSignature;
         requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode, ...(instruction !== undefined ? { instruction } : {}) } };
       }
       return submissionId;

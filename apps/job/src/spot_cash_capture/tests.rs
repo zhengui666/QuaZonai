@@ -27,6 +27,7 @@ fn money(value: &str) -> contracts::DecimalValue {
 }
 fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: Some(NativeSpotCashPolicyV1 {
             schema_version: SchemaV1,
             mode: NativeSpotCashModeV1::MultiCurrencyCash,

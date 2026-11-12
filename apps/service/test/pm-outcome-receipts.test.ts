@@ -1,3 +1,7 @@
+import type { Task } from '@earendil-works/pi-durable';
+import { createPmPlatform } from '../src/pm-platform.ts';
+import { captureDataset } from '../src/pm-datasets.ts';
+import type { PmRecord } from '../src/pm-facts.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
@@ -47,10 +51,26 @@ async function fixture(initialReceipt: 'UNAVAILABLE' | 'PENDING' | 'LEGACY_ACKNO
     await state.service.research.harness.commit(async tx => {
       const app = await tx.doc(Application); app.observations[source.connection.id] = json({ ...source.observation, connection: source.connection });
     }, context);
-    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
-      requestId: 'existing-receipt-monitor', goal: 'Observe original transport facts only; no scientific or investment qualification.', datasetId: 'controlled',
-      funding: { kind: 'ACCOUNT', accountBindingId: source.connection.id }, model: state.model, operatingAuthority: 'RESEARCH_ONLY' } });
-    assert.equal(admitted.statusCode, 202, admitted.body); const mandateId: string = admitted.json().mandate.id;
+    const mandateId = 'existing-receipt-monitor';
+    await state.service.research.harness.commit(async tx => {
+      const stored = pmState(await tx.doc(PmDocument));
+      const dataset = captureDataset(state.options.config.datasets[0]!, stored, nowNs());
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      const record = {
+        input: { datasetId: 'controlled' }, conversationId: conversation.id,
+        mandate: { ...fact(mandateId), capitalSource: { kind: 'ACCOUNT', accountBindingId: source.connection.id }, operatingAuthority: 'RESEARCH_ONLY' },
+        policy: { id: 'existing-policy', validDomain: {} }, datasets: [dataset.revision.id],
+        campaigns: { original: { id: 'original', state: 'CONCLUDED', datasetRevisionIds: [dataset.revision.id], runtime: { conversationId: conversation.id, taskId: null } } },
+        strategies: {}, assessments: {}, events: {}, cycles: {}, decisions: {}, comparisons: {}, capacities: {}, ensembles: {}, evidence: {}, artifacts: {},
+        outcomes: {}, attributions: {}, retirements: {}, commands: {}, gaps: {}, derivedTrials: {}, budgetMovements: {}, searchFamily: {},
+        latestStrategyId: 'existing-strategy', currentDecisionId: null, latestCycleId: null, basisRevision: 'existing-basis', monitorTaskId: null,
+      } as unknown as PmRecord;
+      stored.mandates[mandateId] = record;
+      // Use the actual registered task token and official Durable transaction,
+      // not the removed research-admission API or a replacement scheduler.
+      stored.mandates[mandateId]!.monitorTaskId = await tx.createTask(createPmPlatform(state.options.config).extension.tasks!.find(task => task.definition.name === 'qz.pm.mandate-monitor')! as Task<{ mandateId: string }, { phase: 'start' }, null, object>, { mandateId },
+        { conversationId: conversation.id, ownership: { kind: 'conversation' }, background: true });
+    }, context);
     const decisionId = 'existing-decision', commandId = 'existing-command';
     let originalTaskId!: TaskId;
     await state.service.research.harness.commit(async tx => {

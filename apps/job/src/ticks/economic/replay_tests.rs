@@ -263,13 +263,7 @@ fn explicit_fx_assets_load_beside_perp_alpha_without_expanding_its_signal_scope(
         replay(&root, &legacy, &alpha_only_model).is_err(),
         "legacy FX inside the original research scope retains its original model evaluation"
     );
-    let predictive =
-        crate::ticks::evaluate(&root, &request.research, &alpha_only_model, true).unwrap();
-    assert_eq!(predictive.coverage.instrument_ids, vec![LATE]);
-    assert!(predictive
-        .partitions
-        .iter()
-        .all(|partition| partition.assets.len() == 1 && partition.assets[0].instrument_id == LATE));
+
 }
 
 #[test]

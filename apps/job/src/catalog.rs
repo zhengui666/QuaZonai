@@ -2,6 +2,7 @@
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
 #[cfg(feature = "market-history")]
 pub mod aggregation;
+pub mod coverage;
 pub mod currencies;
 mod file_batches;
 pub mod publish;
@@ -221,7 +222,7 @@ pub fn measure_catalog(
 pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
     Ok(NativeDataQualityReportV1 {
         schema_version: SchemaV1,
-        native_version: "nautilus-persistence/0.68.0".into(),
+        native_version: "nautilus-persistence/0.69.0".into(),
         checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
             .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
         datasets,
@@ -590,3 +591,22 @@ fn validate_native_mode(
         fee_selection: None,
     })
 }
+
+/// Validate supplied owner metadata without scientific scoring.
+pub fn validate_source(
+    request: &contracts::review_science::NativeReviewSourceRequestV1,
+) -> Result<contracts::review_science::NativeReviewSourceResultV1> {
+    let metadata: contracts::catalogs::RuntimeCatalogMetadataV1 =
+        serde_json::from_value(request.metadata.clone())?;
+    domain::catalogs::metadata(&metadata, request.observed_at)?;
+    domain::execution::native_quality(&metadata.quality)?;
+    Ok(contracts::review_science::NativeReviewSourceResultV1 {
+        schema_version: contracts::SchemaV1,
+        method_version: "qz.review-source.v1".into(),
+        validated: true,
+        metadata: request.metadata.clone(),
+    })
+}
+
+mod scope;
+pub use scope::catalog_factor_scope;

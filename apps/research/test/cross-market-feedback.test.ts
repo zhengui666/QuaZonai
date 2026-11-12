@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import research from '../plugins/research.ts';
 import { modelFeedback } from '../src/feedback.ts';
 import { object } from '../src/trials.ts';
@@ -68,7 +68,7 @@ test('large cross-market brief and all original training-market pages read compl
     assert.equal(settled.status, 'done', JSON.stringify({ calls: faux.state.callCount, readMarkets: seen.length }));
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.deepEqual({ ...facts.input, policy: input.policy }, input);
-    assert.ok(facts.input!.policy.reviewPolicies);
+    assert.equal(facts.input!.policy.reviewPolicies, undefined);
     assert.deepEqual(facts.trials, []);
     assert.deepEqual(seen, ids);
     assert.equal(facts.final!.status, 'STOPPED');

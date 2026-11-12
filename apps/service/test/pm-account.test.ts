@@ -46,6 +46,7 @@ test('PM observed account: incomplete source identity, pending-order unknowns an
     ['unavailable orders', snapshot => { (snapshot.openOrders as JsonObject).available_ns = '103'; }, /open_orders_clock_invalid/],
     ['source lost events', snapshot => { (snapshot.nativeObservation as JsonObject).dropped_events = '1'; }, /native_observation_has_gap/],
     ['other sequence', snapshot => { (snapshot.nativeObservation as JsonObject).sequence = '9007199254740996'; }, /native_snapshot_identity_mismatch/],
+    ['unsupported previous native version', snapshot => { ((snapshot.nativeObservation as JsonObject).binding as JsonObject).native_version = '0.68.0'; }, /native_version_unsupported/],
     ['other environment', snapshot => { ((snapshot.nativeObservation as JsonObject).binding as JsonObject).environment = 'LIVE'; }, /native_environment_mismatch/],
     ['stale valuation', snapshot => { ((snapshot.nativeObservation as JsonObject).snapshot as JsonObject).is_stale = true; }, /native_state_not_complete/],
     ['margin account', snapshot => { ((snapshot.nativeObservation as JsonObject).snapshot as JsonObject).account_type = 'MARGIN'; }, /native_multi_currency_cash_required/],
@@ -176,6 +177,15 @@ function eventsFixture() {
   (f.application.observations[f.connection.id]!.snapshot as JsonObject).accountEvents = envelope;
   return { ...f, envelope };
 }
+
+test('PM account events: previous native versions are unsupported without rewriting source evidence', () => {
+  const f = eventsFixture();
+  const source = f.application.observations[f.connection.id]!.snapshot as JsonObject;
+  ((source.nativeObservation as JsonObject).binding as JsonObject).native_version = '0.68.0';
+  const original = structuredClone(source);
+  assert.throws(() => projectAccountEvents(f.capture()), /native_clock_or_version_invalid/);
+  assert.deepEqual(source, original);
+});
 
 test('PM account events: unavailable ledgers are distinct from source-confirmed empty intervals and partial evidence', () => {
   assert.equal(projectAccountEvents(fixture().capture()), null);

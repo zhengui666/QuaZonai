@@ -238,6 +238,7 @@ pub fn market_fixture(
         target_ttl_ns: count(10 * SECOND),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: quote.to_string(),

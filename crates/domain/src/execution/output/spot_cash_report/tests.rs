@@ -137,6 +137,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
             .collect(),
     };
     let settings = NativeSimulationSettingsV1 {
+        price_benchmark: None,
         multi_currency_spot_cash: Some(NativeSpotCashPolicyV1 {
             schema_version: SchemaV1,
             mode: NativeSpotCashModeV1::MultiCurrencyCash,
@@ -154,7 +155,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         leverage: amount("1"),
         fee_model: NativeModelRefV1::FrozenSpotFeeScenario {
             schema_version: SchemaV1,
-            native_version: "0.68.0".into(),
+            native_version: "0.69.0".into(),
             parameters: FrozenSpotFeeScenarioParametersV1 {
                 acceptance: SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability,
                 schedule: fee_schedule.clone(),
@@ -325,7 +326,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         settled_replay_ns: None,
         spot_cash_report: Some(report),
         schema_version: SchemaV1,
-        native_version: "0.68.0".into(),
+        native_version: "0.69.0".into(),
         iterations: count(3),
         events: count(0),
         orders: count(0),
@@ -895,4 +896,32 @@ fn legacy_metrics_keep_the_original_native_observation_count_and_missingness() {
             .all(|metric| metric.observation_count.get() == 2
                 && metric.status == MetricStatus::Failed)
     );
+}
+
+#[test]
+fn benchmark_unavailability_round_trips_without_zero_or_currency_override() {
+    let (request, mut result) = fixture(false);
+    let statistic = NativeStatisticV1 {
+        group: NativeStatisticGroup::Returns,
+        native_key: "Beta vs BTC/USDC.TEST price return (fees/funding excluded; risk-free 0%)"
+            .into(),
+        currency: None,
+        value: None,
+        reason_code: Some("BENCHMARK_WINDOW_MISMATCH".into()),
+    };
+    report_mut(&mut result).statistics.push(statistic);
+    binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).unwrap();
+    report_mut(&mut result)
+        .statistics
+        .last_mut()
+        .unwrap()
+        .reason_code = Some("UNKNOWN_REASON".into());
+    assert!(binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).is_err());
+    report_mut(&mut result)
+        .statistics
+        .last_mut()
+        .unwrap()
+        .reason_code = Some("BENCHMARK_WINDOW_MISMATCH".into());
+    report_mut(&mut result).statistics.last_mut().unwrap().value = Some(0.0);
+    assert!(binding(&request, &result, result.spot_cash_report.as_ref().unwrap()).is_err());
 }

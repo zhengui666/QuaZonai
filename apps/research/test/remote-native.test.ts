@@ -13,8 +13,8 @@ import type { NativeExecutionRequest, NativeJson, RemoteNativeTarget } from '../
 import { canonical } from '../src/documents.ts';
 import { executionId } from '../../nautilus/src/server.ts';
 import { defaultNativeTarget, executeNativeValue, nativeCommands, nativeTargetForData, NativeRemoteUncertainty } from '../src/native-execution.ts';
-import { openResearch } from '../src/host.ts';
-import { FactorTask, runFactor } from '../plugins/native-factor-task.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
+import { IndicatorStrategyTask } from '../plugins/indicator-strategy.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
 async function body(request: IncomingMessage): Promise<NativeExecutionRequest> {
@@ -123,28 +123,28 @@ test('bounded cancellation retains its unknown original remote receipt after Dur
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 100 : milliseconds); });
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-stop-receipt-'));
   let accepted!: () => void; const entered = new Promise<void>(resolve => { accepted = resolve; });
-  let original: NativeExecutionRequest | undefined; let cancels = 0; let posts = 0;
+  let original: NativeExecutionRequest | undefined; let cancels = 0; let posts = 0; const cancelPaths: string[] = [];
   const source = await worker(async (request, _response) => {
     if (request.method === 'POST') { posts++; original = await body(request); accepted(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
-    cancels++; // Deliberately no response: remote termination remains unknown.
+    cancels++; cancelPaths.push(request.url!); // Deliberately no response: remote termination remains unknown.
   });
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('compute', {}), { stopReason: 'toolUse' })]);
   const data = { catalog: directory, nautilusTarget: source.target,
     request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: {} } } };
-  const compute = defineExtension({ name: 'test.remote-stop-receipt', tasks: [FactorTask], tools: [defineTool({
+  const compute = defineExtension({ name: 'qz.research', tools: [defineTool({
     name: 'compute', description: 'Controlled remote cancellation protocol', parameters: obj({}), replay: 'safe',
-    async execute(_args, api, context) { await runFactor(api, context, '(module)', data); return {}; },
+    async execute(_args, api, context) { const id = await api.commit(tx => tx.createTask(IndicatorStrategyTask, { request: {}, catalog: directory, target: source.target }, { ownership: { kind: 'task', taskId: api.taskId } }), context); await api.waitForTask(id, context); return {}; },
   })] });
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [compute] };
   let host = await openResearch(options);
   try {
     const start = await host.start('original-remote-stop', { goal: 'Retain unknown original receipt', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: {} });
     await entered; await host.stop(start.conversationId);
-    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 10), BACKGROUND_CONTEXT);
+    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.indicator-strategy.evaluate' }, 10), BACKGROUND_CONTEXT);
     assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
-    assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1);
+    assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.ok(cancels >= 1); assert.ok(cancelPaths.every(path => path === `/v1/executions/${original!.requestId}`));
     assert.ok(deadlines.includes(15_000));
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
     assert.deepEqual(facts, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'UNKNOWN', error: 'nautilus_cancellation_unknown' }] });

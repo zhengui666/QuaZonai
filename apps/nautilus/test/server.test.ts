@@ -27,7 +27,7 @@ test('request hashing preserves original canonical identities across buffered Un
   assert.equal(executionId({ ...large, files: { ...large.files }, input: [...large.input] }), executionId(large));
 });
 
-async function fixture(calibrationThreads?: number) {
+async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-worker-'));
   const catalog = join(directory, 'catalog'); await mkdir(catalog);
   const count = join(directory, 'calls'); const binary = join(directory, 'job');
@@ -42,10 +42,10 @@ else if(input.fail) { console.error('NATIVE_CONTROLLED_FAILURE'); process.exitCo
 else if(input.invalid) { console.log('invalid'); }
 else { const contents={}; for(let i=0;i<args.length;i++) if(['--model','--scope'].includes(args[i])) contents[args[i]]=fs.readFileSync(args[++i],'utf8');
 const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.readdirSync(args[objects+1]).sort();
-console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN,calibrationThreads:process.env.QZ_CALIBRATION_THREADS??null})); }
+console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN})); }
 `);
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token', calibrationThreads };
+  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token' };
   let worker = await createNautilusWorker(options);
   async function listen() { worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening'); return `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`; }
   let url = await listen();
@@ -69,24 +69,26 @@ console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUT
   };
 }
 
-test('calibration capacity reaches the native process without widening the environment', async () => {
-  for (const threads of [undefined, 1, 4]) {
-    const f = await fixture(threads);
-    try {
-      const request = f.request({});
-      request.command = 'fit-ensemble';
-      const { requestId: _previousId, ...input } = request;
-      request.requestId = executionId(input);
-      const receipt = await (await f.post(request)).json();
-      assert.equal(receipt.status, 'COMPLETED');
-      assert.equal(receipt.result.calibrationThreads, threads === undefined ? null : String(threads));
-      assert.equal(receipt.result.authLeaked, false);
-    } finally { await f.cleanup(); }
-  }
-  for (const calibrationThreads of [0, -1, 1.5, NaN, Infinity]) {
-    await assert.rejects(createNautilusWorker({ binary: '/unused', dataDir: '/unused', catalogRoots: [], calibrationThreads }),
-      /nautilus_calibration_threads_invalid/);
-  }
+test('removed scientific commands are absent from capabilities and rejected before native execution', async () => {
+  const f = await fixture();
+  try {
+    const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
+    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations']) {
+      assert.equal(capabilities.commands.includes(command), false);
+      const body = f.request({}); body.command = command;
+      const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+      const response = await f.post(body);
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: 'nautilus_request_invalid' });
+      assert.equal((await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers })).status, 404);
+    }
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+    assert.equal(capabilities.commands.includes('review-source'), true);
+    const body = f.request({}); body.command = 'review-source';
+    const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+    assert.equal((await (await f.post(body)).json()).status, 'COMPLETED');
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
 });
 
 test('capabilities expose the verified build manifest of the actual executable', async () => {
@@ -248,5 +250,60 @@ test('running receipt exposes original snapshot previews without waiting for or 
     const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
     assert.equal(cancelled.status, 'CANCELLED'); await pending;
     assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('catalog coverage uses the existing read-only catalog execution route without rounding nanoseconds', async () => {
+  const f = await fixture();
+  try {
+    for (const selector of [{ bar_types: ['BTC/USDT.BINANCE-1-MINUTE-LAST-EXTERNAL'] },
+      { selectors: [{ data_type: 'TradeTick', identifier: 'BTC/USDT.BINANCE' }, { data_type: 'QuoteTick', identifier: 'BTC/USDT.BINANCE' }] }] as Record<string, NativeExecutionRequest['input']>[]) {
+    const request = f.request({ ...selector,
+      start_ns: '1790000000000000001', end_ns: '1790000000000000002' }, ['--catalog', f.catalog]);
+    request.command = 'catalog-coverage';
+    const { requestId: _old, ...input } = request;
+    request.requestId = executionId(input);
+    const response = await f.post(request);
+    const receipt = await response.json();
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual(receipt.result.input, request.input);
+    assert.deepEqual(receipt.result.args, ['--catalog', f.catalog]);
+    }
+  } finally { await f.cleanup(); }
+});
+
+test('stopping an active native indicator batch cancels its one process and never publishes partial results', async () => {
+  const f = await fixture();
+  try {
+    const body = f.request({ wait: true, requests: [{ ordinal: '0' }, { ordinal: '1' }] });
+    body.command = 'simulate-indicator-strategy-batch';
+    const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
+    const response = await f.post(body); assert.equal(response.status, 202); await response.body?.cancel();
+    for (let attempt = 0; ; attempt++) {
+      try { await readFile(f.count, 'utf8'); break; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || attempt === 100) throw error; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const stopped = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
+    assert.equal(stopped.status, 'CANCELLED'); assert.equal('result' in stopped, false);
+    const readback = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers })).json();
+    assert.equal(readback.status, 'CANCELLED'); assert.equal('result' in readback, false);
+    const replay = await (await f.post(body)).json(); assert.equal(replay.status, 'CANCELLED');
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('upstream native strategy command preserves exact clocks and only registered catalog paths', async () => {
+  const f = await fixture();
+  try {
+    const input = { event_start_ns: '1790000000000000001', strategy: { kind: 'EMA_CROSS', trade_size: '0.000000000000000001' } };
+    const body = f.request(input, ['--catalog', f.catalog]); body.command = 'native-strategy-backtest';
+    const { requestId: _old, ...wire } = body; body.requestId = executionId(wire);
+    const receipt = await (await f.post(body)).json() as NativeExecutionReceipt;
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual((receipt.result as { input: unknown }).input, input);
+    const outside = f.request(input, ['--catalog', f.directory]); outside.command = 'native-strategy-backtest'; const { requestId: _outsideOld, ...outsideWire } = outside; outside.requestId = executionId(outsideWire);
+    const rejected = await (await f.post(outside)).json();
+    assert.equal(rejected.status, 'FAILED'); assert.equal(rejected.error, 'nautilus_catalog_outside_configured_roots');
   } finally { await f.cleanup(); }
 });

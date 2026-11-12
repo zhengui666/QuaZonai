@@ -508,7 +508,10 @@ pub fn result(
         )
         || value.native_versions
             != BTreeMap::from([
-                ("nautilus-backtest".into(), "0.68.0".into()),
+                (
+                    "nautilus-backtest".into(),
+                    contracts::portfolio::NAUTILUS_EXECUTION_VERSION.into(),
+                ),
                 ("wasmi".into(), "2.0.0".into()),
                 ("strategy-composition".into(), "1".into()),
             ])

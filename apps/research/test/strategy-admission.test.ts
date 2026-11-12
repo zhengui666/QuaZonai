@@ -5,10 +5,10 @@ import { maxDbCounter, thresholdPolicy, thresholdTargets, validateNativeSimulati
 
 const settings: JsonObject = { schema_version: 1, base_currency: 'USDC', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
   exposure_tolerance: '0.000001', snapshot_interval_ms: 1000,
-  fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.68.0', parameters: {} },
-  fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.68.0',
+  fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.69.0', parameters: {} },
+  fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.69.0',
     parameters: { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '1' } },
-  latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.68.0',
+  latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.69.0',
     parameters: { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } },
   fee_rates: [{ instrument_id: 'A.SIM', maker: '0', taker: '0' }] };
 const policy: JsonObject = { name: 'original', kind: 'factor-threshold', instrumentId: 'A.SIM', threshold: 0, investedWeight: '0.75', targetTtlNs: '5', simulationSettings: settings };
@@ -38,7 +38,7 @@ test('native admission requires every simulation wire field and its primitive ty
   }
   for (const invalid of [{ ...settings, account_kind: null }, { ...settings, account_kind: ['CASH'] }, { ...settings, schema_version: '1' }, { ...settings, starting_capital: 3000 },
     { ...settings, leverage: 'NaN' }, { ...settings, exposure_tolerance: Infinity }, { ...settings, snapshot_interval_ms: '1000' },
-    { ...settings, fee_model: {} }, { ...settings, fill_model: [] }, { ...settings, latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'x', upstream_version: '0.68.0' } },
+    { ...settings, fee_model: {} }, { ...settings, fill_model: [] }, { ...settings, latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'x', upstream_version: '0.69.0' } },
     { ...settings, fee_rates: [{ instrument_id: 'A.SIM', maker: '0' }] }]) {
     assert.throws(() => validateNativeSimulationSettings(invalid), /strategy_/);
   }
@@ -67,7 +67,7 @@ test('native admission validates the original supported adapter parameters befor
   for (const random_seed of ['9223372036854775808', '01', '-1']) assert.throws(() => validateNativeSimulationSettings({ ...settings,
     fill_model: { ...fill, parameters: { ...(fill.parameters as JsonObject), random_seed } } }), /strategy_simulation_/);
   assert.throws(() => validateNativeSimulationSettings({ ...settings,
-    fee_model: { schema_version: 1, adapter_kind: 'FROZEN_SPOT_FEE_SCENARIO', native_version: '0.68.0', parameters: {} } }), /strategy_simulation_model_invalid/);
+    fee_model: { schema_version: 1, adapter_kind: 'FROZEN_SPOT_FEE_SCENARIO', native_version: '0.69.0', parameters: {} } }), /strategy_simulation_model_invalid/);
 });
 
 test('native admission binds exact linked model identities and all supported static combinations', () => {
@@ -119,4 +119,13 @@ test('native admission rejects unknown native fields and requires original fees 
   const before = structuredClone(complete);
   assert.equal(validateNativeSimulationSettings(complete, ['A.SIM', 'B.SIM']), complete);
   assert.deepEqual(complete, before);
+});
+
+test('native admission never silently executes a 0.68 model using the 0.69 engine', () => {
+  const old = structuredClone(settings);
+  for (const key of ['fee_model', 'fill_model', 'latency_model']) {
+    (old[key] as JsonObject).upstream_version = '0.68.0';
+  }
+  assert.throws(() => validateNativeSimulationSettings(old), /strategy_simulation_model_invalid/);
+  assert.equal((old.fill_model as JsonObject).upstream_version, '0.68.0');
 });

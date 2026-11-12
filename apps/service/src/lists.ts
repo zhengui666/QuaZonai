@@ -1,28 +1,24 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { Cursor, JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { Cursor, JsonObject } from '@earendil-works/pi-durable';
 import type { FastifyInstance } from 'fastify';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { Requests } from '../../research/src/documents.ts';
 import { latestTrialReview } from '../../research/src/review-documents.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import type { ResearchSpecification, Metric, RecordedDataset } from '../../../packages/contracts/src/index.ts';
-import type { AllocationListItem, FactorListItem, ListCriterion, ListPage, PortfolioListItem, ResearchListItem, TickReplayListItem } from '../../../packages/contracts/src/lists.ts';
-import type { TickEconomicReplayStart, TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
-import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
-import { executionStatus, portfolioRuntime } from './runtime-views.ts';
+import type { FactorListItem, ListCriterion, ListPage, PortfolioListItem, ResearchListItem } from '../../../packages/contracts/src/lists.ts';
+import { portfolioRuntime } from './runtime-views.ts';
 import { readResearchAdmissions } from './admissions.ts';
 import { Application, decimalUnits, portfolio, Problem } from './facts.ts';
 import type { ResearchAdmissions } from './facts.ts';
-import { factorReference, factorViews } from './factors.ts';
+import { factorViews } from './factors.ts';
 import { metrics } from './projections.ts';
 import { portfolioPerformance } from './portfolio-performance.ts';
-import { replayMetadata, TickEconomicReplays } from './economic-tick.ts';
-import { ReviewAllocations } from './review-allocation.ts';
 import type { ServiceConfig } from './config.ts';
 
 const context = BACKGROUND_CONTEXT;
-type Collection = 'research' | 'factors' | 'portfolios' | 'tick-economic-replays' | 'review-allocations';
-type Item = ResearchListItem | FactorListItem | PortfolioListItem | TickReplayListItem | AllocationListItem;
+type Collection = 'research' | 'factors' | 'portfolios';
+type Item = ResearchListItem | FactorListItem | PortfolioListItem;
 type Scalar = string | number | bigint | null;
 type Indexed<T extends Item = Item> = { item: T; search: string; filters: Record<string, string[]>; sort: Record<string, Scalar>; labels?: Record<string, Record<string, string>> };
 type Query = Record<string, unknown>;
@@ -30,15 +26,11 @@ const filterKeys: Record<Collection, string[]> = {
   research: ['status', 'scope', 'datasetId', 'criterionStatus', 'metric', 'modality', 'model'],
   factors: ['status', 'datasetId', 'evidence', 'combinable', 'modality', 'research', 'reviewDecision'],
   portfolios: ['status', 'datasetId', 'reviewDecision', 'currency', 'memberType', 'source'],
-  'tick-economic-replays': ['status', 'datasetId', 'memberType', 'source'],
-  'review-allocations': ['status', 'reviewDecision', 'source'],
 };
 const sortKeys: Record<Collection, string[]> = {
   research: ['newest', 'title', 'datasetName', 'status', 'trials', 'criterionValue'],
   factors: ['newest', 'name', 'researchName', 'datasetName', 'status', 'independentIc'],
   portfolios: ['name', 'datasetName', 'memberCount', 'capital', 'sharpe', 'annualizedReturn', 'maxDrawdown', 'createdAt'],
-  'tick-economic-replays': ['name', 'datasetName', 'memberCount', 'createdAt'],
-  'review-allocations': ['name', 'memberCount', 'createdAt'],
 };
 const labels: Record<string, string> = {
   RUNNING: '进行中', STARTED: '计算中', QUEUED: '待执行', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', IDLE: '当前无执行',
@@ -72,15 +64,12 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
   const research = new Map<number, Indexed<ResearchListItem>>();
   const factors = new Map<number, Indexed<FactorListItem>[]>();
   const portfolios = new Map<string, Indexed<PortfolioListItem>>();
-  const ticks = new Map<string, Indexed<TickReplayListItem>>();
-  const allocations = new Map<string, Indexed<AllocationListItem>>();
-  const known = new Set<number>(); const dirty = new Set<number>(); const dirtyTasks = new Set<number>();
+  const known = new Set<number>(); const dirty = new Set<number>();
   const researchNames = new Map<number, string>();
   let admissions: ResearchAdmissions = {}; let admissionStamp = '';
   let originals = new Map<number, string>(); let originalStamp = '';
-  let appDirty = true; let requestsDirty = true; let ticksDirty = true; let allocationsDirty = true;
+  let appDirty = true; let requestsDirty = true;
   let initialized = false; let refreshing: Promise<void> | undefined;
-  const tickStamps = new Map<string, string>();
   const datasetName = (id: string, sourceResearchIds: number[]) => {
     // A configured ID may have been renamed since admission. Only this object's
     // original sources can supply its frozen name; another study is not provenance.
@@ -100,15 +89,11 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       else if (change.type === 'task') {
         dirty.add(change.value.conversationId);
         if (change.value.kind === 'qz.portfolio') appDirty = true;
-        if (change.value.kind === 'qz.review-allocation') allocationsDirty = true;
-        if (change.value.kind === 'qz.tick-economic-replay') { ticksDirty = true; dirtyTasks.add(change.value.id); }
       } else if (change.type === 'submission' && change.value.type === 'input') dirty.add(change.value.conversationId);
       else if (change.type === 'document' || change.type === 'document.copy') {
         const kind = change.record.kind;
         if (kind === 'qz.application') appDirty = true;
         else if (kind === 'qz.research-requests') { requestsDirty = true; appDirty = true; }
-        else if (kind === 'qz.tick-economic-replays') ticksDirty = true;
-        else if (kind === 'qz.review-allocations') allocationsDirty = true;
         else if (change.conversationId !== undefined && ['qz.study', 'qz.review-ledger'].includes(kind)) dirty.add(change.conversationId);
       }
     }
@@ -126,7 +111,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
         ...(dataset ? { dataset: Object.fromEntries(['id', 'name', 'currency', 'source', 'nativeModality'].filter(key => dataset[key] !== undefined).map(key => [key, dataset[key]!])) } : {}) };
     }
     const stamp = JSON.stringify(next);
-    if (stamp !== admissionStamp) { admissionStamp = stamp; admissions = next; for (const id of known) dirty.add(id); ticksDirty = true; }
+    if (stamp !== admissionStamp) { admissionStamp = stamp; admissions = next; for (const id of known) dirty.add(id); }
     portfolios.clear();
     for (const raw of Object.values(app?.portfolios ?? {})) {
       const fact = await portfolioRuntime(host, portfolio(raw)); if (fact.deletedAt) continue;
@@ -155,7 +140,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
     const requests = await host.harness.snapshot(Requests, context);
     const entries = Object.entries(requests?.requests ?? {}).filter(([, request]) => !request.recovery && request.conversationId !== null).map(([key, request]) => [request.conversationId!, key.slice('request:'.length)] as const);
     const stamp = JSON.stringify(entries);
-    if (stamp !== originalStamp) { originals = new Map(entries); originalStamp = stamp; for (const id of known) dirty.add(id); appDirty = true; ticksDirty = true; }
+    if (stamp !== originalStamp) { originals = new Map(entries); originalStamp = stamp; for (const id of known) dirty.add(id); appDirty = true; }
   }
   async function refreshResearch(ids: number[]) {
     const active = new Set((await host.harness.inspect(context)).tasks.map(task => task.record.conversationId as number));
@@ -164,7 +149,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const name = study?.input?.specification?.name ?? study?.input?.goal;
       if (name !== researchNames.get(id)) {
         if (name) researchNames.set(id, name); else researchNames.delete(id);
-        appDirty = true; ticksDirty = true;
+        appDirty = true;
       }
       if (!study?.input || study.deletedAt) { research.delete(id); factors.delete(id); continue; }
       known.add(id);
@@ -194,48 +179,6 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       }));
     }
   }
-  async function refreshTicks() {
-    ticksDirty = false; const taskIds = new Set(dirtyTasks); dirtyTasks.clear();
-    const runs = (await host.harness.snapshot(TickEconomicReplays, context))?.runs ?? {};
-    const kept = new Set<string>();
-    for (const raw of Object.values(runs)) {
-      const fact = raw as unknown as { original: TickEconomicReplayStart; view: TickEconomicReplayView };
-      const view = fact.view; kept.add(view.id);
-      const members = view.members ?? (view.factorId ? [{ factorId: view.factorId, weight: '1' }] : []);
-      const sourceIds = [...new Set(members.map(member => String(factorReference(member.factorId).researchId)))];
-      const sourceNames = sourceIds.map(id => researchNames.get(Number(id)) ?? '研究名称未记录');
-      const recordedName = datasetName(view.datasetId, sourceIds.map(Number));
-      const stamp = JSON.stringify({ id: view.id, datasetId: view.datasetId, status: view.status, members, sourceNames, datasetName: recordedName });
-      if (ticks.has(view.id) && tickStamps.get(view.id) === stamp && !taskIds.has(view.taskId)) continue;
-      const task = await host.harness.getTask(view.taskId as TaskId, context);
-      const metadata = replayMetadata(fact, task);
-      const item: TickReplayListItem = { id: view.id, name: sourceNames.length === 1 ? sourceNames[0]! : members.length > 1 ? '多因子逐笔回放' : '单因子逐笔回放',
-        datasetId: view.datasetId, datasetName: recordedName, status: executionStatus(task, view.result ? 'COMPUTED' : view.status, 'QUEUED') as TickReplayListItem['status'],
-        memberCount: members.length, memberType: members.length > 1 ? 'ensemble' : 'single-factor', scientificQualification: view.scientificQualification,
-        createdAt: metadata.createdAt, progress: metadata.progress };
-      ticks.set(item.id, { item, search: searchText(item.name, item.id, item.datasetName, ...sourceIds, ...sourceNames, ...members.map(member => member.factorId)),
-        filters: { status: one(item.status), datasetId: one(item.datasetId), memberType: one(item.memberType), source: sourceIds },
-        sort: { name: item.name, datasetName: item.datasetName, memberCount: item.memberCount, createdAt: item.createdAt },
-        labels: { datasetId: { [item.datasetId]: item.datasetName ?? '数据集名称未记录' }, source: Object.fromEntries(sourceIds.map((id, i) => [id, sourceNames[i]!])) } });
-      tickStamps.set(item.id, stamp);
-    }
-    for (const id of ticks.keys()) if (!kept.has(id)) { ticks.delete(id); tickStamps.delete(id); }
-  }
-  async function refreshAllocations() {
-    allocationsDirty = false;
-    const records = (await host.harness.snapshot(ReviewAllocations, context))?.records ?? {};
-    allocations.clear();
-    for (const raw of Object.values(records)) {
-      const view = raw.view as unknown as ReviewAllocationView;
-      const sources = (raw.sources ?? []) as unknown as { view: { id: string; name: string } }[];
-      const sourceNames = view.portfolioIds.map(id => sources.find(source => source.view.id === id)?.view.name ?? portfolios.get(id)?.item.name ?? id);
-      const task = await host.harness.getTask(view.taskId as TaskId, context);
-      if (!task) throw new Problem('review_allocation_task_missing', 500);
-      const item: AllocationListItem = { id: view.id, name: view.name, status: executionStatus(task, 'COMPUTED', 'QUEUED') as AllocationListItem['status'], memberCount: view.portfolioIds.length, reviewDecision: view.review?.decision ?? null, createdAt: view.createdAt };
-      allocations.set(item.id, { item, search: searchText(item.name, item.id, ...view.portfolioIds, ...sourceNames), filters: { status: one(item.status), reviewDecision: one(item.reviewDecision), source: view.portfolioIds },
-        sort: { name: item.name, memberCount: item.memberCount, createdAt: item.createdAt }, labels: { source: Object.fromEntries(view.portfolioIds.map((id, i) => [id, sourceNames[i]!])) } });
-    }
-  }
   async function refresh() {
     if (!initialized) {
       let cursor: Cursor | undefined;
@@ -246,9 +189,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       if (appDirty) await refreshApplication();
       if (requestsDirty) await refreshRequests();
       if (dirty.size) { const ids = [...dirty]; dirty.clear(); await refreshResearch(ids); }
-      if (ticksDirty) await refreshTicks();
-      if (allocationsDirty) await refreshAllocations();
-    } while (appDirty || requestsDirty || dirty.size || ticksDirty || allocationsDirty);
+    } while (appDirty || requestsDirty || dirty.size);
   }
   return {
     close: unsubscribe,
@@ -256,12 +197,11 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const parsed = parseQuery(collection, query);
       refreshing ??= refresh().catch(error => {
         // A failed read must never make a partial rebuild look authoritative on retry.
-        initialized = false; appDirty = true; requestsDirty = true; ticksDirty = true; allocationsDirty = true;
-        tickStamps.clear();
+        initialized = false; appDirty = true; requestsDirty = true;
         for (const id of known) dirty.add(id);
         throw error;
       }).finally(() => { refreshing = undefined; }); await refreshing;
-      const rows: Indexed[] = collection === 'research' ? [...research.values()] : collection === 'factors' ? [...factors.values()].flat() : collection === 'portfolios' ? [...portfolios.values()] : collection === 'tick-economic-replays' ? [...ticks.values()] : [...allocations.values()];
+      const rows: Indexed[] = collection === 'research' ? [...research.values()] : collection === 'factors' ? [...factors.values()].flat() : [...portfolios.values()];
       return selectPage(collection, rows, parsed);
     },
   };
@@ -269,7 +209,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
 
 function parseQuery(collection: Collection, query: Query) {
   const allowed = new Set(['q', 'page', 'pageSize', 'sort', 'order', ...filterKeys[collection],
-    ...(['portfolios', 'tick-economic-replays', 'review-allocations'].includes(collection) ? ['createdFrom', 'createdTo'] : []),
+    ...(collection === 'portfolios' ? ['createdFrom', 'createdTo'] : []),
     ...(collection === 'portfolios' ? ['capitalMin', 'capitalMax'] : []), ...(collection === 'factors' ? ['icMin', 'icMax'] : [])]);
   if (Object.entries(query).some(([key, input]) => !allowed.has(key) || typeof input !== 'string')) throw new Problem('list_query_invalid');
   const strings = query as Record<string, string>;

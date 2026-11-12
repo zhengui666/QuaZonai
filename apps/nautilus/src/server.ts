@@ -16,10 +16,10 @@ type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: st
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
-export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate',
-  'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
-  'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
-  'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
+export const commands = ['review-source', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'native-strategy-backtest',
+  'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
+  'capital-curve', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
+  'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
 const flags = new Set(['--summary-only', '--plan-only']);
 const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
 const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
@@ -36,8 +36,6 @@ export interface WorkerOptions {
   maximumRequestBytes?: number;
   /** Concurrent worker capacity, separate from cumulative research execution. */
   maximumConcurrentTickExecutions?: number;
-  /** Maximum threads per independent ensemble-calibration call; native code also checks cores and scratch size. */
-  calibrationThreads?: number;
   /** Explicit Paper/LIVE account modes in this same native worker process. */
   accounts?: AccountOptions[];
   accountBinary?: string;
@@ -103,8 +101,6 @@ function validateRequest(value: unknown, digest: string): Request {
 
 export async function createNautilusWorker(options: WorkerOptions) {
   const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
-  const calibrationThreads = options.calibrationThreads === undefined ? undefined
-    : positiveLimit(options.calibrationThreads, 1, 'nautilus_calibration_threads_invalid');
   const binary = await realpath(options.binary);
   const tickBinary = options.tickBinary === undefined ? binary : await realpath(options.tickBinary);
   async function implementationIdentity() {
@@ -250,7 +246,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
           if (request.command === 'simulate') execution.progressPath = join(directory, 'progress.ndjson');
           child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory,
-              ...(calibrationThreads === undefined ? {} : { QZ_CALIBRATION_THREADS: String(calibrationThreads) }),
               ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
           const parser = new JsonReader(); let parseError: unknown; let stderr = '';
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');

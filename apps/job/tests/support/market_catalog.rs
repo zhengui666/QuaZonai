@@ -180,6 +180,7 @@ pub fn market_direction_with_size(
         schema_version: SchemaV1,
         selection,
         settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USD".into(),

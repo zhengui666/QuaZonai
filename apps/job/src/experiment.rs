@@ -421,7 +421,7 @@ pub fn evaluate(
         model_artifact_id,
         request: request.clone(),
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.68.0".into()),
+            ("nautilus-backtest".into(), "0.69.0".into()),
             ("wasmi".into(), "2.0.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
         ]),

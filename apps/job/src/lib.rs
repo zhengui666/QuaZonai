@@ -13,6 +13,8 @@ pub fn build_identity() -> serde_json::Value {
 pub mod account_observation_cli;
 pub mod account_observer;
 #[cfg(feature = "account-runtime")]
+mod account_order_preview;
+#[cfg(feature = "account-runtime")]
 pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
@@ -22,13 +24,12 @@ pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod catalog_prefix;
-pub mod ensemble_fit;
 pub mod experiment;
-pub mod factors;
 pub mod feature_model;
 mod fee_models;
 pub mod forecast;
 pub mod forward;
+mod indicator_strategy;
 mod live_progress;
 pub mod managed;
 #[cfg(feature = "native-sandbox-test")]
@@ -39,9 +40,8 @@ pub mod observed_spot;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;
 mod optimization;
+mod performance;
 pub mod portfolio;
-pub mod review_allocate;
-pub mod review_science;
 pub use optimization::allocate;
 mod report;
 pub use report::write_probe_report;
@@ -57,3 +57,5 @@ pub mod strategy;
 pub mod study;
 pub mod ticks;
 pub mod validation;
+
+pub mod native_strategy;

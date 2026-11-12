@@ -59,7 +59,7 @@ test('the real receiver and service share command receipts, account reservations
     async close() {},
   };
   const options: AccountOptions = { id: 'cash-protocol', clientId: 'receiver-client', accountId: 'HYPERLIQUID-PAPER-PROTOCOL', mode: 'paper',
-    instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'], startingBalance: '1000', paperFeeRate: '0.001', cashBuffer: '100' };
+    nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'], startingBalance: '1000', paperFeeRate: '0.001', cashBuffer: '100' };
   const receiver = await createCapitalAccount(options, join(state.directory, 'receiver'), '/missing-native-worker', runtime);
   const remote = Fastify(); const responses: { method: string; path: string; body: unknown; response: unknown }[] = [];
   remote.all('/*', async (request, reply) => {
@@ -218,7 +218,7 @@ test('live economic proof is published with its new native observation while pro
   let spotTotal = '1000'; let proofReads = 0;
   const controls: Record<string, unknown>[] = [];
   const options: AccountOptions = { id: 'live-proof-protocol', clientId: 'live-proof-client', accountId: 'HYPERLIQUID-LIVE-PROTOCOL', mode: 'live',
-    accountAddress: '0x' + '1'.repeat(40), instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'] };
+    accountAddress: '0x' + '1'.repeat(40), nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'] };
   function observe() {
     sequence++; const ns = nowNs();
     frame = { ready: true, recovery_required: false, sequence: String(sequence), currency_precision: 6, native_version: 'TEST_ONLY_LIVE_NDJSON_PROTOCOL', observed_at_ns: ns,

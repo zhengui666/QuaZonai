@@ -300,13 +300,16 @@ pub fn compare_with_closed_rows(
         request.dataset_revision_id,
         rows.clone(),
     ));
-    let rebalance = simulation_leg(replay(
+    let mut rebalance = simulation_leg(replay(
         catalog,
         &request.simulation,
         &request.initial_state,
         request.dataset_revision_id,
         rows,
     ));
+    if let (Some(hold), Some(rebalance)) = (&hold.result, &mut rebalance.result) {
+        add_hold_statistics(hold, rebalance);
+    }
     Ok(NativeObservedSpotComparisonResultV1 {
         schema_version: SchemaV1,
         kind: "OBSERVED_SPOT_ACCOUNT_COMPARISON".into(),
@@ -349,7 +352,7 @@ pub fn study_with_closed_rows(
         request.dataset_revision_id,
         rows.clone(),
     ));
-    let rebalance = match crate::study::evaluate_observed_spot(
+    let mut rebalance = match crate::study::evaluate_observed_spot(
         catalog,
         &request.study,
         read,
@@ -377,6 +380,11 @@ pub fn study_with_closed_rows(
             reason: Some(format!("{error:#}")),
         },
     };
+    if let (Some(hold), Some(study)) = (&hold.result, &mut rebalance.result) {
+        if let Some(rebalance) = &mut study.simulation {
+            add_hold_statistics(hold, rebalance);
+        }
+    }
     Ok(NativeObservedSpotStudyResultV1 {
         schema_version: SchemaV1,
         kind: "OBSERVED_SPOT_STUDY_COMPARISON".into(),
@@ -451,5 +459,21 @@ pub fn study(
         Err(anyhow!(
             "SPOT_SOURCE_CAPABILITY_NOT_BUILT: hyperliquid-offline"
         ))
+    }
+}
+
+fn add_hold_statistics(
+    hold: &contracts::science::NativeSimulationResultV1,
+    rebalance: &mut contracts::science::NativeSimulationResultV1,
+) {
+    if let (Some(hold), Some(rebalance)) = (&hold.spot_cash_report, &mut rebalance.spot_cash_report)
+    {
+        rebalance.statistics.extend(crate::performance::versus_hold(
+            &rebalance.daily_returns,
+            &hold.daily_returns,
+        ));
+        rebalance
+            .statistics
+            .sort_by(|a, b| a.native_key.cmp(&b.native_key));
     }
 }

@@ -14,7 +14,7 @@ import type { CapitalExitNativeAction, CapitalExitPlanningContext, CapitalExitPo
 
 const instrumentId = 'HYPE-USDC-SPOT.HYPERLIQUID';
 const paperOptions: AccountOptions = { id: 'spot', clientId: 'client', accountId: 'HYPERLIQUID-001', mode: 'paper',
-  startingBalance: '1000', paperFeeRate: '0.001', instruments: [instrumentId] };
+  startingBalance: '1000', paperFeeRate: '0.001', nativeStrategy: { instrument_id: instrumentId, strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: [instrumentId] };
 type Json = Record<string, unknown>;
 
 // These controlled NDJSON responses exercise receiver recovery and contracts.
@@ -52,6 +52,7 @@ class ControlledProtocol implements NativeAccountRuntime {
         quantity: String(payload.quantity), filled_quantity: '0', leaves_quantity: String(payload.quantity), status: 'ACCEPTED', limit_price: String(payload.minimum_price), reduce_only: false, exit_id: String(payload.exit_id) });
       return { admission: 'SUBMITTED', submitted: true, client_order_id: payload.client_order_id, epoch: payload.epoch };
     }
+    if (operation === 'STRATEGY_START' || operation === 'STRATEGY_STOP') return { strategy_id: 'EMACross-001', state: operation === 'STRATEGY_START' ? 'RUNNING' : 'STOPPED', native_version: '0.69.0' };
     if (operation === 'TARGET') return { acknowledged: true, target_id: payload.id, epoch: payload.epoch };
     throw new Error(`unexpected_controlled_operation:${operation}`);
   }
@@ -75,7 +76,7 @@ async function openAccount(native: ControlledProtocol, options = paperOptions, r
   let serial = 0;
   const call = async (method: string, path: string, body: unknown = {}) => {
     const value = (await account.handle(path, request(method), async () => body)).value as Json;
-    if (value.result != null) validateCapitalDocument('VIEW', value.result);
+    if (path.startsWith('/capital-exits') && value.result != null) validateCapitalDocument('VIEW', value.result);
     if (value.exit != null) validateCapitalDocument('VIEW', value.exit);
     for (const exit of value.exits as CapitalExitView[] ?? []) validateCapitalDocument('VIEW', exit);
     return value;
@@ -254,12 +255,8 @@ test('a delayed reverse-transfer refresh publishes new spot cash only behind its
     const newCashControls = native.requests.slice(phase).filter(value => value.operation === 'CONTROL' && value.payload.spot_free_cash === '1000');
     assert.ok(newCashControls.length > 0);
     for (const control of newCashControls) { assert.equal(control.payload.mode, 'PAUSED'); assert.ok(BigInt(String(control.payload.epoch)) > BigInt(pausedEpoch)); }
-    const expiresAt = new Date(Date.now() + 30_000).toISOString();
-    const rejected = await account.call('POST', '/targets', { id: 'target-after-unreconciled-reverse', clientId: options.clientId, accountId: options.accountId, expiresAt,
-      target: { valid_until_ns: String(BigInt(Date.parse(expiresAt)) * 1_000_000n), targets: [] },
-      allocation: { accountSourceId: observed.accountSourceId, observationId: observed.observationId, snapshotSequence: observed.sequence,
-        nativeClockNs: observed.nativeClockNs, controlRevision: published.controlRevision, reserved: '0', cashBuffer: '0', capital: '1000' } });
-    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'capital_external_reverse_transfer_requires_reconciliation');
+    await assert.rejects(account.call('POST', '/strategy/commands', { requestId: 'start-after-unreconciled-reverse', action: 'START', clientId: options.clientId, accountId: options.accountId }), /capital_external_reverse_transfer_requires_reconciliation/);
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 0);
     assert.equal(native.requests.filter(value => value.operation === 'TARGET').length, 0);
     const reconciled = await account.action(await account.exit(prepared.id), { action: 'RECONCILE_EXTERNAL_TRANSFER', user_reported_amount: '100', currency: 'USDC', external_transfer_ref: 'reverse-source' });
     assert.equal(reconciled.status, 'ACCEPTED', String(reconciled.error));
@@ -269,48 +266,31 @@ test('a delayed reverse-transfer refresh publishes new spot cash only behind its
   } finally { if (releaseRead) (releaseRead as () => void)(); await account.close(); }
 });
 
-test('reserved trading forwards the original signal budget and pause stops slices while ordinary targets continue', { timeout: 10_000 }, async () => {
+test('reserved capital prevents native strategy restart and pause stops reduction slices without releasing the reservation', { timeout: 10_000 }, async () => {
   const native = new ControlledProtocol('200'); Object.assign(native.snapshot.positions[0]!, { quantity: '8', free_quantity: '8', value: '800' });
   const account = await openAccount(native);
-  const ordinaryTarget = (id: string) => {
-    const expiresAt = new Date(Date.now() + 30_000).toISOString();
-    return { id, clientId: paperOptions.clientId, accountId: paperOptions.accountId, expiresAt,
-      target: { valid_until_ns: String(BigInt(Date.parse(expiresAt)) * 1_000_000n), targets: [{ instrument_id: instrumentId, weight: '0.2' }] } };
-  };
-  const withReservation = async (id: string, exitId: string, raw = true) => {
-    const observed = await account.call('GET', '/account'), body = ordinaryTarget(id);
-    return { ...body, allocation: { accountSourceId: observed.accountSourceId, observationId: observed.observationId, snapshotSequence: observed.sequence,
-      nativeClockNs: observed.nativeClockNs, controlRevision: observed.controlRevision, reserved: '600', cashBuffer: '0', capital: '400',
-      capitalExit: { mode: 'BOUNDED_LIMIT', transition: true, controlRevision: observed.controlRevision, exitIds: [exitId], signalCapital: '1000',
-        ...(raw ? { signalTarget: { ...body.target, targets: [{ instrument_id: instrumentId, weight: '0.8' }] } } : {}) } } };
-  };
+  const command = (requestId: string, action: 'START' | 'STOP') => ({ requestId, action, clientId: paperOptions.clientId, accountId: paperOptions.accountId });
   try {
-    const initial = await account.call('POST', '/targets', ordinaryTarget('ordinary-without-capital-obligation'));
-    assert.equal(initial.status, 'ACKNOWLEDGED', 'Ordinary initial delivery remains supported without an allocation when there is no capital obligation.');
+    assert.equal((await account.call('POST', '/strategy/commands', command('initial-native-start', 'START'))).status, 'COMPLETED');
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 1);
     const created = await account.start('600', context => bounded(context, '6'));
-    const missing = await withReservation('reserved-target-without-original-signal', created.id, false);
-    const rejected = await account.call('POST', '/targets', missing);
-    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'capital_original_signal_budget_required');
-    assert.deepEqual(await account.call('GET', `/targets/${missing.id}`), rejected);
-    const persisted = (await account.saved()).targets[missing.id]!;
-    assert.equal(persisted.receipt.status, 'REJECTED'); assert.deepEqual(persisted.original, missing);
-    assert.equal(native.requests.filter(value => value.operation === 'TARGET').length, 1, 'Missing raw signal cannot enter the native target execution path.');
-    const delivered = await account.call('POST', '/targets', await withReservation('reserved-target-original-signal', created.id));
-    assert.equal(delivered.status, 'ACKNOWLEDGED');
-    const target = native.requests.filter(value => value.operation === 'TARGET').at(-1)!;
-    assert.deepEqual(target.payload.weights, [{ instrument_id: instrumentId, weight: '0.8' }]);
-    assert.equal(target.payload.signal_capital, '1000'); assert.equal(target.payload.capital, '400'); assert.equal(target.payload.reserved_amount, '600');
+    assert.equal(created.funds.requested_amount.amount, '600'); assert.equal(created.funds.reserved_amount.amount, '600');
+    const observed = await account.call('GET', '/account'); assert.equal(observed.equity, '1000'); assert.equal(observed.cash, '200');
+    await assert.rejects(account.call('POST', '/strategy/commands', command('reserved-native-start', 'START')), /strategy_account_exit_unsettled/);
+    assert.equal(native.requests.filter(value => value.operation === 'STRATEGY_START').length, 1, 'An unsettled exit cannot be bypassed by starting an upstream strategy.');
     const paused = await account.pause(await account.exit(created.id));
     const control = native.requests.filter(value => value.operation === 'CONTROL').at(-1)!;
-    assert.equal(control.payload.mode, 'CASH_ONLY', 'Pausing discretionary reduction preserves normal strategy activity under the spot cash reservation.');
-    assert.equal(control.payload.reserved_amount, '600');
-    const continued = await account.call('POST', '/targets', await withReservation('ordinary-target-during-capital-pause', created.id));
-    assert.equal(continued.status, 'ACKNOWLEDGED');
-    const pausedTarget = native.requests.filter(value => value.operation === 'TARGET').at(-1)!;
-    assert.deepEqual(pausedTarget.payload.weights, [{ instrument_id: instrumentId, weight: '0.8' }]); assert.equal(pausedTarget.payload.signal_capital, '1000');
+    assert.equal(control.payload.mode, 'CASH_ONLY', 'Pausing discretionary reduction keeps the original spot cash reservation.');
+    assert.equal(control.payload.reserved_amount, '600'); assert.equal(control.payload.spot_free_cash, '200');
+    await assert.rejects(account.call('POST', '/strategy/commands', command('paused-native-start', 'START')), /strategy_account_exit_unsettled/);
+    assert.equal((await account.call('POST', '/strategy/commands', command('owner-native-stop', 'STOP'))).status, 'COMPLETED');
     native.tick(); await delay(30);
     const after = await account.exit(paused.id);
-    assert.equal(after.state, 'PAUSED'); assert.equal(after.funds.reserved_amount.amount, '600'); assert.equal(after.remaining_trading, 'BUDGET_AWARE');
-    assert.equal(native.slices().length, 0, 'A paused exit never turns an ordinary target or owner tick into another forced reduction.');
+    assert.equal(after.state, 'PAUSED'); assert.equal(after.funds.reserved_amount.amount, '600');
+    assert.equal(after.funds.staged_for_withdrawal_amount.amount, '0'); assert.equal(after.funds.reconciled_withdrawal_amount.amount, '0');
+    assert.equal(after.remaining_trading, 'FENCED_PENDING_TARGET', 'No retired target ACK may be fabricated to claim budget-aware strategy execution.');
+    assert.equal(native.slices().length, 0, 'A paused exit never turns an owner tick into another forced reduction.');
+    assert.equal(native.requests.some(value => value.operation === 'TARGET'), false);
+    assert.deepEqual((await account.saved()).targets, {});
   } finally { await account.close(); }
 });

@@ -2,9 +2,6 @@ import { defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ResearchHost } from '../../research/src/host.ts';
-import { CampaignResearchDoc } from '../../research/src/pm-campaign.ts';
-import { closeResearch } from '../../research/src/closure.ts';
-import { researchRuntime } from '../../research/src/research-runtime.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { PmDocument, assertPmNotDeleted, visiblePmRecord, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
 import { json, object, Problem, text } from './facts.ts';
@@ -14,7 +11,6 @@ import { Application } from './facts.ts';
 import { pmView } from './pm-view.ts';
 import { readPmArtifact } from './pm-evidence.ts';
 import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
-import { admitCampaignAccount } from './pm-campaign-account.ts';
 
 type Action = 'pause' | 'resume' | 'close';
 type ResourceKind = 'evidence' | 'capabilities' | 'decision' | 'decisions' | 'cycle' | 'capacity' | 'campaign' | 'trials' | 'campaignDecision' | 'strategyVersions' | 'strategyAssessments';
@@ -29,20 +25,10 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
         const operation = record.artifacts[task.input.key]!;
         if (campaign.runtime.conversationId !== record.conversationId && operation.previousCampaignState !== 'CONCLUDED') {
           if (task.input.action === 'pause') await host.stop(campaign.runtime.conversationId);
-          else if (task.input.action === 'close') await closeResearch({ ...researchRuntime(runtime), conversationId: campaign.runtime.conversationId as ConversationId }, ctx, 'owner_requested_campaign_comparison');
-          else {
-            let previousId = record.artifacts[task.input.key]!.previousSubmissionId;
-            if (typeof previousId !== 'number') {
-              const submission = (await host.state(campaign.runtime.conversationId)).submission;
-              if (!submission) throw new Problem('campaign_submission_unavailable'); previousId = submission.id;
-              await runtime.commit(async tx => { pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).artifacts[task.input.key]!.previousSubmissionId = previousId!; return undefined; }, ctx);
-            }
-            await host.resume(campaign.runtime.conversationId, previousId as number);
-          }
-        } else if (task.input.action === 'close') throw new Problem('campaign_not_started');
+        }
         await runtime.commit(async tx => {
           const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const campaign = stored.campaigns[task.input.campaignId]!;
-          revise(campaign); campaign.state = task.input.action === 'pause' ? 'PAUSED' : task.input.action === 'resume' ? (stored.artifacts[task.input.key]!.previousCampaignState === 'CONCLUDED' ? 'CONCLUDED' : campaign.runtime.conversationId === stored.conversationId ? 'PLANNED' : 'SEARCHING') : 'CONCLUDED';
+          revise(campaign); campaign.state = task.input.action === 'pause' ? 'PAUSED' : 'CONCLUDED';
           stored.artifacts[task.input.key]!.state = 'APPLIED'; stored.artifacts[`campaign-control:${campaign.id}`] = { ...stored.artifacts[task.input.key]! };
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, ctx);
@@ -80,10 +66,7 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
       const campaign = record.campaigns[id!];
       if (campaign && kind === 'campaign') return campaign;
       if (campaign && kind === 'trials') return Object.values(record.derivedTrials).filter(item => item.campaignId === id);
-      if (campaign && kind === 'campaignDecision') {
-        if (campaign.runtime.conversationId === record.conversationId) return null;
-        return (await host.harness.snapshot(CampaignResearchDoc, campaign.runtime.conversationId as ConversationId, context))?.comparisons.at(-1) ?? null;
-      }
+      if (campaign && kind === 'campaignDecision') return campaign.latestComparisonId ? record.comparisons[campaign.latestComparisonId] ?? null : null;
       const strategy = record.strategies[id!];
       if (strategy || Object.values(record.strategies).some(item => item.definitionId === id)) {
         const versions = Object.values(record.strategies).filter(item => item.definitionId === (strategy?.definitionId ?? id));
@@ -94,6 +77,7 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
     throw new Problem('pm_resource_not_found', 404);
   }
   async function campaignCommand(id: string, action: Action, value: unknown, strategyId?: string) {
+    if (action !== 'pause' && !strategyId) throw new Problem('pm_custom_research_removed', 410);
     const { host } = await ready; const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = json(value);
     const mandateId = await host.harness.commit(async tx => {
       const state = pmState(await tx.doc(PmDocument)); const record = Object.values(state.mandates).find(item => item.campaigns[id]);
@@ -132,24 +116,5 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
     if (record.latestStrategyId !== id) throw new Problem('strategy_version_not_current', 409);
     return campaignCommand(Object.values(record.campaigns).at(-1)!.id, action, value, id);
   }
-  async function startCampaign(value: unknown) {
-    const { host } = await ready; const body = object(value); const id = text(body.mandateId, 'mandate_id'); const requestId = text(body.requestId, 'request_id');
-    await host.harness.commit(async tx => {
-      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); assertPmNotDeleted(record); const key = `campaign-start:${id}:${requestId}`; const original = json(value);
-      if (state.commands[key]) { if (canonical(state.commands[key]!.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
-      assertBusinessAdmission(await tx.doc(Application));
-      ensureRevision(record, body.expectedRevision); const previous = Object.values(record.campaigns).at(-1)!;
-      if (!['CONCLUDED', 'PAUSED'].includes(previous.state)) throw new Problem('campaign_already_active', 409);
-      if (canonical(json(previous.datasetRevisionIds)) === canonical(json(record.datasets))) throw new Problem('new_campaign_requires_new_data_revision', 409);
-      const campaignId = identity('campaign', [id, record.datasets]);
-      if (!record.campaigns[campaignId]) {
-        record.campaigns[campaignId] = { ...previous, ...fact(campaignId), state: 'PLANNED', runtime: { conversationId: record.conversationId, taskId: record.monitorTaskId },
-          datasetRevisionIds: [...record.datasets], hypothesisIds: [], trialIds: [], latestComparisonId: null, selectedStrategyVersionId: null, conclusionReason: null };
-        admitCampaignAccount(record, record.campaigns[campaignId]!, await tx.doc(Application));
-      }
-      state.commands[key] = { original, mandateId: id, resourceId: campaignId };
-    }, context);
-    const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(visiblePmRecord(state, id), state);
-  }
-  return { task: ControlCampaign, readResource, campaignCommand, strategyCommand, startCampaign };
+  return { task: ControlCampaign, readResource, campaignCommand, strategyCommand };
 }

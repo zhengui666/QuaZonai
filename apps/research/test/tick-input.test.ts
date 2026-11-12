@@ -12,13 +12,11 @@ import type { NativeTickFactorRequest } from '../../../packages/contracts/src/ti
 import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import { researchInput } from '../src/input.ts';
 import { modelBriefInput, modelFeedback } from '../src/feedback.ts';
-import { evaluateWasm, iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
-import { openResearch } from '../src/host.ts';
+import { iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
+import { indicatorStrategyResult } from '../src/indicator-result.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import research from '../plugins/research.ts';
-import factor from '../plugins/factor-wasm.ts';
-import volume from '../plugins/factor-volume.ts';
-import heldout from '../plugins/heldout-wasm.ts';
 
 const context = BACKGROUND_CONTEXT;
 const tick = (instrument = 'A.SIM', end = '40'): NativeTickFactorRequest => ({ schema_version: 1,
@@ -286,101 +284,14 @@ test('tagged BAR keeps the legacy native request; tick clipping retains semantic
   assert.match(String((brief.data.feature_model as JsonObject).evidence), /UNVERIFIED/);
 });
 
-test('tick native echo must bind the exact original source and request', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-tick-echo-'));
-  const binary = join(directory, 'job.mjs');
-  try {
-    await writeFile(binary, `#!${process.execPath}\nlet input=''; for await (const chunk of process.stdin) input+=chunk; const request=JSON.parse(input); request.input.source_revision='different-source'; console.log(JSON.stringify({request}));\n`, { mode: 0o700 });
-    await assert.rejects(evaluateWasm(model, { catalog: directory, ...tagged() }, context, undefined, binary), /native_result_request_mismatch/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+test('native strategy request binding preserves exact registered source metadata', () => {
+  const request: JsonObject = { selection: { schema_version: 1, bar_types: ['A.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000040', decision_cutoff_ns: '1790000000000000040' }, settings: {} };
+  const original = structuredClone(request);
+  assert.throws(() => indicatorStrategyResult({ request: { ...request, selection: { ...(request.selection as JsonObject), bar_types: ['DIFFERENT.SIM-1-MINUTE-LAST-EXTERNAL'] } } }, request), /indicator_strategy_request_mismatch/);
+  assert.deepEqual(request, original);
 });
 
 // Controlled child protocol verifies durable isolation and lineage, not numerical/PIT evidence.
-test('tick studies retain restart identity, final isolation and exposure across copied BAR catalogs', { timeout: 30_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-tick-durable-'));
-  const catalog = join(directory, 'catalog'); const copied = join(directory, 'copied');
-  await mkdir(catalog); await mkdir(copied);
-  const binary = join(directory, 'job.mjs'); const calls = join(directory, 'calls.jsonl');
-  await writeFile(binary, `#!${process.execPath}
-import {appendFileSync} from 'node:fs';
-let input=''; for await (const chunk of process.stdin) input+=chunk;
-const request=JSON.parse(input); const operation=process.argv[2];
-appendFileSync(${JSON.stringify(calls)}, JSON.stringify({operation,request})+'\\n');
-console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{owner_only:'NEVER_RETURN_FINAL'}:{}), test_only:'CONTROLLED_PROTOCOL_NOT_NUMERICAL_EVIDENCE'}));
-`, { mode: 0o700 });
-  const previous = process.env.QZ_JOB_BINARY; process.env.QZ_JOB_BINARY = binary;
-  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  const ownerModel = { provider: faux.provider.id, modelId: faux.getModel().id };
-  const options = { database: join(directory, 'research.sqlite'), models, extensions: [research, factor, volume, heldout] };
-  const input = { goal: 'Tick protocol without scientific qualification', model: ownerModel,
-    data: { catalog, ...tagged(tick('A.SIM', '20')), sealed: { catalog, ...tagged(tick()) } }, policy: { } };
-  let host = await openResearch(options);
-  try {
-    faux.setResponses([tool('factor_evaluate', { hypothesis: 'Protocol only', model }), async () => {
-      const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
-      return tool('factor_finalize', { trialId, reason: 'Preselect before owner-only final result' });
-    }]);
-    const first = await startLegacyResearch(host, 'tick-protocol', input);
-    await (await host.harness.submission(first.submissionId, context))!.wait(context);
-    const original = (await host.state(first.conversationId)).research!;
-    assert.equal(original.trials[0]!.status, 'COMPUTED', JSON.stringify(original.trials));
-    assert.equal(original.final!.status, 'COMPUTED', JSON.stringify(original.final));
-    assert.deepEqual(original.input, input);
-    const requests = (await readFile(calls, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-    assert.deepEqual(requests.map(item => [item.operation, item.request.input.event_end_ns]), [['evaluate-tick-factor', '20'], ['evaluate-tick-factor', '40']]);
-    const entries = JSON.stringify((await host.view(first.conversationId)).entries);
-    assert.equal(entries.includes('final tuning feedback is returned'), true);
-    assert.equal(entries.includes('NEVER_RETURN_FINAL'), false);
-    assert.equal((original.final!.result as JsonObject).owner_only, 'NEVER_RETURN_FINAL');
-    await host.close(); host = await openResearch(options);
-    assert.deepEqual(await startLegacyResearch(host, 'tick-protocol', input), first);
-    assert.deepEqual((await host.state(first.conversationId)).research, original);
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
-
-    faux.setResponses([tool('factor_evaluate', { hypothesis: 'Reuse tick history for BAR development', model: legacyModel }), async () => {
-      const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
-      return tool('factor_finalize', { trialId, reason: 'Previously exposed tick history cannot be independent BAR evidence' });
-    }]);
-    const second = await startLegacyResearch(host, 'copied-bar', { ...input, data: { catalog: copied, request: bar(), sealed: { catalog: copied, request: bar() } } });
-    await (await host.harness.submission(second.submissionId, context))!.wait(context);
-    const rejected = (await host.state(second.conversationId)).research!;
-    assert.equal(rejected.trials[0]!.status, 'COMPUTED');
-    assert.equal(rejected.final!.error, 'heldout_already_exposed');
-    assert.equal(rejected.final!.status, 'FAILED');
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 3);
-
-    faux.setResponses([tool('factor_evaluate', { hypothesis: 'Original BAR feedback', model: legacyModel }), tool('research_finish', { reason: 'End BAR protocol' })]);
-    const third = await startLegacyResearch(host, 'bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });
-    await (await host.harness.submission(third.submissionId, context))!.wait(context);
-    assert.equal((await host.state(third.conversationId)).research!.trials[0]!.status, 'COMPUTED');
-    faux.setResponses([tool('factor_evaluate', { hypothesis: 'Tick suffix was already exposed by BAR feedback', model }), async () => {
-      const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
-      return tool('factor_finalize', { trialId, reason: 'Must fail because BAR validation already exposed the final suffix' });
-    }]);
-    const fourth = await startLegacyResearch(host, 'tick-after-bar', { ...input, data: { catalog: copied, ...tagged(tick('B.SIM', '20')), sealed: { catalog: copied, ...tagged(tick('B.SIM')) } } });
-    await (await host.harness.submission(fourth.submissionId, context))!.wait(context);
-    const fourthState = (await host.state(fourth.conversationId)).research!;
-    // Prior iterative feedback is permitted for another iterative prefix, but it
-    // cannot be represented as a fresh independent suffix at final reservation.
-    assert.equal(fourthState.trials[0]!.status, 'COMPUTED');
-    assert.equal(fourthState.final!.status, 'FAILED');
-    assert.equal(fourthState.final!.error, 'heldout_already_exposed');
-
-    const beforeUnsupported = (await readFile(calls, 'utf8')).trim().split('\n').length;
-    faux.setResponses([tool('factor_volume', { hypothesis: 'BAR volume is not implicitly cohort quantity', center: 0 }), tool('research_finish', { reason: 'Unsupported factor remains a disclosed attempt' })]);
-    const fifth = await startLegacyResearch(host, 'tick-volume-rejected', { ...input, data: { catalog, ...tagged(tick('C.SIM', '20')) } });
-    await (await host.harness.submission(fifth.submissionId, context))!.wait(context);
-    const fifthState = (await host.state(fifth.conversationId)).research!;
-    assert.equal(fifthState.trials[0]!.status, 'FAILED');
-    assert.equal(fifthState.trials[0]!.error, 'tick_factor_volume_unsupported');
-    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, beforeUnsupported);
-  } finally {
-    await host.close();
-    if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test('full-market tick feedback keeps coverage totals and availability without repeated source reports or asset rows', () => {
   const coverage: JsonObject = { modality: 'TRADE_TICK', source_revision: 'original-source', trade_count: '1308222597',
     cohort_count: '614393279', first_event_ns: '1', last_event_ns: '9007199254740993', availability: 'EVENT_TIME_PROXY_UNVERIFIED',

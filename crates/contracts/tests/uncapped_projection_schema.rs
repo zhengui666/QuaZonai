@@ -21,3 +21,26 @@ fn equity_preview_schema_allows_all_mandatory_gap_endpoints() {
     assert_eq!(points["type"], "array");
     assert!(points.get("maxItems").is_none());
 }
+
+#[test]
+fn retired_research_fit_and_score_operations_are_not_exposed() {
+    let schema = serde_json::from_str::<serde_json::Value>(&contracts::openapi_json().unwrap()).unwrap();
+    let components = &schema["components"]["schemas"];
+    for name in ["NativeEnsembleFitRequestV1", "NativeEnsembleApplyRequestV1",
+        "NativeEnsembleFreezeRequestV1", "NativeReviewAllocationRequestV1",
+        "NativeReviewScienceRequestV1", "NativeAlphaValidationRequestV1",
+        "NativeAlphaSealedRequestV1", "NativeFactorEvaluationResultV1",
+        "NativeFactorEvaluationSummaryV1", "NativeCatalogFactorScanSummaryV1",
+        "NativeTradeTickFactorEvaluationResultV1"] {
+        assert!(components.get(name).is_none(), "retired schema {name}");
+    }
+    for name in ["qz.alpha_validation", "qz.alpha_sealed"] {
+        assert!(contracts::runtime_jobs::native_output_contract(name, "1").is_none());
+    }
+    for kind in ["VALIDATE_ALPHA", "EVALUATE_SEALED_ALPHA"] {
+        let error = serde_json::from_value::<contracts::execution::NativeTaskParametersV1>(
+            serde_json::json!({"operation": kind, "schema_version": 1})
+        ).unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
+    }
+}

@@ -75,7 +75,7 @@ fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
             assert_eq!(metric.source_artifact_id, artifact);
             assert_eq!(metric.observation_count.get(), result.returns.len() as u64);
             assert_eq!(metric.frequency, "UTC_DAY");
-            assert_eq!(metric.method_version, "0.68.0");
+            assert_eq!(metric.method_version, "0.69.0");
             assert_eq!(metric.scope, "portfolio");
             assert!(metric.period_start < metric.period_end);
         }
@@ -227,7 +227,7 @@ fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
     // Daily account returns require snapshots across UTC dates, not 20 minutes.
     let (directory, request) = market("0", 2 * 1440 + 20);
     let result = simulate(directory.path(), &request).unwrap();
-    assert_eq!(result.native_version, "0.68.0");
+    assert_eq!(result.native_version, "0.69.0");
     assert_eq!(result.consumed_target_points.get(), 2);
     assert_eq!(
         result.summary.get("venues.total").map(String::as_str),
@@ -568,7 +568,7 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
             let (directory, mut request) = market::equity_market(fee, 20);
             request.settings.account_kind = kind;
             let result = simulate(directory.path(), &request).unwrap();
-            assert_eq!(result.native_version, "0.68.0");
+            assert_eq!(result.native_version, "0.69.0");
             assert_eq!(result.consumed_target_points.get(), 2);
             assert_eq!(result.summary["venues.total"], "1");
             assert_eq!(result.summary["account.SIM.type"], label);
@@ -764,20 +764,11 @@ fn calendar_daily_return_statistics_retain_real_flat_account_days() {
     assert_eq!(metric("Calendar Expected Days").value, Some(days));
     assert_eq!(metric("Calendar Observed Return Days").value, Some(2.0));
     assert_eq!(metric("Calendar Coverage Ratio").value, Some(2.0 / days));
-    for key in [
-        "Calendar Geometric Daily Return",
-        "Calendar Minimum Daily Return",
-        "Calendar Maximum Daily Return",
-        "Calendar Maximum Absolute Deviation",
-        "Calendar Negative Days",
-        "Calendar Zero Days",
-    ] {
-        assert!(metric(key).value.is_none(), "{key}");
-        assert_eq!(
-            metric(key).reason_code.as_deref(),
-            Some("NATIVE_STATISTIC_UNAVAILABLE")
-        );
-    }
+    assert_eq!(metric("Calendar Complete Priced Coverage").value, Some(0.0));
+    assert!(!result
+        .statistics
+        .iter()
+        .any(|row| row.native_key == "Calendar Geometric Daily Return"));
     assert!(metric("Sharpe Ratio (252 days)").value.is_none());
 }
 
@@ -789,13 +780,9 @@ fn calendar_daily_return_statistics_do_not_qualify_an_intraday_window() {
     let row = result
         .statistics
         .iter()
-        .find(|row| row.native_key == "Calendar Geometric Daily Return")
+        .find(|row| row.native_key == "Calendar Complete Priced Coverage")
         .unwrap();
-    assert!(row.value.is_none());
-    assert_eq!(
-        row.reason_code.as_deref(),
-        Some("NATIVE_STATISTIC_UNAVAILABLE")
-    );
+    assert_eq!(row.value, Some(0.0));
 }
 
 #[test]
@@ -829,20 +816,9 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
         .collect();
     assert_eq!(values.len() as u64, (end - start) / DAY);
     assert!(result.orders.get() > 0);
-    let geometric =
-        (values.iter().map(|value| value.ln_1p()).sum::<f64>() / values.len() as f64).exp_m1();
-    let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let deviation = values
-        .iter()
-        .map(|value| (value - geometric).abs())
-        .fold(0.0, f64::max);
     for (key, expected) in [
         ("Calendar Coverage Ratio", 1.0),
-        ("Calendar Geometric Daily Return", geometric),
-        ("Calendar Minimum Daily Return", minimum),
-        ("Calendar Maximum Daily Return", maximum),
-        ("Calendar Maximum Absolute Deviation", deviation),
+        ("Calendar Complete Priced Coverage", 1.0),
     ] {
         let row = result
             .statistics
@@ -862,12 +838,7 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
         "Calendar Expected Days",
         "Calendar Observed Return Days",
         "Calendar Coverage Ratio",
-        "Calendar Geometric Daily Return",
-        "Calendar Minimum Daily Return",
-        "Calendar Maximum Daily Return",
-        "Calendar Maximum Absolute Deviation",
-        "Calendar Negative Days",
-        "Calendar Zero Days",
+        "Calendar Complete Priced Coverage",
     ] {
         let metric = |rows: &NativeSimulationResultV1| {
             rows.statistics

@@ -5,22 +5,21 @@ import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
 import { observe, observeParameterScan, observePortfolio } from './watch.ts';
 import { schemas } from './schema.ts';
-import { researchCapital, researchSpecification } from '../../../packages/contracts/src/research.ts';
-import type { ObservationStart, PortfolioStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
+import type { ObservationStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
 
 const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   login [--origin URL] [--name NAME] [--replace] [--ca-certificate FILE]
   identity | logout | forget
   schema list [--domain] | schema show NAME [--domain]
   datasets | usage
+  datasets coverage ID --file REQUEST.json (selectors [{data_type,identifier}] or bar_types; start_ns/end_ns as inclusive ts_init strings)
   maintenance status | enter --file ORIGINAL_REQUEST.json | resume --file ORIGINAL_REQUEST.json
   pm list | get ID | delete ID | decision ID | history ID | events ID | capabilities
-  pm start --file MANDATE.json | recompute ID --file ORIGINAL_COMMAND.json
+  pm recompute ID --file ORIGINAL_COMMAND.json
   pm retire ID --file ORIGINAL_COMMAND.json | cycle ID | capacity ID
   pm targets ID --file ORIGINAL_COMMAND.json | refresh-data ID --file ORIGINAL_COMMAND.json
-  pm clarify-intent ID --file ORIGINAL_COMMAND.json
-  campaign start --file REQUEST.json | get ID | trials ID | compare ID
-  campaign close ID --file COMMAND.json | pause ID --file COMMAND.json | resume ID --file COMMAND.json
+  campaign get ID | trials ID | compare ID
+  campaign pause ID --file COMMAND.json
   strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
@@ -31,14 +30,16 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   parameter-scan create --file REQUEST.json [--request-id ORIGINAL_ID] | list [--file QUERY.json] | get ID | stop ID
   parameter-scan trials ID [--file QUERY.json] | surface ID --file QUERY.json
   parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
-  factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
-  portfolio build --file REQUEST.json | list | get ID | delete ID
+    Native scan: source={kind:"research",researchId}; axes use existing numeric request paths.
+    objective={metricId:<native_key>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency,batchSize}.
+  portfolio list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
-  portfolio capacity ID --file ASSUMPTIONS.json
   portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
+  observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
   capital status OBSERVATION_ID | context OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
+  observation cancel-protection OBSERVATION_ID
   capital preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
   settings get | set --file SETTINGS.json | set --tick-book-cores COUNT
   extensions list | enable NAME | disable NAME
@@ -129,11 +130,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (values.goal || values.dataset || values.model) throw new CliError('file_or_goal_required');
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       submission = file.body as unknown as ResearchStart; body = file.bytes;
-      const input = object('input' in submission ? submission.input : submission); const specification = input.specification;
-      if (specification !== undefined) {
-        try { const spec = researchSpecification(specification); if (input.goal !== spec.question) throw new Error('research_question_mismatch'); }
-        catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_research_specification'); }
-      }
+
     } else {
       const match = /^([^:]+):(.+)$/.exec(values.model ?? '');
       if (!values.goal || !values.dataset || !match || !values['request-id']) throw new CliError('goal_dataset_model_request_id_required');
@@ -160,24 +157,18 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     if (action === 'list') path = '/mandates';
     else if (action === 'capabilities') path = '/capabilities';
     else if (action === 'delete') { method = 'DELETE'; path = `/mandates/${resourceId(id)}`; }
-    else if (action === 'start') {
-      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
-      method = 'POST'; path = '/mandates'; body = file.bytes;
-    } else if (['get', 'decision', 'history', 'events'].includes(action)) {
+    else if (['get', 'decision', 'history', 'events'].includes(action)) {
       path = `/mandates/${resourceId(id)}${action === 'get' ? '' : action === 'history' ? '/decisions' : `/${action}`}`;
     } else if (action === 'cycle') path = `/cycles/${resourceId(id)}`;
     else if (action === 'capacity') path = `/capacity-estimates/${resourceId(id)}`;
-    else if (['recompute', 'retire', 'targets', 'refresh-data', 'clarify-intent'].includes(action)) {
+    else if (['recompute', 'retire', 'targets', 'refresh-data'].includes(action)) {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
-      method = 'POST'; path = `/mandates/${resourceId(id)}/${action === 'clarify-intent' ? 'intent-clarifications' : action}`; body = file.bytes;
+      method = 'POST'; path = `/mandates/${resourceId(id)}/${action}`; body = file.bytes;
     } else throw new CliError('unknown_pm_command');
   } else if (group === 'campaign') {
-    if (action === 'start') {
-      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
-      method = 'POST'; path = '/campaigns'; body = file.bytes;
-    } else if (['get', 'trials', 'compare'].includes(action)) {
+    if (['get', 'trials', 'compare'].includes(action)) {
       path = `/campaigns/${resourceId(id)}${action === 'get' ? '' : action === 'compare' ? '/decision' : '/trials'}`;
-    } else if (['close', 'pause', 'resume'].includes(action)) {
+    } else if (action === 'pause') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
       method = 'POST'; path = `/campaigns/${resourceId(id)}/${action}`; body = file.bytes;
     } else throw new CliError('unknown_campaign_command');
@@ -210,33 +201,14 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (action === 'resume' && (typeof file.body.epoch !== 'string' || !file.body.epoch)) throw new CliError('maintenance_epoch_required');
       method = 'POST'; path += `/${action}`; body = file.bytes;
     } else if (action !== 'status') throw new CliError('unknown_maintenance_command');
-  } else if (group === 'factor') {
-    if (action === 'list') path = '/factors';
-    else if (action === 'get' || action === 'capacity' || action === 'delete') path = `/factors/${resourceId(id)}${action === 'capacity' ? '/capacity' : ''}`;
-    else throw new CliError('unknown_factor_command');
-    if (action === 'delete') method = 'DELETE';
-    if (action === 'capacity' && values.file) {
-      const file = await fileBody(values.file);
-      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
-      method = 'POST'; body = file.bytes;
-    }
   } else if (group === 'portfolio' || group === 'backtest') {
-    if (action === 'build') {
-      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
-      const input = file.body as unknown as PortfolioStart;
-      if (typeof input.capital !== 'string') throw new CliError('capital_decimal_string_required');
-      body = file.bytes; method = 'POST'; path = '/portfolios';
-    } else if (action === 'replay-ticks') {
+    if (action === 'replay-ticks') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       body = file.bytes; method = 'POST'; path = '/tick-economic-replays';
     } else if (action === 'tick-replay') path = `/tick-economic-replays/${resourceId(id)}`;
     else if (action === 'list') path = '/portfolios';
     else if (['get', 'delete', 'watch', 'wait'].includes(action)) { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
-    else if (action === 'capacity') {
-      const file = await fileBody(values.file);
-      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
-      method = 'POST'; path = `/portfolios/${resourceId(id)}/capacity`; body = file.bytes;
-    } else throw new CliError('unknown_portfolio_command');
+    else throw new CliError('unknown_portfolio_command');
   } else if (group === 'observation') {
     if (action === 'start') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
@@ -247,8 +219,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (action === 'get') resourceId(id);
       path = '/observations'; // Get is optional server-side; select from the actual list.
     }
+    else if (action === 'size' || action === 'preview-order') { method = 'POST'; path = `/observations/${resourceId(id)}/${action === 'size' ? 'sizing/fixed-risk' : 'orders/preview'}`; body = (await fileBody(values.file)).bytes; }
     else if (action === 'automatic') { method = 'POST'; path = `/observations/${resourceId(id)}/automatic`; body = (await fileBody(values.file)).bytes; }
-    else if (action === 'refresh' || action === 'stop') { method = 'POST'; path = `/observations/${resourceId(id)}/${action}`; }
+    else if (action === 'refresh' || action === 'stop' || action === 'cancel-protection') { method = 'POST'; path = `/observations/${resourceId(id)}/${action}`; }
     else throw new CliError('unknown_observation_command');
   } else if (group === 'capital') {
     path = `/observations/${resourceId(id)}/capital-exits`;
@@ -273,7 +246,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (action !== 'list') throw new CliError('unknown_extensions_command');
   } else if (group === 'identity') path = '/session';
   else if (group === 'logout') { method = 'DELETE'; path = '/devices/current'; }
-  else if (group === 'datasets' || group === 'usage') path = `/${group}`;
+  else if (group === 'datasets' && action === 'coverage') {
+    path = `/datasets/${resourceId(id)}/coverage`; method = 'POST'; body = (await fileBody(values.file)).bytes;
+  } else if (group === 'datasets' || group === 'usage') path = `/${group}`;
   else throw new CliError('unknown_command');
 
   const profile = await loadProfile();

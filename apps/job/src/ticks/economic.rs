@@ -3947,7 +3947,7 @@ fn partition_metrics(
                     && selected
                         .windows(2)
                         .all(|pair| pair[1].day_start_ns.get() - pair[0].day_start_ns.get() == DAY))
-                .then(|| crate::review_science::native_max_drawdown(&returns))
+                .then(|| crate::performance::native_max_drawdown(&returns))
                 .flatten()
             },
         })

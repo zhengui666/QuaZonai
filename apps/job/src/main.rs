@@ -36,18 +36,13 @@ enum Operation {
     },
     /// Solve one frozen allocation request read from stdin.
     Allocate,
-    /// Deterministic evidence diagnostics; no qualification or delivery authority.
-    ReviewScience,
+    /// Read native catalog file coverage; inclusive ts_init bounds, not event completeness.
+    CatalogCoverage {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
     /// Validate original source-owner metadata; no inferred permission or PIT status.
     ReviewSource,
-    /// Quality-adjusted constrained allocation from frozen review evidence.
-    ReviewAllocate,
-    /// Fit causal fold-local score calibrations and nonnegative simplex weights.
-    FitEnsemble,
-    /// Apply an immutable fitted signal ensemble to later original forecasts.
-    ApplyEnsemble,
-    /// Verify original fit evidence and emit frozen native study calibrations.
-    FreezeEnsembleCalibrations,
     /// Plan capital points; the durable owner runs each as an independent native task.
     CapitalCurve {
         #[arg(long)]
@@ -80,29 +75,6 @@ enum Operation {
         #[arg(long)]
         model: PathBuf,
     },
-    /// Evaluate arbitrary factor scores with shared time cuts; no targets or accounts.
-    /// Catalog/model paths are trusted local CLI configuration only.
-    EvaluateFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Omit per-observation rows; emit the same native metrics and provenance.
-        #[arg(long)]
-        summary_only: bool,
-    },
-    /// Explicit native TradeTick cohort factor research, without BARs or accounts.
-    EvaluateTickFactor {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Omit to use the existing native stdin request protocol.
-        #[arg(long)]
-        request: Option<PathBuf>,
-        #[arg(long)]
-        summary_only: bool,
-    },
     /// Explicit segregated-cash/margin economic estimate over derived cohorts.
     ReplayTickEconomic {
         #[arg(long)]
@@ -119,25 +91,6 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Scan every registered BAR series for pooled factor IC, without a market shortlist.
-    /// No targets, account simulation or qualification are produced.
-    ScanFactorCatalog {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        /// Machine-private JSON array of the identities recorded before execution.
-        #[arg(long)]
-        scope: Option<PathBuf>,
-    },
-
-    /// Execute every independent native fold; stdout remains restricted evidence.
-    ValidateAlpha {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-    },
     /// Independently replay a frozen feature-aware target policy in native folds.
     EvaluateExperiment {
         #[arg(long)]
@@ -153,14 +106,20 @@ enum Operation {
         #[arg(long, required = true, value_parser = parse_id)]
         feature_artifact_id: Vec<contracts::Id>,
     },
-    /// Apply a frozen model without fitting; stdout is restricted held-out evidence.
-    EvaluateSealedAlpha {
+    /// Run a compiled upstream strategy on original native market events.
+    NativeStrategyBacktest {
         #[arg(long)]
         catalog: PathBuf,
+    },
+    /// Explicit same-data/settings native indicator batch using engine reset.
+    SimulateIndicatorStrategyBatch {
         #[arg(long)]
-        model: PathBuf,
+        catalog: PathBuf,
+    },
+    /// Backtest an explicit official-indicator strategy, without a Wasm artifact.
+    SimulateIndicatorStrategy {
         #[arg(long)]
-        calibration: Option<PathBuf>,
+        catalog: PathBuf,
     },
     /// Replay frozen target weights in one native simulated account.
     Simulate {
@@ -276,12 +235,7 @@ fn run(operation: Operation) -> Result<()> {
             Ok(())
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
-        Operation::ReviewScience => output(&job::review_science::analyze(&input()?)?),
-        Operation::ReviewSource => output(&job::review_science::validate_source(&input()?)?),
-        Operation::ReviewAllocate => output(&job::review_allocate::allocate(&input()?)?),
-        Operation::FitEnsemble => output(&job::ensemble_fit::fit(&input()?)?),
-        Operation::ApplyEnsemble => output(&job::ensemble_fit::apply(&input()?)?),
-        Operation::FreezeEnsembleCalibrations => output(&job::ensemble_fit::freeze(&input()?)?),
+        Operation::ReviewSource => output(&job::catalog::validate_source(&input()?)?),
         Operation::CapitalCurve {
             catalog,
             dataset_revision_id,
@@ -311,20 +265,6 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
-        Operation::EvaluateFactor {
-            catalog,
-            model,
-            summary_only,
-        } => {
-            let result = job::factors::evaluate_factor(&catalog, &input()?, &model_bytes(&model)?)?;
-            if summary_only {
-                output(&contracts::factors::NativeFactorEvaluationSummaryV1::from(
-                    result,
-                ))
-            } else {
-                output(&result)
-            }
-        }
         Operation::ReplayTickEconomic {
             catalog,
             funding_catalog,
@@ -340,46 +280,12 @@ fn run(operation: Operation) -> Result<()> {
                 .collect::<Result<Vec<_>>>()?,
             book_cores,
         )?),
+        Operation::CatalogCoverage { catalog } => {
+            output(&job::catalog::coverage::query(&catalog, input()?)?)
+        }
         Operation::CatalogFactorScope { catalog } => {
-            output(&job::factors::catalog_factor_scope(&catalog)?)
+            output(&job::catalog::catalog_factor_scope(&catalog)?)
         }
-        Operation::EvaluateTickFactor {
-            catalog,
-            model,
-            request,
-            summary_only,
-        } => {
-            let request = match request {
-                Some(path) => serde_json::from_slice(&model_bytes(&path)?)?,
-                None => input()?,
-            };
-            output(&job::ticks::evaluate(
-                &catalog,
-                &request,
-                &model_bytes(&model)?,
-                summary_only,
-            )?)
-        }
-        Operation::ScanFactorCatalog {
-            catalog,
-            model,
-            scope,
-        } => {
-            let scope: Option<Vec<String>> = scope
-                .map(|path| Ok::<_, anyhow::Error>(serde_json::from_reader(fs::File::open(path)?)?))
-                .transpose()?;
-            output(&job::factors::scan_factor_catalog_with_scope(
-                &catalog,
-                &input()?,
-                &model_bytes(&model)?,
-                scope.as_deref(),
-            )?)
-        }
-        Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
         Operation::EvaluateExperiment {
             catalog,
             model,
@@ -403,25 +309,13 @@ fn run(operation: Operation) -> Result<()> {
                 &model_bytes(&model)?,
             )?)
         }
-        Operation::EvaluateSealedAlpha {
-            catalog,
-            model,
-            calibration,
-        } => {
-            let calibration = calibration
-                .map(
-                    |p| -> Result<contracts::science::NativeFrozenCalibrationV1> {
-                        Ok(serde_json::from_slice(&model_bytes(&p)?)?)
-                    },
-                )
-                .transpose()?;
-            output(&job::validation::evaluate_sealed_alpha(
-                &catalog,
-                &input()?,
-                &model_bytes(&model)?,
-                calibration.as_ref(),
-            )?)
-        }
+        Operation::NativeStrategyBacktest { catalog } => output(&job::native_strategy::run(&catalog, input()?)?),
+        Operation::SimulateIndicatorStrategyBatch { catalog } => output(
+            &job::simulation::simulate_indicator_strategy_batch(&catalog, &input()?)?,
+        ),
+        Operation::SimulateIndicatorStrategy { catalog } => output(
+            &job::simulation::simulate_indicator_strategy(&catalog, &input()?)?,
+        ),
         Operation::Simulate {
             catalog,
             dataset_revision_id,

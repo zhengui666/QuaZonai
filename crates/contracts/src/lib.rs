@@ -1,16 +1,17 @@
 //! Native scientific DTOs and the immutable file protocol consumed by job.
 #![forbid(unsafe_code)]
 
+pub mod native_strategy;
 pub mod account_observation;
 pub mod brief;
 pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit;
+pub mod catalog_coverage;
 pub mod catalog_prefix;
 pub mod catalogs;
 pub mod delivery;
 pub mod economic_tick;
-pub mod ensemble_fit;
 pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
@@ -18,6 +19,7 @@ pub mod execution_assumptions;
 pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
+pub mod indicator_strategy;
 pub mod lifecycle;
 pub mod observed_spot;
 pub mod portfolio;
@@ -25,7 +27,6 @@ pub mod portfolio_history;
 pub mod recorded_fees;
 pub mod research;
 pub mod research_currency;
-pub mod review_allocation;
 pub mod review_science;
 pub mod runs;
 pub mod runtime;
@@ -46,13 +47,15 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    indicator_strategy::NativeIndicatorStrategyRequestV1,
+    indicator_strategy::NativeIndicatorStrategyResultV1,
+    indicator_strategy::NativeIndicatorStrategyBatchRequestV1,
+    indicator_strategy::NativeIndicatorStrategyBatchResultV1,
     catalog_prefix::NativeCatalogPrefixResultV1,
-    review_science::NativeReviewScienceRequestV1,
-    review_science::NativeReviewScienceResultV1,
+    catalog_coverage::NativeCatalogCoverageRequestV1,
+    catalog_coverage::NativeCatalogCoverageResultV1,
     review_science::NativeReviewSourceRequestV1,
     review_science::NativeReviewSourceResultV1,
-    review_allocation::NativeReviewAllocationRequestV1,
-    review_allocation::NativeReviewAllocationResultV1,
     evidence::MetricValueV1,
     evidence::MetricRequirementV1,
     execution::NativeTaskParametersV1,
@@ -63,12 +66,6 @@ use utoipa::OpenApi;
     portfolio::AllocationInputV1,
     portfolio::AllocationResultV1,
     portfolio::AllocatorSettingsV1,
-    ensemble_fit::NativeEnsembleFitRequestV1,
-    ensemble_fit::NativeEnsembleFitResultV1,
-    ensemble_fit::NativeEnsembleApplyRequestV1,
-    ensemble_fit::NativeEnsembleApplyResultV1,
-    ensemble_fit::NativeEnsembleFreezeRequestV1,
-    ensemble_fit::NativeEnsembleFreezeResultV1,
     capital_curve::NativeCapitalCurveRequestV1,
     capital_curve::NativeCapitalCurveResultV1,
     observed_spot::NativeObservedSpotComparisonRequestV1,
@@ -79,24 +76,18 @@ use utoipa::OpenApi;
     observed_spot::NativeObservedSpotValuationResultV1,
     observed_spot::NativeObservedSpotBuildRequestV1,
     observed_spot::NativeObservedSpotBuildResultV1,
+    native_strategy::NativeStrategyBacktestRequestV1,
+    native_strategy::NativeStrategyBacktestResultV1,
     science::NativeForecastRequestV1,
     science::NativeForecastResultV1,
     factors::NativeFactorEvaluationRequestV1,
-    factors::NativeFactorEvaluationResultV1,
-    factors::NativeFactorEvaluationSummaryV1,
     ticks::NativeTradeTickFactorEvaluationRequestV1,
-    ticks::NativeTradeTickFactorEvaluationResultV1,
     economic_tick::NativeTickEconomicRequestV1,
     economic_tick::NativeTickEconomicResultV1,
     factors::NativeCatalogFactorScanRequestV1,
-    factors::NativeCatalogFactorScanSummaryV1,
     science::ExperimentEvaluationParametersV1,
     science::NativeExperimentEvaluationRequestV1,
     science::NativeExperimentEvaluationResultV1,
-    science::NativeAlphaValidationRequestV1,
-    science::NativeAlphaValidationResultV1,
-    science::NativeAlphaSealedRequestV1,
-    science::NativeAlphaSealedResultV1,
     science::NativeFrozenCalibrationV1,
     capacity::NativeCapacityRequestV1,
     capacity::NativeCapacityReportV1,

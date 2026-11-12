@@ -8,7 +8,6 @@ import { awaitWithContext } from '@earendil-works/chord/context';
 import { Study } from '../../research/src/documents.ts';
 import { built, context, setup, studied } from './support.ts';
 import { Application } from '../src/facts.ts';
-import { BuildPortfolio } from '../src/science.ts';
 import { metrics, researchTaskViews, tickEconomicMetrics } from '../src/projections.ts';
 import { researchCriterion, researchSpecification } from '../../../packages/contracts/src/research.ts';
 
@@ -186,56 +185,7 @@ test('historical native codes and WAT failures keep specific safe public causes'
   } finally { await state.cleanup(); }
 });
 
-test('portfolio reads and original admission replay share public failure projection', { timeout: 20_000 }, async () => {
-  const state = await setup();
-  try {
-    const { input, view } = await built(state);
-    for (const [diagnostic, code] of [
-      ['Native backtest failed at /private/test-only/catalog', 'backtest_failed'],
-      ['custom_evaluator_failed', 'custom_evaluator_failed'],
-      ['QZ_NATIVE_JOB_MEMORY_LIMIT\n/private/test-only/catalog token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT'],
-      ['parseWat failed:\nselected-factor.wat:1:2: error: private-source-marker', 'wasm_compile_failed'],
-    ]) {
-      await state.service.research.harness.commit(async tx => {
-        const facts = await tx.doc(Application); const fact = facts.portfolios[view.id]!;
-        const stored = fact.view as Record<string, unknown>; stored.error = diagnostic;
-        stored.errorDetail = { code: 'synthetic-secret', message: 'private-source-marker', action: 'synthetic-secret' };
-      }, context);
-      const get = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
-      assert.equal(get.json().error, code); assert.equal(get.json().errorDetail.code, code);
-      assert.doesNotMatch(get.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
-      const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input });
-      assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().taskId, view.taskId);
-      assert.equal(replay.json().error, code); assert.equal((await state.service.work.getPortfolio(view.id)).view.error, diagnostic);
-      assert.doesNotMatch(replay.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
-    }
-  } finally { await state.cleanup(); }
-});
 
-test('pre-kernel filesystem failure is retained privately rather than laundered to operation_failed', { timeout: 20_000 }, async () => {
-  const state = await setup();
-  try {
-    const missing = join(state.directory, 'missing-private-scratch');
-    const { receipt } = await studied(state, 'missing-environment'); const id = 'missing-scratch';
-    const taskId = await state.service.research.harness.commit(async tx => {
-      const taskId = await tx.createTask(BuildPortfolio, { id, dataDir: missing, catalog: state.directory, binary: state.options.config.jobBinary,
-        evidence: {}, policy: state.options.config.datasets[0]!.strategy!, capital: '1000', currency: 'USD' },
-        { conversationId: receipt.conversationId as ConversationId, ownership: { kind: 'conversation' } });
-      (await tx.doc(Application)).portfolios[id] = { input: { requestId: id }, evidence: [], policy: {}, native: null, target: null,
-        view: { id, name: id, researchIds: [receipt.conversationId], datasetId: 'controlled', status: 'QUEUED', capital: '1000', currency: 'USD',
-          createdAt: '2026-10-19T00:00:00.000Z', taskId, metrics: [], curve: [], targets: [], error: null } };
-      return taskId;
-    }, context);
-    const task = await state.service.research.harness.waitForTask(taskId, context);
-    const { view } = await state.service.work.getPortfolio(id);
-    assert.equal(view.status, 'FAILED'); assert.match(view.error!, /ENOENT/); assert.ok(view.error!.includes(missing));
-    assert.equal(task.state.outcome.status, 'failed');
-    if (task.state.outcome.status === 'failed') assert.equal(task.state.outcome.error.message, view.error);
-    const response = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
-    assert.equal(response.json().error, 'ENOENT'); assert.equal(response.json().errorDetail.category, 'runtime');
-    assert.doesNotMatch(response.body, /missing-private-scratch/);
-  } finally { await state.cleanup(); }
-});
 
 test('captured dataset identity survives registry changes and identical inputs in different studies', { timeout: 20_000 }, async () => {
   const state = await setup();
@@ -283,4 +233,24 @@ for (const endpoint of ['usage', 'research']) test(`${endpoint} summary does not
     assert.deepEqual(response.json(), expected.json(), 'original summary fields and nullable values remain unchanged');
     assert.equal(historicalReads, 0);
   } finally { harness.commit = commit; await state.cleanup(); }
+});
+
+test('native indicator results expose only upstream statistics as metrics, not every bar as a metric', () => {
+  const result = metrics({ request: { signal: { kind: 'EMA_CROSS' } },
+    simulation: { statistics: [{ native_key: 'Sharpe Ratio (365 days)', value: 0.4 }, { native_key: 'missing', value: null }] },
+    observations: [{ available_ns: '1000000000000000000', atr: 5.0, vwap: 100.0 }],
+  });
+  assert.deepEqual(result, [
+    { key: 'Sharpe Ratio (365 days)', label: 'Sharpe Ratio (365 days)', value: 0.4 },
+    { key: 'missing', label: 'missing', value: null },
+  ]);
+});
+
+
+test('native reset batches keep per-case metrics distinct without flattening observations', () => {
+  const one = { request: {}, simulation: { statistics: [{ native_key: 'Sharpe', value: null }] }, observations: [{ atr: 123 }] };
+  assert.deepEqual(metrics({ reuse: 'NAUTILUS_ENGINE_RESET', results: [one, one] }), [
+    { key: 'batch.0.Sharpe', label: 'case 1: Sharpe', value: null, component: 0 },
+    { key: 'batch.1.Sharpe', label: 'case 2: Sharpe', value: null, component: 1 },
+  ]);
 });

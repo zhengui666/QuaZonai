@@ -168,25 +168,41 @@ def read_manifest(destination: Path) -> dict:
 def readme(manifest: dict) -> str:
     version = manifest['version']
     base = f'https://github.com/{REPOSITORY}/releases/download/{version}'
-    return f'''# QuaZonai {version}
+    return f'''# QuaZonai {version} · Docker deployment
 
-Source revision: `{manifest['revision']}`. Prebuilt Node application, scientific
-image and four JS CLI archives with official Node {NODE_VERSION}; no host Node/npm.
+Source revision: `{manifest['revision']}`.
 
-Linux x86_64 (Docker Compose) or macOS (CLI): download `{base}/install.sh`,
-then run `bash install.sh`. Add `--cli-only` for a remote Linux client and
-`--directory PATH` for an existing non-default installation.
-Windows x86_64: download `{base}/install.ps1`, then run it with PowerShell.
+Deploy on Linux x86_64 with Docker Engine, the Docker Compose plugin, Bash 4.4+,
+curl, tar and standard Unix tools. The installer uses prebuilt release images;
+it does not build locally or require host Node.js/npm or Rust.
 
-`quazonai --version` prints `quazonai {version}`. Use `quazonai login --help`.
-The application listens at http://localhost:8081 by default; perform initial
-password setup in the browser. Configure original datasets and provider env;
-installation does not perform model inference or qualify evidence.
+Download `{base}/install.sh`, then run:
 
-Preserve the installation root, configuration, SQLite, keys, modules, journals
-and backups. This release requires a fresh schema-5 installation; earlier
-installation and database formats are not migrated.
-See the deployment bundle README for stopped backup/restore and update commands.
+```bash
+bash install.sh --directory "$HOME/.local/share/quazonai" --port 8081
+```
+
+The application listens at http://localhost:8081 by default, bound to the host
+loopback interface. Perform initial password setup in the browser. Configure
+model providers, a reachable Nautilus backtest instance and registered datasets
+before research. The application container alone is not a connected native
+execution service; installation does not run inference or place trades.
+
+The bundled `quazonai` CLI is a client of the deployed HTTP service, not a second
+server deployment method. `quazonai --version` prints `quazonai {version}`;
+use `quazonai login --help` to connect it to the deployed service. Client archives
+remain available as release assets.
+
+For updates, use the target release installer with the same installation owner
+and original `--directory`. Preserve the installation root, configuration,
+SQLite, keys, journals, backups and the separate Nautilus data/account directory.
+Use the deployment bundle's `bash manage.sh --help` for status, stopped backup,
+restore and start commands. A backup leaves the application stopped; restart it
+explicitly when ready. Container restart does not imply remote work has ended.
+
+This release uses schema-5 installations; earlier installation/database formats
+and retired research workflows are not migrated or executed for compatibility.
+Do not delete stored data or unresolved account orders to bypass an upgrade error.
 '''
 
 def prepare(destination: Path) -> None:

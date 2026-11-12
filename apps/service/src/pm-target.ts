@@ -10,7 +10,7 @@ import { digest } from './pm-facts.ts';
 import { PmDocument, pmRecord, pmState, revise } from './pm-facts.ts';
 import type { PmRecord } from './pm-facts.ts';
 import { capitalExitTargetControl, captureAccount, managedTradingBudget } from './pm-account.ts';
-import { downstream, isPreTransportRejection } from './downstream.ts';
+import { downstream } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 
@@ -126,61 +126,13 @@ export const PmTargetTask = defineTask<{ mandateId: string; commandId: string; r
   name: 'qz.pm.target-command', version: 1, initial: input => ({ phase: input.reconcileOnly ? 'reconcile' : 'deliver' }),
   phases: {
     async deliver(task, runtime, context) {
-      let input: ObservationTaskInput | null = null;
       await runtime.commit(async tx => {
-        const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, task.input.mandateId); const command = record.commands[task.input.commandId]!;
-        const application = await tx.doc(Application); const source = observation(application.observations[command.accountBindingId]);
-        try {
-          const decision = record.decisions[command.decisionId]!;
-          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, accountBindingId: command.accountBindingId, commandId: command.id });
-          targetEligibility(record, decision, captureAccount(application, command.accountBindingId).basis, source.connection.mode);
-          if (canonical(record.artifacts[command.payloadEvidenceRef]!) !== canonical(pmTargetPayload(record, decision))) throw new Problem('target_prepared_payload_changed', 409);
-          const allocation = record.artifacts[`target-allocation:${command.id}`];
-          if (!allocation || canonical(allocation) !== canonical(pmTargetAllocation(record, decision, source, application.accountControls))) throw new Problem('target_prepared_allocation_changed', 409);
-        } catch (error) {
-          command.state = 'NOT_OFFERED'; revise(command); record.artifacts[`target-error:${command.id}`] = json({ reason: error instanceof Problem ? error.message : 'target_evidence_unavailable' });
-          return { status: 'terminal', outcome: { status: 'completed', result: null } };
-        }
-        command.state = 'UNCERTAIN'; revise(command);
-        input = json({ id: source.view.id, connection: source.connection, receiptId: command.idempotencyKey, target: object(record.artifacts[command.payloadEvidenceRef], 'target_payload'), allocation: object(record.artifacts[`target-allocation:${command.id}`]) }) as unknown as ObservationTaskInput;
-        return { status: 'running', checkpoint: { phase: 'reconcile' } };
-      }, context);
-      if (!input) return;
-      const prepared = input as ObservationTaskInput;
-      let checkingBasis = true;
-      try {
-        // The uncertainty checkpoint can yield while another owner updates the
-        // account. Recheck immediately before transport; the receiver then owns
-        // the final atomic revision fence.
-        await runtime.commit(async tx => {
-          const state = pmState(await tx.doc(PmDocument)); const latest = pmRecord(state, task.input.mandateId);
-          const command = latest.commands[task.input.commandId]!;
-          const application = await tx.doc(Application);
-          const source = observation(application.observations[command.accountBindingId]);
-          const decision = latest.decisions[command.decisionId]!;
-          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, accountBindingId: command.accountBindingId, commandId: command.id });
-          targetEligibility(latest, decision, captureAccount(application, command.accountBindingId).basis, source.connection.mode);
-          if (canonical(prepared.target) !== canonical(pmTargetPayload(latest, decision))
-            || canonical(prepared.allocation!) !== canonical(pmTargetAllocation(latest, decision, source, application.accountControls))) throw new Problem('target_basis_changed_before_transport', 409);
-          return undefined;
-        }, context);
-        checkingBasis = false;
-        await settle(await downstream(prepared, 'deliver', runtime.signal));
-      }
-      catch (error) {
-        if (runtime.signal.aborted) throw error;
-        await runtime.commit(async tx => {
-          const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const command = record.commands[task.input.commandId]!;
-          if (checkingBasis || isPreTransportRejection(error)) { revise(command); command.state = 'NOT_OFFERED'; }
-          record.artifacts[`target-error:${command.id}`] = json({ reason: error instanceof Problem ? error.message : 'target_receipt_requires_reconciliation' });
-          return checkingBasis || isPreTransportRejection(error) ? { status: 'terminal', outcome: { status: 'completed', result: null } } : { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } };
-        }, context);
-      }
-      async function settle(receipt: JsonObject) { await runtime.commit(async tx => {
         const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const command = record.commands[task.input.commandId]!;
-        const application = await tx.doc(Application); acceptPmReceipt(record, command, receipt, observation(application.observations[command.accountBindingId]).connection);
-        return ['PENDING', 'UNCERTAIN'].includes(command.state) ? { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } } : { status: 'terminal', outcome: { status: 'completed', result: null } };
-      }, context); }
+        if (command.state === 'UNCERTAIN') return { status: 'running', checkpoint: { phase: 'reconcile' } };
+        if (command.state === 'PENDING') { command.state = 'NOT_OFFERED'; revise(command); }
+        record.artifacts[`target-error:${command.id}`] = { reason: 'native_strategy_only' };
+        return { status: 'terminal', outcome: { status: 'completed', result: null } };
+      }, context);
     },
     async reconcile(task, runtime, context) {
       const record = pmRecord(pmState(await runtime.snapshot(PmDocument, context)), task.input.mandateId); const command = record.commands[task.input.commandId]!;

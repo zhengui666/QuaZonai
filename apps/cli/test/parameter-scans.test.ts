@@ -26,7 +26,7 @@ test('parameter scan commands preserve original writes, opaque identities and ex
   const directory = await mkdtemp(join(tmpdir(), 'qz-parameter-scan-cli-'));
   const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = directory;
   const file = join(directory, 'original.json');
-  const bytes = '{\n "requestId":"original-scan", "name":"EMA parameter scan", "source":{"kind":"factor","factorId":"r2.t3.m0"}, "mode":"STRATEGY", "axes":[{"key":"investedWeight","domain":{"kind":"values","values":["0.100000000000000001"]}}], "objective":{"metricId":"account.sharpe252","partition":"VALIDATION","direction":"maximize"}, "execution":{"concurrency":1}\n}\n';
+  const bytes = '{\n "requestId":"original-scan", "name":"EMA parameter scan", "source":{"kind":"research","researchId":2}, "mode":"STRATEGY", "axes":[{"key":"long_weight","domain":{"kind":"values","values":["0.100000000000000001"]}}], "objective":{"metricId":"CustomNativeStatistic","partition":"FULL_SELECTION","direction":"minimize"}, "execution":{"concurrency":2,"batchSize":3}\n}\n';
   await writeFile(file, bytes);
   try {
     const address = server.address() as { port: number };
@@ -45,12 +45,12 @@ test('parameter scan commands preserve original writes, opaque identities and ex
     await run(['parameter-scan', 'get', 'scan:one/two'], () => {});
     await run(['parameter-scan', 'stop', 'scan:one/two'], () => {});
     await run(['parameter-scan', 'options'], () => {});
-    await writeFile(file, '{"sourceKind":"factor","sourceId":"r2.t3.m0"}');
+    await writeFile(file, '{"sourceKind":"research","researchId":2}');
     await run(['parameter-scan', 'options', '--file', file], () => {});
     await writeFile(file, '{"page":1,"pageSize":20,"status":"FAILED","sort":"metric"}');
     await run(['parameter-scan', 'list', '--file', file], () => {});
     await run(['parameter-scan', 'trials', 'scan:one/two', '--file', file], () => {});
-    await writeFile(file, '{"x":"fast_period","y":"slow_period","fixed":{"investedWeight":"0.100000000000000001"},"metricId":"account.sharpe252","xOffset":"9007199254740993","limit":20}');
+    await writeFile(file, '{"x":"signal.fast_period","y":"signal.slow_period","fixed":{"long_weight":"0.100000000000000001"},"metricId":"CustomNativeStatistic","xOffset":"9007199254740993","limit":20}');
     await run(['parameter-scan', 'surface', 'scan:one/two', '--file', file], () => {});
     assert.deepEqual(requests.slice(2).map(({ method, path }) => [method, path]), [
       ['POST', '/api/v3/parameter-scans/preview'],
@@ -58,10 +58,10 @@ test('parameter scan commands preserve original writes, opaque identities and ex
       ['GET', '/api/v3/parameter-scans/scan%3Aone%2Ftwo'],
       ['POST', '/api/v3/parameter-scans/scan%3Aone%2Ftwo/stop'],
       ['GET', '/api/v3/parameter-scans/options'],
-      ['GET', '/api/v3/parameter-scans/options?sourceKind=factor&sourceId=r2.t3.m0'],
+      ['GET', '/api/v3/parameter-scans/options?sourceKind=research&researchId=2'],
       ['GET', '/api/v3/parameter-scans?page=1&pageSize=20&status=FAILED&sort=metric'],
       ['GET', '/api/v3/parameter-scans/scan%3Aone%2Ftwo/trials?page=1&pageSize=20&status=FAILED&sort=metric'],
-      ['GET', '/api/v3/parameter-scans/scan%3Aone%2Ftwo/surface?x=fast_period&y=slow_period&fixed=%7B%22investedWeight%22%3A%220.100000000000000001%22%7D&metricId=account.sharpe252&xOffset=9007199254740993&limit=20'],
+      ['GET', '/api/v3/parameter-scans/scan%3Aone%2Ftwo/surface?x=signal.fast_period&y=signal.slow_period&fixed=%7B%22long_weight%22%3A%220.100000000000000001%22%7D&metricId=CustomNativeStatistic&xOffset=9007199254740993&limit=20'],
     ]);
     const admitted = requests.length;
     await assert.rejects(run(['parameter-scan', 'get']), /resource_id_required/);
@@ -126,4 +126,58 @@ test('parameter scan source contracts are discoverable without a service connect
   assert.match(value.source!, /interface ParameterScanSurface/);
   assert.match(value.source!, /scientificQualification: 'UNQUALIFIED_EXPLORATORY'/);
   assert.ok((await schemas()).names!.includes('ParameterScanView'));
+});
+
+test('dataset coverage CLI preserves exact inclusive nanoseconds and dataset identity', async () => {
+  const calls: { path: string; body: string }[] = [];
+  const server = createServer(async (request, response) => {
+    let body = ''; for await (const chunk of request) body += chunk;
+    calls.push({ path: request.url!, body });
+    response.writeHead(200, { 'content-type': 'application/json' }); response.end('{}');
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-coverage-cli-'));
+  const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = directory;
+  const file = join(directory, 'request.json');
+  const bytes = '{"bar_types":["BTC/USDT.BINANCE-1-MINUTE-LAST-EXTERNAL"],"start_ns":"1790000000000000001","end_ns":"1790000000000000002"}';
+  try {
+    await writeFile(file, bytes);
+    const address = server.address() as { port: number };
+    await saveProfile({ schema_version: 1, origin: `http://127.0.0.1:${address.port}`, token: 'qzc.test-coverage', development_http: true, ca_certificate: null });
+    await run(['datasets', 'coverage', 'dataset:one/two', '--file', file], () => {});
+    assert.deepEqual(calls, [{ path: '/api/v3/datasets/dataset%3Aone%2Ftwo/coverage', body: bytes }]);
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+    await rm(directory, { recursive: true, force: true });
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test('observation sizing and order preview CLI preserve exact inputs without a trading command', async () => {
+  const calls: { path: string; body: string }[] = [];
+  const server = createServer(async (request, response) => {
+    let body = ''; for await (const chunk of request) body += chunk;
+    assert.equal(request.method, 'POST'); calls.push({ path: request.url!, body });
+    response.writeHead(200, { 'content-type': 'application/json' }); response.end('{"preview_only":true}');
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-preview-cli-'));
+  const previous = process.env.XDG_CONFIG_HOME; process.env.XDG_CONFIG_HOME = directory;
+  const file = join(directory, 'request.json');
+  const sizing = '{"sizing":{"instrument_id":"BTC.HYPERLIQUID","equity":"1000.000000000000000001"}}';
+  const order = '{"instrument_id":"BTC.HYPERLIQUID","order":{"kind":"STOP_LOSS","quantity":"0.00000001","trigger_price":"95.00000001","side":"SELL"}}';
+  try {
+    const address = server.address() as { port: number };
+    await saveProfile({ schema_version: 1, origin: `http://127.0.0.1:${address.port}`, token: 'qzc.test-preview', development_http: true, ca_certificate: null });
+    await writeFile(file, sizing); await run(['observation', 'size', 'original:account/one', '--file', file], () => {});
+    await writeFile(file, order); await run(['observation', 'preview-order', 'original:account/one', '--file', file], () => {});
+    assert.deepEqual(calls, [
+      { path: '/api/v3/observations/original%3Aaccount%2Fone/sizing/fixed-risk', body: sizing },
+      { path: '/api/v3/observations/original%3Aaccount%2Fone/orders/preview', body: order },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+    await rm(directory, { recursive: true, force: true });
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

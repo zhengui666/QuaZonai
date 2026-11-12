@@ -1,3 +1,4 @@
+import { nativeFixedRiskSizing } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
@@ -14,6 +15,32 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const value = (await host.harness.snapshot(Application, context))?.observations[id];
     if (!value) throw new Problem('observation_not_found', 404);
     return observation(value);
+  }
+  /** Hypothetical native previews only; never reserve capital, submit orders or enable automation. */
+  async function previewNative(id: string, value: unknown, kind: 'sizing' | 'order') {
+    const original = await fact(id);
+    const body = object(value, 'native_preview_request');
+    const allowed = kind === 'sizing' ? ['sizing'] : ['instrument_id', 'order'];
+    if (Object.keys(body).some(key => !allowed.includes(key))) throw new Problem('native_preview_unknown_field');
+    if (kind === 'sizing') {
+      try { body.sizing = { ...nativeFixedRiskSizing(body.sizing) }; }
+      catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_sizing_invalid'); }
+    }
+    const instrument = kind === 'sizing' ? text(object(body.sizing).instrument_id, 'instrument_id') : text(body.instrument_id, 'instrument_id');
+    const response = await downstreamRequest(original.connection, kind === 'sizing' ? 'sizing/fixed-risk' : 'orders/preview', 'POST', {
+      ...body, clientId: original.connection.clientId, accountId: original.connection.accountId,
+    });
+    assertEnvelope(original.connection, response, original.view.currency);
+    if (response.preview_only !== true) throw new Problem('native_preview_response_invalid', 502);
+    if (kind === 'sizing') {
+      if (response.instrument_id !== instrument || response.model !== 'NAUTILUS_FIXED_RISK'
+        || response.input_source !== 'REQUEST_SCENARIO' || response.account_balance_verified !== false
+        || typeof response.quantity !== 'string') throw new Problem('native_preview_response_invalid', 502);
+    } else {
+      if (response.submitted !== false || response.automatic_protection_enabled !== false || !Array.isArray(response.orders)
+        || response.orders.length === 0 || response.orders.some(row => !row || typeof row !== 'object' || Array.isArray(row) || row.instrument_id !== instrument)) throw new Problem('native_preview_response_invalid', 502);
+    }
+    return response;
   }
   async function refreshCapital(id: string) {
     const original = await fact(id); let key = accountKey(original.connection, (await host.harness.snapshot(Application, context))?.accountControls);
@@ -159,5 +186,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       facts.accountControls![owner.key] = json(admitted); return { requestId, state: 'PENDING', result: null };
     }, context);
   }
-  return { refreshCapital, planningContext, getCapitalExit, previewCapital, commandCapital };
+  return { refreshCapital, planningContext, getCapitalExit, previewCapital, commandCapital,
+    previewFixedRisk: (id: string, value: unknown) => previewNative(id, value, 'sizing'),
+    previewOrder: (id: string, value: unknown) => previewNative(id, value, 'order') };
 }

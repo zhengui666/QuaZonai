@@ -91,6 +91,7 @@ const featureV2Semantics = {
 /** Only a model-facing projection. Original admitted facts are never rewritten. */
 export function modelBriefInput(input: { data: JsonObject; policy: JsonObject }): { data: JsonObject; policy: JsonObject } {
   const { sealed: _sealed, ...data } = input.data;
+  if (data.indicator_strategy_request !== undefined || data.indicator_strategy_batch_request !== undefined) return { data, policy: input.policy };
   const tagged = nativeResearchInput(data);
   const flow = tagged?.modality === 'TRADE_TICK' && String(tagged.request.input.representation).endsWith('_FLOW_CACHE_V1');
   const received = tagged?.modality === 'TRADE_TICK' && tagged.request.input.availability === 'RECEIVED_TIME_OBSERVED';

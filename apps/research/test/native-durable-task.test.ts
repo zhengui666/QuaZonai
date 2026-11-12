@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, MemoryStorage } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { openResearch } from '../src/host.ts';
+import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { executeNativeValue, withNativeRemoteTracking, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 

@@ -14,9 +14,6 @@ use spot::{count, money, MINUTE, START};
 use std::collections::BTreeMap;
 #[path = "support/observed_spot_forward.rs"]
 mod forward_tests;
-#[cfg(feature = "catalog-prepare")]
-#[path = "support/observed_spot_pm.rs"]
-mod multi_day;
 
 fn fixture(
     rows: u32,
@@ -81,7 +78,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
     let initial_state = NativeObservedSpotStartV1 {
         schema_version: SchemaV1,
         snapshot_evidence_ref: "CONTROLLED_ORIGINAL_NATIVE_PUBLICATION".into(),
-        source_native_version: "0.68.0".into(),
+        source_native_version: "0.69.0".into(),
         available_ns: count(snapshot.ts_init.get() + 1),
         open_orders_evidence_ref: "CONTROLLED_SAME_RUN_CANONICAL_OPEN_ORDER_COUNT".into(),
         open_orders_account_id: snapshot.account_id.clone(),
@@ -252,6 +249,14 @@ fn matched_hold_keeps_original_inventory_and_rebalance_pays_real_exit_fee() {
     assert!(rebalance_account["commissions"]
         .to_string()
         .contains("USDC"));
+    let mut unsupported = rebalance.clone();
+    unsupported.native_version = "0.68.0".into();
+    assert!(domain::execution::check_observed_spot_simulation(
+        &request.simulation,
+        &unsupported,
+        &request.initial_state
+    )
+    .is_err());
     let mut altered = hold.clone();
     altered.orders = count(1);
     let mut hold_request = request.simulation.clone();

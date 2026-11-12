@@ -7,6 +7,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
     NativePortfolioBuildRequestV1 {
         schema_version: SchemaV1,
         execution_settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: input.base_currency.clone(),

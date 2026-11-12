@@ -1,3 +1,4 @@
+import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
@@ -68,10 +69,18 @@ async function fixture(keepMonitor = false) {
       }
       assert.equal(accountKey(connections[0]!, app.accountControls), accountKey(connections[1]!, app.accountControls));
     }, context);
-    const start = (requestId: string, alias = 0, authority: 'AUTHORIZED_TARGETS' | 'RESEARCH_ONLY' = 'AUTHORIZED_TARGETS') => state.service.app.inject({
-      method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
-        requestId, goal: 'Control ownership protocol only; no investment qualification asserted.', datasetId: 'controlled', model: state.model,
-        funding: { kind: 'ACCOUNT', accountBindingId: connections[alias]!.id }, businessPreference: 'NET_RETURN', operatingAuthority: authority } });
+    // The retired PM creation route is not invoked. Exercise the real shared
+    // account guard inside the official transaction when loading retained control.
+    const start = async (requestId: string, alias = 0, authority: 'AUTHORIZED_TARGETS' | 'RESEARCH_ONLY' = 'AUTHORIZED_TARGETS') => {
+      try {
+        const view = await retainPmControlRecord(state, { requestId, goal: 'Original account control only', datasetId: 'controlled', model: state.model,
+          funding: { kind: 'ACCOUNT', accountBindingId: connections[alias]!.id }, operatingAuthority: authority });
+        return { statusCode: 202, body: JSON.stringify(view), json: <T = PmMandateView>() => view as T };
+      } catch (error) {
+        const body = { error: error instanceof Error ? error.message : String(error) };
+        return { statusCode: (error as { statusCode?: number }).statusCode ?? 500, body: JSON.stringify(body), json: <T = PmMandateView>() => body as T };
+      }
+    };
     const stopMonitors = async () => {
       const document = pmState(await state.service.research.harness.snapshot(PmDocument, context));
       for (const record of Object.values(document.mandates)) if (record.monitorTaskId) {

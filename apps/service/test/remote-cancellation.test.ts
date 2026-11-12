@@ -9,10 +9,9 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/conte
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool, MemoryStorage } from '@earendil-works/pi-durable';
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
-import { openResearch } from '../../research/src/host.ts';
+import { remoteNativeCapabilities, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { openRetainedResearch as openResearch } from '../../research/test/frozen-input.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
-import { implementationIdentity } from '../src/pm-science.ts';
 
 const digest = `sha256:${'c'.repeat(64)}`;
 function signal() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
@@ -42,7 +41,7 @@ async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T>
   })]); } finally { if (timer) clearTimeout(timer); }
 }
 
-test('PM implementation identity and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
+test('Native capabilities and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-helper-capabilities-abort-'));
   const host = await explicitHost(directory);
   try {
@@ -53,7 +52,7 @@ test('PM implementation identity and scientific execution interrupt a connected 
         // Connected, but no headers/body: a connect timeout cannot end this wait.
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
-      const operation = host.withNativeHost(() => helper === 'implementation' ? implementationIdentity(source.target, context)
+      const operation = host.withNativeHost(() => helper === 'implementation' ? remoteNativeCapabilities(source.target, context.abortSignal)
         : executeNative(source.target, 'size-account', {}, [], directory, context));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {

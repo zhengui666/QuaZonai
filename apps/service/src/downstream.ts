@@ -5,11 +5,10 @@ import { remoteNativeCredential } from '../../research/src/native-execution.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.ts';
 import type { ObservationFact } from './facts.ts';
-import { assertReviewDeliverySources } from './review-delivery.ts';
 
 export interface ObservationTaskInput {
   reviewSources?: import('./review-delivery.ts').ReviewDeliverySource[];
-  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; allocation?: JsonObject;
+  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; allocation?: JsonObject; nativeBrackets?: import('../../../packages/contracts/src/native-order-preview.ts').NativeTargetBrackets;
 }
 export function connectionBase(connection: ConnectionConfig): URL {
   const url = new URL(connection.url); url.hash = '';
@@ -38,20 +37,20 @@ export function isPreTransportRejection(error: unknown): boolean {
 
 export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
   const { connection } = input;
-  if (operation === 'deliver') {
-    await assertReviewDeliverySources(input.reviewSources ?? []);
-    const now = BigInt(nowNs());
-    if (BigInt(counter(input.target.valid_until_ns, 'expiry')) <= now) throw new Problem('target_expired');
-    if (input.allocation) {
-      const deadline = input.allocation.validUntilNs;
-      if (typeof deadline !== 'string' || !/^\d+$/.test(deadline)) throw new Problem('allocation_evidence_unavailable');
-      if (BigInt(deadline) <= now) throw new Problem('allocation_evidence_expired');
-    }
-  }
-  const path = operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
-  return downstreamRequest(connection, path, operation === 'deliver' ? 'POST' : 'GET', operation === 'deliver' ? {
-    id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId, expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target, ...(input.allocation ? { allocation: input.allocation } : {}),
-  } : undefined, signal);
+  if (operation === 'deliver') throw new Problem('native_strategy_only', 410);
+  const path = operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
+  return downstreamRequest(connection, path, 'GET', undefined, signal);
+}
+
+/** Cancellation targets the original persisted delivery, never a caller-supplied account or order ID. */
+export async function cancelNativeProtection(fact: ObservationFact): Promise<JsonObject> {
+  const receipt = fact.view.receipt;
+  if (!receipt?.id || !('nativeBrackets' in fact.input && fact.input.nativeBrackets)) throw new Problem('observation_native_bracket_missing', 422);
+  const result = await downstreamRequest(fact.connection, `targets/${encodeURIComponent(receipt.id)}/cancel-protection`, 'POST', {
+    clientId: fact.connection.clientId, accountId: fact.connection.accountId,
+  });
+  if (result.target_id !== receipt.id || typeof result.settled !== 'boolean') throw new Problem('native_protection_cancel_response_invalid');
+  return result;
 }
 
 export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void {
@@ -63,6 +62,7 @@ export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void 
   original.status = status;
   original.externalId ??= typeof receipt.externalId === 'string' ? receipt.externalId : null;
   original.acknowledgedAt ??= typeof receipt.acknowledgedAt === 'string' ? receipt.acknowledgedAt : null;
+  if (receipt.nativeProtection != null) original.nativeProtection = structuredClone(object(receipt.nativeProtection, 'native_protection_receipt'));
   if (fact.view.status !== 'STOPPED') fact.view.status = status === 'ACKNOWLEDGED' ? 'OBSERVING' : status;
 }
 

@@ -96,7 +96,7 @@ export function validateNativeSimulationSettings(value: unknown, instrumentIds: 
     const adapters = field === 'fill_model' ? ['NAUTILUS_DEFAULT_FILL']
       : field === 'latency_model' ? ['NAUTILUS_STATIC_LATENCY'] : ['NAUTILUS_MAKER_TAKER'];
     if (model.schema_version !== 1 || typeof model.adapter_kind !== 'string' || !adapters.includes(model.adapter_kind)
-      || model.upstream_class !== classes[model.adapter_kind] || model.upstream_version !== '0.68.0') throw new Error('strategy_simulation_model_invalid');
+      || model.upstream_class !== classes[model.adapter_kind] || model.upstream_version !== '0.69.0') throw new Error('strategy_simulation_model_invalid');
     const modelFields = ['schema_version', 'adapter_kind', 'upstream_class', 'upstream_version', 'parameters'];
     if (Object.keys(model).some(key => !modelFields.includes(key))) throw new Error('strategy_simulation_model_invalid');
     const parameters = object(model.parameters, 'strategy_simulation_model_parameters');
@@ -162,7 +162,7 @@ export function resolvePortfolioPolicy(proposal: JsonObject, original: JsonObjec
   return resolveStrategyPolicy(proposal, original);
 }
 
-function selectedSettings(original: JsonObject, ids: string[]): JsonObject {
+export function selectedSettings(original: JsonObject, ids: string[]): JsonObject {
   const settings = JSON.parse(JSON.stringify(original)) as JsonObject;
   const rates = instrumentFeeRates(settings.fee_rates, ids);
   settings.fee_rates = rates.filter((rate) => ids.includes(String(object(rate, 'fee_rate').instrument_id)));

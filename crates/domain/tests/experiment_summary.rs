@@ -55,6 +55,7 @@ fn report(large: bool) -> NativeExperimentEvaluationResultV1 {
         target_ttl_ns: count(60_000_000_000),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {
+            price_benchmark: None,
             multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USDT".into(),
@@ -356,4 +357,26 @@ fn current_strategy_is_target_only_and_corrupt_native_outcomes_are_rejected() {
             "case {case}"
         );
     }
+}
+
+#[test]
+fn previous_native_versions_are_rejected_without_relabeling_results() {
+    let current = report(false);
+    let previous: NativeExperimentEvaluationResultV1 = serde_json::from_str(
+        &serde_json::to_string(&current)
+            .unwrap()
+            .replace("0.69.0", "0.68.0"),
+    )
+    .unwrap();
+    let original = serde_json::to_value(&previous).unwrap();
+    assert!(experiment_summary(Id::new(), Id::new(), Id::new(), &previous).is_err());
+    assert_eq!(serde_json::to_value(&previous).unwrap(), original);
+    let previous: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
+        serde_json::from_str(
+            &serde_json::to_string(&historical_strategy(&current))
+                .unwrap()
+                .replace("0.69.0", "0.68.0"),
+        )
+        .unwrap();
+    assert!(domain::execution::strategy_portfolio_summary(&previous).is_err());
 }

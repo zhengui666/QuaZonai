@@ -1,68 +1,50 @@
-import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
-import { awaitWithContext } from '@earendil-works/chord/context';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
-import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
-import research from '../../research/plugins/research.ts';
 import { Study, Requests } from '../../research/src/documents.ts';
 import { CampaignResearchDoc } from '../../research/src/pm-campaign.ts';
-import { registerHypothesis } from '../../research/src/pm-ledger.ts';
 import { recoveryRequestId } from '../../research/src/recovery.ts';
-import { evaluateTrial } from '../../research/src/trials.ts';
-import { PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
+import { fact, PmDocument, pmRecord, pmState, type PmRecord } from '../src/pm-facts.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
 
-// Real owner HTTP, official Durable/SQLite and PM retirement. The probe records
-// only an explicit TEST_ONLY trial; no market/scientific success is asserted.
+// The child is a real public research conversation. Only the existing parent
+// ownership record is initialized directly; no removed research fitting runs.
 async function stoppedPmResearch() {
   const state = await setup();
-  let entered!: () => void; const enteredTool = new Promise<void>(resolve => { entered = resolve; });
-  const probe = defineExtension({ name: 'test.deleted-pm-resume', tools: [defineTool({
-    name: 'deleted_pm_resume_probe', description: 'TEST_ONLY original trial and cancellation ownership', parameters: obj({}), replay: 'safe',
-    async execute(_args, api, ctx) {
-      const hypothesis = await registerHypothesis(api, ctx, { economicFamilyId: 'test:deleted-pm-resume', mechanism: 'Exercise parent deletion after owner stop.',
-        prediction: 'Removed parent cannot authorize a resumed child.', falsification: 'A new model turn appears after parent deletion.', requiredDataCapabilities: [], incrementalQuestion: 'Is the original stop retained?' });
-      await evaluateTrial(api, ctx, { hypothesisId: hypothesis.id, hypothesis: 'TEST_ONLY control observation.' }, async () => ({ protocolOnly: true }));
-      entered(); await awaitWithContext(new Promise<void>(() => {}), ctx);
-      return { output: [{ type: 'text', text: 'Unreachable after owner stop.' }] };
-    },
-  })] });
   try {
-    state.options.extensions = [research, probe];
-    state.options.config.datasets[0]!.data.request = { train_end_ns: '140', validation_end_ns: '180', forecast: {
-      schema_version: 1, selection: { event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] }, parameters: {},
-    } };
-    await state.restart();
-    state.faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('strategy_intake', { name: 'Deleted-parent recovery protocol', archetype: 'PREDICTIVE_ALPHA',
-        economicMechanism: 'Test original task ownership only.', falsificationConditions: ['A removed parent starts new model work.'],
-        requiredCapabilities: [], intendedHoldingHorizonRef: 'REGISTERED_NATIVE_LABEL_HORIZON', knownFailureModes: ['TEST_ONLY'], ambiguities: [], ownerBoundaries: [] }), { stopReason: 'toolUse' }),
-      fauxAssistantMessage(fauxToolCall('deleted_pm_resume_probe', {}), { stopReason: 'toolUse' }),
-    ]);
-    const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
-      payload: { requestId: 'deleted-parent-original', goal: 'Control-only recovery of an original PM child', datasetId: 'controlled', model: state.model,
-        funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '1000', currency: 'USD' } } } });
-    assert.equal(start.statusCode, 202, start.body); await enteredTool;
-    const id = start.json<PmMandateView>().mandate.id;
-    const path = `/api/v3/mandates/${encodeURIComponent(id)}`;
-    const current = await state.service.app.inject({ url: path, headers: state.headers });
-    assert.equal(current.statusCode, 200, current.body); const view = current.json<PmMandateView>();
-    const campaignId = view.campaigns[0]!.id;
-    const conversationId = view.campaigns[0]!.runtime.conversationId as ConversationId;
-    assert.notEqual(conversationId, pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id).conversationId);
-    const retired = await state.service.app.inject({ method: 'POST', url: `${path}/retire`, headers: state.headers,
-      payload: { requestId: 'original-retire-before-delete', expectedRevision: view.mandate.revision } });
-    assert.equal(retired.statusCode, 202, retired.body);
-    const pm = pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id);
-    await state.service.research.harness.waitForTask(pm.artifacts[`campaign-control:${campaignId}`]!.taskId as TaskId, context);
+    let entered!: () => void; const generating = new Promise<void>(resolve => { entered = resolve; });
+    state.faux.setResponses([async (_transcript, options) => {
+      entered();
+      await new Promise<void>(resolve => { if (options?.signal?.aborted) resolve(); else options?.signal?.addEventListener('abort', () => resolve(), { once: true }); });
+      return fauxAssistantMessage('Original owner stop');
+    }]);
+    const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+      payload: { requestId: 'existing-child', goal: 'Test original recovery ownership', datasetId: 'controlled', model: state.model } });
+    assert.equal(start.statusCode, 202, start.body);
+    const receipt = start.json(); const conversationId = receipt.conversationId as ConversationId;
+    await generating;
+    await state.service.research.stop(conversationId);
+    const id = 'existing-parent'; const path = `/api/v3/mandates/${id}`;
+    await state.service.research.harness.commit(async tx => {
+      const parent = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      pmState(await tx.doc(PmDocument)).mandates[id] = {
+        input: { datasetId: 'controlled' }, conversationId: parent.id,
+        mandate: { ...fact(id), capitalSource: { kind: 'RESEARCH_SCENARIO', capital: { amount: '1000', currency: 'USD' } } },
+        campaigns: { original: { id: 'original', state: 'CONCLUDED', runtime: { conversationId, taskId: null }, datasetRevisionIds: [] } },
+        retirements: { original: { strategyVersionId: 'original', reconciliationRequired: false } },
+        latestStrategyId: 'original', commands: {}, decisions: {}, artifacts: {}, evidence: {}, monitorTaskId: null,
+        outcomes: {}, attributions: {}, cycles: {}, comparisons: {}, capacities: {}, ensembles: {}, gaps: {}, events: {}, strategies: {}, assessments: {},
+        datasets: [], derivedTrials: {}, budgetMovements: {}, searchFamily: {}, currentDecisionId: null, latestCycleId: null,
+      } as unknown as PmRecord;
+      // Restore the original parent ownership link without invoking campaign tools.
+      (await tx.doc(Study, conversationId)).input!.campaign = { mandateRevisionId: id } as never;
+    }, context);
     const stopped = await state.service.research.state(conversationId);
     assert.equal(stopped.research!.final!.status, 'STOPPED'); assert.equal(stopped.research!.final!.reason, 'owner_stop');
     assert.equal(stopped.research!.final!.trialId, null); assert.equal(stopped.research!.final!.result, null);
-    assert.equal(stopped.submission!.status, 'unanswered'); assert.equal(stopped.submission!.reason, 'aborted');
-    assert.equal(stopped.research!.trials.length, 1); assert.equal(stopped.research!.input!.policy.max_trials, undefined);
+    assert.equal(stopped.submission!.status, 'unanswered');
+    assert.equal(stopped.research!.trials.length, 0);
     return { state, id, path, conversationId, submissionId: stopped.submission!.id };
   } catch (error) { await state.cleanup(); throw error; }
 }
@@ -106,10 +88,11 @@ test('PM deletion serializes with child resume through its final submit handoff'
   const f = await stoppedPmResearch();
   let reached!: () => void; const submitting = new Promise<void>(resolve => { reached = resolve; });
   let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
+  let finishModel!: () => void; const modelPending = new Promise<void>(resolve => { finishModel = resolve; });
   const host = f.state.service.research;
   const original = host.harness.conversation.bind(host.harness);
   try {
-    f.state.faux.setResponses([fauxAssistantMessage(fauxToolCall('deleted_pm_resume_probe', {}), { stopReason: 'toolUse' })]);
+    f.state.faux.setResponses([async () => { await modelPending; return fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'test-only ended provider' }); }]);
     const recoveryId = recoveryRequestId(f.conversationId, f.submissionId);
     const interception = t.mock.method(host.harness, 'conversation', async (...args: Parameters<typeof original>) => {
       const handle = await original(...args);
@@ -139,6 +122,6 @@ test('PM deletion serializes with child resume through its final submit handoff'
     interception.mock.restore();
     // Stop the actually admitted resumed input before cleanup; deletion never
     // pretends that it cancelled this independently running child.
-    await host.stop(f.conversationId);
-  } finally { release(); t.mock.restoreAll(); await f.state.cleanup(); }
+    finishModel(); await host.stop(f.conversationId);
+  } finally { release(); finishModel(); t.mock.restoreAll(); await f.state.cleanup(); }
 });

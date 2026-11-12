@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
-import type { EvidenceRef, PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
+import type { EvidenceRef, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
 import { object } from '../src/facts.ts';
-import { digest, PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
+import { digest, PmDocument, pmRecord, pmState, type PmRecord } from '../src/pm-facts.ts';
 import { pmArtifactDigest, pmScienceCheckpoint, readPmArtifact, retainPmArtifacts } from '../src/pm-evidence.ts';
 import { context, setup } from './support.ts';
 import { pmTargetPayload } from '../src/pm-target.ts';
@@ -121,12 +121,14 @@ test('original PM evidence and scientific checkpoint survive official task resta
     state.options.config.datasets[0]!.data.request = { train_end_ns: '140', validation_end_ns: '180', forecast: {
       schema_version: 1, selection: { event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] }, parameters: {} } };
     await state.restart();
-    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
-      requestId: 'evidence-storage', goal: 'Protocol storage acceptance only', datasetId: 'controlled', model: state.model,
-      funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000.000000000000000001', currency: 'USD' } },
-    } });
-    assert.equal(admitted.statusCode, 202, admitted.body);
-    const mandateId = admitted.json<PmMandateView>().mandate.id;
+    const mandateId = 'test:storage-only';
+    await state.service.research.harness.commit(async tx => {
+      // Only the fields used by storage and payload reading. This is not a
+      // research admission, qualified strategy, account, or trading decision.
+      pmState(await tx.doc(PmDocument)).mandates[mandateId] = {
+        evidence: {}, artifacts: {}, mandate: { id: mandateId },
+      } as unknown as PmRecord;
+    }, context);
     const taskId = await state.service.research.harness.commit(async tx => {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       return tx.createTask(task, { mandateId }, { conversationId: conversation.id, ownership: { kind: 'conversation' }, background: true });

@@ -20,7 +20,7 @@ export function configure(root, origin) {
     throw new Error('Prior research configuration is unsupported; use a fresh installation.');
   }
   const research = { database: join(researchDir, 'research.sqlite'),
-    modules: ['research.ts', 'factor-wasm.ts', 'heldout-wasm.ts'].map(name => `/opt/quazonai/apps/research/plugins/${name}`) };
+    modules: ['research.ts'].map(name => `/opt/quazonai/apps/research/plugins/${name}`) };
   const config = { host: '0.0.0.0', port: 8080, dataDir: data, research,
     nautilus: {}, staticDir: '/opt/quazonai/web',
     datasets: [], connections: [], extensions: [], secureCookies: origin.startsWith('https:') };

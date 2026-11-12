@@ -1,5 +1,6 @@
+import { AssistantEntry } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ConversationId, Cursor, TaskRecord } from '@earendil-works/pi-durable';
+import type { ConversationId, Cursor, EntryRecord, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { readResearchAdmissions } from './admissions.ts';
@@ -32,9 +33,35 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
     ...(typeof input?.event_start_ns === 'string' && typeof input?.event_end_ns === 'string' ? { event_start_ns: input.event_start_ns, event_end_ns: input.event_end_ns } : {}) } };
 }
 
+/** Bounded detail projection; the complete observation tape remains in the native task. */
+function nativeIndicatorDetails(value: Json | undefined, claim: Json | undefined): { nativeIndicatorResult?: JsonObject } {
+  if (claim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION' || !value || typeof value !== 'object' || Array.isArray(value)) return {};
+  if (value.reuse === 'NAUTILUS_ENGINE_RESET' && Array.isArray(value.results)) {
+    return { nativeIndicatorResult: { scientificClaim: claim, reuse: value.reuse, nativeVersion: value.native_version ?? null,
+      cases: value.results.map((row, index) => ({ ordinal: index, ...nativeIndicatorDetails(row, claim).nativeIndicatorResult })) } };
+  }
+  const observations = Array.isArray(value.observations) ? value.observations : [];
+  return { nativeIndicatorResult: { request: value.request ?? null, scientificClaim: claim,
+    performanceScope: value.performance_scope ?? null, decisionPolicy: value.decision_policy ?? null,
+    skippedUnsettledDecisions: value.skipped_unsettled_decisions ?? null, mergedSameTimeBars: value.merged_same_time_bars ?? null,
+    observationCount: observations.length, latestObservation: observations.at(-1) ?? null } };
+}
+
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
+  if (!Array.isArray(value) && value.reuse === 'NAUTILUS_ENGINE_RESET' && Array.isArray(value.results)) {
+    return value.results.flatMap((row, index) => metrics(row).map(metric => ({ ...metric,
+      key: `batch.${index}.${metric.key}`, label: `case ${index + 1}: ${metric.label}`, component: index })));
+  }
+  if (!Array.isArray(value) && value.simulation && Array.isArray(value.observations)) {
+    const simulation = object(value.simulation, 'native_indicator_simulation');
+    return (Array.isArray(simulation.statistics) ? simulation.statistics : []).map(item => {
+      const statistic = object(item, 'native_statistic');
+      const key = String(statistic.native_key);
+      return { key, label: key, value: typeof statistic.value === 'number' ? statistic.value : null };
+    });
+  }
   if (!Array.isArray(value) && value.economic) {
     const { economic, ...result } = value;
     return [...metrics(result, prefix), ...tickEconomicMetrics(economic)];
@@ -143,17 +170,38 @@ export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHos
   };
 }
 
+/** Only ordinary assistant text is an owner-facing message. Never expose thinking,
+ * internal instruction entries, tool arguments, results or provider metadata. */
+export function researchMessages(entries: readonly EntryRecord[]): NonNullable<ResearchDetail['messages']> {
+  return entries.flatMap(entry => {
+    if (!AssistantEntry.is(entry)) return [];
+    const text = (entry.model ?? []).flatMap(message => message.role === 'assistant'
+      ? message.content.flatMap(part => part.type === 'text' ? [part.text] : []) : []).join('\n');
+    return text.trim() ? [{ entryId: entry.id, text }] : [];
+  });
+}
+
 export async function researchDetail(host: ResearchHost, id: number, readTasks: ReturnType<typeof researchTaskViews>): Promise<ResearchDetail> {
   const view = await host.state(id); const study = view.research;
   if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const tasks = await readTasks(id); const final = study.final;
+  const conversation = await host.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+  if (!conversation) throw new Problem('research_not_found', 404);
+  const messages: NonNullable<ResearchDetail['messages']> = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await conversation.entries({ order: 'ascending' }, 100, cursor, BACKGROUND_CONTEXT);
+    messages.push(...researchMessages(page.items)); cursor = page.next;
+  } while (cursor);
   const admissions = await readResearchAdmissions(host);
   return {
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)
       ? [record.report as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport] : []),
-    input: study.input as ResearchInput, submission: submissionView(view.submission),
+    messages, input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(view.literature ? { literature: view.literature } : {}),
+    ...(study.toolPolicy ? { toolPolicy: study.toolPolicy } : {}),
+    ...(study.previousNativeResults ? { previousNativeResults: study.previousNativeResults } : {}),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
@@ -166,7 +214,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
       reason: typeof final.reason === 'string' ? final.reason : null,
       ...publicExecutionError(final.error, 'scientific_execution_failed',
         Array.isArray((study.trials.find(trial => trial.taskId === final.trialId)?.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', final.errorDetail),
-      metrics: metrics(final.result), ...tickInputDetails(final.result) } : null,
+      metrics: metrics(final.result), ...tickInputDetails(final.result), ...nativeIndicatorDetails(final.result, final.scientificClaim) } : null,
   };
 }
 

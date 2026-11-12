@@ -1,130 +1,18 @@
+import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import { readResearchAdmissions } from '../src/admissions.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { researchCapital, researchSpecification, researchInstructions, researchCriterion } from '../../../packages/contracts/src/research.ts';
-import { factorViews, factorId } from '../src/factors.ts';
+import { factorViews } from '../src/factors.ts';
 import { Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
-import research from '../../research/plugins/research.ts';
-import factorWasm from '../../research/plugins/factor-wasm.ts';
-import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
-import strategyPortfolio from '../../research/plugins/strategy-portfolio.ts';
-import { maxDbCounter } from '../../research/src/strategy.ts';
-import { Application } from '../src/facts.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup, wat } from './support.ts';
 
 const specification = researchSpecification({ version: 1, name: 'Volume hypothesis', question: 'Does volume predict the registered return?', rationale: 'Falsifiable original economic mechanism',
   evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' },
   capital: { scenarios: ['1000.000000000000000001'], participation: '0.01', maximumAgeSeconds: 120 } });
 
-test('new structured native studies reject missing bindings and unsupported runners before model admission', async () => {
-  const state = await setup();
-  try {
-    state.options.extensions.push(factorWasm, strategyPortfolio);
-    const extensions = [...state.options.extensions];
-    const dataset = state.options.config.datasets[0]!;
-    const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, string> = {}) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.68.0', parameters });
-    Object.assign(dataset.strategy!, { simulationSettings: { schema_version: 1, base_currency: 'USD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60000,
-      fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
-      fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel'),
-      latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' }),
-      fee_rates: [{ instrument_id: 'TEST.SIM', maker: '0', taker: '0' }] } });
-    const original = structuredClone(dataset.data);
-    const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
-      selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100 },
-      parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1 } } };
-    const ensemble = researchSpecification({ ...specification, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 8, stop: 'budget-or-selection' } });
-    const scan = { schema_version: 1, event_start_ns: '0', train_end_ns: '10', validation_end_ns: '20', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, parameters: request.forecast.parameters };
-    const failures: { data: typeof original; spec: typeof specification; error: string; missingStrategy?: boolean; missingPortfolio?: boolean; missingFactor?: boolean }[] = [
-      { data: { catalog: original.catalog!, storageMode: 'price-volume' }, spec: ensemble, error: 'native_request_required' },
-      { data: { catalog: original.catalog!, catalog_scan_request: scan }, spec: ensemble, error: 'catalog_factor_only_account_binding_required' },
-      { data: { catalog: original.catalog!, request, catalog_scan_request: scan }, spec: specification, error: 'ambiguous_factor_request' },
-      { data: { request }, spec: specification, error: 'catalog_required' },
-      { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_policy_required', missingStrategy: true },
-      { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_adapter_not_configured', missingPortfolio: true },
-      { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true },
-      { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true, missingPortfolio: true },
-      { data: { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } }, spec: specification, error: 'registered_final_evaluator_required' },
-    ];
-    for (const [index, failure] of failures.entries()) {
-      dataset.data = failure.data;
-      const strategy = dataset.strategy;
-      if (failure.missingStrategy) delete dataset.strategy;
-      state.options.extensions = extensions.filter(extension => !(failure.missingPortfolio && extension === strategyPortfolio || failure.missingFactor && extension === factorWasm));
-      await state.restart();
-      const requestId = `invalid-native-binding-${index}`;
-      const body = { requestId, goal: failure.spec.question, specification: failure.spec, model: state.model, datasetId: dataset.id };
-      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: body });
-      assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, failure.error);
-      assert.equal(state.faux.state.callCount, 0);
-      assert.equal((await readResearchAdmissions(state.service.research))[`request:${requestId}`], undefined);
-      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
-      dataset.strategy = strategy;
-    }
-    const strategy = dataset.strategy!;
-    dataset.data = { catalog: original.catalog!, request };
-    const invalidPolicies = [
-      { policy: { kind: 'factor-threshold' }, error: 'strategy_instrument_invalid' },
-      { policy: { ...strategy, simulationSettings: { base_currency: 'USD' } }, error: 'strategy_starting_capital_required' },
-      { policy: { ...strategy, instrumentIds: ['TEST.SIM', 'MISSING.SIM'] }, error: 'strategy_instrument_fee_missing' },
-      { policy: { ...strategy, simulationSettings: { ...strategy.simulationSettings, typo: true } }, error: 'strategy_simulation_settings_invalid' },
-      { policy: { ...strategy, targetTtlNs: (maxDbCounter + 1n).toString() }, error: 'target_ttl_invalid' },
-      { policy: { ...strategy, targetTtlNs: (maxDbCounter - 20n).toString() }, error: 'target_ttl_invalid' },
-    ];
-    for (const [index, invalid] of invalidPolicies.entries()) {
-      dataset.strategy = invalid.policy as typeof strategy; state.options.extensions = extensions;
-      await state.restart();
-      const requestId = `invalid-native-policy-${index}`;
-      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-        payload: { requestId, goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id } });
-      assert.equal(response.statusCode, 400, response.body);
-      assert.equal(response.json().error, invalid.error);
-      assert.equal(state.faux.state.callCount, 0);
-      assert.equal((await readResearchAdmissions(state.service.research))[`request:${requestId}`], undefined);
-      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
-    }
-    dataset.strategy = strategy;
-    state.options.extensions = [...extensions, heldoutWasm];
-    const changed = structuredClone(request); changed.forecast.parameters.fast_period = 1;
-    const sealedFailures: { sealed: typeof original; error: string }[] = [
-      { sealed: { request }, error: 'heldout_catalog_required' },
-      { sealed: { catalog: original.catalog! }, error: 'native_request_required' },
-      { sealed: { catalog: original.catalog!, request: { ...request, train_end_ns: '0' } }, error: 'native_partition_boundaries' },
-      { sealed: { catalog: original.catalog!, request: changed }, error: 'heldout_criteria_mismatch' },
-    ];
-    for (const [index, failure] of sealedFailures.entries()) {
-      dataset.data = { catalog: original.catalog!, request, sealed: failure.sealed };
-      await state.restart();
-      const requestId = `invalid-native-sealed-${index}`;
-      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-        payload: { requestId, goal: specification.question, specification, model: state.model, datasetId: dataset.id } });
-      assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, failure.error);
-      assert.equal(state.faux.state.callCount, 0);
-      assert.equal((await readResearchAdmissions(state.service.research))[`request:${requestId}`], undefined);
-      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
-    }
-    state.options.extensions = extensions;
-    dataset.data = { catalog: original.catalog!, request };
-    await state.restart();
-    state.faux.setResponses([fauxAssistantMessage('Valid native binding admitted; no computation claimed.')]);
-    const accepted = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-      payload: { requestId: 'valid-native-ensemble', goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id } });
-    assert.equal(accepted.statusCode, 202, accepted.body);
-    await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
-    assert.equal(state.faux.state.callCount, 1);
-    state.options.extensions.push(heldoutWasm);
-    dataset.data = { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } };
-    await state.restart();
-    state.faux.setResponses([fauxAssistantMessage('Registered finalizer available; no computation claimed.')]);
-    const sealed = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
-      payload: { requestId: 'valid-native-sealed-factor', goal: specification.question, specification, model: state.model, datasetId: dataset.id } });
-    assert.equal(sealed.statusCode, 202, sealed.body);
-    await (await state.service.research.harness.submission(sealed.json().submissionId, context))!.wait(context);
-    assert.equal(state.faux.state.callCount, 2);
-  } finally { await state.cleanup(); }
-});
-
-test('custom structured data remains opaque and an admitted request replays after native adapters are installed', async () => {
+test('custom discussion input remains opaque and its original admission replays after dataset configuration changes', async () => {
   const state = await setup();
   try {
     const datasets = state.options.config.datasets;
@@ -140,7 +28,6 @@ test('custom structured data remains opaque and an admitted request replays afte
     state.faux.setResponses([fauxAssistantMessage('Original custom admission retained.')]);
     const nativeReceipt = await state.service.research.start('opaque-native-original', nativeInput);
     await (await state.service.research.harness.submission(nativeReceipt.submissionId, context))!.wait(context);
-    state.options.extensions.push(factorWasm, strategyPortfolio);
     state.options.config.datasets = [];
     await state.restart();
     const replay = await post(); assert.equal(replay.statusCode, 202, replay.body); assert.deepEqual(replay.json(), receipt);
@@ -162,7 +49,7 @@ test('custom structured data remains opaque and an admitted request replays afte
 test('structured admission captures the mandate, rejects unsupported overrides and retains exact original identity through restart', async () => {
   const state = await setup();
   try {
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    state.faux.setResponses([fauxAssistantMessage('Original discussion input retained, no scientific result claimed.')]);
     const input = { requestId: 'structured-original', goal: specification.question, specification, model: state.model, datasetId: 'controlled' };
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: input });
     assert.equal(response.statusCode, 202, response.body); const receipt = response.json();
@@ -170,60 +57,27 @@ test('structured admission captures the mandate, rejects unsupported overrides a
     const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
     assert.equal(detail.title, specification.name); assert.deepEqual(detail.input.specification, specification); assert.equal(detail.criterion.status, 'insufficient');
     assert.match(researchInstructions(detail.input), /Original structured research mandate/); assert.match(researchInstructions(detail.input), /Volume hypothesis/);
-    const factors = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json();
-    assert.equal(factors.length, 1); assert.equal(factors[0].id, factorId(receipt.conversationId, detail.final.trialId, 0)); assert.equal(factors[0].evidence, 'independent');
-    assert.equal(factors[0].combinable, false); assert.equal(factors[0].reason, 'research_criterion_insufficient');
-    const assumptions = { scenarios: ['20.000000000000000001'], participation: '0.02', maximumAgeSeconds: 60 };
-    assert.deepEqual(researchCapital(assumptions), assumptions); assert.throws(() => researchCapital({ ...assumptions, horizon: 9 }), /research_override_unsupported/);
-    const assessed = await state.service.app.inject({ method: 'POST', url: `/api/v3/factors/${factors[0].id}/capacity`, headers: state.headers, payload: assumptions }); assert.equal(assessed.statusCode, 200, assessed.body);
-    assert.equal(assessed.json().status, 'UNAVAILABLE'); assert.equal(assessed.json().assumptions.participation, '0.02'); assert.equal(assessed.json().scenarios[0].capital, assumptions.scenarios[0]);
-    assert.equal((await state.service.app.inject({ method: 'POST', url: `/api/v3/factors/${factors[0].id}/capacity`, headers: state.headers, payload: { ...assumptions, maximumAgeSeconds: 0 } })).statusCode, 400);
-    assert.deepEqual((await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json().input, detail.input);
-    const body = { requestId: 'atomic-original', name: 'Atomic shared-account configuration', factors: [{ factorId: factors[0].id, weight: '1' }], datasetId: 'controlled', capital: '1000' };
-    for (const members of [{ factors: body.factors }, { researchIds: [receipt.conversationId] }]) {
-      const rejected = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: { ...body, factors: undefined, ...members } });
-      assert.equal(rejected.statusCode, 422, rejected.body); assert.equal(rejected.json().error, 'research_criterion_insufficient');
-    }
-    assert.equal(assessed.json().reason, 'research_criterion_insufficient');
+    assert.deepEqual((await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json(), []);
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...input, specification: { ...specification, name: 'changed' } } })).statusCode, 409);
     await state.restart();
     assert.deepEqual((await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: input })).json(), receipt);
-    assert.equal((await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json()[0].id, factors[0].id);
+    assert.deepEqual((await state.service.app.inject({ url: '/api/v3/research/' + receipt.conversationId, headers: state.headers })).json().input, detail.input);
     assert.equal(state.faux.state.callCount, 1);
     const bad = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...input, requestId: 'unsupported', specification: { ...specification, horizon: 2 } } });
     assert.equal(bad.statusCode, 400); assert.equal(bad.json().error, 'research_override_unsupported');
   } finally { await state.cleanup(); }
 });
 
-test('supported search scope is enforced in the original counted trial ledger, not only model prose', async () => {
+test('discussion finish records an unscored stop without creating scientific trials', async () => {
   const state = await setup();
   try {
-    const ensemble = researchSpecification({ ...specification, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 2, stop: 'budget-or-selection' } });
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-    const receipt = await state.service.work.startResearch({ requestId: 'scope', goal: ensemble.question, specification: ensemble, model: state.model, datasetId: 'controlled' });
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Discussion complete' }), { stopReason: 'toolUse' })]);
+    const receipt = await state.service.work.startResearch({ requestId: 'native-discussion-stop', goal: specification.question, specification, model: state.model, datasetId: 'controlled' });
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!;
-    assert.equal(study.trials.length, 1); assert.equal(study.trials[0]!.status, 'FAILED'); assert.equal(study.trials[0]!.error, 'research_search_scope_exceeded');
-  } finally { await state.cleanup(); }
-});
-
-test('structured budget-or-selection rejects an unselected model response boundary and continues to an actual selection', async () => {
-  const state = await setup();
-  try {
-    state.options.extensions.push(research); await state.restart();
-    state.faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Response boundary is not a scientific stop' }), { stopReason: 'toolUse' }),
-      transcript => { assert.match(JSON.stringify(transcript), /research_stop_condition_not_met/); return fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' }); },
-    ]);
-    const receipt = await state.service.work.startResearch({ requestId: 'structured-stop', goal: specification.question, specification, model: state.model, datasetId: 'controlled' });
-    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
-    const study = (await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!;
-    assert.equal(study.trials.length, 1); assert.equal(study.final!.status, 'COMPUTED'); assert.equal(study.final!.trialId, study.trials[0]!.taskId); assert.equal(state.faux.state.callCount, 2);
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-    const zero = await state.service.work.startResearch({ requestId: 'structured-zero-stop', goal: specification.question, specification, model: state.model, datasetId: 'controlled' });
-    await (await state.service.research.harness.submission(zero.submissionId, context))!.wait(context);
-    const unbounded = (await state.service.research.harness.snapshot(Study, zero.conversationId, context))!;
-    assert.equal(unbounded.trials.length, 1); assert.equal(unbounded.final!.status, 'COMPUTED');
+    assert.deepEqual(study.trials, []); assert.equal(study.final!.status, 'STOPPED');
+    assert.equal(study.final!.trialId, null); assert.equal(study.final!.result, null);
+    assert.equal(state.faux.state.callCount, 1);
   } finally { await state.cleanup(); }
 });
 
@@ -243,7 +97,7 @@ test('structured native input accepts only the registered inherited policy and s
       assert.equal(bad.statusCode, 400, bad.body); assert.equal(bad.json().error, 'research_policy_unregistered');
     }
     const extra = await post('native-extra-policy', { ...input, policy: { ...policy, partitionOverride: 'TRAIN' } }); assert.equal(extra.statusCode, 400); assert.equal(extra.json().error, 'research_policy_unregistered');
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    state.faux.setResponses([fauxAssistantMessage('Original discussion input retained, no scientific result claimed.')]);
     const acceptedInput = input;
     const accepted = await post('native-registered-policy', acceptedInput); assert.equal(accepted.statusCode, 202, accepted.body);
     await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
@@ -255,7 +109,7 @@ test('structured native input accepts only the registered inherited policy and s
   } finally { await state.cleanup(); }
 });
 
-test('identical scientific inputs retain their own original factor admission provenance after restart', async () => {
+test('identical discussion inputs retain their own original dataset admission provenance after restart', async () => {
   const state = await setup();
   try {
     const expected = new Map<number, { id: string; name: string; source: string; currency: string }>();
@@ -263,17 +117,18 @@ test('identical scientific inputs retain their own original factor admission pro
       const registered = state.options.config.datasets[0]!;
       registered.id = `provenance-${index}`; registered.name = `Original dataset ${index}`; registered.source = `TEST_ONLY source ${index}`; registered.currency = currency;
       await state.restart();
-      state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-      const receipt = await state.service.work.startResearch({ requestId: `identical-input-${index}`, goal: specification.question, specification, model: state.model, datasetId: registered.id });
+      state.faux.setResponses([fauxAssistantMessage('Original discussion input retained, no scientific result claimed.')]);
+        const receipt = await state.service.work.startResearch({ requestId: `identical-input-${index}`, goal: specification.question, specification, model: state.model, datasetId: registered.id });
       await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
       expected.set(receipt.conversationId, { id: registered.id, name: registered.name, source: registered.source, currency });
     }
     await state.restart();
-    const factors = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json(); assert.equal(factors.length, 2);
-    for (const factor of factors) {
-      const original = expected.get(factor.researchId)!; assert.equal(factor.datasetId, original.id); assert.equal(factor.currency, original.currency);
-      const detail = (await state.service.app.inject({ url: `/api/v3/factors/${factor.id}`, headers: state.headers })).json(); assert.equal(detail.datasetId, original.id); assert.equal(detail.currency, original.currency);
-      const research = (await state.service.app.inject({ url: `/api/v3/research/${factor.researchId}`, headers: state.headers })).json(); assert.equal(research.dataset.name, original.name); assert.equal(research.dataset.source, original.source);
+    const rows = (await state.service.app.inject({ url: '/api/v3/research', headers: state.headers })).json().items;
+    assert.equal(rows.length, 2);
+    for (const [id, original] of expected) {
+      const research = (await state.service.app.inject({ url: `/api/v3/research/${id}`, headers: state.headers })).json();
+      assert.equal(research.datasetId, original.id); assert.equal(research.dataset.name, original.name);
+      assert.equal(research.dataset.source, original.source); assert.equal(research.dataset.currency, original.currency);
     }
   } finally { await state.cleanup(); }
 });
@@ -294,7 +149,6 @@ test('HTTP rejects out-of-native-range capacity scenarios before research, facto
       for (const [url, payload] of [
         ['/api/v3/factors/r999.t1.m0/capacity', capital],
         ['/api/v3/research', { requestId: `invalid-${scenario}`, goal: specification.question, specification: { ...specification, capital }, model: state.model, datasetId: 'controlled' }],
-        ['/api/v3/portfolios', { requestId: `invalid-${scenario}`, name: 'Invalid native range', researchIds: [999], datasetId: 'controlled', capital: '1000', capacityPolicy: capital }],
       ] as const) {
         const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload });
         assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, 'research_capital_scenarios_invalid');
@@ -353,32 +207,6 @@ test('criterion requires an unambiguous available metric and preserves legacy st
   assert.equal(researchCriterion(account, 'COMPUTED', [sharpe, { ...sharpe, value: 0.1 }])!.status, 'insufficient');
 });
 
-test('unavailable or duplicate retained evidence cannot qualify factors or admit a portfolio', async () => {
-  const state = await setup();
-  try {
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-    const spec = { ...specification, evaluation: { ...specification.evaluation, target: 0.1 } };
-    const receipt = await state.service.work.startResearch({ requestId: 'criterion-status-evidence', goal: spec.question, specification: spec, model: state.model, datasetId: 'controlled' });
-    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
-    const original = (await state.service.research.state(receipt.conversationId)).research!;
-    for (const [index, statuses] of [['INSUFFICIENT_SAMPLES'], ['CONSTANT_SCORE'], ['UNSUPPORTED'], ['AVAILABLE', 'AVAILABLE']].entries()) {
-      // Deliberately inconsistent retained protocol bytes, not market evidence.
-      const result = { request: original.input!.data.request!, partitions: statuses.map(status => ({ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: 0.9, status } } })) };
-      await state.service.research.harness.commit(async tx => {
-        const study = await tx.doc(Study, receipt.conversationId); study.final!.result = result;
-      }, context);
-      const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
-      assert.equal(detail.criterion.status, 'insufficient'); assert.equal(detail.criterion.value, null);
-      const study = (await state.service.research.state(receipt.conversationId)).research!;
-      const factor = factorViews(receipt.conversationId, study)[0]!;
-      assert.equal(factor.combinable, false); assert.equal(factor.reason, 'research_criterion_insufficient');
-      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers,
-        payload: { requestId: `invalid-criterion-${index}`, name: 'Must not admit', researchIds: [receipt.conversationId], datasetId: 'controlled', capital: '1000' } });
-      assert.equal(response.statusCode, 422, response.body); assert.equal(response.json().error, 'research_criterion_insufficient');
-    }
-  } finally { await state.cleanup(); }
-});
-
 test('registered annualization selects only its exact native 252-day or 365-day Sharpe statistic', () => {
   for (const days of [252, 365]) {
     const metric = `Sharpe Ratio (${days} days)`;
@@ -394,4 +222,16 @@ test('registered annualization selects only its exact native 252-day or 365-day 
     const exact = researchCriterion(spec, 'COMPUTED', [{ ...own, value: 0.9 }, different])!;
     assert.equal(exact.status, 'not_met'); assert.equal(exact.value, 0.9);
   }
+});
+
+test('retired scoring inputs are rejected before a Pi admission or model call', async () => {
+  const state = await setup();
+  try {
+    for (const policy of JSON.parse(JSON.stringify([{ reviewPolicy: createReviewPolicy('FACTOR', 'retired-factor', '0') }, { reviewPolicies: { FACTOR: createReviewPolicy('FACTOR', 'retired-factor', '0'), PORTFOLIO: createReviewPolicy('PORTFOLIO', 'retired-portfolio', '0') } }, { reviewedFactorSources: [] }])) as import('@earendil-works/pi-durable').JsonObject[]) {
+      const requestId = `retired-${Object.keys(policy)[0]}`;
+      await assert.rejects(state.service.research.start(requestId, { goal: 'No custom scoring', model: state.model, data: {}, policy }), /legacy_research_scoring_retired/);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+    }
+    assert.equal(state.faux.state.callCount, 0);
+  } finally { await state.cleanup(); }
 });
