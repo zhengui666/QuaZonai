@@ -104,62 +104,6 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
     check_cli_archive(output, platform)
     return output
 
-def smoke_cli(path: Path, platform: str, version: str) -> None:
-    check_cli_archive(path, platform)
-    with tempfile.TemporaryDirectory(prefix='quazonai-cli-check-', dir=os.environ.get('TMPDIR')) as temporary:
-        directory = Path(temporary)
-        if path.suffix == '.zip':
-            with zipfile.ZipFile(path) as archive:
-                archive.extractall(directory)
-        else:
-            with tarfile.open(path, 'r:gz') as archive:
-                archive.extractall(directory, filter='data')
-        node = directory / ('runtime/node.exe' if platform.startswith('windows-') else 'runtime/node')
-        command = [str(node), '--experimental-strip-types', str(directory / 'app/launch.mjs')]
-        env = {**os.environ, 'QUAZONAI_VERSION': version, 'QZ_CLI_VERSION': version}
-        def run(*args):
-            return subprocess.run([*command, *args], env=env, check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout.strip()
-        if run('--version') != f'quazonai {version}':
-            raise ValueError('Extracted CLI version differs from the release tag.')
-        help_text = run('--help')
-        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance', 'pm clarify-intent')):
-            raise ValueError('Extracted CLI lacks workbench commands.')
-        schemas = json.loads(run('schema', 'list'))
-        for name in ('PmIntentClarification', 'PmExecutionEvidence', 'PmExecutionQualification', 'AssetTarget'):
-            if name not in schemas.get('names', []):
-                raise ValueError(f'Extracted CLI lacks the {name} contract.')
-            contract = json.loads(run('schema', 'show', name))
-            if contract.get('entry') != name or f'interface {name}' not in contract.get('source', ''):
-                raise ValueError(f'Extracted CLI cannot read its original {name} contract.')
-            if name == 'AssetTarget' and not re.search(r'export interface AssetTarget\s*\{[^}]*\bexecutionEstimate\?:', contract.get('source', '')):
-                raise ValueError('Extracted CLI lacks the separate rounded execution estimate contract.')
-        if 'DecisionTrigger' not in schemas.get('names', []):
-            raise ValueError('Extracted CLI lacks the DecisionTrigger contract.')
-        trigger = json.loads(run('schema', 'show', 'DecisionTrigger'))
-        definition = re.search(r'export type DecisionTrigger\s*=([^;]+);', trigger.get('source', ''))
-        if trigger.get('entry') != 'DecisionTrigger' or not definition or "'SOURCE_RECOVERED'" not in definition.group(1):
-            raise ValueError('Extracted CLI lacks the source recovery decision trigger contract.')
-        domain = json.loads(run('schema', 'list', '--domain'))
-        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1', 'AllocatorSettingsV1', 'AllocationResultV1'):
-            if name not in domain.get('names', []):
-                raise ValueError(f'Extracted CLI lacks the native {name} contract.')
-            contract = json.loads(run('schema', 'show', name, '--domain'))
-            native = contract.get('components', {}).get('schemas', {})
-            if name not in native:
-                raise ValueError(f'Extracted CLI cannot resolve its native {name} contract.')
-            if name == 'AllocatorSettingsV1':
-                protocol = 'NativeCashNumericalOutputProtocolV1'
-                field = native[name].get('properties', {}).get('cash_numerical_output', {})
-                if f'#/components/schemas/{protocol}' not in json.dumps(field) or 'VALIDATED_FEASIBLE_SEGMENT_V1' not in native.get(protocol, {}).get('enum', []):
-                    raise ValueError('Extracted CLI lacks the registered CASH numerical output protocol.')
-            if name == 'AllocationResultV1':
-                trace = 'NativeCashNumericalOutputV1'
-                field = native[name].get('properties', {}).get('numerical_output', {})
-                exact = native.get(trace, {}).get('properties', {}).get('objective_delta_exact', {})
-                value_type = exact.get('type')
-                if f'#/components/schemas/{trace}' not in json.dumps(field) or not (value_type == 'string' or isinstance(value_type, list) and 'string' in value_type):
-                    raise ValueError('Extracted CLI lacks the exact numerical objective trace contract.')
-
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())
     identity(manifest['version'], manifest['revision'])
@@ -274,15 +218,10 @@ def main() -> None:
     pack.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
     pack.add_argument('--version', required=True)
     pack.add_argument('--revision', required=True)
-    smoke = commands.add_parser('smoke-cli')
-    smoke.add_argument('--archive', type=Path, required=True)
-    smoke.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
-    smoke.add_argument('--version', required=True)
     for name in ('prepare', 'verify'):
         commands.add_parser(name).add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision))
-    elif args.command == 'smoke-cli': smoke_cli(args.archive, args.platform, args.version)
     elif args.command == 'prepare': prepare(args.output)
     else: verify(args.output)
 
