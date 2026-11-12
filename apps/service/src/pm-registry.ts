@@ -4,7 +4,7 @@ import { nowNs } from './facts.ts';
 
 export const PM_CAPABILITY_ID = 'qz.native.pm/1';
 export function pmCapabilities(): Pm.CapabilityDescriptor[] {
-  const operations = ['simulate', 'value-observed-spot', 'study-observed-spot', 'compare-observed-spot'];
+  const operations = ['simulate', 'value-observed-spot', 'compare-observed-spot'];
   return [{ ...fact(PM_CAPABILITY_ID, '0'), provider: 'Nautilus account adapter', providerVersion: '1',
     strategyArchetypes: ['PREDICTIVE_ALPHA', 'FACTOR_RESEARCH', 'PORTFOLIO_OVERLAY'], dataKinds: ['BAR'],
     predictionUnits: ['RETURN_PER_HORIZON'], accountingModels: ['SINGLE_CURRENCY_SHARED_ACCOUNT', 'MULTI_CURRENCY_SPOT_CASH'],
@@ -14,7 +14,6 @@ export function pmCapabilities(): Pm.CapabilityDescriptor[] {
       requiredCapabilityIds: [], effect: 'NATIVE_COMPUTE' as const, replayPolicy: 'REQUEST_BOUND' as const, incompatibleCapabilityIds: [] })),
     boundaries: [
       { operation: 'simulate', state: 'CONDITIONAL', requiredEvidence: ['original_catalog', 'registered_cost_rules', 'matched_account_starting_state'], reasonCodes: ['fresh_historical_account_is_not_current_holdings'] },
-      { operation: 'study-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['lossless_original_cash_account_snapshot', 'same_account_known_zero_open_orders', 'no_locked_or_borrowed_balances', 'point_in_time_price_valuation', 'explicit_spot_execution_policy'], reasonCodes: ['historical_paired_hold_rebalance_is_not_realized_pnl', 'margin_and_betting_accounts_unsupported'] },
       { operation: 'value-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['lossless_original_cash_account_snapshot', 'original_cutoff_available_price_marks', 'explicit_spot_reporting_currency'], reasonCodes: ['derived_inventory_value_does_not_replace_raw_source_equity'] },
       { operation: 'compare-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['same_original_spot_balances', 'known_zero_open_orders', 'matched_selection_and_cost_policy'], reasonCodes: ['historical_hold_rebalance_counterfactual_not_realized_outcome'] },
       { operation: 'TARGET_OPERATION', state: 'CONDITIONAL', requiredEvidence: ['independent_strategy_evidence', 'authoritative_account_basis', 'live_execution_capacity', 'authorized_target_transport'], reasonCodes: ['historical_replay_does_not_authorize_live_target'] },

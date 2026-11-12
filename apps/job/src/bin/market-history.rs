@@ -37,6 +37,19 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Convert an existing published-hour source into a new native L2 catalog, preserving both clocks.
+    PublishedBooks {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Inclusive original provider-receipt timestamp, nanoseconds.
+        #[arg(long)]
+        available_start_ns: u64,
+        /// Exclusive original provider-receipt timestamp, nanoseconds.
+        #[arg(long)]
+        available_end_ns: u64,
+    },
     /// Encode official historical settlement events as native InstrumentClose data.
     InstrumentCloses {
         #[arg(long)]
@@ -1618,6 +1631,21 @@ fn trade_memory_limit() -> Result<()> {
 
 fn main() {
     let result = match Arguments::parse().command {
+        Command::PublishedBooks {
+            source,
+            output,
+            available_start_ns,
+            available_end_ns,
+        } => job::ticks::economic::export_published_books(
+            &source,
+            &output,
+            available_start_ns,
+            available_end_ns,
+        )
+        .and_then(|report| {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }),
         Command::InstrumentCloses {
             source,
             instruments,

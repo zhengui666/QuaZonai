@@ -27,7 +27,7 @@ import { workbench } from './workbench.ts';
 import { eventStream } from './event-stream.ts';
 import { readResearchAdmissions } from './admissions.ts';
 import { listFactors, readFactor } from './factors.ts';
-import { factorCapacity, portfolioCapacity } from './capacity.ts';
+import { portfolioCapacity } from './capacity.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
 import { accountKey, capitalStatus, capitalStatusForBinding, control, transportBindingKey } from './capital-exit.ts';
@@ -228,8 +228,6 @@ export async function createService(options: ServiceOptions) {
       cost: null, activeTasks: (await research.harness.inspect(context)).tasks.length };
   });
   app.get(`${API}/factors`, async () => listFactors(research, await readResearchAdmissions(research)));
-  app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
-  app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
   app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, await readResearchAdmissions(research))).view);
   app.get<{ Params: { id: string } }>(`${API}/factors/:id/review`, async request => (await readFactor(research, request.params.id, await readResearchAdmissions(research))).view.review ?? null);
   app.get(`${API}/portfolios`, async () => Promise.all(Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(async item => portfolioView(await work.getPortfolio(item.view.id)))));

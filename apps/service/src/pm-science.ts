@@ -3,7 +3,7 @@ import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { object } from './facts.ts';
 

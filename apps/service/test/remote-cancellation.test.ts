@@ -11,7 +11,7 @@ import { defineExtension, defineTask, defineTool, MemoryStorage } from '@earendi
 import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { remoteNativeCapabilities, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { openRetainedResearch as openResearch } from '../../research/test/frozen-input.ts';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 
 const digest = `sha256:${'c'.repeat(64)}`;
 function signal() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }

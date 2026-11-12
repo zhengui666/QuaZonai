@@ -33,6 +33,7 @@ pub mod closes;
 mod models;
 mod native;
 mod source_books;
+pub use source_books::export_catalog as export_published_books;
 use models::EconomicModels;
 use native::{NativeBook, NativeLedger, NativeMark, NativeRate};
 const DAY: u64 = 86_400_000_000_000;

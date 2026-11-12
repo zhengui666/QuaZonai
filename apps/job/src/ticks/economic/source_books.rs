@@ -697,6 +697,78 @@ impl RawBooks {
     }
 }
 
+/// Convert the existing published-hour source to an ordinary native catalog.
+/// Source files are read only; carry checkpoints remain validation-only, not new events.
+pub fn export_catalog(
+    root: &Path,
+    output: &Path,
+    start: u64,
+    end: u64,
+) -> Result<serde_json::Value> {
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+    let header: Header = serde_json::from_reader(BufReader::new(File::open(
+        root.join("book-snapshots.source.json"),
+    )?))?;
+    let instruments = crate::catalog::currencies::instruments_from_value(header.instrument_source)?;
+    let indexed = source(root)?;
+    // Publish only after all source reads and native writes succeeded. Existing data is never replaced.
+    ensure!(!output.exists(), "OUTPUT_MUST_BE_NEW");
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let staging = tempfile::tempdir_in(parent)?;
+    let catalog_root = staging.path().join("catalog");
+    std::fs::create_dir(&catalog_root)?;
+    crate::catalog::currencies::write(&catalog_root, &instruments)?;
+    let catalog = ParquetDataCatalog::new(&catalog_root, None, None, None, None);
+    catalog.write_instruments(instruments.clone())?;
+    let mut rows = 0u64;
+    let mut frames = 0u64;
+    let mut checkpoints = (0u64, 0u64);
+    for instrument in instruments {
+        if !indexed.instruments.contains(&instrument.id()) {
+            continue;
+        }
+        let mut books = RawBooks::open_indexed(indexed.clone(), instrument.id(), start, end)?;
+        // Native engines require the declared instrument precision. Existing parsing checks
+        // exact Decimal equality and refuses any value that would be rounded.
+        books.encoding = Encoding::new(instrument.id(), Some(&instrument), false)?;
+        let mut pending = Vec::new();
+        while let Some(snapshot) = books.next()? {
+            frames += 1;
+            rows += snapshot.deltas.deltas.len() as u64;
+            pending.extend(snapshot.deltas.deltas);
+            // Flush only complete F_LAST batches, preserving the original pair of clocks.
+            if pending.len() >= 100_000 {
+                catalog.write_to_parquet(&pending, None, None, None)?;
+                pending.clear();
+            }
+        }
+        if !pending.is_empty() {
+            catalog.write_to_parquet(&pending, None, None, None)?;
+        }
+        let counts = books.checkpoint_counts();
+        checkpoints.0 += counts.0;
+        checkpoints.1 += counts.1;
+    }
+    ensure!(frames > 0, "PUBLISHED_BOOK_SELECTION_EMPTY");
+    let report = serde_json::json!({
+        "native_catalog":"catalog", "available_start_ns":start.to_string(),
+        "available_end_ns":end.to_string(), "frames":frames,"rows":rows,
+        "validated_carry_snapshots":checkpoints.0,"validated_carry_rows":checkpoints.1,
+        "clock_semantics":"ORIGINAL_TS_EVENT_AND_PROVIDER_RECEIPT_TS_INIT",
+        "scope":"L2_ONLY_NO_SYNTHETIC_TRADES_QUOTES_OR_FUNDING"
+    });
+    std::fs::write(
+        staging.path().join("import.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    ensure!(!output.exists(), "OUTPUT_MUST_BE_NEW");
+    std::fs::rename(staging.path(), output)?;
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -933,6 +1005,17 @@ mod tests {
                 assert!(books.next().unwrap().is_none());
             }
             assert_eq!(books.checkpoint_counts(), (1, 2));
+            let output = root.path().join("exported");
+            let export = export_catalog(root.path(), &output, START, START + HOUR);
+            if only_checkpoint {
+                assert!(export.is_err());
+                assert!(!output.exists());
+            } else {
+                let report = export.unwrap();
+                assert_eq!(report["frames"], 1);
+                assert_eq!(report["validated_carry_snapshots"], 1);
+                assert_eq!(report["validated_carry_rows"], 2);
+            }
         }
     }
 
@@ -1361,6 +1444,88 @@ mod tests {
         }
         let missing = tempfile::tempdir().unwrap();
         assert!(FeatureBooks::open(missing.path(), id, START, START + HOUR).is_err());
+    }
+
+    #[test]
+    fn published_export_rejects_precision_loss_without_publishing_or_changing_source() {
+        let (root, _) = source(false);
+        replace_first_hour(
+            root.path(),
+            &[
+                (START / 1_000_000, START + 123, "bid", "10.123", "1"),
+                (START / 1_000_000, START + 123, "ask", "10.13", "2"),
+            ],
+            "BTC_USDT",
+            None,
+            true,
+        );
+        let before = std::fs::read(root.path().join("book-snapshots.source.json")).unwrap();
+        let output = root.path().join("unrepresentable");
+        assert!(export_catalog(root.path(), &output, START, START + HOUR)
+            .unwrap_err()
+            .to_string()
+            .contains("PRICE_PRECISION_LOSS"));
+        assert!(!output.exists());
+        assert_eq!(
+            before,
+            std::fs::read(root.path().join("book-snapshots.source.json")).unwrap()
+        );
+    }
+
+    #[test]
+    fn exported_published_books_preserve_clocks_and_run_native_strategy() {
+        use nautilus_model::data::OrderBookDelta;
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let (root, id) = source(false);
+        let output = root.path().join("native-output");
+        let report = export_catalog(root.path(), &output, START, START + 2 * HOUR).unwrap();
+        assert_eq!(report["frames"], 3);
+        let mut native = ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
+        let rows = native
+            .query::<OrderBookDelta>(Some(vec![id.to_string()]), None, None, None, None, false)
+            .unwrap();
+        let mut original = RawBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+        let mut expected = Vec::new();
+        while let Some(frame) = original.next().unwrap() {
+            expected.extend(frame.deltas.deltas);
+        }
+        assert_eq!(rows.len(), expected.len());
+        for (actual, original) in rows.iter().zip(&expected) {
+            assert_eq!(actual.ts_event, original.ts_event);
+            assert_eq!(actual.ts_init, original.ts_init);
+            assert_eq!(actual.action, original.action);
+            assert_eq!(actual.flags, original.flags);
+            assert_eq!(
+                actual.order.price.as_decimal(),
+                original.order.price.as_decimal()
+            );
+            assert_eq!(
+                actual.order.size.as_decimal(),
+                original.order.size.as_decimal()
+            );
+        }
+        assert_eq!(rows[0].ts_event.as_u64(), START - 1_000_000);
+        assert_eq!(rows[0].ts_init.as_u64(), START + 123);
+        assert_eq!(rows[3].action, BookAction::Clear);
+        let request = serde_json::from_value(serde_json::json!({
+          "schema_version":1,"instrument_id":id.to_string(),
+          "selectors":[{"data_type":"OrderBookDelta","identifier":id.to_string()}],
+          "event_start_ns":(START-1_000_000).to_string(),"event_end_ns":(START+2*HOUR).to_string(),
+          "available_start_ns":START.to_string(),"available_end_ns":(START+2*HOUR).to_string(),
+          "venue":{"account_type":"CASH","oms_type":"NETTING","book_type":"L2_MBP","starting_balances":["100000 USDT","1 BTC"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
+          "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"0.010000","trigger_min_size":"0.1","trigger_imbalance_ratio":"0.9","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false}
+        })).unwrap();
+        let result = crate::native_strategy::run(&output.join("catalog"), request).unwrap();
+        assert_eq!(
+            result.data_rows_by_type["OrderBookDelta"].get(),
+            rows.len() as u64
+        );
+        assert!(!result.canonical_result["fills"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(export_catalog(root.path(), &output, START, START + 2 * HOUR).is_err());
+        assert!(root.path().join("book-snapshots.source.json").exists());
     }
 
     #[test]

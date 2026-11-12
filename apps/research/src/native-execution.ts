@@ -512,3 +512,10 @@ async function executeNativeUnwrapped(target: NativeTarget, command: string, inp
   } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
   finally { if (timer) clearInterval(timer); await progressRead; await env.cleanup(withoutAbortSignal(context)); }
 }
+
+/** Typed object projection only; execution and receipt ownership stay in the native adapter. */
+export async function executeNative(binary: NativeTarget, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
+  const result = await executeNativeValue(binary, command, input, args, directory, context);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('native_result');
+  return result;
+}

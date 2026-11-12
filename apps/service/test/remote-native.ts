@@ -12,7 +12,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { createNautilusWorker } from '../../nautilus/src/server.ts';
-import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { executeNative } from '../../research/src/native-execution.ts';
 import { remoteNativeCapabilities } from '../../research/src/native-execution.ts';
 import { object } from '../src/facts.ts';
 
