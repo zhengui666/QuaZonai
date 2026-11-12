@@ -45,7 +45,7 @@ print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocat
   }
   let url = await listen();
   const headers = { 'content-type': 'application/json' };
-  function request(input: NativeExecutionRequest['input'], command = 'simulate-indicator-strategy', args: string[] = [], files: Record<string, string> = {}) {
+  function request(input: NativeExecutionRequest['input'], command = 'simulate', args: string[] = [], files: Record<string, string> = {}) {
     const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command, input, args, files };
     return { ...body, requestId: executionId(body) };
   }
@@ -78,11 +78,11 @@ test('native execution inherits process limits and preserves original receipts',
   const f = await fixture();
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
-    assert.ok(caps.commands.includes('simulate-indicator-strategy'));
+    assert.ok(caps.commands.includes('simulate'));
     const body = f.request({ allocateBeyondLimit: true });
     const original = await (await f.post(body)).json();
     assert.equal(original.status, 'COMPLETED');
-    const bar = await (await f.post(f.request({}, 'simulate-indicator-strategy-batch'))).json();
+    const bar = await (await f.post(f.request({}, 'review-source'))).json();
     assert.deepEqual(original.result.limits, bar.result.limits);
     assert.equal(original.result.allocation, 'allowed');
     assert.equal(original.result.authLeaked, false); assert.deepEqual(original.result.input, body.input);
@@ -98,9 +98,9 @@ test('native active execution keeps exact replay, independent commands and confi
     const completed = f.request({ earlier: true }); const original = await (await f.post(completed)).json();
     const waiting = f.request({ wait: true }); const first = f.post(waiting); const pid = await f.started(2);
     const duplicate = f.post(waiting); const next = f.request({ next: true });
-    assert.equal((await (await f.post(next)).json()).status, 'COMPLETED', 'no retired QZ tick slot limit is imposed on native strategies');
+    assert.equal((await (await f.post(next)).json()).status, 'COMPLETED', 'fixed-target historical replay is independent of tick execution slots');
     assert.deepEqual(await (await f.post(completed)).json(), original);
-    const batch = await (await f.post(f.request({}, 'simulate-indicator-strategy-batch'))).json();
+    const batch = await (await f.post(f.request({}, 'review-source'))).json();
     assert.equal(batch.status, 'COMPLETED');
     const cancelled = await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json();
     assert.equal(cancelled.status, 'CANCELLED'); assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
@@ -148,13 +148,13 @@ test('native catalog mounts remain restricted without a retired economic replay 
   const f = await fixture();
   try {
     const mounted = ['--catalog', f.options.catalogRoots[0]!];
-    const result = await (await f.post(f.request({}, 'simulate-indicator-strategy', mounted))).json();
+    const result = await (await f.post(f.request({}, 'simulate', mounted))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job');
-    const outside = await (await f.post(f.request({}, 'simulate-indicator-strategy', ['--catalog', f.directory]))).json();
+    const outside = await (await f.post(f.request({}, 'simulate', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const outsideFunding = await (await f.post(f.request({}, 'simulate', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
     assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
-    const waiting = f.request({ wait: true }, 'simulate-indicator-strategy', mounted);
+    const waiting = f.request({ wait: true }, 'simulate', mounted);
     const active = f.post(waiting); await f.started(2);
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
     assert.equal((await (await active).json()).status, 'RUNNING');
@@ -164,14 +164,14 @@ test('native catalog mounts remain restricted without a retired economic replay 
 test('tick capacity rejects before creating a receipt; exact replay and BAR operations still work', async () => {
   const f = await fixture();
   try {
-    const completed = f.request({ earlier: true }, 'replay-tick-economic'); const original = await (await f.post(completed)).json();
-    const waiting = f.request({ wait: true }, 'replay-tick-economic'); const first = f.post(waiting); const pid = await f.started(2);
-    const duplicate = f.post(waiting); const next = f.request({ next: true }, 'replay-tick-economic');
+    const completed = f.request({ earlier: true }, 'native-strategy-backtest'); const original = await (await f.post(completed)).json();
+    const waiting = f.request({ wait: true }, 'native-strategy-backtest'); const first = f.post(waiting); const pid = await f.started(2);
+    const duplicate = f.post(waiting); const next = f.request({ next: true }, 'native-strategy-backtest');
     const busy = await f.post(next);
     assert.equal(busy.status, 429); assert.deepEqual(await busy.json(), { schemaVersion: 1, requestId: next.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' });
     assert.equal((await fetch(`${f.url}/v1/executions/${next.requestId}`)).status, 404);
     assert.deepEqual(await (await f.post(completed)).json(), original);
-    const bar = await (await f.post(f.request({}, 'simulate-indicator-strategy'))).json();
+    const bar = await (await f.post(f.request({}, 'simulate'))).json();
     assert.equal(bar.status, 'COMPLETED');
     assert.notEqual(bar.result.limits[1], 2 * 1024 ** 3, 'tick-only limit does not change BAR process limits');
     const cancelled = await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json();
@@ -194,12 +194,12 @@ test('explicit precision companions route tick-only and bind both native files a
   const f = await fixture({}, true);
   try {
     const before = await (await fetch(`${f.url}/v1/capabilities`)).json();
-    const tick = await (await f.post(f.request({}, 'replay-tick-economic'))).json();
+    const tick = await (await f.post(f.request({}, 'native-strategy-backtest'))).json();
     assert.equal(tick.status, 'COMPLETED'); assert.equal(tick.result.executable, 'job-high-precision');
-    const barBody = f.request({}, 'simulate-indicator-strategy'); const bar = await (await f.post(barBody)).json();
+    const barBody = f.request({}, 'simulate'); const bar = await (await f.post(barBody)).json();
     assert.equal(bar.status, 'COMPLETED'); assert.equal(bar.result.executable, 'job');
     await writeFile(f.options.tickBinary!, await readFile(f.options.tickBinary!, 'utf8') + '\n# changed companion bytes\n');
-    const changed = await (await f.post(f.request({}, 'simulate-indicator-strategy'))).json();
+    const changed = await (await f.post(f.request({}, 'simulate'))).json();
     assert.equal(changed.status, 'FAILED'); assert.equal(changed.error, 'nautilus_implementation_changed');
     assert.equal((await readFile(f.calls, 'utf8')).trim().split('\n').length, 2, 'a changed companion cannot execute even an old standard identity');
     await f.restart();
@@ -207,32 +207,32 @@ test('explicit precision companions route tick-only and bind both native files a
     assert.notEqual(after.implementationDigest, before.implementationDigest);
     assert.equal((await f.post(barBody)).status, 409, 'the new executable pair cannot borrow an old POST receipt identity');
     assert.deepEqual(await (await fetch(`${f.url}/v1/executions/${barBody.requestId}`)).json(), bar, 'historical original receipts remain readable');
-    assert.equal((await (await f.post(f.request({}, 'replay-tick-economic'))).json()).status, 'COMPLETED');
+    assert.equal((await (await f.post(f.request({}, 'native-strategy-backtest'))).json()).status, 'COMPLETED');
     await writeFile(f.options.binary, await readFile(f.options.binary, 'utf8') + '\n# changed standard bytes\n');
-    const standardChanged = await (await f.post(f.request({}, 'replay-tick-economic'))).json();
+    const standardChanged = await (await f.post(f.request({}, 'native-strategy-backtest'))).json();
     assert.equal(standardChanged.status, 'FAILED'); assert.equal(standardChanged.error, 'nautilus_implementation_changed');
   } finally { await f.cleanup(); }
 });
 
 
-test('economic replay shares tick precision, mounted catalogs and admission slots', async () => {
+test('upstream strategy replay shares tick precision, mounted catalogs and admission slots', async () => {
   const f = await fixture({}, true);
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
-    assert.ok(caps.commands.includes('replay-tick-economic'));
+    assert.ok(caps.commands.includes('native-strategy-backtest'));
     const mounted = ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.options.catalogRoots[0]!, '--model', '@file:model'];
     const files = { model: Buffer.from('controlled model artifact').toString('base64') };
-    const result = await (await f.post(f.request({}, 'replay-tick-economic', mounted, files))).json();
+    const result = await (await f.post(f.request({}, 'native-strategy-backtest', mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
-    const bar = await (await f.post(f.request({}, 'simulate-indicator-strategy'))).json();
+    const bar = await (await f.post(f.request({}, 'simulate'))).json();
     assert.deepEqual(result.result.limits, bar.result.limits);
-    const outside = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.directory]))).json();
+    const outside = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
-    const outsideFunding = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
+    const outsideFunding = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
     assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
-    const waiting = f.request({ wait: true }, 'replay-tick-economic', mounted, files);
+    const waiting = f.request({ wait: true }, 'native-strategy-backtest', mounted, files);
     const active = f.post(waiting); await f.started(3);
-    const refused = await f.post(f.request({}, 'replay-tick-economic'));
+    const refused = await f.post(f.request({}, 'native-strategy-backtest'));
     assert.equal(refused.status, 429); assert.equal((await refused.json()).admission, 'REJECTED');
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
     assert.equal((await (await active).json()).status, 'RUNNING');

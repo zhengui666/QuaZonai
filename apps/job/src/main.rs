@@ -3,9 +3,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    io::Write,
+    path::PathBuf,
 };
 
 mod native_stdout;
@@ -66,17 +65,6 @@ enum Operation {
     SizeAccount,
     /// Validate an original capital-exit V1 document; does not control an owner.
     ValidateCapitalExit,
-    /// Explicit segregated-cash/margin economic estimate over derived cohorts.
-    ReplayTickEconomic {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        funding_catalog: Option<PathBuf>,
-        #[arg(long, required = true)]
-        model: Vec<PathBuf>,
-        #[arg(long, default_value_t = 1)]
-        book_cores: usize,
-    },
     /// Exact native BAR identities for private exposure tracking; no observations.
     CatalogFactorScope {
         #[arg(long)]
@@ -134,35 +122,6 @@ fn output<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-fn model_bytes(path: &Path) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() {
-        anyhow::bail!("native model file limit");
-    }
-    // Only the runtime's registered read-only model mount is passed here. These
-    // local CLI arguments are not exposed as arbitrary HTTP/MCP filesystem reads.
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(
-            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
-        );
-    }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        anyhow::bail!("native model is not a file");
-    }
-    let mut bytes = Vec::new();
-    file.take(metadata.len().saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != metadata.len() {
-        anyhow::bail!("native model file changed");
-    }
-    Ok(bytes)
-}
-
 fn run(operation: Operation) -> Result<()> {
     match operation {
         Operation::BuildIdentity => {
@@ -205,21 +164,6 @@ fn run(operation: Operation) -> Result<()> {
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
-        Operation::ReplayTickEconomic {
-            catalog,
-            funding_catalog,
-            model,
-            book_cores,
-        } => output(&job::ticks::economic::replay_models_with_funding_and_cores(
-            &catalog,
-            funding_catalog.as_deref().unwrap_or(&catalog),
-            &input()?,
-            &model
-                .iter()
-                .map(|path| model_bytes(path))
-                .collect::<Result<Vec<_>>>()?,
-            book_cores,
-        )?),
         Operation::CatalogCoverage { catalog } => {
             output(&job::catalog::coverage::query(&catalog, input()?)?)
         }
@@ -301,30 +245,6 @@ fn main() {
 mod tests {
     use super::{public_error_code, public_failure, Arguments};
     use clap::Parser;
-
-    #[test]
-    fn invalid_model_failure_does_not_echo_model_contents() {
-        let error = job::signals::SignalModule::new(b"SENTINEL_NOT_FOR_LOGS", false).err().unwrap();
-        assert_eq!(public_failure(&error), "QZ_NATIVE_JOB_FAILED\nSIGNAL_REQUIRES_WASM_BINARY");
-        assert!(!public_failure(&error).contains("SENTINEL_NOT_FOR_LOGS"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn native_model_loader_rejects_symlinks_and_fifos_without_opening_them() {
-        let directory = tempfile::tempdir().unwrap();
-        let model = directory.path().join("original.wasm");
-        std::fs::write(&model, b"original bytes").unwrap();
-        assert_eq!(super::model_bytes(&model).unwrap(), b"original bytes");
-        let link = directory.path().join("link.wasm");
-        std::os::unix::fs::symlink(&model, &link).unwrap();
-        let fifo = directory.path().join("fifo.wasm");
-        rustix::fs::mknodat(rustix::fs::CWD, &fifo, rustix::fs::FileType::Fifo,
-            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR, 0).unwrap();
-        for path in [link, fifo] {
-            assert_eq!(super::model_bytes(&path).unwrap_err().to_string(), "native model file limit");
-        }
-    }
 
     #[test]
     fn hyper_network_collection_is_not_a_cli_operation() {

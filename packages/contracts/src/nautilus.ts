@@ -44,7 +44,7 @@ export interface NativeExecutionRejection {
 
 /** Tick replay uses the configured precision companion and worker limits. */
 export function isTickNativeCommand(command: string): boolean {
-  return command === 'replay-tick-economic';
+  return command === 'native-strategy-backtest' || command === 'native-walk-forward';
 }
 
 /** Official LiveRiskEngine limits; omitted fields retain upstream defaults. */

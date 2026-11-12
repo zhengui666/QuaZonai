@@ -252,7 +252,7 @@ for (const retrying of [false, true]) test(`economic replay capacity cancellatio
   let posts = 0; let deletes = 0;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['replay-tick-economic'] })); return; }
+    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest'] })); return; }
     if (incoming.method === 'POST') {
       posts++; let body = ''; for await (const chunk of incoming) body += chunk;
       const original = JSON.parse(body) as NativeExecutionRequest;
@@ -272,7 +272,7 @@ for (const retrying of [false, true]) test(`economic replay capacity cancellatio
   const ReplayProbe = defineTask<{}, { phase: 'compute' }, null>({
     name: 'test.replay-capacity-probe', version: 1, initial: () => ({ phase: 'compute' }),
     phases: { async compute(task, runtime, ctx) {
-      await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'replay-tick-economic', {}, [], directory, ctx));
+      await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'native-strategy-backtest', {}, [], directory, ctx));
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
     } },
     async abort(task, runtime, ctx) {

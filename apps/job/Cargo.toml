@@ -86,8 +86,7 @@ num-rational = "=0.4.2"
 iso_currency = "=0.7.0"
 rustix = { version = "=1.1.4", features = ["fs", "process", "stdio"] }
 ndarray = "=0.17.1"
-# Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
-wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "portable-dispatch"] }
+
 
 [build-dependencies]
 toml = "=1.1.8"

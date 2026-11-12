@@ -17,7 +17,7 @@ import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../sr
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
 test('untrusted 429 and 501 responses never prove native upstream strategy non-execution', { timeout: 15_000 }, async () => {
-  for (const command of ['native-strategy-backtest']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
+  for (const command of ['native-strategy-backtest']) for (const status of [429, 501]) for (const mode of ['generic', 'wrong-id'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
     let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
     const server = createServer(async (request, response) => {
@@ -28,10 +28,10 @@ test('untrusted 429 and 501 responses never prove native upstream strategy non-e
       if (request.method === 'POST') {
         posts++; let data = ''; for await (const chunk of request) data += chunk;
         original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
-        response.statusCode = mode === 'explicit' ? 501 : 429;
+        response.statusCode = status;
         response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
           schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
-          admission: 'REJECTED', error: mode === 'explicit' ? 'nautilus_tick_resource_limits_unavailable' : 'nautilus_tick_capacity_exhausted',
+          admission: 'REJECTED', error: status === 501 ? 'nautilus_tick_resource_limits_unavailable' : 'nautilus_tick_capacity_exhausted',
         })); return;
       }
       reads++; response.statusCode = 404; response.end(JSON.stringify({ error: 'nautilus_execution_not_found' }));
@@ -156,7 +156,7 @@ test('native upstream strategy HTTP capacity response keeps its original invocat
 });
 
 test('only original-id explicit admission refusal settles a Durable remote reference without a terminal receipt', { timeout: 15_000 }, async () => {
-  for (const command of ['replay-tick-economic']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
+  for (const command of ['native-strategy-backtest']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
     let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
     const server = createServer(async (request, response) => {
@@ -258,7 +258,7 @@ test('explicit tick capacity refusal sleeps and resumes the original invocation 
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
   try {
-    const observation = host.withNativeHost(() => executeNativeValue(target, 'replay-tick-economic', { marker: 'original-input' }, [], directory, BACKGROUND_CONTEXT)).catch(() => undefined);
+    const observation = host.withNativeHost(() => executeNativeValue(target, 'native-strategy-backtest', { marker: 'original-input' }, [], directory, BACKGROUND_CONTEXT)).catch(() => undefined);
     let pending;
     for (let i = 0; i < 200; i++) {
       pending = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0];

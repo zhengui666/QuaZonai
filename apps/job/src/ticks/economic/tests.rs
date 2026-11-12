@@ -1,523 +1,69 @@
 use super::*;
 use serde_json::json;
 
-pub(super) fn request() -> NativeTickEconomicRequestV1 {
-    let mut research = crate::ticks::tests::request();
-    research.input.representation =
-        Some(contracts::ticks::NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
-    research.input.event_end_ns = counter(5 * DAY).unwrap();
-    research.input.decision_cutoff_ns = research.input.event_end_ns;
-    research.train_end_ns = counter(3 * DAY).unwrap();
-    research.validation_end_ns = counter(4 * DAY).unwrap();
-    serde_json::from_value(json!({"schema_version":1,"research":research,
-        "scenario":{"initial_usdt":"3000","usdt0_per_usdt":"1","spot_fraction":"0.5",
-            "gross_fraction":"0.5","maximum_asset_weight":"0.1","participation_fraction":"0.01",
-            "perp_taker_fee_bps":"4.5","spot_taker_fee_bps":"7","extra_cost_bps":"10","initial_margin_fraction":"0.5","maintenance_margin_fraction":"0.25",
-            "decision_interval_ns":"60000000000","base_latency_ns":"1000000000","jitter_min_ns":"100000","jitter_max_ns":"1500000",
-            "random_seed":"0","maximum_mark_age_ns":"172800000000000"},
-        "fx_instrument_ids":["AUD/USD.SIM"],"funding_source":"funding-rates.jsonl"})).unwrap()
-}
-
-#[test]
-fn instrument_fee_overrides_keep_defaults_and_add_extra_cost_once() {
-    let mut request = request();
-    assert!(serde_json::to_value(&request).unwrap()["scenario"]
-        .get("taker_fee_bps_by_instrument")
-        .is_none());
-    let id = "BTC-USDC-SPOT.HYPERLIQUID".parse().unwrap();
-    assert_eq!(
-        fee_schedule(&request.scenario, false)
-            .unwrap()
-            .rates_for(id)
-            .taker,
-        Decimal::new(17, 4)
-    );
-    assert_eq!(
-        fee_schedule(&request.scenario, true)
-            .unwrap()
-            .rates_for(id)
-            .taker,
-        Decimal::new(145, 5)
-    );
-    request.scenario.taker_fee_bps_by_instrument = Some(BTreeMap::from([
-        (id.to_string(), "1.4".parse().unwrap()),
-        ("xyz:NVDA.HYPERLIQUID".into(), "9".parse().unwrap()),
-    ]));
-    validate(&request).unwrap();
-    let schedule = fee_schedule(&request.scenario, false).unwrap();
-    assert_eq!(schedule.rates_for(id).taker, Decimal::new(114, 5));
-    assert_eq!(
-        schedule
-            .rates_for("xyz:NVDA.HYPERLIQUID".parse().unwrap())
-            .taker,
-        Decimal::new(19, 4)
-    );
-    assert_eq!(
-        schedule
-            .rates_for("OTHER.HYPERLIQUID".parse().unwrap())
-            .taker,
-        Decimal::new(17, 4)
-    );
-    for fee in ["-1", "9990"] {
-        request
-            .scenario
-            .taker_fee_bps_by_instrument
-            .as_mut()
-            .unwrap()
-            .insert(id.to_string(), fee.parse().unwrap());
-        assert_eq!(
-            validate(&request).unwrap_err().to_string(),
-            "ECONOMIC_COST_INVALID"
-        );
-    }
-}
-
-#[test]
-fn registered_latency_seed_is_reproducible_and_absolute_lag_is_not_jitter() {
-    let request = request();
-    validate(&request).unwrap();
-    let (mut a, mut b) = (0, 0);
-    for _ in 0..100 {
-        let lag = delay(&mut a, &request.scenario).unwrap();
-        assert_eq!(lag, delay(&mut b, &request.scenario).unwrap());
-        assert!((1_000_100_000..=1_001_500_000).contains(&lag));
-    }
-    let mut invalid = request.clone();
-    invalid.scenario.spot_fraction = "1".parse().unwrap();
-    assert!(validate(&invalid).is_err());
-    invalid = request.clone();
-    invalid.research.validation_end_ns = counter(4 * DAY + DAY / 2).unwrap();
-    assert!(invalid.research.evaluation_regimes.is_none());
-    assert_eq!(
-        validate(&invalid).unwrap_err().to_string(),
-        "ECONOMIC_UTC_DAILY_BOUNDARIES_REQUIRED"
-    );
-}
-
-#[test]
-fn actual_rate_stream_rejects_repeated_clock_and_does_not_erase_submillisecond_offset() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("rates.jsonl");
-    let line = "{\"instrument_id\":\"BTC-USD-PERP.HYPERLIQUID\",\"event_ns\":\"1753660800002000000\",\"rate\":\"0.0000238727\"}\n";
-    std::fs::write(&path, format!("{line}{line}")).unwrap();
-    let mut rates =
-        Funding::open(&path, BTreeSet::from(["BTC-USD-PERP.HYPERLIQUID".into()])).unwrap();
-    assert_eq!(
-        rates.next.as_ref().unwrap().event_ns.get(),
-        1_753_660_800_002_000_000
-    );
-    assert_eq!(
-        rates.advance().unwrap_err().to_string(),
-        "ECONOMIC_FUNDING_ORDER_INVALID"
-    );
-}
-
-#[test]
-fn missing_exposed_funding_hour_is_unknown_but_zero_rate_observation_is_present() {
-    let mut expected = BTreeSet::from([("BTC".into(), 0), ("BTC".into(), 1)]);
-    let mut seen = BTreeSet::from([("BTC".into(), 0)]);
-    assert!(missing_rates_before(HOUR, &mut expected, &mut seen).is_none());
-    let (at, cause) = missing_rates_before(2 * HOUR, &mut expected, &mut seen).unwrap();
-    assert_eq!(at, HOUR);
-    assert_eq!(
-        cause,
-        format!(
-            "FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=BTC:rate_hour=1",
-            HOUR
-        )
-    );
-    assert!(expected.is_empty() && seen.is_empty());
-}
-
-#[test]
-fn first_missing_funding_cause_uses_hour_before_instrument_name() {
-    let mut expected = BTreeSet::from([("BTC".into(), 20), ("ETH".into(), 1)]);
-    let mut seen = BTreeSet::new();
-    assert_eq!(
-        missing_rates_before(24 * HOUR, &mut expected, &mut seen)
-            .unwrap()
-            .1,
-        format!(
-            "FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=ETH:rate_hour=1",
-            HOUR
-        )
-    );
-    assert!(expected.is_empty());
-}
-
-#[test]
-fn earlier_missing_hour_replaces_later_mark_cause_discovered_first() {
-    let mut first = Some((20 * HOUR, "STALE_MARK".into()));
-    let mut expected = BTreeSet::from([("BTC".into(), 1)]);
-    let mut seen = BTreeSet::new();
-    retain_first_funding_cause(
-        &mut first,
-        missing_rates_before(24 * HOUR, &mut expected, &mut seen).unwrap(),
-    );
-    assert_eq!(first.as_ref().unwrap().0, HOUR);
-    assert!(first.as_ref().unwrap().1.contains("MISSING_RATE"));
-    retain_first_funding_cause(&mut first, (21 * HOUR, "LATER_STALE_MARK".into()));
-    assert!(first.unwrap().1.contains("MISSING_RATE"));
-}
-
-#[test]
-fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_elapsed_time() {
-    use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
-    let request = request();
-    let days = vec![
-        NativeTickEconomicDayV1 {
-            day_start_ns: counter(0).unwrap(),
-            equity_usdt: None,
-            net_return: Some(0.01),
-            unknown_reason: None,
-            missing_balances: Vec::new(),
-        },
-        NativeTickEconomicDayV1 {
-            day_start_ns: counter(DAY).unwrap(),
-            equity_usdt: None,
-            net_return: None,
-            unknown_reason: Some("MISSING_MARK".into()),
-            missing_balances: Vec::new(),
-        },
-        NativeTickEconomicDayV1 {
-            day_start_ns: counter(2 * DAY).unwrap(),
-            equity_usdt: None,
-            net_return: Some(-0.01),
-            unknown_reason: None,
-            missing_balances: Vec::new(),
-        },
-    ];
-    let reports = metrics(&request, &days).unwrap();
-    let train = reports
-        .iter()
-        .find(|r| {
-            r.partition == NativeFactorPartitionV1::Train && r.regime == NativeTickRegimeV1::Unknown
-        })
-        .unwrap();
-    assert_eq!(train.days.get(), 3);
-    assert_eq!(train.valid_return_days.get(), 2);
-    assert_eq!(train.sharpe_365, Some(0.0));
-    assert!(train.conditional_annualized_return_365.unwrap() < 0.0);
-    let selected_day_cagr = (1.01_f64 * 0.99).powf(365.0 / 2.0) - 1.0;
-    assert!((train.conditional_annualized_return_365.unwrap() - selected_day_cagr).abs() < 1e-12);
-    let empty = reports
-        .iter()
-        .find(|report| report.regime == NativeTickRegimeV1::Bull)
-        .unwrap();
-    assert_eq!(empty.valid_return_days.get(), 0);
-    assert_eq!(empty.sharpe_365, None);
-    assert_eq!(empty.conditional_annualized_return_365, None);
-}
-
-#[test]
-fn partition_metrics_use_all_observed_daily_returns_and_keep_missing_partitions_unknown() {
-    use contracts::factors::NativeFactorPartitionV1;
-    let request = request();
-    let days = [Some(0.01), None, Some(-0.01), Some(0.02), None]
-        .into_iter()
-        .enumerate()
-        .map(|(index, net_return)| NativeTickEconomicDayV1 {
-            day_start_ns: counter(index as u64 * DAY).unwrap(),
-            equity_usdt: None,
-            net_return,
-            unknown_reason: net_return.is_none().then(|| "MISSING_MARK".into()),
-            missing_balances: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let reports = partition_metrics(&request, &days).unwrap();
-    assert_eq!(reports.len(), 3);
-    let train = &reports[0];
-    assert_eq!(train.partition, NativeFactorPartitionV1::Train);
-    assert_eq!(train.days.get(), 3);
-    assert_eq!(train.valid_return_days.get(), 2);
-    assert_eq!(train.sharpe_365, Some(0.0));
-    let expected = (1.01_f64 * 0.99).powf(365.0 / 2.0) - 1.0;
-    assert!((train.annualized_return_365.unwrap() - expected).abs() < 1e-12);
-    let validation = &reports[1];
-    assert_eq!(validation.partition, NativeFactorPartitionV1::Validation);
-    assert_eq!(validation.days.get(), 1);
-    assert_eq!(validation.valid_return_days.get(), 1);
-    assert_eq!(validation.sharpe_365, None);
-    assert!(
-        (validation.annualized_return_365.unwrap() - (1.02_f64.powf(365.0) - 1.0)).abs() < 1e-8
-    );
-    let heldout = &reports[2];
-    assert_eq!(heldout.partition, NativeFactorPartitionV1::Heldout);
-    assert_eq!(heldout.days.get(), 1);
-    assert_eq!(heldout.valid_return_days.get(), 0);
-    assert_eq!(heldout.sharpe_365, None);
-    assert_eq!(heldout.annualized_return_365, None);
-    assert_eq!(train.max_drawdown, None);
-    assert_eq!(validation.max_drawdown, Some(0.0));
-    assert_eq!(heldout.max_drawdown, None);
-    let known = [0.1, -0.25, 0.1]
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| NativeTickEconomicDayV1 {
-            day_start_ns: counter(index as u64 * DAY).unwrap(),
-            equity_usdt: None,
-            net_return: Some(value),
-            unknown_reason: None,
-            missing_balances: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let known_metrics = partition_metrics(&request, &known).unwrap();
-    assert!((known_metrics[0].max_drawdown.unwrap() + 0.25).abs() < 1e-12);
-    let mut gap = known;
-    gap.remove(1);
-    assert_eq!(
-        partition_metrics(&request, &gap).unwrap()[0].max_drawdown,
-        None
-    );
-}
-
-#[test]
-fn bridge_conversion_respects_native_lot_and_minimum_without_spending_dust() {
-    use nautilus_model::{
-        identifiers::{InstrumentId, Symbol},
-        instruments::CurrencyPair,
-        types::{Price, Quantity},
-    };
-    let bridge = InstrumentAny::CurrencyPair(
-        CurrencyPair::builder()
-            .instrument_id(InstrumentId::from("USDT-USDC.HYPERLIQUID"))
-            .raw_symbol(Symbol::new("@test-fx"))
-            .base_currency(Currency::USDT())
-            .quote_currency(Currency::USDC())
-            .price_precision(4)
-            .size_precision(2)
-            .price_increment(Price::from("0.0001"))
-            .size_increment(Quantity::from("0.01"))
-            .min_notional(Money::from("10 USDC"))
-            .ts_event(0_u64.into())
-            .ts_init(0_u64.into())
-            .build()
-            .unwrap(),
-    );
-    assert_eq!(
-        conversion_quantity(
-            Decimal::from(3000),
-            Decimal::new(1, 3),
-            Decimal::ONE,
-            &bridge
-        )
-        .unwrap(),
-        Decimal::ZERO
-    );
-    let spent = conversion_quantity(
-        Decimal::from(3000),
-        Decimal::new(20555, 3),
-        Decimal::ONE,
-        &bridge,
-    )
-    .unwrap();
-    assert_eq!(spent, Decimal::new(2055, 2));
-    let dust = Decimal::new(1, 3);
-    assert_eq!(
-        conversion_quantity(dust, dust, Decimal::ONE, &bridge).unwrap(),
-        Decimal::ZERO
-    );
-    assert_eq!(Decimal::from(3000) - spent, Decimal::new(297945, 2));
-}
-
 #[test]
 fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     let dir = tempfile::tempdir().unwrap();
-    let request = request();
-    assert!(funding_sources(dir.path(), &request.research)
+    let request = crate::ticks::tests::request();
+    assert!(funding_sources(dir.path(), &request)
         .unwrap()
         .is_empty());
     let quotes = dir.path().join("spot-valuation.jsonl");
     std::fs::write(&quotes, "{}\n").unwrap();
     assert_eq!(
-        funding_sources(dir.path(), &request.research).unwrap(),
+        funding_sources(dir.path(), &request).unwrap(),
         vec![("spot-valuation.jsonl".into(), 3)]
     );
     std::fs::remove_file(&quotes).unwrap();
     let books = dir.path().join("book-snapshots.source.json");
     std::fs::write(&books, "{}\n").unwrap();
     assert_eq!(
-        funding_sources(dir.path(), &request.research).unwrap(),
+        funding_sources(dir.path(), &request).unwrap(),
         vec![("book-snapshots.source.json".into(), 3)]
     );
     std::fs::remove_file(&books).unwrap();
     std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
-    assert!(funding_sources(dir.path(), &request.research).is_err());
-    let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
+    assert!(funding_sources(dir.path(), &request).is_err());
+    let mut manifest = json!({"source_revision":request.input.source_revision,"start_ns":"0","end_ns":request.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
     let path = dir.path().join("funding-rates.manifest.json");
     std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert_eq!(
-        funding_sources(dir.path(), &request.research)
+        funding_sources(dir.path(), &request)
             .unwrap()
             .len(),
         2
     );
     std::fs::write(&quotes, "{}\n").unwrap();
-    assert!(funding_sources(dir.path(), &request.research)
+    assert!(funding_sources(dir.path(), &request)
         .unwrap()
         .contains(&("spot-valuation.jsonl".into(), 3)));
     std::fs::write(&books, "{}\n").unwrap();
-    assert!(funding_sources(dir.path(), &request.research)
+    assert!(funding_sources(dir.path(), &request)
         .unwrap()
         .contains(&("book-snapshots.source.json".into(), 3)));
     #[cfg(unix)]
     {
         std::fs::remove_file(&quotes).unwrap();
         std::os::unix::fs::symlink(dir.path().join("funding-rates.jsonl"), &quotes).unwrap();
-        assert!(funding_sources(dir.path(), &request.research).is_err());
+        assert!(funding_sources(dir.path(), &request).is_err());
         std::fs::remove_file(&quotes).unwrap();
     }
     let mut padded = serde_json::to_vec(&manifest).unwrap();
     padded.resize(padded.len() + 16 * 1024 * 1024, b' ');
     std::fs::write(&path, &padded).unwrap();
-    let sources = funding_sources(dir.path(), &request.research).unwrap();
+    let sources = funding_sources(dir.path(), &request).unwrap();
     assert_eq!(sources[1].1, padded.len() as u64);
     manifest["end_ns"] = json!("1");
     std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    assert!(funding_sources(dir.path(), &request.research).is_err());
+    assert!(funding_sources(dir.path(), &request).is_err());
 }
 
 #[test]
-fn derived_wire_values_round_only_at_output_boundary() {
-    let value = Decimal::ONE / Decimal::from(3);
-    assert_eq!(
-        exact(value).unwrap().as_decimal().to_plain_string(),
-        "0.333333333333333333"
-    );
-    let fx = Decimal::from_str("1.003").unwrap();
-    let wealth = Decimal::from(3000) / fx;
-    let serialized = exact(wealth).unwrap();
-    assert!((decimal(&serialized).unwrap() - wealth).abs() <= Decimal::new(5, 19));
-}
-
-#[test]
-fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
+fn context_prices_preserve_exact_decimals_and_missing_values() {
+    assert_eq!(context_decimal("").unwrap(), None);
     assert_eq!(context_decimal("1e-8").unwrap(), Some(Decimal::new(1, 8)));
-    assert_eq!(
-        context_decimal("0.0000000200").unwrap(),
-        Some(Decimal::new(2, 8))
-    );
+    assert_eq!(context_decimal("0.0000000200").unwrap(), Some(Decimal::new(2, 8)));
     for invalid in ["0", "-1", "NaN", "Infinity"] {
         assert!(context_decimal(invalid).is_err());
-    }
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("context-prices-000.csv");
-    let text = format!(
-        "\"event_ns\",\"oracle_px\",\"mark_px\"\r\n0,3.0440,3.042500\r\n{},,4\r\n{},5,6\r\n",
-        HOUR,
-        2 * HOUR
-    );
-    std::fs::write(&path, &text).unwrap();
-    let file = ContextFile {
-        instrument_id: "UNIT".into(),
-        path: "context-prices-000.csv".into(),
-        bytes: counter(text.len() as u64).unwrap(),
-        rows: counter(3).unwrap(),
-        first_event_ns: Some(counter(0).unwrap()),
-        last_event_ns: Some(counter(2 * HOUR).unwrap()),
-    };
-    let mut reader = ContextReader::open(directory.path(), file).unwrap();
-    assert_eq!(
-        reader.price(HOUR - 1, HOUR, true).unwrap(),
-        Some(Decimal::new(30440, 4))
-    );
-    assert_eq!(reader.price(HOUR, HOUR, true).unwrap(), None);
-    assert_eq!(
-        reader.price(HOUR, HOUR, false).unwrap(),
-        Some(Decimal::from(4))
-    );
-    assert_eq!(reader.price(2 * HOUR - 1, HOUR, true).unwrap(), None);
-    assert_eq!(
-        reader.price(2 * HOUR, HOUR, true).unwrap(),
-        Some(Decimal::from(5))
-    );
-    assert_eq!(
-        reader.price(3 * HOUR, HOUR, false).unwrap(),
-        Some(Decimal::from(6))
-    );
-    assert_eq!(reader.price(3 * HOUR + 1, HOUR, false).unwrap(), None);
-    // Exact repeated clocks are rejected instead of silently selecting an ordering.
-    std::fs::write(&path, "event_ns,oracle_px,mark_px\n0,1,2\n0,3,4\n").unwrap();
-    let file = ContextFile {
-        instrument_id: "UNIT".into(),
-        path: "context-prices-000.csv".into(),
-        bytes: counter(0).unwrap(),
-        rows: counter(2).unwrap(),
-        first_event_ns: Some(counter(0).unwrap()),
-        last_event_ns: Some(counter(0).unwrap()),
-    };
-    let mut reader = ContextReader::open(directory.path(), file).unwrap();
-    assert_eq!(
-        reader.price(0, HOUR, true).unwrap_err().to_string(),
-        "ECONOMIC_CONTEXT_ORDER_INVALID"
-    );
-    let original = request();
-    assert!(!serde_json::to_value(&original)
-        .unwrap()
-        .as_object()
-        .unwrap()
-        .contains_key("context_source"));
-    let mut enabled = original;
-    enabled.context_source = Some(CONTEXT_MANIFEST.into());
-    validate(&enabled).unwrap();
-    enabled.context_source = Some("other.json".into());
-    assert!(validate(&enabled).is_err());
-    enabled.context_source = None;
-    enabled.event_time_context_source = Some(EVENT_TIME_CONTEXT_MANIFEST.into());
-    validate(&enabled).unwrap();
-    enabled.research.input.availability =
-        contracts::ticks::NativeTickAvailabilityV1::ReceivedTimeObserved;
-    enabled.research.input.representation =
-        Some(contracts::ticks::NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1);
-    enabled.research.input.maximum_receive_delay_ns = Some(counter(1).unwrap());
-    enabled.research.sampling.kind =
-        contracts::ticks::NativeTickSamplingKindV1::ReceivedTimeCohortV1;
-    assert_eq!(
-        validate(&enabled).unwrap_err().to_string(),
-        "ECONOMIC_EVENT_TIME_CONTEXT_CLOCK_INVALID"
-    );
-}
-
-#[test]
-fn scenario_decision_clock_preserves_legacy_wire_and_rejects_conflicting_policy() {
-    let mut request = request();
-    let legacy = serde_json::to_value(&request).unwrap();
-    assert!(legacy["scenario"].get("decision_clock").is_none());
-    let mut null_clock = legacy.clone();
-    null_clock["scenario"]["decision_clock"] = serde_json::Value::Null;
-    assert!(serde_json::from_value::<NativeTickEconomicRequestV1>(null_clock).is_err());
-    for clock in [
-        NativeTickDecisionClockV1::CohortBucketV1,
-        NativeTickDecisionClockV1::FixedIntervalV1,
-    ] {
-        request.scenario.decision_clock = Some(clock);
-        let wire = serde_json::to_value(&request).unwrap();
-        assert_eq!(
-            wire["scenario"]["decision_clock"],
-            serde_json::to_value(clock).unwrap()
-        );
-        let decoded: NativeTickEconomicRequestV1 = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
-        validate(&request).unwrap();
-        request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
-            maximum_entry_notional_usdc: "30".parse().unwrap(),
-            maximum_holding_ns: counter(60_000_000_000).unwrap(),
-            decision_clock: Some(clock),
-        });
-        validate(&request).unwrap();
-        request
-            .small_capital_policy
-            .as_mut()
-            .unwrap()
-            .decision_clock = Some(if clock == NativeTickDecisionClockV1::FixedIntervalV1 {
-            NativeTickDecisionClockV1::CohortBucketV1
-        } else {
-            NativeTickDecisionClockV1::FixedIntervalV1
-        });
-        assert_eq!(
-            validate(&request).unwrap_err().to_string(),
-            "ECONOMIC_DECISION_CLOCK_CONFLICT"
-        );
-        request.small_capital_policy = None;
     }
 }

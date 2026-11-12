@@ -16,7 +16,7 @@ import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativ
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 import { canonical } from './documents.ts';
 
-export const nativeCommands = new Set(['review-source', 'replay-tick-economic', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'value-observed-spot', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
+export const nativeCommands = new Set(['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'value-observed-spot', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
@@ -420,7 +420,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       await writer.commit(async tx => { (await tx.doc(NativeExecutionRequestPart, conversationId, `${request.requestId}:${index}`, null)).data = data; return undefined; }, context);
     });
     const frozen: RemoteTaskInput = { target, requestId: request.requestId, basis: callsKey, command, request: retained,
-      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'replay-tick-economic' || command === 'native-strategy-backtest' || command === 'native-walk-forward') ? { receiptRequired: true } : {}) };
+      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'native-strategy-backtest' || command === 'native-walk-forward') ? { receiptRequired: true } : {}) };
     if (owner) await owner.runtime.commit(async tx => {
       const call = await tx.doc(NativeCalls, owner.taskId, callsKey, null);
       let selectedRequestId = request.requestId;

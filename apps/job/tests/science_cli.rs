@@ -459,6 +459,7 @@ fn native_cli_blend_targets_rejects_bad_weights_and_original_point_misalignment(
 #[test]
 fn retired_ensemble_and_review_allocation_commands_are_not_executable() {
     for operation in [
+        "replay-tick-economic",
         "forecast",
         "forecast-factor",
         "allocate",
