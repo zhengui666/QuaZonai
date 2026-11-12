@@ -103,6 +103,11 @@ it('shows the official strategy report without custom indicator semantics or inv
   const visible = visibleText(html);
   for (const exact of ['0.69.0', '1790000000000000001', '0.500000000000000001', '9007199254740993', '3ff0000000000000', '原生费用假设']) expect(visible).toContain(exact);
   expect(visible).toContain('不在浏览器重算绩效');
+  expect(visible).toContain('数据计数口径与运行说明');
+  expect(visible).not.toContain('streaming');
+  const countNotes = ['CATALOG_ROW_COUNTS: pre-run scan, not consumed events', 'REPLAY_READER_ROWS_INCLUDING_PREFETCH: {"QuoteTick":"9007199254740993"}', 'CATALOG_READ_CONSISTENCY_UNVERIFIED'];
+  const counted = visibleText(renderToStaticMarkup(createElement(NativeStrategyResultView, { value: { ...value, notes: countNotes } })));
+  for (const note of ['CATALOG_ROW_COUNTS', 'REPLAY_READER_ROWS_INCLUDING_PREFETCH', 'CATALOG_READ_CONSISTENCY_UNVERIFIED', '9007199254740993']) expect(counted).toContain(note);
   expect(visible).not.toContain('最后一条原生指标观测'); expect(visible).not.toContain('现金期');
   expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>');
 });

@@ -46,6 +46,7 @@ for (const thinkingLevel of ['off', 'high', 'max'] as const) test(`official chil
       synthesisCalls++;
       const wire = JSON.stringify(input);
       assert.ok(wire.includes('NOT_RUN')); assert.ok(wire.includes('INDEPENDENT_OUT_OF_SAMPLE'));
+      for (const caveat of ['CATALOG_ROW_COUNTS', 'REPLAY_READER_ROWS_INCLUDING_PREFETCH', 'CATALOG_READ_CONSISTENCY_UNVERIFIED', 'Do not label older reports as streaming']) assert.ok(wire.includes(caveat));
       return fauxAssistantMessage(JSON.stringify(judgment(5))); // A model cannot override missing-evidence semantics.
     },
     fauxAssistantMessage('Logic reviewed; independent data validation remains absent.'),
@@ -156,6 +157,7 @@ test('upstream native strategy binding exposes real logic and synthesis child Ag
       synthesisCalls++;
       const wire = JSON.stringify(input);
       assert.ok(wire.includes('NOT_RUN')); assert.ok(wire.includes('INDEPENDENT_OUT_OF_SAMPLE'));
+      for (const caveat of ['CATALOG_ROW_COUNTS', 'REPLAY_READER_ROWS_INCLUDING_PREFETCH', 'CATALOG_READ_CONSISTENCY_UNVERIFIED', 'Do not label older reports as streaming']) assert.ok(wire.includes(caveat));
       return fauxAssistantMessage(JSON.stringify(judgment(5))); // A model cannot override missing-evidence semantics.
     },
     fauxAssistantMessage('Logic reviewed; independent data validation remains absent.'),
