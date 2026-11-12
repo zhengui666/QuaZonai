@@ -663,18 +663,33 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     }
     const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'UNCERTAIN', result: null, error: null };
     commands[command.requestId] = { original: structuredClone(body), receipt };
-    await save(); // No automatic replay once this point is persisted, including after process restart.
+    // START must have a durable intent. An explicitly requested STOP must remain
+    // available when receipt storage fails; it is never advertised as durable.
+    let persisted = true;
+    try { await save(); } catch (error) {
+      if (command.action !== 'STOP') throw error;
+      persisted = false;
+    }
+    const unrecorded = () => {
+      receipt.status = 'UNCERTAIN'; receipt.persisted = false;
+      receipt.persistenceError = 'account_receipts_write_failed';
+      receipt.error ??= 'strategy_outcome_not_durably_recorded';
+      return structuredClone(receipt);
+    };
     try {
       const result = await runtime.request(command.action === 'START' ? 'STRATEGY_START' : 'STRATEGY_STOP', { epoch: state.epoch });
       if (result.admission === 'REJECTED' && result.started === false && command.action === 'START' && typeof result.reason === 'string') {
         receipt.result = result; receipt.status = 'REJECTED'; receipt.error = result.reason;
-        await save(); return structuredClone(receipt);
+        try { await save(); } catch { return unrecorded(); }
+        return structuredClone(receipt);
       }
       if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') fail('strategy_native_result_invalid');
       receipt.result = result;
       receipt.status = 'COMPLETED';
     } catch (error) { receipt.error = error instanceof Error ? error.message : 'strategy_native_outcome_uncertain'; }
-    await save(); return structuredClone(receipt);
+    if (!persisted) return unrecorded();
+    try { await save(); } catch { return unrecorded(); }
+    return structuredClone(receipt);
   }
   function status() {
     const blocked = reason(); for (const exit of Object.values(state.exits)) actions(exit);

@@ -21,7 +21,8 @@ function accept(record: CommandRecord, value: JsonObject) {
   assertEnvelope(record.connection, value, record.currency);
   if (value.requestId !== record.original.requestId || value.action !== record.original.action
     || !['UNCERTAIN', 'COMPLETED', 'REJECTED'].includes(String(value.status))) throw new Problem('strategy_receipt_identity_mismatch');
-  if (value.status === 'COMPLETED') { const result = object(value.result, 'strategy_native_result');
+  if (value.persisted === false && value.status !== 'UNCERTAIN') throw new Problem('strategy_unrecorded_result_invalid');
+  if (value.status === 'COMPLETED' || value.persisted === false && value.result !== null) { const result = object(value.result, 'strategy_native_result');
     if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') throw new Problem('strategy_native_result_invalid');
   }
   if (value.status === 'REJECTED') { const result = object(value.result, 'strategy_native_rejection');

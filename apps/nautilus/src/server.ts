@@ -16,7 +16,7 @@ type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: st
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
-export const commands = ['review-source', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'native-strategy-backtest', 'native-walk-forward',
+export const commands = ['review-source', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
   'capital-curve', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;

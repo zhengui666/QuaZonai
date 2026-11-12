@@ -1,3 +1,4 @@
+import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 import { arr, map, obj, opt, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { nativeTargetForData } from '../src/native-execution.ts';
@@ -20,8 +21,7 @@ export const nativeWalkForwardTool = defineTool({
   parameters: obj({ strategies: opt(arr(map(unknown()))), split: map(unknown()), objective: map(unknown()) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
-    if (input.campaign || input.data.sealed !== undefined || input.data.indicator_strategy_request !== undefined || input.data.indicator_strategy_batch_request !== undefined || input.data.request !== undefined || input.data.nativeInput !== undefined) throw new Error('native_walk_forward_explicit_upstream_binding_required');
-    const source = object(input.data.native_strategy_backtest_request, 'native_walk_forward_strategy_required');
+    const source = registeredNativeStrategyRequest(input);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
     const parameters = args as { strategies?: JsonObject[]; split: JsonObject; objective: JsonObject };
     const strategies = parameters.strategies ?? [object(source.strategy, 'native_strategy_config')];

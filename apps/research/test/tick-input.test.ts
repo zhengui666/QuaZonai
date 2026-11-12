@@ -14,7 +14,7 @@ import { researchInput } from '../src/input.ts';
 import { modelBriefInput, modelFeedback } from '../src/feedback.ts';
 import { iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
 import { openRetainedResearch as openResearch } from './frozen-input.ts';
-import { indicatorStrategyResult } from '../src/indicator-result.ts';
+import { nativeStrategyResult } from '../plugins/native-strategy-backtest.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import research from '../plugins/research.ts';
 
@@ -285,9 +285,9 @@ test('tagged BAR keeps the legacy native request; tick clipping retains semantic
 });
 
 test('native strategy request binding preserves exact registered source metadata', () => {
-  const request: JsonObject = { selection: { schema_version: 1, bar_types: ['A.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000040', decision_cutoff_ns: '1790000000000000040' }, settings: {} };
+  const request: JsonObject = { schema_version: 1, instrument_id: 'A.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'A.SIM' }], venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS' }, event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000040', available_end_ns: '1790000000000000040' };
   const original = structuredClone(request);
-  assert.throws(() => indicatorStrategyResult({ request: { ...request, selection: { ...(request.selection as JsonObject), bar_types: ['DIFFERENT.SIM-1-MINUTE-LAST-EXTERNAL'] } } }, request), /indicator_strategy_request_mismatch/);
+  assert.throws(() => nativeStrategyResult({ request: { ...request, selectors: [{ data_type: 'QuoteTick', identifier: 'DIFFERENT.SIM' }] } }, request), /native_strategy_request_mismatch/);
   assert.deepEqual(request, original);
 });
 

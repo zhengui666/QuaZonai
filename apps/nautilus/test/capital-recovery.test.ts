@@ -333,3 +333,41 @@ test('native account capabilities do not advertise replay-only order-book strate
     assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance');
   } finally { await account.close(); }
 });
+
+test('explicit STOP crosses receipt disk failure without claiming a durable result or retrying', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-stop-disk-failure-'));
+  const native = new ControlledProtocol();
+  const account = await createCapitalAccount(paperOptions, directory, '/unused-controlled-protocol', native);
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Json;
+  const body = (requestId: string, action: string) => ({ requestId, action, clientId: paperOptions.clientId, accountId: paperOptions.accountId });
+  try {
+    assert.equal((await call('POST', '/strategy/commands', body('before-failure', 'START'))).status, 'COMPLETED');
+    // Real atomic-write failure on an isolated test directory, not a mocked save.
+    await (await import('node:fs/promises')).mkdir(join(directory, 'capital-receipts.json.next'));
+    const receipt = await call('POST', '/strategy/commands', body('emergency-stop', 'STOP'));
+    assert.equal(receipt.status, 'UNCERTAIN'); assert.equal(receipt.persisted, false);
+    assert.equal(receipt.persistenceError, 'account_receipts_write_failed');
+    assert.equal((receipt.result as Json).state, 'STOPPED', 'Preserve the actual runtime reply separately from durable receipt status.');
+    const disk = JSON.parse(await readFile(join(directory, 'capital-receipts.json'), 'utf8')) as Json;
+    assert.equal((disk.strategyCommands as Json)['emergency-stop'], undefined);
+    assert.deepEqual(await call('POST', '/strategy/commands', body('emergency-stop', 'STOP')), receipt);
+    assert.deepEqual(await call('GET', '/strategy/commands/emergency-stop'), receipt);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_STOP').length, 1);
+    await assert.rejects(call('POST', '/strategy/commands', body('unsafe-restart', 'START')), /account_receipts_write_failed/);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_START').length, 1);
+    const original = native.request.bind(native);
+    native.request = async (operation, payload) => {
+      const response = await original(operation, payload);
+      if (operation === 'STRATEGY_STOP') throw new Error('account_runtime_outcome_uncertain');
+      return response;
+    };
+    const lost = await call('POST', '/strategy/commands', body('emergency-stop-lost', 'STOP'));
+    assert.equal(lost.status, 'UNCERTAIN'); assert.equal(lost.persisted, false);
+    assert.equal(lost.result, null); assert.equal(lost.error, 'account_runtime_outcome_uncertain');
+    assert.deepEqual(await call('POST', '/strategy/commands', body('emergency-stop-lost', 'STOP')), lost);
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_STOP').length, 2);
+  } finally {
+    await account.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

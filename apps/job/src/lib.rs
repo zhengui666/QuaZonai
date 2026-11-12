@@ -30,7 +30,6 @@ pub mod feature_model;
 mod fee_models;
 pub mod forecast;
 pub mod forward;
-mod indicator_strategy;
 mod live_progress;
 pub mod managed;
 #[cfg(feature = "native-sandbox-test")]

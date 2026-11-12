@@ -1,3 +1,5 @@
+import type { ResearchInput } from './documents.ts';
+import { object } from './trials.ts';
 import { defineDoc, type JsonObject, type TaskId, type Tx, type ConversationId } from '@earendil-works/pi-durable';
 import { assertNativeRemoteTaskSettled } from './native-remote-receipts.ts';
 
@@ -14,4 +16,10 @@ export async function assertResearchRunSettled(tx: Tx, conversationId: Conversat
   const task = await tx.task(configuration.evaluationTaskId);
   if (!task || task.state.status !== 'terminal') throw Object.assign(new Error('native_strategy_execution_unsettled'), { statusCode: 409 });
   await assertNativeRemoteTaskSettled(tx, conversationId, configuration.evaluationTaskId);
+}
+
+/** Current execution authority is the registered upstream request, never retired configuration metadata. */
+export function registeredNativeStrategyRequest(input: ResearchInput): JsonObject {
+  if (input.campaign || ['sealed', 'indicator_strategy_request', 'indicator_strategy_batch_request', 'request', 'catalog_scan_request', 'nativeInput'].some(key => input.data[key] !== undefined)) throw new Error('native_strategy_requires_explicit_historical_binding');
+  return object(input.data.native_strategy_backtest_request, 'native_strategy_backtest_request');
 }

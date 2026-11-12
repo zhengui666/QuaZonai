@@ -7,7 +7,7 @@ import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint } from '../src/native-execution.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
-import { ResearchConfiguration } from '../src/research-configuration.ts';
+import { ResearchConfiguration, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 import { executionVersions } from '../src/native-result-version.ts';
 
 export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject {
@@ -49,8 +49,7 @@ export const nativeStrategyBacktestTool = defineTool({
   parameters: obj({}), replay: 'safe', executionMode: 'sequential',
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
-    if (input.campaign || input.data.sealed !== undefined || input.data.indicator_strategy_request !== undefined || input.data.indicator_strategy_batch_request !== undefined || input.data.request !== undefined || input.data.catalog_scan_request !== undefined || input.data.nativeInput !== undefined) throw new Error('native_strategy_requires_explicit_historical_binding');
-    const request = object(input.data.native_strategy_backtest_request, 'native_strategy_backtest_request');
+    const request = registeredNativeStrategyRequest(input);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
     const id = await api.commit(async tx => {
       const study = await tx.doc(Study, api.conversationId);

@@ -17,6 +17,7 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     assert.equal(body.clientId, envelope.clientId); assert.equal(body.accountId, envelope.accountId); calls.push(body.action);
     const receipt = { ...envelope, requestId: body.requestId, action: body.action, status: 'COMPLETED', result: { ...native, state: body.action === 'STOP' ? 'STOPPED' : 'RUNNING' }, error: null };
     if (body.requestId === 'start-rejected') Object.assign(receipt, { status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'account_native_cache_write_failed' }, error: 'account_native_cache_write_failed' });
+    if (body.requestId === 'unrecorded-stop') return { ...receipt, status: 'UNCERTAIN', persisted: false, persistenceError: 'account_receipts_write_failed', error: 'strategy_outcome_not_durably_recorded' };
     receipts.set(body.requestId, receipt);
     if (body.requestId === 'start-once') { reply.raw.destroy(); return; } // Original accepted command, response lost.
     return receipt;
@@ -57,6 +58,18 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     assert.equal(rejected.json().status, 'REJECTED'); assert.equal(rejected.json().receipt.result.started, false);
     const count = calls.length;
     await send('start-rejected', 'START'); assert.equal(calls.length, count, 'Confirmed rejection is not silently retried.');
+    await send('unrecorded-stop', 'STOP');
+    app = (await state.service.research.harness.snapshot(Application, context))!;
+    const unrecorded = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'unrecorded-stop')!;
+    await state.service.research.harness.waitForTask(unrecorded.taskId as never, context);
+    app = (await state.service.research.harness.snapshot(Application, context))!;
+    const saved = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'unrecorded-stop')!;
+    assert.equal(saved.status, 'UNCERTAIN'); assert.equal((saved.receipt as { persisted: boolean }).persisted, false);
+    const beforeRestart = calls.length;
+    await state.restart();
+    await send('unrecorded-stop', 'STOP');
+    await state.service.app.inject({ method: 'GET', url: url + '/commands/unrecorded-stop', headers: state.headers });
+    assert.equal(calls.length, beforeRestart, 'A non-durable remote STOP must only be read after Pi recovery, never resent.');
     const after = (await state.service.research.harness.snapshot(Application, context))!;
     assert.deepEqual(after.observations[source.connection.id]!.snapshot, source.observation.snapshot);
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: { requestId: 'old-target', portfolioId: 'old', mode: 'paper' } })).statusCode, 410);

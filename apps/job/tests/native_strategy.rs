@@ -410,3 +410,112 @@ fn a_completely_empty_replay_is_not_a_computed_backtest() {
     let error = job::native_strategy::run(dir.path(), request(2 * SECOND)).unwrap_err();
     assert!(error.to_string().contains("NATIVE_STRATEGY_EMPTY_DATA"));
 }
+
+#[test]
+fn retired_custom_indicator_commands_are_not_executable() {
+    for command in ["simulate-indicator-strategy", "simulate-indicator-strategy-batch"] {
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_job"))
+            .args([command, "--help"]).output().unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("unrecognized subcommand"));
+    }
+}
+
+#[test]
+fn official_hourly_interval_settles_without_invented_next_funding_timestamp() {
+    use nautilus_model::{
+        data::{FundingRateUpdate, MarkPriceUpdate},
+        instruments::{Instrument, stubs::crypto_perpetual_ethusdt},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let native = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        None,
+    )
+    .unwrap();
+    let instrument = InstrumentAny::CryptoPerpetual(crypto_perpetual_ethusdt());
+    let perp = instrument.id();
+    job::catalog::currencies::write(directory.path(), std::slice::from_ref(&instrument)).unwrap();
+    native.write_instruments(vec![instrument]).unwrap();
+    let books: Vec<_> = snapshot(SECOND, 2 * SECOND, "10.000000", "1.000000")
+        .into_iter()
+        .map(|mut row| {
+            row.instrument_id = perp;
+            row.order.size = Quantity::new(row.order.size.as_f64(), 3);
+            row
+        })
+        .collect();
+    native.write_to_parquet(&books, None, None, None).unwrap();
+    native
+        .write_to_parquet(
+            &[MarkPriceUpdate::new(
+                perp,
+                Price::from("100.00"),
+                (3599 * SECOND).into(),
+                (3599 * SECOND).into(),
+            )],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    native
+        .write_to_parquet(
+            &[FundingRateUpdate::new(
+                perp,
+                "0.01".parse().unwrap(),
+                Some(60),
+                None,
+                (3600 * SECOND).into(),
+                (3600 * SECOND).into(),
+            )],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let mut config = request(3601 * SECOND);
+    config.event_end_ns = contracts::DbCounter::new(3601 * SECOND).unwrap();
+    config.instrument_id = perp.to_string();
+    config.selectors[0].identifier = perp.to_string();
+    config.venue.account_type = "MARGIN".into();
+    config.venue.starting_balances = vec!["100000 USDT".into()];
+    config.strategy = serde_json::from_value(json!({"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false})).unwrap();
+    config.selectors.push(
+        serde_json::from_value(
+            json!({"data_type":"MarkPriceUpdate","identifier":perp.to_string()}),
+        )
+        .unwrap(),
+    );
+    let baseline = job::native_strategy::run(directory.path(), config.clone()).unwrap();
+    assert!(
+        !baseline.canonical_result["fills"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    config.selectors.push(
+        serde_json::from_value(
+            json!({"data_type":"FundingRateUpdate","identifier":perp.to_string()}),
+        )
+        .unwrap(),
+    );
+    let funded = job::native_strategy::run(directory.path(), config).unwrap();
+    assert_eq!(funded.data_rows_by_type["FundingRateUpdate"].get(), 1);
+    assert_ne!(
+        funded.canonical_result["accounts"], baseline.canonical_result["accounts"],
+        "funding must reach a real open position, not just be counted"
+    );
+    // One long ETH * the actual 100 USDT mark * the explicit 1% settlement rate.
+    assert_eq!(
+        baseline.canonical_result["accounts"][0]["Margin"]["base"]["balances"]["USDT"]["total"],
+        "100000.00000000 USDT"
+    );
+    assert_eq!(
+        funded.canonical_result["accounts"][0]["Margin"]["base"]["balances"]["USDT"]["total"],
+        "99999.00000000 USDT"
+    );
+}

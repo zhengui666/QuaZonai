@@ -73,7 +73,7 @@ test('removed scientific commands are absent from capabilities and rejected befo
   const f = await fixture();
   try {
     const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
-    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations']) {
+    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch']) {
       assert.equal(capabilities.commands.includes(command), false);
       const body = f.request({}); body.command = command;
       const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
@@ -272,11 +272,11 @@ test('catalog coverage uses the existing read-only catalog execution route witho
   } finally { await f.cleanup(); }
 });
 
-test('stopping an active native indicator batch cancels its one process and never publishes partial results', async () => {
+test('stopping an active upstream strategy cancels its one process and never publishes a result', async () => {
   const f = await fixture();
   try {
     const body = f.request({ wait: true, requests: [{ ordinal: '0' }, { ordinal: '1' }] });
-    body.command = 'simulate-indicator-strategy-batch';
+    body.command = 'native-strategy-backtest';
     const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
     const response = await f.post(body); assert.equal(response.status, 202); await response.body?.cancel();
     for (let attempt = 0; ; attempt++) {

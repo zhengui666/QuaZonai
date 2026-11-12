@@ -118,17 +118,8 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Explicit same-data/settings native indicator batch using engine reset.
+    /// Replay explicit historical walk-forward windows with upstream strategies.
     NativeWalkForward {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
-    SimulateIndicatorStrategyBatch {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
-    /// Backtest an explicit official-indicator strategy, without a Wasm artifact.
-    SimulateIndicatorStrategy {
         #[arg(long)]
         catalog: PathBuf,
     },
@@ -326,12 +317,6 @@ fn run(operation: Operation) -> Result<()> {
         Operation::NativeWalkForward { catalog } => {
             native_output(|| job::native_walk_forward::run(&catalog, input()?))
         },
-        Operation::SimulateIndicatorStrategyBatch { catalog } => output(
-            &job::simulation::simulate_indicator_strategy_batch(&catalog, &input()?)?,
-        ),
-        Operation::SimulateIndicatorStrategy { catalog } => output(
-            &job::simulation::simulate_indicator_strategy(&catalog, &input()?)?,
-        ),
         Operation::Simulate {
             catalog,
             dataset_revision_id,

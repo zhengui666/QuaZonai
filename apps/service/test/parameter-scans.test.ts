@@ -84,6 +84,13 @@ test('native scan rejects missing numeric leaves and expanding registered data s
     assert.equal(p.requests.length, 0);
   } finally { await p.close(); }
 });
+test('removed batchSize is rejected instead of silently changing execution semantics', async () => {
+  const p = await protocol(); try {
+    const response = await p.state.service.app.inject({ method: 'POST', url: '/api/v3/parameter-scans/preview', headers: p.state.headers,
+      payload: { ...p.plan, execution: { concurrency: 2, batchSize: 2 } } });
+    assert.equal(response.statusCode, 422, response.body); assert.equal(p.requests.length, 0);
+  } finally { await p.close(); }
+});
 test('bad native evidence fails every candidate rather than publishing partial science', async () => {
   const p = await protocol('invalid'); try {
     const response = await p.state.service.app.inject({ method: 'POST', url: '/api/v3/parameter-scans', headers: p.state.headers, payload: { ...p.plan, requestId: 'bad-evidence', execution: { concurrency: 1 } } });

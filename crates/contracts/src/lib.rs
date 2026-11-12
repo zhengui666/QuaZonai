@@ -19,7 +19,6 @@ pub mod execution_assumptions;
 pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
-pub mod indicator_strategy;
 pub mod native_walk_forward;
 pub mod lifecycle;
 pub mod observed_spot;
@@ -48,10 +47,6 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
-    indicator_strategy::NativeIndicatorStrategyRequestV1,
-    indicator_strategy::NativeIndicatorStrategyResultV1,
-    indicator_strategy::NativeIndicatorStrategyBatchRequestV1,
-    indicator_strategy::NativeIndicatorStrategyBatchResultV1,
     catalog_prefix::NativeCatalogPrefixResultV1,
     catalog_coverage::NativeCatalogCoverageRequestV1,
     catalog_coverage::NativeCatalogCoverageResultV1,

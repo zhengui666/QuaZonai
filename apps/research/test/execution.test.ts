@@ -4,12 +4,12 @@ import { createModels, fauxProvider, fauxAssistantMessage } from '@earendil-work
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { indicatorStrategyResult } from '../src/indicator-result.ts';
+import { nativeStrategyResult } from '../plugins/native-strategy-backtest.ts';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { IndicatorStrategyTask } from '../plugins/indicator-strategy.ts';
+import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 import { executeNativeValue as executeNative } from '../src/native-execution.ts';
 import { classifyExecutionError, ExecutionFailure } from '../src/execution-errors.ts';
 import { researchSettings } from '../src/settings.ts';
@@ -20,9 +20,9 @@ test('research uses provider defaults and forwards explicitly configured native 
   assert.equal(researchSettings().stream?.maxRetries, 0);
 });
 
-test('indicator cancellation propagates without attempting to commit a scientific failure', async () => {
+test('upstream strategy cancellation propagates without attempting to commit a scientific failure', async () => {
   const controller = new AbortController(); controller.abort();
-  const compute = IndicatorStrategyTask.definition.phases.compute;
+  const compute = NativeStrategyBacktestTask.definition.phases.compute;
   let commits = 0;
   const task = { input: { request: {}, catalog: '/unused', target: '/unused' } } as unknown as Parameters<typeof compute>[0];
   const runtime = { signal: controller.signal, async commit() { commits++; } } as unknown as Parameters<typeof compute>[1];
@@ -54,9 +54,9 @@ test('native serialization preserves exact input and uses the configured isolate
   try {
     await writeFile(script, `import { tmpdir } from 'node:os'; let input=''; for await (const chunk of process.stdin) input += chunk; const request=JSON.parse(input); console.log(JSON.stringify({request,temporaryRoot:tmpdir(),cwd:process.cwd()}));`);
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-    const request = { schema_version: 1, selection: { event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', maximum_rows: 1 }, signal: { kind: 'EMA_CROSS', fast_period: 2, slow_period: 3 }, long_weight: '0.500000000000000001' };
+    const request = { schema_version: 1, instrument_id: 'BTC.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'BTC.SIM' }], event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', available_end_ns: '1790000000000000031', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS', fast_period: 2, slow_period: 3, trade_size: '0.500000000000000001' } };
     const original = structuredClone(request);
-    const result = await executeNative(binary, 'simulate-indicator-strategy', request, [], directory, BACKGROUND_CONTEXT) as JsonObject;
+    const result = await executeNative(binary, 'native-strategy-backtest', request, [], directory, BACKGROUND_CONTEXT) as JsonObject;
     const canonicalPath = async (path: string) => join(await realpath(dirname(path)), basename(path));
     assert.equal(await canonicalPath(String(result.temporaryRoot)), await canonicalPath(String(result.cwd)));
     assert.deepEqual(result.request, request); assert.deepEqual(request, original);
@@ -74,18 +74,15 @@ test('provider dispatch preserves explicit pi-ai options without a legacy checkp
   assert.equal(result.stopReason, 'stop'); assert.equal(faux.state.callCount, 1);
 });
 
-test('native indicator echoes reject changed exact rows, decimal weights and nanosecond clocks before accepting results', () => {
-  // Request binding is checked before other output fields; intentionally incomplete results cannot imply successful backtests.
-  for (const maximum_rows of [undefined, 0, 1]) {
-    const request: JsonObject = { selection: { event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', ...(maximum_rows === undefined ? {} : { maximum_rows }) }, settings: {}, long_weight: '0.500000000000000001' };
-    const original = structuredClone(request);
-    const mutations = [
-      { ...request, selection: { ...(request.selection as JsonObject), event_end_ns: '1790000000000000032' } },
-      { ...request, selection: { ...(request.selection as JsonObject), maximum_rows: 2 } },
-      { ...request, long_weight: '0.500000000000000002' },
-    ];
-    for (const echoed of mutations) assert.throws(() => indicatorStrategyResult({ request: echoed }, request), /indicator_strategy_request_mismatch/);
-    assert.throws(() => indicatorStrategyResult({ request }, request), /indicator_strategy_result_invalid/, 'matching request alone is never successful evidence');
-    assert.deepEqual(request, original);
-  }
+test('upstream request echoes reject changed source selectors, decimal quantities and nanosecond clocks', () => {
+  const request: JsonObject = { schema_version: 1, instrument_id: 'BTC.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'BTC.SIM' }], venue: { base_currency: null },
+    event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000031', available_end_ns: '1790000000000000031', strategy: { kind: 'EMA_CROSS', trade_size: '0.500000000000000001' } };
+  const original = structuredClone(request);
+  for (const echoed of [
+    { ...request, event_end_ns: '1790000000000000032' },
+    { ...request, selectors: [{ data_type: 'QuoteTick', identifier: 'OTHER.SIM' }] },
+    { ...request, strategy: { ...(request.strategy as JsonObject), trade_size: '0.500000000000000002' } },
+  ]) assert.throws(() => nativeStrategyResult({ request: echoed }, request), /native_strategy_request_mismatch/);
+  assert.throws(() => nativeStrategyResult({ request }, request), /native_strategy_version_mismatch/, 'matching request alone cannot imply a completed backtest');
+  assert.deepEqual(request, original);
 });

@@ -4,9 +4,9 @@ import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
-import { canonical, Study, type ResearchInput } from '../src/documents.ts';
+import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
-import { ResearchConfiguration } from '../src/research-configuration.ts';
+import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 
 async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject, includeValidation = false) {
   let cursor; let found: TaskRecord<JsonValue, JsonValue, JsonValue> | undefined;
@@ -19,9 +19,6 @@ async function upstreamExecution(tx: Tx, conversationId: ConversationId, request
     cursor = page.next;
   } while (cursor);
   return found;
-}
-function boundRequest(input: ResearchInput, configured?: JsonObject | null): JsonObject {
-  return object(input.data.native_strategy_backtest_request ?? configured ?? input.data.indicator_strategy_request ?? input.data.indicator_strategy_batch_request, 'research_assessment_strategy_required');
 }
 
 function reviewedCandidateMatch(logicInput: JsonObject, validation: JsonObject): boolean {
@@ -71,7 +68,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     if (answer.stopReason === 'error' || answer.stopReason === 'aborted') throw new Error('research_assessment_model_failed');
     const text = answer.content.filter(part => part.type === 'text').map(part => part.text).join('');
     const judgment = assessmentJudgment(JSON.parse(text));
-    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId,
+    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST',
       model: task.input.model, rubricVersion: 'RESEARCH_ADVISORY_V1', judgment: synthesis ? { ...judgment, stars: null } : judgment,
       evidence: task.input.evidence, claim: synthesis ? 'INCOMPLETE_TWO_LANE_RESEARCH_ASSESSMENT' : 'CONFIGURATION_ONLY_LOGIC_REVIEW', tradingPermission: false };
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
@@ -85,19 +82,16 @@ export const logicReviewTool = defineTool({
   parameters: obj({ hypothesis: str(), strategies: opt(arr(map(unknown()))) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
-    const configuration = await api.snapshot(ResearchConfiguration, api.conversationId, context);
-    const request = boundRequest(input, configuration?.request);
-    if (args.strategies !== undefined && input.data.native_strategy_backtest_request === undefined) throw new Error('research_assessment_candidates_require_upstream_strategy');
-    const candidates = input.data.native_strategy_backtest_request === undefined ? null
-      : (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }));
+    const request = registeredNativeStrategyRequest(input);
+    const candidates = (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }));
     if (candidates?.length === 0) throw new Error('research_assessment_candidates_required');
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
-      const current = await tx.doc(ResearchConfiguration, api.conversationId);
-      if (current.evaluationTaskId || input.data.native_strategy_backtest_request !== undefined && await upstreamExecution(tx, api.conversationId, request, true) || (await tx.doc(Study, api.conversationId)).final) throw new Error('research_assessment_pre_execution_required');
-      if (canonical(boundRequest(input, current.request)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
+      if (await upstreamExecution(tx, api.conversationId, request, true)) throw new Error('research_assessment_pre_execution_required');
+      const currentInput = (await tx.doc(Study, api.conversationId)).input;
+      if (!currentInput || canonical(registeredNativeStrategyRequest(currentInput)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
-        configurationTaskId: current.configuredByTaskId ?? null,
+        configurationTaskId: null,
         evidence: { hypothesis: args.hypothesis, reviewedCandidates: candidates, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
       { ownership: { kind: 'task', taskId: api.taskId } });
       (await tx.doc(ResearchAssessment, api.conversationId)).logicTaskId = child.taskId;
@@ -115,17 +109,16 @@ export const assessmentReportTool = defineTool({
   parameters: obj({}), replay: 'safe', executionMode: 'sequential',
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
-    const configuration = await api.snapshot(ResearchConfiguration, api.conversationId, context);
-    const request = boundRequest(input, configuration?.request);
+    const request = registeredNativeStrategyRequest(input);
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
-      const current = await tx.doc(ResearchConfiguration, api.conversationId);
-      if (canonical(boundRequest(input, current.request)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
+      const currentInput = (await tx.doc(Study, api.conversationId)).input;
+      if (!currentInput || canonical(registeredNativeStrategyRequest(currentInput)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
       const assessment = await tx.doc(ResearchAssessment, api.conversationId);
       const logic = assessment.logicTaskId ? await tx.task(assessment.logicTaskId) : undefined;
       const matchingLogic = logic?.kind === 'qz.research.assessment' && object(logic.input, 'logic_input').mode === 'LOGIC' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'
-        && canonical(object(logic.input, 'logic_input').request ?? null) === canonical(request) && object(logic.input, 'logic_input').configurationTaskId === (current.configuredByTaskId ?? null);
-      const native = input.data.native_strategy_backtest_request !== undefined ? await upstreamExecution(tx, api.conversationId, request) : current.evaluationTaskId ? await tx.task(current.evaluationTaskId) : undefined;
+        && canonical(object(logic.input, 'logic_input').request ?? null) === canonical(request) && object(logic.input, 'logic_input').configurationTaskId === (null);
+      const native = await upstreamExecution(tx, api.conversationId, request);
       const nativeMatches = native && native.kind === 'qz.native-strategy.backtest' && canonical(object(native.input, 'native_input').request ?? null) === canonical(request);
       const validation = await tx.doc(NativeWalkForward, api.conversationId);
       const trialHistory: JsonObject = { scope: 'THIS_CONVERSATION_ONLY', crossConversationCoverage: 'NOT_CHECKED', runs: [] };
@@ -166,7 +159,7 @@ export const assessmentReportTool = defineTool({
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
         dataValidation, trialHistory,
       };
-      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: current.configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
+      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
       assessment.reportTaskIds.push(child.taskId);
       return child.taskId;
     }, context);
