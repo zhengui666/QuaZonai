@@ -1415,6 +1415,13 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     ensure!(
         !matches!(
             config.native_strategy.strategy,
+            NativeCompiledStrategyV1::HurstVpinDirectional { .. }
+        ),
+        "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+    );
+    ensure!(
+        !matches!(
+            config.native_strategy.strategy,
             NativeCompiledStrategyV1::GridMarketMaker { .. }
         ),
         "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
@@ -1675,6 +1682,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(s) => {
             s.strategy_core().config.manage_stop
         }
+        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+            )
+        }
         crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
             anyhow::bail!(
                 "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
@@ -1687,6 +1699,11 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     match compiled {
         crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
             node.add_strategy(strategy)?
+        }
+        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
+            anyhow::bail!(
+                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
+            )
         }
         crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
             anyhow::bail!(
@@ -1825,6 +1842,21 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
+        );
+    }
+    #[tokio::test]
+    async fn hurst_strategy_account_lifecycle_rejected_before_connecting() {
+        let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"paper",
+            "native_strategy":{"instrument_id":"BTC-USDC-SPOT.HYPERLIQUID","strategy":{"kind":"HURST_VPIN_DIRECTIONAL","bar_type":"BTC-USDC-SPOT.HYPERLIQUID-100-VALUE-LAST-INTERNAL","trade_size":"1","hurst_window":8,"hurst_lags":[2,4],"hurst_enter":0.55,"hurst_exit":0.5,"vpin_window":2,"vpin_threshold":0.3,"max_holding_secs":60}},
+            "instruments":["BTC-USDC-SPOT.HYPERLIQUID"],"source_id":"unused","data_dir":"/tmp/unused"
+        })).unwrap();
+        let error = super::run_config(config, "unused".into())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
         );
     }
     #[test]

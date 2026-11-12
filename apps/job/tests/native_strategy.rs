@@ -776,3 +776,52 @@ fn cli_static_scenario_keeps_future_definition_and_market_clocks_without_claimin
             .contains("SCENARIO_DEFINITION_NOT_UNIQUE_OR_MISSING")
     );
 }
+
+
+#[test]
+fn upstream_hurst_replays_native_bars_quotes_and_trades_without_custom_signals() {
+    use nautilus_model::data::{Bar, BarType, QuoteTick};
+    let dir = catalog(&snapshot(SECOND, 2 * SECOND, "1.000000", "1.000000"), &[]);
+    let native = ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, Some(4096), None, None).unwrap();
+    let bar_type: BarType = "BTCUSDT.BINANCE-100-VALUE-LAST-EXTERNAL".parse().unwrap();
+    let mut bars = Vec::new(); let mut quotes = Vec::new(); let mut trades = Vec::new();
+    for index in 1..=24u64 {
+        let price = 100.0 + (index * index) as f64 / 10.0;
+        let at = index * SECOND;
+        trades.push(TradeTick::new(id(), Price::new(price, 2), Quantity::from("1.000000"), AggressorSide::Buy, TradeId::from(index.to_string().as_str()), at.into(), (at + SECOND / 10).into()));
+        bars.push(Bar::new(bar_type, Price::new(price, 2), Price::new(price, 2), Price::new(price, 2), Price::new(price, 2), Quantity::from("1.000000"), (at + SECOND / 5).into(), (at + SECOND * 3 / 10).into()));
+        quotes.push(QuoteTick::new(id(), Price::new(price - 0.5, 2), Price::new(price + 0.5, 2), Quantity::from("1.000000"), Quantity::from("1.000000"), (at + SECOND * 2 / 5).into(), (at + SECOND / 2).into()));
+    }
+    native.write_to_parquet(&bars, None, None, None).unwrap();
+    native.write_to_parquet(&quotes, None, None, None).unwrap();
+    native.write_to_parquet(&trades, None, None, None).unwrap();
+    let mut config = request(30 * SECOND);
+    config.event_end_ns = contracts::DbCounter::new(30 * SECOND).unwrap();
+    config.venue.book_type = "L1_MBP".into();
+    config.venue.bar_execution = Some(false);
+    config.selectors = serde_json::from_value(json!([
+        {"data_type":"Bar","identifier":bar_type.to_string()},
+        {"data_type":"QuoteTick","identifier":id().to_string()},
+        {"data_type":"TradeTick","identifier":id().to_string()}
+    ])).unwrap();
+    config.strategy = serde_json::from_value(json!({"kind":"HURST_VPIN_DIRECTIONAL","bar_type":bar_type.to_string(),"trade_size":"0.010000","hurst_window":8,"hurst_lags":[2,4],"hurst_enter":0.55,"hurst_exit":0.5,"vpin_window":2,"vpin_threshold":0.3,"max_holding_secs":60})).unwrap();
+    let result = job::native_strategy::run(dir.path(), config.clone()).unwrap();
+    for kind in ["Bar", "QuoteTick", "TradeTick"] { assert_eq!(result.data_rows_by_type[kind].get(), 24); }
+    assert_eq!(serde_json::to_value(&result.request).unwrap(), serde_json::to_value(&config).unwrap());
+    assert!(!result.canonical_result["fills"].as_array().unwrap().is_empty());
+    let mut bar_matching = config.clone();
+    bar_matching.venue.bar_execution = Some(true);
+    assert!(job::native_strategy::run(dir.path(), bar_matching).unwrap_err().to_string().contains("Bar execution requires time-aggregated bars"));
+    let mut internal = config.clone();
+    internal.selectors.retain(|row| row.data_type != "Bar");
+    if let contracts::native_strategy::NativeCompiledStrategyV1::HurstVpinDirectional { bar_type, .. } = &mut internal.strategy {
+        *bar_type = "BTCUSDT.BINANCE-100-VALUE-LAST-INTERNAL".into();
+    }
+    let aggregated = job::native_strategy::run(dir.path(), internal).unwrap();
+    assert_eq!(aggregated.data_rows_by_type["TradeTick"].get(), 24);
+    assert!(!aggregated.data_rows_by_type.contains_key("Bar"), "internal bars must be produced by the official engine, not injected catalog rows");
+    assert!(!aggregated.canonical_result["fills"].as_array().unwrap().is_empty());
+    let mut invalid = serde_json::to_value(&config).unwrap();
+    invalid["strategy"]["hurst_window"] = json!(0);
+    assert!(job::native_strategy::run(dir.path(), serde_json::from_value(invalid).unwrap()).unwrap_err().to_string().contains("hurst_window"));
+}

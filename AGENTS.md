@@ -91,8 +91,9 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 ## 原生研究与参数扫描的实际范围
 
 - `native_strategy_configure` 在同一 Pi Conversation 保存官方策略的明确请求；`native_strategy_backtest` 通过原 Task、远端执行回执和已绑定 catalog 运行，不另建策略状态机。
-- 当前单标的回测已接官方 EMA_CROSS（QuoteTick）、ORDER_BOOK_IMBALANCE（L2）及 GRID_MARKET_MAKER（QuoteTick）。Grid 的策略专属字段逐一映射官方 GridMarketMakerConfig，instrument_id 来自原请求；可选 base 原样由官方 StrategyConfig 解析。省略 trade_size/expire_time_secs 保持官方 None 语义，其余数值/开关显式提供，不由胶水补交易规则。尚未接任意 Python 策略、多标的或全部原生策略。
-- 回放使用原始事件与可用时间窗口、官方账户/撮合/费用及原生统计；不把缺失值补零，不把回测当独立样本外验证。账户运行仍仅允许原有 EMA_CROSS，Grid 和订单簿不因回测注册而开放账户执行。
+- 当前单标的回测已接官方 EMA_CROSS（QuoteTick）、ORDER_BOOK_IMBALANCE（L2）、GRID_MARKET_MAKER（QuoteTick）及 HURST_VPIN_DIRECTIONAL（官方 BAR/QuoteTick/TradeTick 订阅）。Grid 的策略专属字段逐一映射官方 GridMarketMakerConfig，instrument_id 来自原请求；可选 base 原样由官方 StrategyConfig 解析。省略 trade_size/expire_time_secs 保持官方 None 语义，其余数值/开关显式提供，不由胶水补交易规则。尚未接任意 Python 策略、多标的或全部原生策略。
+- Hurst/VPIN 的所有策略专属配置按公开 HurstVpinDirectionalConfig 字段映射，窗口校验与指标/交易算法由上游执行。官方 INTERNAL BAR 由 DataEngine 按真实 TradeTick 聚合；EXTERNAL BAR 使用完整 BarType 标识，不能以 instrument ID 替代。同标的不同 BarType 可并列读取。外部非时间 BAR 若只用作策略输入，应显式设置官方 venue.bar_execution=false 并提供真实 Quote/Trade 执行数据；省略保持官方 true 及其原生拒绝行为，不静默改变撮合语义。
+- 回放使用原始事件与可用时间窗口、官方账户/撮合/费用及原生统计；不把缺失值补零，不把回测当独立样本外验证。账户运行仍仅允许原有 EMA_CROSS，Grid、Hurst/VPIN 和订单簿不因回测注册而开放账户执行。
 - Web/API/CLI 参数扫描基于已有原生研究请求，枚举其实际数值字段。每项经同一 Pi Durable 与官方原生策略回测，保持独立账户状态；没有已退役的 indicator_strategy_batch_request 执行入口。扫描仅属探索，不自动授予实盘权限。
 - 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。Rust job 已不依赖 WASM 解释器或 Clarabel 求解器；历史 Wire 类型及拒绝旧请求的测试仍可保留相关标识，不等于支持执行。真实资金/账户与原始数据代码须按调用图保留，不能按关键词盲删。
 - 原生兼容方向是使用官方配置、策略、指标、数据与报告接口，而不是再造策略 DSL。当前 Rust `add_strategy<T>` 需要编译时具体类型；尚无任意 Python `ImportableStrategyConfig` 动态执行接线，原生策略入口也不支持用户源码即席运行。已接入的策略不是 Nautilus 全部能力，扩展应接官方公开接口，不修改上游。

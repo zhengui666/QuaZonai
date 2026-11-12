@@ -29,6 +29,9 @@ pub struct NativeStrategyVenueV1 {
     pub account_type: String,
     pub oms_type: String,
     pub book_type: String,
+    /// Official SimulatedVenueConfig option. None retains the upstream default (true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_execution: Option<bool>,
     pub starting_balances: Vec<String>,
     pub base_currency: Option<String>,
     pub leverage: String,
@@ -78,6 +81,20 @@ pub enum NativeCompiledStrategyV1 {
         requote_threshold_bps: u32,
         expire_time_secs: Option<u64>,
         on_cancel_resubmit: bool,
+    },
+    /// Compiled official HurstVpinDirectional; original BAR/quote/trade semantics.
+    HurstVpinDirectional {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<serde_json::Value>,
+        bar_type: String,
+        trade_size: String,
+        hurst_window: usize,
+        hurst_lags: Vec<usize>,
+        hurst_enter: f64,
+        hurst_exit: f64,
+        vpin_window: usize,
+        vpin_threshold: f64,
+        max_holding_secs: u64,
     },
     OrderBookImbalance {
         /// Original official StrategyConfig JSON, decoded directly upstream.

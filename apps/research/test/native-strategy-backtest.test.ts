@@ -140,3 +140,9 @@ test('instrument definition evidence cannot silently upgrade static assumptions 
   assert.throws(() => nativeStrategyResult(evidence, request), /request_mismatch/);
 
 });
+
+test('optional official BAR execution preserves explicit false and normalizes only absent semantics', () => {
+  const strategy = { kind: 'HURST_VPIN_DIRECTIONAL', bar_type: 'BTC.SIM-100-VALUE-LAST-INTERNAL' };
+  assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: false }, strategy }).venue, { base_currency: null, bar_execution: false });
+  assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: null }, strategy }).venue, { base_currency: null });
+});

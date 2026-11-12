@@ -112,6 +112,7 @@ export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject
   if (expected.instrument_definition === null) delete expected.instrument_definition;
   const venue = object(expected.venue, 'native_strategy_venue');
   if (venue.base_currency === undefined) venue.base_currency = null;
+  if (venue.bar_execution === null) delete venue.bar_execution;
   const strategy = object(expected.strategy, 'native_strategy_config');
   if (strategy.base === null) delete strategy.base;
   if (strategy.kind === 'GRID_MARKET_MAKER') {
@@ -154,7 +155,7 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
 
 export const nativeStrategyBacktestTool = defineTool({
   name: 'native_strategy_backtest',
-  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS and GRID_MARKET_MAKER consume QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
+  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS and GRID_MARKET_MAKER consume QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. HURST_VPIN_DIRECTIONAL uses official BAR/QuoteTick/TradeTick subscriptions; non-time external bars require explicit venue.bar_execution=false with quotes/trades for execution. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
   parameters: obj({ finishResearch: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);

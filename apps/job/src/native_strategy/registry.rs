@@ -5,12 +5,14 @@ use nautilus_model::{enums::BookType, identifiers::InstrumentId};
 use nautilus_trading::examples::strategies::{
     ema_cross::{EmaCross, EmaCrossConfig},
     grid_mm::{GridMarketMaker, GridMarketMakerConfig},
+    hurst_vpin_directional::{HurstVpinDirectional, HurstVpinDirectionalConfig},
     orderbook_imbalance::{OrderBookImbalance, OrderBookImbalanceConfig},
 };
 
 pub enum CompiledNativeStrategy {
     EmaCross(EmaCross),
     GridMarketMaker(Box<GridMarketMaker>),
+    HurstVpinDirectional(Box<HurstVpinDirectional>),
     OrderBookImbalance(OrderBookImbalance),
 }
 
@@ -73,6 +75,23 @@ pub fn build_strategy(
                 config.base = serde_json::from_value(base.clone())?;
             }
             CompiledNativeStrategy::GridMarketMaker(Box::new(GridMarketMaker::new(config)))
+        }
+        NativeCompiledStrategyV1::HurstVpinDirectional { base, bar_type, trade_size, hurst_window, hurst_lags,
+            hurst_enter, hurst_exit, vpin_window, vpin_threshold, max_holding_secs } => {
+            let mut config = HurstVpinDirectionalConfig::builder()
+                .instrument_id(id)
+                .bar_type(bar_type.parse().map_err(anyhow::Error::msg)?)
+                .trade_size(trade_size.parse().map_err(anyhow::Error::msg)?)
+                .hurst_window(*hurst_window)
+                .hurst_lags(hurst_lags.clone())
+                .hurst_enter(*hurst_enter)
+                .hurst_exit(*hurst_exit)
+                .vpin_window(*vpin_window)
+                .vpin_threshold(*vpin_threshold)
+                .max_holding_secs(*max_holding_secs)
+                .build();
+            if let Some(base) = base { config.base = serde_json::from_value(base.clone())?; }
+            CompiledNativeStrategy::HurstVpinDirectional(Box::new(HurstVpinDirectional::new_checked(config)?))
         }
         NativeCompiledStrategyV1::OrderBookImbalance {
             base,

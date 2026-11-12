@@ -125,6 +125,8 @@ pub fn run(
                 .account_type(venue.account_type.parse()?)
                 .oms_type(venue.oms_type.parse()?)
                 .book_type(book)
+                // The pinned upstream default is true; callers may explicitly disable BAR matching.
+                .bar_execution(venue.bar_execution.unwrap_or(true))
                 .starting_balances(
                     venue
                         .starting_balances
@@ -173,6 +175,8 @@ pub fn run(
                         == Some(NautilusDataType::QuoteTick)),
                 "NATIVE_GRID_QUOTE_DATA_REQUIRED"
             ),
+            // Subscriptions and internal BAR aggregation belong to the official strategy/data engine.
+            NativeCompiledStrategyV1::HurstVpinDirectional { .. } => {},
             NativeCompiledStrategyV1::OrderBookImbalance { .. } => {
                 ensure!(book == BookType::L2_MBP, "NATIVE_IMBALANCE_L2_REQUIRED");
                 ensure!(
@@ -187,6 +191,7 @@ pub fn run(
         }
         match build_strategy(id, &request.strategy)? {
             CompiledNativeStrategy::EmaCross(strategy) => engine.add_strategy(strategy)?,
+            CompiledNativeStrategy::HurstVpinDirectional(strategy) => engine.add_strategy(*strategy)?,
             CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(*strategy)?,
             CompiledNativeStrategy::OrderBookImbalance(strategy) => {
                 engine.add_strategy(strategy)?
