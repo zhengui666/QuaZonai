@@ -858,3 +858,67 @@ fn incomplete_book_tail_after_a_full_engine_batch_still_fails() {
     let error = job::native_strategy::run(dir.path(), request(6 * SECOND)).unwrap_err();
     assert!(error.to_string().contains("NATIVE_BOOK_INCOMPLETE_EVENT_BATCH"), "{error:#}");
 }
+
+#[test]
+fn official_replay_frame_grouping_preserves_tied_selectors_and_strategy_callbacks() {
+    use nautilus_backtest::{config::{BacktestEngineConfig, SimulatedVenueConfig}, engine::BacktestEngine};
+    use nautilus_common::logging::logger::LoggerConfig;
+    use nautilus_execution::models::fee::{FeeModelHandle, MakerTakerFeeModel};
+    use nautilus_model::{data::{DataBatch, FundingRateUpdate, MarkPriceUpdate, OrderBookDeltas},
+        enums::{AccountType, BookType, OmsType}, instruments::{Instrument, stubs::crypto_perpetual_ethusdt}, types::Money};
+    use job::native_strategy::registry::{build_strategy, CompiledNativeStrategy};
+    use std::str::FromStr;
+    // Compare the former one-frame insertion directly with grouped insertions in
+    // the unchanged official engine, including equal replay clocks at a boundary.
+    let run = |batch_size: usize, books_first: bool, funding: bool| {
+        let instrument = InstrumentAny::CryptoPerpetual(crypto_perpetual_ethusdt());
+        let perp = instrument.id();
+        let mut engine = BacktestEngine::new(BacktestEngineConfig {
+            logging: LoggerConfig::builder().bypass_logging(true).is_colored(false).build().unwrap(),
+            bypass_logging: true, shutdown_on_error: true, ..Default::default()
+        }).unwrap();
+        engine.add_venue(SimulatedVenueConfig::builder().venue(perp.venue)
+            .account_type(AccountType::Margin).oms_type(OmsType::Netting).book_type(BookType::L2_MBP)
+            .starting_balances(vec![Money::from_str("100000 USDT").unwrap()])
+            .default_leverage("1".parse().unwrap())
+            .fee_model(FeeModelHandle::new(MakerTakerFeeModel::new("0".parse().unwrap(), "0".parse().unwrap())))
+            .build().unwrap()).unwrap();
+        engine.add_instrument(&instrument).unwrap();
+        let strategy = serde_json::from_value(json!({"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false})).unwrap();
+        let CompiledNativeStrategy::OrderBookImbalance(strategy) = build_strategy(perp, &strategy).unwrap() else { unreachable!() };
+        engine.add_strategy(strategy).unwrap();
+        let frames = (0..33u64).map(|index| {
+            let time = SECOND + index * 100_000_000;
+            let deltas = snapshot(time, time, if index == 0 { "10.000000" } else { "1.000000" }, "1.000000")
+                .into_iter().map(|mut row| { row.instrument_id = perp; row.order.size = Quantity::new(row.order.size.as_f64(), 3); row }).collect();
+            OrderBookDeltas::new_checked(perp, deltas).unwrap()
+        }).collect::<Vec<_>>();
+        let add_books = |engine: &mut BacktestEngine| {
+            for chunk in frames.chunks(batch_size) {
+                engine.add_data_batch(DataBatch::BookDeltas(chunk.to_vec().into()), None, true, true).unwrap();
+            }
+        };
+        let time = SECOND + 16 * 100_000_000;
+        let add_other_selectors = |engine: &mut BacktestEngine| {
+            engine.add_data_batch(DataBatch::MarkPrice(vec![MarkPriceUpdate::new(perp, Price::from("100.00"), time.into(), time.into())].into()), None, true, true).unwrap();
+            engine.add_data_batch(DataBatch::Trade(vec![TradeTick::new(perp, Price::from("100.00"), Quantity::from("1.000"), AggressorSide::Buy, TradeId::from("tied"), time.into(), time.into())].into()), None, true, true).unwrap();
+            if funding {
+                engine.add_data_batch(DataBatch::FundingRate(vec![FundingRateUpdate::new(perp, "0.01".parse().unwrap(), None, Some(time.into()), time.into(), time.into())].into()), None, true, true).unwrap();
+            }
+        };
+        if books_first { add_books(&mut engine); add_other_selectors(&mut engine); }
+        else { add_other_selectors(&mut engine); add_books(&mut engine); }
+        engine.run(Some(SECOND.into()), Some((5 * SECOND).into()), None, false).unwrap();
+        let report = engine.get_canonical_result().unwrap().as_value().clone();
+        engine.dispose();
+        report
+    };
+    for books_first in [true, false] {
+        let original = run(1, books_first, true);
+        let grouped = run(16, books_first, true);
+        assert_eq!(original, grouped, "Grouping must preserve the entire official canonical report for this selector order");
+        assert!(!grouped["fills"].as_array().unwrap().is_empty(), "The real strategy must trade, not merely load data");
+        let without_funding = run(16, books_first, false);
+        assert_ne!(grouped["accounts"], without_funding["accounts"], "Tied funding must actually settle against the open position");
+    }
+}
