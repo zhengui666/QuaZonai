@@ -22,11 +22,11 @@ const source: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selec
   strategy: { kind: 'EMA_CROSS', trade_size: '0.001', fast_period: 2, slow_period: 3 } };
 const request: JsonObject = { schema_version: 1, candidates: [source], split: { n_splits: 1, gap: 0 }, objective: { native_key: 'Sharpe Ratio', direction: 'MAXIMIZE' } };
 // Protocol-only native wire. Numerical native execution is tested in the Rust job tests, not mocked here.
-function wire() {
-  const native = (start: string, end: string) => ({ schema_version: 1, native_version: '0.69.0', request: { ...source, available_start_ns: start, available_end_ns: end },
+function wire(walkRequest: JsonObject = request) {
+  const native = (start: string, end: string, candidate: JsonObject = source) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
     canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
-  return { schema_version: 1, request, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
-    trials: [{ candidate_index: 0, metric_value: 1, error: null, result: native('1790000000000000001', '1790000000000000002') }], selected_candidate_index: 0, test_result: native('1790000000000000003', '1790000000000000004'), status: 'COMPLETED', reason: null }] };
+  return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
+    trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate) })), selected_candidate_index: 0, test_result: native('1790000000000000003', '1790000000000000004'), status: 'COMPLETED', reason: null }] };
 }
 
 test('walk-forward evidence binds original strategies, chronology, availability and untouched native statistics', () => {
@@ -42,16 +42,19 @@ test('walk-forward evidence binds original strategies, chronology, availability 
   }
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-walk-forward-'));
-  const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let complete = behavior === 'tools' || behavior === 'history';
+  const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let complete = behavior !== 'recover' && behavior !== 'stop';
+  const strategies = behavior === 'reviewed' || behavior === 'changed' ? [source.strategy, { ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }] : [source.strategy];
+  const planned: JsonObject = { ...request, candidates: strategies.map(strategy => ({ ...source, strategy: strategy! })) };
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
     if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
     if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
     const original = posts.at(-1)!; assert.ok(['native-walk-forward', 'native-strategy-backtest'].includes(original.command));
     if (incoming.method === 'DELETE') { deletes.push(incoming.url!); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire() : { ...wire().folds[0]!.trials[0]!.result, request: source } } : { error: 'pending_original_receipt' }) }));
+    if (behavior === 'repeat' && posts.length === 1) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'recorded_first_attempt_failure' })); return; }
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject) : { ...wire().folds[0]!.trials[0]!.result, request: source } } : { error: 'pending_original_receipt' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -60,15 +63,18 @@ for (const behavior of ['recover', 'stop', 'tools', 'history'] as const) test(`n
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
   try {
-    if (behavior === 'tools' || behavior === 'history') {
+    if (behavior !== 'recover' && behavior !== 'stop') {
       let receipt;
       if (behavior === 'history') {
         faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' })]);
         receipt = await host.start('walk-forward-tools', { goal: 'Check chronology, not profitability claims', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
         await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       }
+      const review = behavior === 'reviewed' || behavior === 'changed';
       faux.setResponses([
-        fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective: request.objective }), { stopReason: 'toolUse' }),
+        ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' ? strategies : [source.strategy] }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
+        ...(behavior === 'repeat' ? [fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective: request.objective }), { stopReason: 'toolUse' })] : []),
+        fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective: request.objective }), { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
         (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes('PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ stars: 5, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
         fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
@@ -80,13 +86,18 @@ for (const behavior of ['recover', 'stop', 'tools', 'history'] as const) test(`n
         receipt = await host.start('walk-forward-tools', { goal: 'Check chronology, not profitability claims', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
         await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       }
-      const validation = await host.harness.snapshot(NativeWalkForward, receipt.conversationId, context); assert.equal(validation?.taskIds.length, 1);
+      const validation = await host.harness.snapshot(NativeWalkForward, receipt.conversationId, context); assert.equal(validation?.taskIds.length, behavior === 'repeat' ? 2 : 1);
       const assessment = await host.harness.snapshot(ResearchAssessment, receipt.conversationId, context); assert.equal(assessment?.reportTaskIds.length, 1);
       const task = await host.harness.getTask(assessment!.reportTaskIds[0]!, context);
       assert.equal(task?.state.outcome?.status, 'completed');
       if (task?.state.outcome?.status !== 'completed') assert.fail('report did not complete');
       assert.equal((task.state.outcome.result.judgment as any).stars, null);
-      assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds[0]);
+      assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
+      const evidence = task.state.outcome.result.evidence as any;
+      assert.equal(evidence.trialHistory.scope, 'THIS_CONVERSATION_ONLY'); assert.equal(evidence.trialHistory.crossConversationCoverage, 'NOT_CHECKED');
+      assert.equal(evidence.trialHistory.runCount, behavior === 'repeat' ? 2 : 1);
+      if (behavior === 'repeat') { assert.deepEqual(evidence.trialHistory.runs.map((run: any) => run.status), ['failed', 'completed']); assert.equal(evidence.trialHistory.runs[0].error, 'recorded_first_attempt_failure'); }
+      if (review) assert.equal(evidence.dataValidation.logicCoverage, behavior === 'reviewed' ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW');
       if (behavior === 'history') assert.equal((task.state.outcome.result.evidence as any).historicalNativeExecution.status, 'completed', 'newer walk-forward does not hide a real ordinary backtest');
     } else {
       const root = await host.harness.root(context);
@@ -105,6 +116,6 @@ for (const behavior of ['recover', 'stop', 'tools', 'history'] as const) test(`n
         const result = await host.harness.waitForTask(id, context); assert.equal(result.state.outcome.status, 'completed');
       }
     }
-    assert.equal(posts.length, behavior === 'history' ? 2 : 1); assert.deepEqual(posts.at(-1)!.input, request);
+    assert.equal(posts.length, behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.at(-1)!.input, planned);
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });

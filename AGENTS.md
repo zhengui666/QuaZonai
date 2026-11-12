@@ -152,12 +152,14 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 
 ## 双路研究评级的当前接线
 
-`native_strategy_logic_review` 在已配置策略执行前创建官方 Pi Durable 子 Task。子 Task 用官方 pi-ai 的独立上下文审阅声明的经济机制、前视风险、自由度、参数依据和执行假设，不读取主对话或原生回测结果，也不声称检查过未提供的源码。结果绑定原始策略请求、配置 Task ID、模型与评级规则版本；模型缺失或响应无效按真实失败处理。逻辑星级仅为研究判断，不是收益概率。
+`native_strategy_logic_review` 在已配置策略执行前创建官方 Pi Durable 子 Task。子 Task 用官方 pi-ai 的独立上下文审阅声明的经济机制、前视风险、自由度、参数依据和执行假设；对上游策略可显式传入与 walk-forward 相同顺序的 `strategies` 候选列表，省略时只审阅已注册策略，不读取主对话或原生回测结果，也不声称检查过未提供的源码。结果绑定原始策略请求、配置 Task ID、模型与评级规则版本；模型缺失或响应无效按真实失败处理。逻辑星级仅为研究判断，不是收益概率。
 
-`native_strategy_assessment_report` 创建另一个官方子 Task，读取同一配置的真实逻辑审阅 Task 及原生执行 Task。当前此入口尚未接入独立样本外、泄漏审计、邻域、成本和完整试验记录的数据验证链，因此数据状态为 `NOT_RUN`，综合星级必须为 `null`，即使模型建议星级也不覆盖缺失事实。历史原生回测及探索参数扫描不得冒称独立验证。旧报告仍通过原 Task ID 留存，改参后的综合报告不复用不匹配的逻辑评级。
+`native_strategy_assessment_report` 创建另一个官方子 Task，读取同一配置的真实逻辑审阅 Task 及原生执行 Task。当前此入口可读取真实 walk-forward 分折事实，但尚未完成泄漏审计、邻域、成本和全局试验记录的数据验证链；未运行时数据状态为 `NOT_RUN`，运行后仍仅是部分证据，综合星级必须为 `null`，即使模型建议星级也不覆盖缺失事实。历史原生回测及探索参数扫描不得冒称独立验证。旧报告仍通过原 Task ID 留存，改参后的综合报告不复用不匹配的逻辑评级。
 
 这是完整自动双路流程的首个接线切片，不是已完成的数据验证产品；现有普通研究回测仍保持原收尾方式。审阅工具可在同一 Conversation 的后续 Submission 调用，不增设交易门禁、审批或资金权限。
 
 原生 `native_strategy_walk_forward` 工具使用已注册的 `native_strategy_backtest_request`，仅替换候选的上游 `strategy` 参数，不扩大数据、时间窗、账户初始条件或费用范围。`native-walk-forward` 沿既有 NativeStrategyBacktestTask 与远端 receipt 的等待、重启、取消路径运行；验证结果仍是同一 Conversation 下的真实子 Task，不另建作业数据库。工具调用的重放读取原 Task；用户再次明确调用会保留新的试验记录，但原远端结果未决时不重复提交。
 
 每个训练候选和胜出候选的后续测试均由 Nautilus 在独立窗口冷启动，不携带之前账户、仓位或指标状态。切分按真实可用时间批次，不拆同时间数据；原始事件窗口与可用时间边界分别保留。原生报告统计原样保存，position-return 等统计不得标成日权益收益。综合报告仅从同一原始配置的真实验证 Task 读取分折事实、训练选择和测试统计。当前状态为 `PARTIAL_WALK_FORWARD_EVIDENCE`，尚无完整泄漏审计、邻域、成本与跨次试验检查，综合星级仍为 `null`；不能用已有逻辑审阅冒称覆盖所有变更的候选策略。
+
+预审与 walk-forward 的候选覆盖按实际 Task 输入中的完整有序候选逐项比较：完全一致且逻辑 Task 早于验证 Task 时标为 `EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION`；候选变更或缺少预审时明确标为未覆盖，不限制回测执行。综合报告同时列出当前 Conversation 中所有已记录 walk-forward Task 的原请求、候选数、终态/运行态和真实失败原因，不只展示最新成功尝试。范围明确是 `THIS_CONVERSATION_ONLY`，跨会话试验完整性仍未核查，不能据此声称消除了反复试验的选择偏差。

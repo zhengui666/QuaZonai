@@ -1,7 +1,8 @@
+import { normalizedNativeStrategyRequest } from './native-strategy-backtest.ts';
 import { NativeWalkForward } from './native-walk-forward.ts';
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import type { JsonValue } from '@earendil-works/chord';
-import { obj, str } from '@earendil-works/pi-schema';
+import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
 import { canonical, Study, type ResearchInput } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
@@ -21,6 +22,14 @@ async function upstreamExecution(tx: Tx, conversationId: ConversationId, request
 }
 function boundRequest(input: ResearchInput, configured?: JsonObject | null): JsonObject {
   return object(input.data.native_strategy_backtest_request ?? configured ?? input.data.indicator_strategy_request ?? input.data.indicator_strategy_batch_request, 'research_assessment_strategy_required');
+}
+
+function reviewedCandidateMatch(logicInput: JsonObject, validation: JsonObject): boolean {
+  const reviewed = object(logicInput.evidence, 'logic_evidence').reviewedCandidates;
+  const actual = validation.candidates;
+  if (!Array.isArray(reviewed) || !Array.isArray(actual) || reviewed.length !== actual.length) return false;
+  return reviewed.every((candidate, index) => canonical(normalizedNativeStrategyRequest(object(candidate, 'logic_candidate')))
+    === canonical(normalizedNativeStrategyRequest(object(actual[index], 'validation_candidate'))));
 }
 
 /** Advisory research facts. Lifecycle, child ownership and replay belong to official Pi. */
@@ -72,12 +81,16 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
 
 export const logicReviewTool = defineTool({
   name: 'native_strategy_logic_review',
-  description: 'Before evaluating this configured native strategy, ask an isolated Pi child Agent to review its declared economic mechanism, lookahead risks, parameter freedom and execution assumptions. Supply a hypothesis, not backtest results. This records an advisory logic star rating (or null when unknown), not data validation or permission to trade. No market data is read. Already-executed configurations cannot be retrospectively labelled pre-execution.',
-  parameters: obj({ hypothesis: str() }), replay: 'safe', executionMode: 'sequential',
+  description: 'Before evaluating this configured native strategy, ask an isolated Pi child Agent to review its declared economic mechanism, lookahead risks, parameter freedom and execution assumptions. Supply a hypothesis, not backtest results. For upstream strategies, provide the same ordered strategies list intended for walk-forward; omitted means just the registered strategy. The review does not cover later changed candidates. This records an advisory logic star rating (or null when unknown), not data validation or permission to trade. No market data is read. Already-executed configurations cannot be retrospectively labelled pre-execution.',
+  parameters: obj({ hypothesis: str(), strategies: opt(arr(map(unknown()))) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     const configuration = await api.snapshot(IndicatorConfiguration, api.conversationId, context);
     const request = boundRequest(input, configuration?.request);
+    if (args.strategies !== undefined && input.data.native_strategy_backtest_request === undefined) throw new Error('research_assessment_candidates_require_upstream_strategy');
+    const candidates = input.data.native_strategy_backtest_request === undefined ? null
+      : (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }));
+    if (candidates?.length === 0) throw new Error('research_assessment_candidates_required');
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
       const current = await tx.doc(IndicatorConfiguration, api.conversationId);
@@ -85,7 +98,7 @@ export const logicReviewTool = defineTool({
       if (canonical(boundRequest(input, current.request)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
         configurationTaskId: current.configuredByTaskId ?? null,
-        evidence: { hypothesis: args.hypothesis, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
+        evidence: { hypothesis: args.hypothesis, reviewedCandidates: candidates, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
       { ownership: { kind: 'task', taskId: api.taskId } });
       (await tx.doc(ResearchAssessment, api.conversationId)).logicTaskId = child.taskId;
       return child.taskId;
@@ -110,11 +123,24 @@ export const assessmentReportTool = defineTool({
       if (canonical(boundRequest(input, current.request)) !== canonical(request)) throw new Error('research_assessment_configuration_changed');
       const assessment = await tx.doc(ResearchAssessment, api.conversationId);
       const logic = assessment.logicTaskId ? await tx.task(assessment.logicTaskId) : undefined;
-      const matchingLogic = logic?.kind === 'qz.research.assessment' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'
+      const matchingLogic = logic?.kind === 'qz.research.assessment' && object(logic.input, 'logic_input').mode === 'LOGIC' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'
         && canonical(object(logic.input, 'logic_input').request ?? null) === canonical(request) && object(logic.input, 'logic_input').configurationTaskId === (current.configuredByTaskId ?? null);
       const native = input.data.native_strategy_backtest_request !== undefined ? await upstreamExecution(tx, api.conversationId, request) : current.evaluationTaskId ? await tx.task(current.evaluationTaskId) : undefined;
       const nativeMatches = native && ['qz.indicator-strategy.evaluate', 'qz.native-strategy.backtest'].includes(native.kind) && canonical(object(native.input, 'native_input').request ?? null) === canonical(request);
       const validation = await tx.doc(NativeWalkForward, api.conversationId);
+      const trialHistory: JsonObject = { scope: 'THIS_CONVERSATION_ONLY', crossConversationCoverage: 'NOT_CHECKED', runs: [] };
+      for (const id of validation.taskIds) {
+        const task = await tx.task(id);
+        if (!task || task.kind !== 'qz.native-strategy.backtest') continue;
+        const invocation = object(task.input, 'native_walk_forward_input');
+        if (invocation.walkForward !== true) continue;
+        const submitted = object(invocation.request, 'native_walk_forward_request');
+        (trialHistory.runs as JsonObject[]).push({ taskId: id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
+          sameSource: canonical(invocation.sourceRequest ?? null) === canonical(request), request: submitted,
+          candidateCount: Array.isArray(submitted.candidates) ? submitted.candidates.length : null,
+          error: task.state.status === 'terminal' && task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null });
+      }
+      trialHistory.runCount = (trialHistory.runs as JsonObject[]).length;
       let dataValidation: JsonObject = { status: 'NOT_RUN', stars: null, missing: ['INDEPENDENT_OUT_OF_SAMPLE', 'TIME_LEAKAGE_AUDIT', 'PARAMETER_NEIGHBOURHOOD', 'COST_SENSITIVITY', 'COMPLETE_TRIAL_HISTORY'] };
       for (const id of [...validation.taskIds].reverse()) {
         const task = await tx.task(id);
@@ -130,14 +156,15 @@ export const assessmentReportTool = defineTool({
             folds: (result.folds as JsonObject[]).map(fold => ({ index: fold.index!, trainStartNs: fold.train_start_ns!, trainEndNs: fold.train_end_ns!, testStartNs: fold.test_start_ns!, testEndNs: fold.test_end_ns!, status: fold.status!, reason: fold.reason!, selectedCandidateIndex: fold.selected_candidate_index!,
               trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error! })),
               nativeTestStatistics: fold.test_result === null ? null : object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics! })),
-            logicCoverage: 'LOGIC_REVIEW_COVERS_BOUND_SOURCE_NOT_ALL_CANDIDATE_VARIATIONS' };
+            logicCoverage: matchingLogic && logic!.id < task.id && reviewedCandidateMatch(object(logic!.input, 'logic_input'), object(result.request, 'walk_forward_request'))
+              ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW'  };
         }
         break;
       }
       const evidence: JsonObject = {
         logic: matchingLogic ? { taskId: logic!.id, result: logic!.state.outcome!.status === 'completed' ? logic!.state.outcome!.result : null } : { status: 'MISSING_OR_DIFFERENT_CONFIGURATION', stars: null },
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
-        dataValidation,
+        dataValidation, trialHistory,
       };
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: current.configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
       assessment.reportTaskIds.push(child.taskId);
@@ -151,4 +178,4 @@ export const assessmentReportTool = defineTool({
 
 
 export default defineExtension({ name: 'qz.research-assessment', tasks: [ResearchAssessmentTask], tools: [logicReviewTool, assessmentReportTool],
-  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });
+  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review with the same ordered strategies candidates planned for validation, before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });
