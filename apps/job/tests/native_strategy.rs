@@ -913,10 +913,36 @@ fn official_replay_frame_grouping_preserves_tied_selectors_and_strategy_callback
         engine.dispose();
         report
     };
+    // Upstream exchange.rs embeds a fresh settlement.event_id (UUID4) inside
+    // PositionAdjusted.reason; its canonical writer normalizes event_id fields,
+    // but not this embedded identity. Normalize ONLY that known reason suffix.
+    // First-occurrence numbering retains repeated-identity relationships, while
+    // every record, amount, clock, reason kind and array order stays unchanged.
+    fn normalize_settlement_ids(value: &mut serde_json::Value, ids: &mut Vec<String>, occurrences: &mut usize) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if let Some(serde_json::Value::String(reason)) = fields.get_mut("reason")
+                    && let Some(id) = reason.strip_prefix("funding_settlement:") {
+                        nautilus_core::UUID4::from_str(id).expect("Only a genuine upstream UUID4 may be normalized");
+                        let index = ids.iter().position(|known| known == id).unwrap_or_else(|| { ids.push(id.to_owned()); ids.len() - 1 });
+                        *reason = format!("funding_settlement:identity-{index}");
+                        *occurrences += 1;
+                }
+                for child in fields.values_mut() { normalize_settlement_ids(child, ids, occurrences); }
+            }
+            serde_json::Value::Array(items) => for child in items { normalize_settlement_ids(child, ids, occurrences); },
+            _ => {},
+        }
+    }
     for books_first in [true, false] {
-        let original = run(1, books_first, true);
-        let grouped = run(16, books_first, true);
-        assert_eq!(original, grouped, "Grouping must preserve the entire official canonical report for this selector order");
+        let mut original = run(1, books_first, true);
+        let mut grouped = run(16, books_first, true);
+        for report in [&mut original, &mut grouped] {
+            let mut ids = Vec::new(); let mut occurrences = 0;
+            normalize_settlement_ids(report, &mut ids, &mut occurrences);
+            assert_eq!((ids.len(), occurrences), (1, 2), "One actual settlement is represented in the position and position snapshot; do not drop or merge funding events");
+        }
+        assert_eq!(original, grouped, "Grouping must preserve the entire official canonical report except the upstream random settlement identity");
         assert!(!grouped["fills"].as_array().unwrap().is_empty(), "The real strategy must trade, not merely load data");
         let without_funding = run(16, books_first, false);
         assert_ne!(grouped["accounts"], without_funding["accounts"], "Tied funding must actually settle against the open position");
