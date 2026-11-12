@@ -48,23 +48,20 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     let footer = corrupted.len() - 8;
     corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     std::fs::write(&path, &corrupted).unwrap();
-    for result in [
-        command(
-            &[
-                "simulate".as_ref(),
-                "--catalog".as_ref(),
-                directory.path().as_os_str(),
-            ],
-            &request,
-        ),
-    ] {
-        assert_eq!(result.status.code(), Some(1));
-        assert!(result.stdout.is_empty());
-        assert_eq!(
-            String::from_utf8_lossy(&result.stderr).lines().next(),
-            Some("QZ_NATIVE_JOB_FAILED")
-        );
-    }
+    let result = command(
+        &[
+            "simulate".as_ref(),
+            "--catalog".as_ref(),
+            directory.path().as_os_str(),
+        ],
+        &request,
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr).lines().next(),
+        Some("QZ_NATIVE_JOB_FAILED")
+    );
     assert_eq!(std::fs::read(&path).unwrap(), corrupted);
     std::fs::write(path, original).unwrap();
     let recovered = command(
