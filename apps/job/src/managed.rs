@@ -11,15 +11,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
 };
 
 mod compiler_memory;
-use compiler_memory::CompilerMemory;
 pub use compiler_memory::CompilerMemoryLimit;
-
-const COMPILER: &str = "/opt/rust/bin/rustc";
 
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(|_| anyhow::anyhow!("NATIVE_COUNTER_RANGE"))
@@ -193,133 +188,6 @@ fn publish(staged: &tempfile::NamedTempFile, target: &Path) -> Result<()> {
     Ok(())
 }
 
-struct CompilerChild(Child);
-impl Drop for CompilerChild {
-    fn drop(&mut self) {
-        // Reap only this owned compiler. The outer native cgroup owns all descendants.
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn compile(
-    spec: &JobSpecV1,
-    input: &Path,
-    code: Id,
-    outputs: &mut Outputs,
-    features: bool,
-) -> Result<()> {
-    compile_with(spec, input, code, outputs, features, Path::new(COMPILER))
-}
-
-fn compile_with(
-    spec: &JobSpecV1,
-    input: &Path,
-    code: Id,
-    outputs: &mut Outputs,
-    features: bool,
-    compiler: &Path,
-) -> Result<()> {
-    let source = input.join("objects").join(code.to_string());
-    let bytes = read(&source)?;
-    std::str::from_utf8(&bytes)?;
-    let memory = CompilerMemory::capture();
-    let version = Command::new(compiler)
-        .arg("--version")
-        .env_clear()
-        .env("PATH", "/opt/rust/bin:/usr/bin:/bin")
-        .env("HOME", "/tmp")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()?;
-    CompilerMemory::check(version.status, memory, "NATIVE_COMPILER_VERSION")?;
-    ensure!(version.stdout.len() <= 512, "NATIVE_COMPILER_VERSION");
-    let version = std::str::from_utf8(&version.stdout)?.trim();
-    ensure!(
-        version.starts_with("rustc 1.99.1 "),
-        "NATIVE_COMPILER_VERSION"
-    );
-    // rustc creates linker scratch directories next to -o, regardless of
-    // TMPDIR. Keep those directories off the flat, live-scanned output mount.
-    let mut staging_builder = tempfile::Builder::new();
-    staging_builder.prefix("qz-compile-");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        staging_builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    let staging = staging_builder.tempdir_in("/tmp")?;
-    let target = staging.path().join("model.wasm");
-    let memory = CompilerMemory::capture();
-    let child = Command::new(compiler)
-        .args([
-            "--edition=2021",
-            "--crate-type=cdylib",
-            "--target=wasm32-unknown-unknown",
-            "--crate-name=research_signal",
-            "-C",
-            "opt-level=1",
-            "-C",
-            "panic=abort",
-            "-C",
-            "codegen-units=1",
-        ])
-        .arg(&source)
-        .arg("-o")
-        .arg(&target)
-        .env_clear()
-        .env("PATH", "/opt/rust/bin:/usr/bin:/bin")
-        .env("HOME", "/tmp")
-        .env("TMPDIR", "/tmp")
-        .current_dir("/tmp")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut child = CompilerChild(child);
-    let began = Instant::now();
-    loop {
-        if let Some(status) = child.0.try_wait()? {
-            CompilerMemory::check(status, memory, "NATIVE_COMPILATION_FAILED")?;
-            break;
-        }
-        ensure!(
-            !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now())
-                && spec
-                    .limits
-                    .wall_seconds
-                    .is_none_or(|wall| began.elapsed() < Duration::from_secs(u64::from(wall))),
-            "NATIVE_COMPILATION_DEADLINE"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let wasm = read(&target)?;
-    // Native Wasmi verifies imports, start functions, limits and exact predict ABI.
-    let abi = if features {
-        let module = crate::signals::SignalModule::new(&wasm, false)?;
-        crate::feature_model::FeatureModel::new(&module, None, None)?;
-        crate::feature_model::ABI
-    } else {
-        crate::signals::WasmSignal::new(&wasm, None, None)?;
-        "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
-    };
-    let model = outputs.compiled_model(&wasm)?;
-    outputs.json(
-        "qz.model_compilation",
-        RuntimeOutputKind::Report,
-        &NativeModelCompilationV1 {
-            schema_version: SchemaV1,
-            code_artifact_id: code,
-            model_storage_ref: model,
-            rustc_version: version.to_owned(),
-            target: "wasm32-unknown-unknown".into(),
-            abi: abi.into(),
-            module_bytes: counter(wasm.len() as u64)?,
-        },
-    )?;
-    Ok(())
-}
-
 /// `input` and `output` are trusted local mounts. The HTTP body cannot select them.
 /// Each process calls this exactly once; native numerical engines are not embedded in API/Worker.
 pub fn execute(input: &Path, output: &Path) -> Result<()> {
@@ -336,6 +204,16 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             .join("objects")
             .join(spec.parameters_artifact_id.to_string()),
     )?;
+    ensure!(
+        !matches!(
+            parameters,
+            NativeTaskParametersV1::CompileModel { .. }
+                | NativeTaskParametersV1::CompileFeatureModel { .. }
+                | NativeTaskParametersV1::EvaluateExperiment { .. }
+                | NativeTaskParametersV1::ComposeStrategyTargets { .. }
+        ),
+        "NATIVE_RESEARCH_OPERATION_RETIRED"
+    );
     domain::execution::task(&spec, &parameters)?;
     ensure!(
         !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now()),
@@ -389,39 +267,6 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
         )?;
     }
     match parameters {
-        NativeTaskParametersV1::CompileModel {
-            code_artifact_id, ..
-        } => compile(&spec, input, code_artifact_id, &mut outputs, false)?,
-        NativeTaskParametersV1::CompileFeatureModel {
-            code_artifact_id, ..
-        } => compile(&spec, input, code_artifact_id, &mut outputs, true)?,
-        NativeTaskParametersV1::EvaluateExperiment {
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_ids,
-            request,
-            ..
-        } => {
-            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
-            let parts = feature_artifact_ids
-                .iter()
-                .map(|id| document(&input.join("objects").join(id.to_string())))
-                .collect::<Result<Vec<contracts::science::FeatureObservationsV1>>>()?;
-            let result = crate::experiment::evaluate(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                dataset_revision_id,
-                model_artifact_id,
-                &feature_artifact_ids,
-                &parts,
-                &bytes,
-            )?;
-            outputs.json(
-                "qz.experiment_evaluation",
-                RuntimeOutputKind::Report,
-                &result,
-            )?;
-        }
         NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::EvaluateForward { request, .. } => {
             let result = crate::forward::evaluate(&request, |id| {
@@ -440,33 +285,14 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             outputs.json("qz.forward_evaluation", RuntimeOutputKind::Report, &result)?;
         }
         // Original task documents remain readable, but Execute cannot revive retired research.
-        NativeTaskParametersV1::EvaluateAlpha { .. }
+        NativeTaskParametersV1::CompileModel { .. }
+        | NativeTaskParametersV1::CompileFeatureModel { .. }
+        | NativeTaskParametersV1::EvaluateExperiment { .. }
+        | NativeTaskParametersV1::ComposeStrategyTargets { .. }
+        | NativeTaskParametersV1::EvaluateAlpha { .. }
         | NativeTaskParametersV1::StudyPortfolio { .. }
-        | NativeTaskParametersV1::BuildPortfolio { .. } => anyhow::bail!("NATIVE_RESEARCH_OPERATION_RETIRED"),
-        NativeTaskParametersV1::ComposeStrategyTargets {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let settings: contracts::science::NativeSimulationSettingsV1 = document(
-                &input.join("objects").join(
-                    request
-                        .mandate
-                        .constraints
-                        .transaction_costs_ref
-                        .to_string(),
-                ),
-            )?;
-            ensure!(
-                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
-                "STRATEGY_SETTINGS_SOURCE_MISMATCH"
-            );
-            let result = crate::strategy::compose(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                |id| read(&input.join("objects").join(id.to_string())),
-            )?;
-            outputs.json("qz.strategy_portfolio", RuntimeOutputKind::Report, &result)?;
+        | NativeTaskParametersV1::BuildPortfolio { .. } => {
+            anyhow::bail!("NATIVE_RESEARCH_OPERATION_RETIRED")
         }
         NativeTaskParametersV1::SimulatePortfolio {
             dataset_revision_id,
@@ -846,212 +672,5 @@ mod tests {
         assert_eq!(preserved.nlink(), 1);
         assert_eq!(preserved.mode() & 0o777, 0o444);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
-    }
-
-    // Deliberately controlled compiler fixture, not evidence of official rustc
-    // execution. It holds an adjacent linker scratch directory until the test
-    // has scanned output, then emits the supplied WASM or a compilation error.
-    fn controlled_compile(
-        wasm: &[u8],
-        capacity: u64,
-        features: bool,
-        exit_code: u8,
-    ) -> (tempfile::TempDir, Outputs, Result<()>) {
-        let fixture = tempfile::tempdir().unwrap();
-        let input = fixture.path().join("input");
-        let output = fixture.path().join("output");
-        fs::create_dir_all(input.join("objects")).unwrap();
-        fs::create_dir(&output).unwrap();
-        let code = Id::new();
-        fs::write(input.join("objects").join(code.to_string()), b"fixture").unwrap();
-        fs::write(fixture.path().join("module.wasm"), wasm).unwrap();
-        fs::write(fixture.path().join("exit-code"), exit_code.to_string()).unwrap();
-        let compiler = fixture.path().join("controlled-compiler");
-        fs::write(
-            &compiler,
-            r#"#!/bin/sh
-set -eu
-if [ "$1" = '--version' ]; then
-    printf '%s\n' 'rustc 1.99.1 (controlled fixture)'
-    exit 0
-fi
-fixture=${0%/*}
-while [ "$1" != '-o' ]; do shift; done
-target=$2
-mkdir "${target%/*}/rustc-controlled-linker"
-printf '%s' "$target" > "$fixture/ready.tmp"
-mv "$fixture/ready.tmp" "$fixture/ready"
-while [ ! -f "$fixture/release" ]; do sleep 0.01; done
-cp "$fixture/module.wasm" "$target"
-exit "$(cat "$fixture/exit-code")"
-"#,
-        )
-        .unwrap();
-        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o700)).unwrap();
-        let parameters = NativeTaskParametersV1::CompileModel {
-            schema_version: SchemaV1,
-            code_artifact_id: code,
-        };
-        let run_id = Id::new();
-        let spec = JobSpecV1 {
-            schema_version: SchemaV1,
-            run_id,
-            attempt_no: 1,
-            owner_epoch: Revision::INITIAL,
-            external_job_id: domain::runtime_jobs::external_id(run_id, 1).unwrap(),
-            job_kind: parameters.job_kind(),
-            image_ref: format!(
-                "example.invalid/controlled-compiler@sha256:{}",
-                "a".repeat(64)
-            ),
-            input_set_id: Id::new(),
-            inputs: Vec::new(),
-            parameters_artifact_id: Id::new(),
-            limits: contracts::runtime_jobs::RuntimeJobLimitsV1 {
-                cpu: Some(1),
-                cpu_seconds: Some(counter(10).unwrap()),
-                memory_mib: Some(512),
-                wall_seconds: Some(10),
-                output_bytes: Some(counter(capacity).unwrap()),
-            },
-            deadline_at: Some(chrono::Utc::now() + chrono::Duration::seconds(10)),
-            requested_output_schemas: parameters.output_schemas(),
-        };
-        let mut outputs = test_outputs(&output, capacity);
-        let (outputs, result) = std::thread::scope(|scope| {
-            let running = scope.spawn(move || {
-                let result = compile_with(&spec, &input, code, &mut outputs, features, &compiler);
-                (outputs, result)
-            });
-            let began = Instant::now();
-            let ready = fixture.path().join("ready");
-            while !ready.is_file() {
-                assert!(began.elapsed() < Duration::from_secs(5));
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let target = PathBuf::from(fs::read_to_string(ready).unwrap());
-            let staging = target.parent().unwrap();
-            assert!(staging.starts_with("/tmp"));
-            assert_ne!(staging, output);
-            assert_eq!(fs::metadata(staging).unwrap().mode() & 0o777, 0o700);
-            assert!(staging.join("rustc-controlled-linker").is_dir());
-            assert!(!target.exists());
-            assert_eq!(scan_flat_output(&output, capacity), 0);
-            assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
-            fs::write(fixture.path().join("release"), b"").unwrap();
-            let result = running.join().unwrap();
-            assert!(
-                !staging.exists(),
-                "compiler scratch must be removed on every return"
-            );
-            result
-        });
-        (fixture, outputs, result)
-    }
-
-    #[test]
-    fn compiler_scratch_is_private_until_valid_model_publication() {
-        let wasm = signal();
-        let (fixture, outputs, result) = controlled_compile(&wasm, 8192, false, 0);
-        result.unwrap();
-        assert_eq!(outputs.items.len(), 2);
-        let model = outputs
-            .items
-            .iter()
-            .find(|item| item.kind == RuntimeOutputKind::Model)
-            .unwrap();
-        assert_eq!(
-            fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(),
-            wasm
-        );
-        let report = outputs
-            .items
-            .iter()
-            .find(|item| item.kind == RuntimeOutputKind::Report)
-            .unwrap();
-        let report: NativeModelCompilationV1 =
-            document(&outputs.root.join(report.storage_ref.to_string())).unwrap();
-        assert_eq!(report.model_storage_ref, model.storage_ref);
-        assert_eq!(report.module_bytes.get(), wasm.len() as u64);
-        assert_eq!(
-            scan_flat_output(&outputs.root, 8192),
-            8192 - outputs.remaining.unwrap()
-        );
-        assert!(!outputs.root.join("index.json").exists());
-        outputs.seal().unwrap();
-        let output = fixture.path().join("output");
-        assert_eq!(fs::read_dir(&output).unwrap().count(), 3);
-        let index: NativeJobOutputIndexV1 = document(&output.join("index.json")).unwrap();
-        assert_eq!(index.artifacts.len(), 2);
-    }
-
-    #[test]
-    fn compiler_preserves_valid_module_above_former_file_cap_and_every_custom_section_byte() {
-        let mut wasm = signal();
-        // A valid opaque custom section, including its empty name, crosses the
-        // old transport ceiling without changing the module's predict ABI.
-        let section_bytes = 2 * 1024 * 1024 + 1;
-        wasm.push(0);
-        let mut length = section_bytes as u32;
-        loop {
-            let byte = (length & 0x7f) as u8;
-            length >>= 7;
-            wasm.push(if length == 0 { byte } else { byte | 0x80 });
-            if length == 0 {
-                break;
-            }
-        }
-        wasm.resize(wasm.len() + section_bytes, 0);
-        let capacity = wasm.len() as u64 + 8192;
-        let (_fixture, outputs, result) = controlled_compile(&wasm, capacity, false, 0);
-        result.unwrap();
-        let model = outputs
-            .items
-            .iter()
-            .find(|item| item.kind == RuntimeOutputKind::Model)
-            .unwrap();
-        assert_eq!(model.byte_count.get(), wasm.len() as u64);
-        assert_eq!(
-            fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(),
-            wasm
-        );
-        outputs.seal().unwrap();
-    }
-
-    #[test]
-    fn compiler_rejections_leave_no_model_report_or_temporary_output() {
-        let invalid_abi =
-            wat::parse_str(r#"(module (func (export "predict") (result f64) f64.const 0))"#)
-                .unwrap();
-        let wasm = signal();
-        for (bytes, capacity, features, exit_code, expected) in [
-            (
-                wasm.clone(),
-                wasm.len() as u64 - 1,
-                false,
-                0,
-                "NATIVE_OUTPUT_LIMIT",
-            ),
-            (invalid_abi, 8192, false, 0, "SIGNAL_ABI_MISMATCH"),
-            (wasm.clone(), 8192, true, 0, "FEATURE_MODEL_ABI_MISMATCH"),
-            (
-                vec![0; 2 * 1024 * 1024 + 1],
-                8192,
-                false,
-                0,
-                "SIGNAL_REQUIRES_WASM_BINARY",
-            ),
-            (wasm, 8192, false, 1, "NATIVE_COMPILATION_FAILED"),
-        ] {
-            let (_fixture, outputs, result) =
-                controlled_compile(&bytes, capacity, features, exit_code);
-            assert!(
-                result.unwrap_err().to_string().contains(expected),
-                "{expected}"
-            );
-            assert_eq!(outputs.remaining, Some(capacity));
-            assert!(outputs.items.is_empty());
-            assert_eq!(fs::read_dir(&outputs.root).unwrap().count(), 0);
-        }
     }
 }

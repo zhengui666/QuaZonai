@@ -71,16 +71,14 @@ pub(crate) struct ReplayStatus {
     order_rejection: Option<String>,
     order_denial: Option<String>,
     submitted_after_ns: u64,
-    study_infeasible: bool,
     settled_replay_ns: Option<u64>,
-    frames: Vec<NativePortfolioStudyFrameV1>,
     spot_fills: Vec<OrderFilled>,
 }
 
 impl ReplayStatus {
     fn replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
         self.failure.is_none()
-            && (self.study_infeasible || (data_complete && self.consumed == expected_targets))
+            && data_complete && self.consumed == expected_targets
     }
 
     fn record_callback_error(&mut self, error: anyhow::Error) {
@@ -116,26 +114,12 @@ impl ReplayStatus {
     }
 }
 
-pub(crate) struct StudyInput {
-    pub cutoff_ns: DbCounter,
-    pub input: contracts::portfolio::AllocationInputV1,
-    pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
-    pub bar_notionals: Vec<contracts::execution::NativeBarNotionalV1>,
-    pub liquidity_maximum_age: Option<u32>,
-}
-
 pub(crate) struct TargetReplay {
     core: StrategyCore,
     instruments: Vec<InstrumentAny>,
     bar_types: Vec<BarType>,
     latest: BTreeMap<InstrumentId, Bar>,
     points: Vec<NativeTargetPointV1>,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
     settings: NativeSimulationSettingsV1,
     spot_cash: Option<crate::spot_cash_capture::SpotCashCaptureHandle>,
     currency: Currency,
@@ -292,7 +276,7 @@ impl TargetReplay {
             .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
         let finished =
             status.replay_terminal(data_complete, self.points.len()) && self.orders_settled();
-        if finished && !status.study_infeasible {
+        if finished {
             status
                 .settled_replay_ns
                 .get_or_insert_with(|| self.clock().timestamp_ns().as_u64());
@@ -367,9 +351,6 @@ impl TargetReplay {
     }
 
     fn apply_bar(&mut self, bar: &Bar, receipt_ns: u64) -> Result<()> {
-        if self.status.borrow().study_infeasible {
-            return Ok(());
-        }
         ensure!(
             self.status.borrow().failure.is_none(),
             "SIMULATION_ALREADY_FAILED"
@@ -475,94 +456,9 @@ impl TargetReplay {
         ensure!(equity > Decimal::ZERO, "SIMULATION_NONPOSITIVE_EQUITY");
         // Most BARs only establish readiness. Own the target only once the
         // complete decision can use settled positions and native equity.
-        let mut point = point.clone();
+        let point = point.clone();
 
-        if let Some(planned) = self.study_inputs.get(next) {
-            let mut input = planned.input.clone();
-            input.forecasts.decision_asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
-            if let Some(age) = planned.liquidity_maximum_age {
-                domain::portfolio::bar_liquidity_age(
-                    &planned.bar_notionals,
-                    &input.base_currency,
-                    age,
-                    input.forecasts.decision_asof_ns,
-                )?;
-            }
-            input.capital_assumption = equity.to_string().parse().map_err(anyhow::Error::msg)?;
-            let mut cash = Decimal::ONE;
-            for (asset, instrument) in input.assets.iter_mut().zip(&self.instruments) {
-                let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
-                let notional = checked(
-                    checked(
-                        crate::spot_cash_runtime::inventory_quantity(
-                            spot_snapshot.as_ref(),
-                            instrument,
-                            || self.portfolio().net_position(&instrument.id()),
-                        )?
-                        .checked_mul(price),
-                    )?
-                    .checked_mul(instrument.multiplier().as_decimal()),
-                )?;
-                let weight = checked(notional.checked_div(equity))?.round_dp(18);
-                cash = checked(cash.checked_sub(weight))?;
-                asset.current_weight = weight.to_string().parse().map_err(anyhow::Error::msg)?;
-            }
-            input.current_cash_weight = cash.to_string().parse().map_err(anyhow::Error::msg)?;
-            let allocation = crate::allocate(&input)?;
-            domain::portfolio::allocation_result(&input, &allocation)?;
-            let targets = allocation.targets.clone();
-            let cash = allocation.cash_weight.clone();
-            self.status
-                .borrow_mut()
-                .frames
-                .push(NativePortfolioStudyFrameV1 {
-                    cutoff_ns: planned.cutoff_ns,
-                    input,
-                    allocation,
-                    slippage_references: planned.slippage.clone(),
-                    bar_notionals: planned.bar_notionals.clone(),
-                });
-            let (Some(targets), Some(cash)) = (targets, cash) else {
-                self.status.borrow_mut().study_infeasible = true;
-                return Ok(());
-            };
-            point.targets = targets;
-            point.cash_weight = cash;
-            point.asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
-            validate_point(&self.settings, &point, &self.instruments)?;
-        }
-        if let Some((constraints, currency, tolerance)) = &self.strategy_constraints {
-            let current = self
-                .instruments
-                .iter()
-                .map(|instrument| {
-                    let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
-                    let notional = checked(
-                        checked(
-                            crate::spot_cash_runtime::inventory_quantity(
-                                spot_snapshot.as_ref(),
-                                instrument,
-                                || self.portfolio().net_position(&instrument.id()),
-                            )?
-                            .checked_mul(price),
-                        )?
-                        .checked_mul(instrument.multiplier().as_decimal()),
-                    )?;
-                    checked(notional.checked_div(equity))?
-                        .round_dp(18)
-                        .to_string()
-                        .parse()
-                        .map_err(anyhow::Error::msg)
-                })
-                .collect::<Result<Vec<DecimalValue>>>()?;
-            domain::execution::strategy::target_bounds(
-                constraints,
-                currency,
-                tolerance,
-                &point,
-                &current,
-            )?;
-        }
+
         let mut reductions = Vec::<OrderAny>::new();
         let mut increases = Vec::<OrderAny>::new();
         for (instrument, target) in self.instruments.iter().zip(&point.targets) {
@@ -935,39 +831,7 @@ pub fn simulate(
     root: &Path,
     request: &NativeSimulationRequestV1,
 ) -> Result<NativeSimulationResultV1> {
-    run(root, request, Vec::new())?
-        .0
-        .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
-}
-
-pub(crate) fn run(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
-    run_with_strategy(root, request, study_inputs, None)
-}
-
-pub fn simulate_strategy(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    mandate: &contracts::strategy_portfolio::StrategyMandateContentV1,
-) -> Result<NativeSimulationResultV1> {
-    run_with_strategy(
-        root,
-        request,
-        Vec::new(),
-        Some((
-            mandate.constraints.clone(),
-            mandate.base_currency.clone(),
-            mandate.exposure_tolerance.clone(),
-        )),
-    )?
-    .0
-    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+    run_with_strategy_and_spot(root, request, None)
 }
 
 /// Explicit research-candidate entry. Source rows must come from the trusted
@@ -983,16 +847,12 @@ pub fn simulate_spot_cash_candidate(
     run_with_strategy_and_spot(
         root,
         request,
-        Vec::new(),
-        None,
         Some(crate::spot_cash_runtime::SpotReplayInputs {
             dataset_revision_id,
             closed_rows,
             observed_start: None,
         }),
-    )?
-    .0
-    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+    )
 }
 
 /// Explicit observed-inventory runner. Empty points mean no submitted orders,
@@ -1003,11 +863,7 @@ pub(crate) fn run_observed_spot(
     dataset_revision_id: contracts::Id,
     closed_rows: Vec<crate::spot_cash_capture::ClosedBarSourceRow>,
     initial_state: &contracts::observed_spot::NativeObservedSpotStartV1,
-    study_inputs: Vec<StudyInput>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
+) -> Result<NativeSimulationResultV1> {
     domain::observed_spot::starting_balances(
         initial_state,
         &request.settings,
@@ -1017,8 +873,6 @@ pub(crate) fn run_observed_spot(
     run_with_strategy_and_spot(
         root,
         request,
-        study_inputs,
-        None,
         Some(crate::spot_cash_runtime::SpotReplayInputs {
             dataset_revision_id,
             closed_rows,
@@ -1027,42 +881,13 @@ pub(crate) fn run_observed_spot(
     )
 }
 
-fn run_with_strategy(
-    root: &Path,
-    request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
-    run_with_strategy_and_spot(root, request, study_inputs, strategy_constraints, None)
-}
-
 fn run_with_strategy_and_spot(
     root: &Path,
     request: &NativeSimulationRequestV1,
-    study_inputs: Vec<StudyInput>,
-    strategy_constraints: Option<(
-        contracts::portfolio::PortfolioConstraintsV1,
-        String,
-        DecimalValue,
-    )>,
     mut spot_inputs: Option<crate::spot_cash_runtime::SpotReplayInputs>,
-) -> Result<(
-    Option<NativeSimulationResultV1>,
-    Vec<NativePortfolioStudyFrameV1>,
-)> {
+) -> Result<NativeSimulationResultV1> {
     ensure!(
-        study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
-        "STUDY_FRAME_COUNT"
-    );
-    ensure!(
-        (study_inputs.is_empty() && strategy_constraints.is_none() && spot_inputs.is_none())
+        spot_inputs.is_none()
             || request
                 .target_points
                 .iter()
@@ -1178,8 +1003,6 @@ fn run_with_strategy_and_spot(
             .collect(),
         latest: BTreeMap::new(),
         points: request.target_points.clone(),
-        study_inputs,
-        strategy_constraints,
         settings: request.settings.clone(),
         spot_cash: None,
         currency,
@@ -1220,7 +1043,7 @@ fn run_with_strategy_and_spot(
     let mut engine = BacktestEngine::new(config)?;
     let fill_fees = crate::fee_models::FillFeeObserver::default();
     let live_progress = crate::live_progress::LiveProgress::attach();
-    let result = (|| -> Result<Option<NativeSimulationResultV1>> {
+    let result = (|| -> Result<NativeSimulationResultV1> {
         let settings = &request.settings;
 
         let default_fill = DefaultFillModel::new(
@@ -1358,9 +1181,6 @@ fn run_with_strategy_and_spot(
         status.borrow_mut().finish_run(native_result)?;
 
         let observed = status.borrow();
-        if observed.study_infeasible {
-            return Ok(None);
-        }
         let expected_targets = request.target_points.len();
         ensure!(
             observed.consumed == expected_targets,
@@ -1536,7 +1356,7 @@ fn run_with_strategy_and_spot(
         if let Some(evidence) = projected_bar_evidence {
             summary.insert("qz.source_runtime_bar_projection".into(), evidence);
         }
-        Ok(Some(NativeSimulationResultV1 {
+        Ok(NativeSimulationResultV1 {
             settled_replay_ns: observed
                 .settled_replay_ns
                 .map(DbCounter::new)
@@ -1557,12 +1377,11 @@ fn run_with_strategy_and_spot(
             returns_reason,
             returns,
             canonical_result: engine.get_canonical_result()?.as_value().clone(),
-        }))
+        })
     })();
     drop(live_progress);
     engine.dispose();
-    let frames = std::mem::take(&mut status.borrow_mut().frames);
-    Ok((result?, frames))
+    result
 }
 
 #[cfg(test)]
@@ -1708,17 +1527,14 @@ mod replay_error_tests {
     }
 
     #[test]
-    fn replay_infeasible_study_is_terminal_without_consuming_future_targets() {
+    fn replay_is_terminal_only_after_all_data_and_targets_are_consumed() {
         let mut status = ReplayStatus::default();
         assert!(!status.replay_terminal(false, 1));
         assert!(!status.replay_terminal(true, 1));
-        status.study_infeasible = true;
-        assert!(status.replay_terminal(false, 1));
         assert_eq!(status.consumed, 0);
         status.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
         assert!(!status.replay_terminal(false, 1));
         status.failure = None;
-        status.study_infeasible = false;
         status.consumed = 1;
         assert!(!status.replay_terminal(false, 1));
         assert!(status.replay_terminal(true, 1));

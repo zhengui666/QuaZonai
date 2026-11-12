@@ -1,34 +1,15 @@
 //! Exercise the actual native binary, protocol input and safe error channel.
 #[path = "support/market.rs"]
 mod market;
-use contracts::science::{NativeForecastResultV1, NativeSimulationResultV1};
-use market::{forecast_request, market, module};
+use contracts::science::NativeSimulationResultV1;
+use market::market;
 #[path = "support/command.rs"]
 mod native;
 use native::command;
 
 #[test]
-fn real_native_cli_forecasts_and_replays_a_single_shared_account() {
+fn real_native_cli_replays_a_single_shared_account() {
     let (directory, request) = market("0", 20);
-    let model = directory.path().join("model.wasm");
-    std::fs::write(&model, module("local.get 2 local.get 3 f64.sub")).unwrap();
-    let result = command(
-        &[
-            "forecast".as_ref(),
-            "--catalog".as_ref(),
-            directory.path().as_os_str(),
-            "--model".as_ref(),
-            model.as_os_str(),
-        ],
-        &forecast_request(&request),
-    );
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    let forecast: NativeForecastResultV1 = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(forecast.points.len(), 40);
     let result = command(
         &[
             "simulate".as_ref(),
@@ -48,128 +29,9 @@ fn real_native_cli_forecasts_and_replays_a_single_shared_account() {
 }
 
 #[test]
-fn price_bar_forecast_cli_matches_the_original_features_without_trading_definitions() {
-    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
-
-    let (original, request) = market("0", 20);
-    let forecast_request = forecast_request(&request);
-    let wasm = module("local.get 2 local.get 3 f64.sub");
-    let expected = job::forecast::forecast(original.path(), &forecast_request, &wasm).unwrap();
-    let data = job::catalog::load_catalog(original.path(), &request.selection).unwrap();
-    let prices = tempfile::tempdir().unwrap();
-    let catalog =
-        ParquetDataCatalog::from_uri(prices.path().to_str().unwrap(), None, Some(16), None, None)
-            .unwrap();
-    for series in &data.series {
-        catalog
-            .write_to_parquet(&series.bars, None, None, None)
-            .unwrap();
-    }
-    let model = prices.path().join("model.wasm");
-    std::fs::write(&model, &wasm).unwrap();
-    let result = command(
-        &[
-            "forecast-factor".as_ref(),
-            "--catalog".as_ref(),
-            prices.path().as_os_str(),
-            "--model".as_ref(),
-            model.as_os_str(),
-        ],
-        &forecast_request,
-    );
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    let observed: NativeForecastResultV1 = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(
-        serde_json::to_value(observed).unwrap(),
-        serde_json::to_value(expected).unwrap()
-    );
-    assert!(job::forecast::forecast(prices.path(), &forecast_request, &wasm).is_err());
-}
-
-#[test]
-fn native_cli_reports_invalid_model_cause_without_echoing_model_contents() {
-    let (directory, request) = market("0", 20);
-    let model = directory.path().join("private-sentinel.wasm");
-    std::fs::write(&model, b"SENTINEL_NOT_FOR_LOGS").unwrap();
-    let result = command(
-        &[
-            "forecast".as_ref(),
-            "--catalog".as_ref(),
-            directory.path().as_os_str(),
-            "--model".as_ref(),
-            model.as_os_str(),
-        ],
-        &forecast_request(&request),
-    );
-    assert!(!result.status.success());
-    assert!(result.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert_eq!(
-        stderr.trim(),
-        "QZ_NATIVE_JOB_FAILED\nSIGNAL_REQUIRES_WASM_BINARY"
-    );
-    assert!(!stderr.contains("SENTINEL_NOT_FOR_LOGS"));
-}
-
-#[cfg(unix)]
-#[test]
-fn native_cli_rejects_model_symlinks_and_fifos_without_opening_them() {
-    let (directory, request) = market("0", 20);
-    let model = directory.path().join("original.wasm");
-    std::fs::write(&model, module("f64.const 1")).unwrap();
-    let link = directory.path().join("link.wasm");
-    std::os::unix::fs::symlink(&model, &link).unwrap();
-    let result = command(
-        &[
-            "forecast".as_ref(),
-            "--catalog".as_ref(),
-            directory.path().as_os_str(),
-            "--model".as_ref(),
-            link.as_os_str(),
-        ],
-        &forecast_request(&request),
-    );
-    assert!(!result.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&result.stderr).trim(),
-        "QZ_NATIVE_JOB_FAILED\nnative model file limit"
-    );
-    let fifo = directory.path().join("fifo.wasm");
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        &fifo,
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-        0,
-    )
-    .unwrap();
-    let result = command(
-        &[
-            "forecast".as_ref(),
-            "--catalog".as_ref(),
-            directory.path().as_os_str(),
-            "--model".as_ref(),
-            fifo.as_os_str(),
-        ],
-        &forecast_request(&request),
-    );
-    assert!(!result.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&result.stderr).trim(),
-        "QZ_NATIVE_JOB_FAILED\nnative model file limit"
-    );
-}
-
-#[test]
 fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, request) = market("0", 20);
-    let model = directory.path().join("model.wasm");
-    std::fs::write(&model, module("f64.const 1")).unwrap();
     let catalog = ParquetDataCatalog::from_uri(
         directory.path().to_str().unwrap(),
         None,
@@ -187,16 +49,6 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     std::fs::write(&path, &corrupted).unwrap();
     for result in [
-        command(
-            &[
-                "forecast".as_ref(),
-                "--catalog".as_ref(),
-                directory.path().as_os_str(),
-                "--model".as_ref(),
-                model.as_os_str(),
-            ],
-            &forecast_request(&request),
-        ),
         command(
             &[
                 "simulate".as_ref(),
@@ -607,6 +459,12 @@ fn native_cli_blend_targets_rejects_bad_weights_and_original_point_misalignment(
 #[test]
 fn retired_ensemble_and_review_allocation_commands_are_not_executable() {
     for operation in [
+        "forecast",
+        "forecast-factor",
+        "allocate",
+        "study-portfolio",
+        "build-observed-spot",
+        "study-observed-spot",
         "fit-ensemble",
         "apply-ensemble",
         "freeze-ensemble-calibrations",

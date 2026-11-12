@@ -54,7 +54,6 @@ tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "=0.4.45", features = ["serde"] }
-clarabel = "=0.11.1"
 nautilus-backtest = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
 nautilus-analysis = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
 nautilus-common = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["indicators"] }
@@ -86,9 +85,7 @@ num-bigint = "=0.4.8"
 num-rational = "=0.4.2"
 iso_currency = "=0.7.0"
 rustix = { version = "=1.1.4", features = ["fs", "process", "stdio"] }
-nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
 ndarray = "=0.17.1"
-ndarray-stats = "=0.7.0"
 # Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
 wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "portable-dispatch"] }
 

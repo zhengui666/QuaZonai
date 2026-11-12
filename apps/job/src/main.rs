@@ -82,21 +82,6 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Independently replay a frozen feature-aware target policy in native folds.
-    EvaluateExperiment {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        model: PathBuf,
-        #[arg(long, value_parser = parse_id)]
-        dataset_revision_id: contracts::Id,
-        #[arg(long, value_parser = parse_id)]
-        model_artifact_id: contracts::Id,
-        #[arg(long, required = true)]
-        features: Vec<PathBuf>,
-        #[arg(long, required = true, value_parser = parse_id)]
-        feature_artifact_id: Vec<contracts::Id>,
-    },
     /// Run a compiled upstream strategy on original native market events.
     NativeStrategyBacktest {
         #[arg(long)]
@@ -130,13 +115,7 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Optimize inside the observed spot inventory at every causal decision cutoff.
-    StudyObservedSpot {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        objects: PathBuf,
-    },
+
 }
 
 fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
@@ -247,35 +226,12 @@ fn run(operation: Operation) -> Result<()> {
         Operation::CatalogFactorScope { catalog } => {
             output(&job::catalog::catalog_factor_scope(&catalog)?)
         }
-        Operation::EvaluateExperiment {
-            catalog,
-            model,
-            dataset_revision_id,
-            model_artifact_id,
-            features,
-            feature_artifact_id,
-        } => {
-            let request = input()?;
-            let parts = features
-                .into_iter()
-                .map(|path| -> Result<_> { Ok(serde_json::from_slice(&model_bytes(&path)?)?) })
-                .collect::<Result<Vec<_>>>()?;
-            output(&job::experiment::evaluate(
-                &catalog,
-                &request,
-                dataset_revision_id,
-                model_artifact_id,
-                &feature_artifact_id,
-                &parts,
-                &model_bytes(&model)?,
-            )?)
-        }
         Operation::NativeStrategyBacktest { catalog } => {
             native_output(|| job::native_strategy::run(&catalog, input()?))
-        },
+        }
         Operation::NativeWalkForward { catalog } => {
             native_output(|| job::native_walk_forward::run(&catalog, input()?))
-        },
+        }
         Operation::Simulate {
             catalog,
             dataset_revision_id,
@@ -292,11 +248,6 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::CatalogPrefixDigest { catalog } => {
             output(&job::catalog_prefix::digest(&catalog, &input()?)?)
-        }
-        Operation::StudyObservedSpot { catalog, objects } => {
-            output(&job::observed_spot::study(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()))
-            })?)
         }
     }
 }
@@ -348,8 +299,32 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{public_error_code, public_failure, Arguments, Operation};
+    use super::{public_error_code, public_failure, Arguments};
     use clap::Parser;
+
+    #[test]
+    fn invalid_model_failure_does_not_echo_model_contents() {
+        let error = job::signals::SignalModule::new(b"SENTINEL_NOT_FOR_LOGS", false).err().unwrap();
+        assert_eq!(public_failure(&error), "QZ_NATIVE_JOB_FAILED\nSIGNAL_REQUIRES_WASM_BINARY");
+        assert!(!public_failure(&error).contains("SENTINEL_NOT_FOR_LOGS"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_model_loader_rejects_symlinks_and_fifos_without_opening_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("original.wasm");
+        std::fs::write(&model, b"original bytes").unwrap();
+        assert_eq!(super::model_bytes(&model).unwrap(), b"original bytes");
+        let link = directory.path().join("link.wasm");
+        std::os::unix::fs::symlink(&model, &link).unwrap();
+        let fifo = directory.path().join("fifo.wasm");
+        rustix::fs::mknodat(rustix::fs::CWD, &fifo, rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR, 0).unwrap();
+        for path in [link, fifo] {
+            assert_eq!(super::model_bytes(&path).unwrap_err().to_string(), "native model file limit");
+        }
+    }
 
     #[test]
     fn hyper_network_collection_is_not_a_cli_operation() {
@@ -436,9 +411,10 @@ mod tests {
 
     #[test]
     fn executable_commands_exclude_the_removed_compatibility_probe() {
-        for command in ["allocate", "run-bounded", "execute"] {
+        for command in ["run-bounded", "execute"] {
             assert!(Arguments::try_parse_from(["job", command]).is_ok());
         }
+        assert!(Arguments::try_parse_from(["job", "allocate"]).is_err());
         assert!(Arguments::try_parse_from([
             "job",
             "verify-native",
@@ -456,88 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_evaluation_cli_preserves_each_typed_artifact_identity() {
-        let dataset = contracts::Id::new().to_string();
-        let model = contracts::Id::new().to_string();
-        let first = contracts::Id::new().to_string();
-        let second = contracts::Id::new().to_string();
-        let arguments = [
-            "job",
-            "evaluate-experiment",
-            "--catalog",
-            "catalog",
-            "--model",
-            "model.wasm",
-            "--dataset-revision-id",
-            &dataset,
-            "--model-artifact-id",
-            &model,
-            "--features",
-            "first.json",
-            "--feature-artifact-id",
-            &first,
-            "--features",
-            "second.json",
-            "--feature-artifact-id",
-            &second,
-        ];
-        let Operation::EvaluateExperiment {
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_id,
-            features,
-            ..
-        } = Arguments::try_parse_from(arguments).unwrap().command
-        else {
-            panic!("expected feature evaluation operation");
-        };
-        assert_eq!(dataset_revision_id.to_string(), dataset);
-        assert_eq!(model_artifact_id.to_string(), model);
-        assert_eq!(
-            feature_artifact_id
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-            [first, second]
-        );
-        assert_eq!(
-            features,
-            [
-                std::path::PathBuf::from("first.json"),
-                std::path::PathBuf::from("second.json")
-            ]
-        );
-    }
-
-    #[test]
-    fn feature_evaluation_cli_rejects_invalid_ids_before_reading_any_inputs() {
-        let valid = contracts::Id::new().to_string();
-        let arguments = vec![
-            "job",
-            "evaluate-experiment",
-            "--catalog",
-            "missing-catalog",
-            "--model",
-            "missing-model.wasm",
-            "--dataset-revision-id",
-            &valid,
-            "--model-artifact-id",
-            &valid,
-            "--features",
-            "missing-features.json",
-            "--feature-artifact-id",
-            &valid,
-        ];
-        for position in [7, 9, 13] {
-            for invalid in ["not-a-uuid", "550e8400-e29b-41d4-a716-446655440000"] {
-                let mut candidate = arguments.clone();
-                candidate[position] = invalid;
-                let error = Arguments::try_parse_from(candidate)
-                    .err()
-                    .expect("invalid ID");
-                assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
-                assert!(error.to_string().contains("canonical UUIDv7"));
-            }
-        }
+    fn retired_wasm_evaluation_is_not_a_cli_operation() {
+        assert!(Arguments::try_parse_from(["job", "evaluate-experiment"]).is_err());
     }
 }

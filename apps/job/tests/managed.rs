@@ -267,7 +267,12 @@ fn retired_managed_forecast_cannot_publish_or_execute() {
     );
     fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
     attach_catalog(&f, dataset_id, catalog.path());
-    assert_eq!(job::managed::execute(&f.input, &f.output).unwrap_err().to_string(), "NATIVE_RESEARCH_OPERATION_RETIRED");
+    assert_eq!(
+        job::managed::execute(&f.input, &f.output)
+            .unwrap_err()
+            .to_string(),
+        "NATIVE_RESEARCH_OPERATION_RETIRED"
+    );
     assert!(!execute(&f));
     assert!(!f.output.join("index.json").exists());
 }
@@ -347,7 +352,12 @@ fn retired_managed_study_cannot_publish_or_execute() {
             fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
         }
         attach_catalog(&f, dataset, catalog.path());
-        assert_eq!(job::managed::execute(&f.input, &f.output).unwrap_err().to_string(), "NATIVE_RESEARCH_OPERATION_RETIRED");
+        assert_eq!(
+            job::managed::execute(&f.input, &f.output)
+                .unwrap_err()
+                .to_string(),
+            "NATIVE_RESEARCH_OPERATION_RETIRED"
+        );
         assert!(!execute(&f));
         assert!(!f.output.join("index.json").exists());
     }
@@ -499,7 +509,12 @@ fn portfolio_fixture(
 #[test]
 fn retired_managed_build_cannot_publish_or_execute() {
     let f = portfolio_fixture(false, |_| {});
-    assert_eq!(job::managed::execute(&f.input, &f.output).unwrap_err().to_string(), "NATIVE_RESEARCH_OPERATION_RETIRED");
+    assert_eq!(
+        job::managed::execute(&f.input, &f.output)
+            .unwrap_err()
+            .to_string(),
+        "NATIVE_RESEARCH_OPERATION_RETIRED"
+    );
     assert!(!execute(&f));
     assert!(!f.output.join("index.json").exists());
 }
@@ -829,9 +844,14 @@ fn portfolio_sequence_binds_every_original_target_and_one_native_account() {
 fn native_managed_output_limit_fails_without_a_published_index() {
     let (catalog, request) = market::market("0.001", 20);
     let id = Id::new();
-    let mut f = fixture(NativeTaskParametersV1::SimulatePortfolio {
-        schema_version: SchemaV1, dataset_revision_id: id, request: Box::new(request),
-    }, vec![dataset(id)]);
+    let mut f = fixture(
+        NativeTaskParametersV1::SimulatePortfolio {
+            schema_version: SchemaV1,
+            dataset_revision_id: id,
+            request: Box::new(request),
+        },
+        vec![dataset(id)],
+    );
     attach_catalog(&f, id, catalog.path());
     f.spec.limits.output_bytes = Some(DbCounter::new(1).unwrap());
     fs::write(
@@ -868,7 +888,7 @@ fn native_compiler_rejects_a_dataset_mount_before_starting_a_compiler() {
 }
 
 #[test]
-fn managed_cross_source_evaluation_publishes_native_bound_fold_evidence() {
+fn retired_managed_cross_source_evaluation_cannot_publish_or_execute() {
     let (catalog, request, parts) = experiment_fixture::fixture(false);
     let dataset_id = Id::new();
     let model_id = Id::new();
@@ -915,15 +935,9 @@ fn managed_cross_source_evaluation_publishes_native_bound_fold_evidence() {
         fs::write(f.input.join("objects").join(id.to_string()), raw).unwrap();
     }
     attach_catalog(&f, dataset_id, catalog.path());
-    assert!(execute(&f));
-    let report: contracts::science::NativeExperimentEvaluationResultV1 =
-        result(&f, "qz.experiment_evaluation");
-    assert_eq!(report.feature_artifact_ids, feature_ids);
-    assert!(report.folds.len() > 1);
-    assert!(report
-        .folds
-        .iter()
-        .all(|fold| fold.simulation.consumed_target_points.get() == fold.decisions.len() as u64));
+    assert!(!execute(&f));
+    assert!(!f.output.join("index.json").exists());
+    assert_eq!(fs::read_dir(&f.output).unwrap().count(), 0);
 }
 
 #[test]
@@ -1117,4 +1131,23 @@ fn forward_daily_statistics_use_original_reports_and_fixed_native_methods() {
         role: ArtifactInputRole::Report,
     });
     assert!(domain::execution::task(&extra, &parameters).is_err());
+}
+
+#[test]
+fn retired_managed_compilers_reject_before_reading_source() {
+    for parameters in [
+        NativeTaskParametersV1::CompileModel {
+            schema_version: SchemaV1,
+            code_artifact_id: Id::new(),
+        },
+        NativeTaskParametersV1::CompileFeatureModel {
+            schema_version: SchemaV1,
+            code_artifact_id: Id::new(),
+        },
+    ] {
+        let f = fixture(parameters, vec![]);
+        let error = job::managed::execute(&f.input, &f.output).unwrap_err();
+        assert_eq!(error.to_string(), "NATIVE_RESEARCH_OPERATION_RETIRED");
+        assert_eq!(fs::read_dir(&f.output).unwrap().count(), 0);
+    }
 }

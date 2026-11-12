@@ -16,7 +16,7 @@ import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativ
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 import { canonical } from './documents.ts';
 
-export const nativeCommands = new Set(['review-source', 'replay-tick-economic', 'evaluate-experiment', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
+export const nativeCommands = new Set(['review-source', 'replay-tick-economic', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'value-observed-spot', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */

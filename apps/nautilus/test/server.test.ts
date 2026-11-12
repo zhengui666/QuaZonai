@@ -73,7 +73,7 @@ test('removed scientific commands are absent from capabilities and rejected befo
   const f = await fixture();
   try {
     const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
-    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot']) {
+    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'evaluate-experiment', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot', 'study-observed-spot']) {
       assert.equal(capabilities.commands.includes(command), false);
       const body = f.request({}); body.command = command;
       const { requestId: _previous, ...input } = body; body.requestId = executionId(input);

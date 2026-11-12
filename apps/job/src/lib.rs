@@ -25,10 +25,8 @@ pub mod capital_exit_gate;
 pub mod catalog;
 pub mod native_walk_forward;
 pub mod catalog_prefix;
-pub mod experiment;
 pub mod feature_model;
 mod fee_models;
-pub mod forecast;
 pub mod forward;
 mod live_progress;
 pub mod managed;
@@ -39,10 +37,7 @@ pub mod native_node_observer;
 pub mod observed_spot;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;
-mod optimization;
 mod performance;
-pub mod portfolio;
-pub use optimization::allocate;
 mod report;
 pub use report::write_probe_report;
 pub mod signals;
@@ -53,8 +48,6 @@ mod spot_cash_runtime;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
 pub mod spot_fees;
-pub mod strategy;
-pub mod study;
 pub mod ticks;
 pub mod validation;
 
