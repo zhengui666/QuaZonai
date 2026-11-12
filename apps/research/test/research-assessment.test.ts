@@ -268,7 +268,7 @@ test('exposure pages bound a single response by model context without truncating
     assert.ok((page.nextOffset as number) > offset); offset = page.nextOffset as number;
   } while (true);
   assert.ok(pages > 1); assert.deepEqual(seen, rows);
-  assert.throws(() => nativeExposurePage([{ value: 'x'.repeat(5000) }], args, 4096), /row_exceeds_model_page_budget/);
+  assert.throws(() => nativeExposurePage([{ value: 'x'.repeat(5000) }], args, 4096), /row_exceeds_model_page_budget.*reducing pageSize cannot fix.*record this row as unread/);
   assert.throws(() => nativeExposurePage([], args, 4), /metadata_exceeds_model_budget/);
   assert.equal(nativeExposurePage([], args, 4096).nextOffset, null);
 });

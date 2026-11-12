@@ -104,7 +104,7 @@ export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; pa
   while (end < rows.length && selected.length < args.pageSize) {
     const size = Buffer.byteLength(JSON.stringify(rows[end])) + (selected.length ? 1 : 0);
     if (bytes + size > maxPayloadBytes) {
-      if (!selected.length) throw new Error(`assessment_evidence_row_exceeds_model_page_budget: task=${args.taskId} path=${args.path} offset=${end}; row remains intact on original Task but cannot be read through this page tool`);
+      if (!selected.length) throw new Error(`assessment_evidence_row_exceeds_model_page_budget: task=${args.taskId} path=${args.path} offset=${end}; row remains intact on original Task but cannot be read through this page tool; reducing pageSize cannot fix an oversized single row; record this row as unread and continue other evidence rather than retrying the same offset without progress`);
       break;
     }
     selected.push(rows[end]!); bytes += size; end++;
@@ -113,7 +113,7 @@ export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; pa
 }
 export const exposureReadTool = defineTool({
   name: 'native_assessment_read_exposure',
-  description: 'Read an explicitly requested page of an original native account/position table listed in this review manifest. Use its taskId and exact table path, offset (zero-based) and pageSize. pageSize is a requested row count; a conservative per-return byte budget derived from the selected model context may return fewer rows. Follow actual nextOffset, not the requested count. There is no imposed total-row or page-count limit. A row too large for one response fails explicitly without removing it from the original Task. nextOffset null means only this table has ended. Returned rows are unchanged; reading a page is not proof of full review, peak exposure, or margin sufficiency. No backtests or orders.',
+  description: 'Read an explicitly requested page of an original native account/position table listed in this review manifest. Use its taskId and exact table path, offset (zero-based) and pageSize. pageSize is a requested row count; a conservative per-return byte budget derived from the selected model context may return fewer rows. Follow actual nextOffset, not the requested count. There is no imposed total-row or page-count limit. A row too large for one response fails explicitly without removing it from the original Task. Reducing pageSize cannot fix one oversized row: record it as unread, disclose the missing evidence, and continue other rows/tables instead of retrying that offset without progress. nextOffset null means only this table has ended. Returned rows are unchanged; reading a page is not proof of full review, peak exposure, or margin sufficiency. No backtests or orders.',
   parameters: obj({ taskId: int({ minimum: 0 }), path: str(), offset: int({ minimum: 0 }), pageSize: int({ minimum: 1 }) }),
   replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
