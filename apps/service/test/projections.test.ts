@@ -45,7 +45,7 @@ test('list and usage do not load historical task results; list retains its exist
     const { receipt } = await studied(state);
     const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
     const detail = (await get(`research/${receipt.conversationId}`)).json();
-    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, ...expected } = detail;
+    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
     const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
     const list = await get('research'); const usage = await get('usage');
@@ -63,7 +63,7 @@ test('detail reads live task state from the official graph and caches immutable 
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { if (args[0].conversationId === receipt.conversationId && args[0].status === 'terminal') scans++; return scan(...args); });
     const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
     const [first, concurrent] = await Promise.all([get(), get()]);
-    assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 1);
+    assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 0, 'studied already read detail and populated terminal metadata');
     let finishFailure!: () => void; const failure = new Promise<void>(resolve => { finishFailure = resolve; });
     const task = defineTask<{ fail: boolean; result: string | null }, { phase: 'compute' }, string | null>({ name: 'test.metadata-only', version: 1, initial: () => ({ phase: 'compute' }),
       phases: { async compute(task, runtime, ctx) { if (task.input.fail) await awaitWithContext(failure, ctx); await runtime.commit(() => ({ status: 'terminal', outcome: task.input.fail ? { status: 'failed', error: { message: 'test_failure' } } : { status: 'completed', result: task.input.result } }), ctx); } },
@@ -83,8 +83,8 @@ test('detail reads live task state from the official graph and caches immutable 
     const usage = await state.service.app.inject({ url: '/api/v3/usage', headers: state.headers }); assert.ok(usage.json().activeTasks > 0);
     finishFailure(); await host.harness.waitForTask(pending, context);
     const final = (await get()).json(); const failed = final.tasks[0]; assert.equal(failed.id, pending); assert.equal(failed.status, 'terminal'); assert.equal(failed.outcome, 'failed'); assert.equal(failed.error, 'task_failed');
-    assert.equal(scans, 1, 'committed changes must update metadata without reloading evidence');
-    const cold = await researchTaskViews(host)(receipt.conversationId); assert.deepEqual(cold, final.tasks); assert.equal(scans, 11, 'cold history is read in ten small pages, not one huge allocation');
+    assert.equal(scans, 0, 'committed changes must update metadata without reloading evidence');
+    const cold = await researchTaskViews(host)(receipt.conversationId); assert.deepEqual(cold, final.tasks); assert.equal(scans, 10, 'cold history is read in ten small pages, not one huge allocation');
     assert.equal((await storage.task(ids[0]!, context))!.state.outcome!.status, 'completed');
   } finally { await state.cleanup(); }
 });
@@ -235,22 +235,31 @@ for (const endpoint of ['usage', 'research']) test(`${endpoint} summary does not
   } finally { harness.commit = commit; await state.cleanup(); }
 });
 
-test('native indicator results expose only upstream statistics as metrics, not every bar as a metric', () => {
-  const result = metrics({ request: { signal: { kind: 'EMA_CROSS' } },
-    simulation: { statistics: [{ native_key: 'Sharpe Ratio (365 days)', value: 0.4 }, { native_key: 'missing', value: null }] },
-    observations: [{ available_ns: '1000000000000000000', atr: 5.0, vwap: 100.0 }],
-  });
-  assert.deepEqual(result, [
-    { key: 'Sharpe Ratio (365 days)', label: 'Sharpe Ratio (365 days)', value: 0.4 },
-    { key: 'missing', label: 'missing', value: null },
-  ]);
+test('canonical upstream reports do not flatten executions or hexadecimal statistics into decimal metrics', () => {
+  assert.deepEqual(metrics({ request: {}, canonical_result: { schema: 'nautilus-backtest-result/v1',
+    statistics: { returns: { 'Sharpe Ratio': '0000000000000000', unavailable: null } },
+    fills: [{ price: '123.456789012345678901', quantity: '0.000000000000000001' }], orders: [{ count: 1 }] }, data_rows_by_type: { QuoteTick: '9007199254740995' } }), []);
 });
 
-
-test('native reset batches keep per-case metrics distinct without flattening observations', () => {
-  const one = { request: {}, simulation: { statistics: [{ native_key: 'Sharpe', value: null }] }, observations: [{ atr: 123 }] };
-  assert.deepEqual(metrics({ reuse: 'NAUTILUS_ENGINE_RESET', results: [one, one] }), [
-    { key: 'batch.0.Sharpe', label: 'case 1: Sharpe', value: null, component: 0 },
-    { key: 'batch.1.Sharpe', label: 'case 2: Sharpe', value: null, component: 1 },
-  ]);
+test('native result and prior submissions retain separate original reports and unavailable values', async () => {
+  const state = await setup();
+  try {
+    const { receipt } = await studied(state);
+    const original = { schema_version: 1, native_version: '0.69.0', request: { instrument_id: 'TEST.SIM', event_start_ns: '1790000000000000001' },
+      canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000', missing: null } }, fills: [{ price: '123.456789012345678901' }] },
+      data_rows_by_type: { QuoteTick: '9007199254740995' }, notes: ['Protocol projection only, not measured performance.'] };
+    const previous = { ...original, canonical_result: { ...original.canonical_result, statistics: { returns: { 'Sharpe Ratio': '0000000000000000', missing: null } } } };
+    const history = [{ previousSubmissionId: receipt.submissionId, final: { status: 'COMPUTED', result: previous } }];
+    await state.service.research.harness.commit(async tx => {
+      const study = await tx.doc(Study, receipt.conversationId); study.previousNativeResults = history;
+      study.final = { status: 'COMPUTED', taskId: 123, trialId: null, comparedTrials: [], scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result: original };
+    }, context);
+    const response = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+    assert.equal(response.statusCode, 200, response.body); const detail = response.json();
+    assert.deepEqual(detail.final.metrics, []);
+    assert.deepEqual(detail.final.nativeStrategyResult.canonicalResult, original.canonical_result);
+    assert.deepEqual(detail.final.nativeStrategyResult.dataRowsByType, original.data_rows_by_type);
+    assert.deepEqual(detail.previousNativeResults, history);
+    assert.equal(detail.final.nativeStrategyResult.canonicalResult.statistics.returns.missing, null);
+  } finally { await state.cleanup(); }
 });

@@ -47,6 +47,9 @@ function ResearchWorkspace({ route }: { route: Route }) {
     ]} />}
   </section>;
 }
+export function hasActiveResearchExecution(detail: Pick<ResearchDetail, 'tasks' | 'submission'>): boolean {
+  return detail.tasks.some(task => task.status !== 'terminal') || ['queued', 'placed'].includes(detail.submission?.status ?? '');
+}
 function StudyDocument({ route, back }: { route: Route; back: string }) {
   const cache = useQueryClient(); const query = useResearchDetail(route.id!);
   const [stopError, setStopError] = useState<unknown>(); const [stopping, setStopping] = useState(false);
@@ -54,12 +57,12 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
   const tab = route.params.get('tab') ?? 'evidence';
   const selectTab = (value: string) => { const params = new URLSearchParams(route.params); params.set('tab', value); navigate(`/research/${route.id}?${params}`, true); };
   if (!detail) return <article className="study-document"><header className="study-heading"><h1>研究</h1></header>{query.isPending ? <Loading /> : <ErrorNotice error={query.error ?? new Error('未找到研究')} retry={() => { void query.refetch(); }} />}<a className="text-link" href={href(back)}>返回研究列表</a></article>;
-  const active = detail.tasks.some(task => task.status !== 'terminal') || ['queued', 'placed'].includes(detail.submission?.status ?? '');
+  const active = hasActiveResearchExecution(detail);
   const stop = async () => { setStopping(true); setStopError(undefined); try { const value = await api<ResearchDetail>(`/research/${detail.id}/stop`, { method: 'POST' }); cache.setQueryData([`/research/${detail.id}`], value); await cache.invalidateQueries({ queryKey: ['/research'] }); } catch (error) { setStopError(error); } finally { setStopping(false); } };
   const stoppedLabel = detail.status === 'STOPPED' && active ? '停止中' : detail.status === 'STARTED' ? '原生执行中' : undefined;
   const originalSubmission = detail.originalSubmission ?? detail.submission;
   const nativeSettings = datasetResearchSettings(detail.input.data);
-  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'native-scan', label: '扫描原生请求参数', onClick: () => navigate(`/parameter-scans/new?sourceKind=research&researchId=${detail.id}`) }, { key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active && (!detail.final || detail.final.status === 'STARTED') ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
+  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'native-scan', label: '扫描原生请求参数', onClick: () => navigate(`/parameter-scans/new?sourceKind=research&researchId=${detail.id}`) }, { key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
       <RecordTitle text={detail.title} fallback="研究" />
       <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span></div></header>
       <ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />

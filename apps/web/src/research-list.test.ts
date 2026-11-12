@@ -119,3 +119,15 @@ it('renders original assessment stars, missing grades, historical scope and real
   expect(html).toContain('/api/v3/research/7/evidence/41'); expect(html).toContain('CPCV_NOT_RUN');
   expect(visibleText(html)).toContain('不代表收益承诺或交易许可');
 });
+
+it('keeps stopping available for live validation after a completed historical native result', async () => {
+  const { hasActiveResearchExecution } = await import('./research');
+  const detail = { final: { status: 'COMPUTED' }, tasks: [
+    { id: 1, name: 'qz.native-strategy.backtest', status: 'terminal', outcome: 'completed', error: null },
+    { id: 2, name: 'qz.native-strategy.backtest', status: 'sleeping', error: null },
+  ], submission: { id: 3, status: 'placed' } } as ResearchDetail;
+  expect(hasActiveResearchExecution(detail)).toBe(true);
+  expect(hasActiveResearchExecution({ ...detail, submission: { id: 3, status: 'done' } })).toBe(true);
+  expect(hasActiveResearchExecution({ ...detail, tasks: [detail.tasks[0]!], submission: { id: 3, status: 'done' } })).toBe(false);
+  expect(hasActiveResearchExecution({ ...detail, tasks: [] })).toBe(true);
+});

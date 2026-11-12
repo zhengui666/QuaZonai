@@ -44,6 +44,10 @@ function nativeStrategyDetails(value: Json | undefined, claim: Json | undefined)
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
+  // Official canonical reports are exposed verbatim via nativeStrategyResult.
+  // Neither event rows nor IEEE754 hexadecimal encodings are decimal metrics.
+  if (!Array.isArray(value) && value.canonical_result && typeof value.canonical_result === 'object' && !Array.isArray(value.canonical_result)
+    && value.canonical_result.schema === 'nautilus-backtest-result/v1') return [];
   if (!Array.isArray(value) && value.economic) {
     const { economic, ...result } = value;
     return [...metrics(result, prefix), ...tickEconomicMetrics(economic)];
