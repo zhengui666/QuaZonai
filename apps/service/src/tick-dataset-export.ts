@@ -170,6 +170,28 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       }
       await addContextSource('context-prices.manifest.json', 'context-prices-');
       await addContextSource('event-time-context-prices.manifest.json', 'event-time-context-prices-', true);
+      const closesName = 'instrument-closes.manifest.json';
+      if (sources.some(extra => object(extra, 'tick_economic_source').path === closesName)) {
+        const path = join(directory, closesName); await observe(path);
+        const closes = object(parseOriginalJson(await readFile(path, 'utf8')), 'tick_instrument_closes'); validateNumbers(closes);
+        if (closes.schema_version !== 1 || closes.format !== 'NAUTILUS_INSTRUMENT_CLOSE_V1'
+          || closes.event_clock !== 'EVENT_TIME_OBSERVED' || closes.availability !== 'HISTORICAL_COLLECTOR_AVAILABILITY_UNKNOWN'
+          || closes.scheduling !== 'EXCHANGE_EFFECTIVE_TIME' || typeof closes.source_revision !== 'string' || !closes.source_revision.trim()
+          || closes.research_source_revision !== request.input.source_revision
+          || cacheCounter(closes.start_ns) > BigInt(request.input.event_start_ns) || cacheCounter(closes.end_ns) < BigInt(request.input.event_end_ns)
+          || !Array.isArray(closes.files)) throw new Error('tick_instrument_close_manifest_invalid');
+        names.add(closesName);
+        let rows = 0n;
+        for (const raw of closes.files) {
+          const file = object(raw, 'tick_instrument_close_file'); const name = text(file.path, 'tick_instrument_close_path');
+          if (!name.startsWith('data/instrument_closes/') || !name.endsWith('.parquet') || name.includes('\\')
+            || name.split('/').some(part => !part || part === '.' || part === '..') || names.has(name)) throw new Error('tick_instrument_close_file_invalid');
+          const bytes = cacheCounter(file.bytes); const count = cacheCounter(file.rows);
+          if (bytes === 0n || count === 0n) throw new Error('tick_instrument_close_file_invalid');
+          rows += count; names.add(name); contextSizes.set(name, bytes);
+        }
+        if (rows !== cacheCounter(closes.rows)) throw new Error('tick_instrument_close_row_count_mismatch');
+      }
       for (const extra of extras) {
         const row = object(extra, 'tick_economic_source');
         if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');
@@ -177,7 +199,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         const state = await lstat(path, { bigint: true });
         if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.path === 'spot-valuation.jsonl' && directory === primary ? row.research_bytes ?? row.bytes : row.bytes)
           || contextSizes.has(row.path) && state.size !== contextSizes.get(row.path)) throw new Error('tick_economic_source_size_mismatch');
-        if (row.path.endsWith('context-prices.manifest.json') || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
+        if (row.path.endsWith('context-prices.manifest.json') || row.path === closesName || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
         files.add(path);
       }
       if (names.size) throw new Error('tick_economic_source_manifest_invalid');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { link, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { clipTickRegimeEvaluation } from '../../../packages/contracts/src/tick-input.ts';
 import type { NativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
@@ -380,6 +380,48 @@ test('explicit context sidecars retain exact source identity and owned bytes', a
   }
 });
 
+
+test('instrument close sidecars preserve effective clocks, source binding and shared native files', async () => {
+  for (const failure of [null, 'revision', 'path', 'bytes', 'view']) {
+    const f = await preparedCache(undefined, true, false, true);
+    try {
+      const path = 'data/instrument_closes/BTCUSDT.SIM/10-10.parquet';
+      const bytes = Buffer.from('PAR1controlled-framing-onlyPAR1');
+      const manifest = { schema_version: 1, format: 'NAUTILUS_INSTRUMENT_CLOSE_V1',
+        source_revision: 'official-market-settlements', research_source_revision: f.request.input.source_revision,
+        event_clock: 'EVENT_TIME_OBSERVED', availability: 'HISTORICAL_COLLECTOR_AVAILABILITY_UNKNOWN',
+        scheduling: 'EXCHANGE_EFFECTIVE_TIME', start_ns: '0', end_ns: '80', rows: '1',
+        files: [{ path, bytes: String(bytes.length), rows: '1' }] };
+      if (failure === 'revision') manifest.research_source_revision = 'different-source';
+      if (failure === 'path') manifest.files[0]!.path = '../unrelated.parquet';
+      if (failure === 'bytes') manifest.files[0]!.bytes = String(bytes.length + 1);
+      const sources = new Map([['instrument-closes.manifest.json', Buffer.from(JSON.stringify(manifest))], [path, bytes]]);
+      for (const [name, content] of sources) {
+        const source = join(f.directory, name); await mkdir(dirname(source), { recursive: true }); await writeFile(source, content);
+        for (const part of ['research', 'independent']) {
+          const target = join(f.prepared, part, 'catalog', name); await mkdir(dirname(target), { recursive: true }); await link(source, target);
+        }
+      }
+      if (failure === 'view') {
+        const target = join(f.prepared, 'research/catalog', path); await rm(target); await writeFile(target, bytes);
+      }
+      const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8'));
+      metadata.economic_sources = [...sources].map(([path, bytes]) => ({ path, bytes: String(bytes.length) }));
+      await writeFile(f.options.prepared, JSON.stringify(metadata));
+      if (failure) {
+        const error = failure === 'revision' ? /instrument_close_manifest_invalid/ : failure === 'path' ? /instrument_close_file_invalid/
+          : failure === 'bytes' ? /economic_source_size_mismatch/ : /context_source_view_mismatch/;
+        await assert.rejects(exportDataset(f.options), error);
+      } else {
+        const result = await exportDataset(f.options); const primary = String(result.data.catalog);
+        const independent = String((result.data.sealed as Record<string, unknown>).catalog);
+        assert.deepEqual(await readFile(join(primary, path)), bytes);
+        assert.equal((await stat(join(primary, path))).ino, (await stat(join(independent, path))).ino);
+        assert.equal(JSON.parse(await readFile(join(primary, 'instrument-closes.manifest.json'), 'utf8')).scheduling, 'EXCHANGE_EFFECTIVE_TIME');
+      }
+    } finally { await rm(f.directory, { recursive: true, force: true }); }
+  }
+});
 
 test('context export preserves source clocks under the native directional clock rules', async () => {
   for (const receivedResearch of [false, true]) {

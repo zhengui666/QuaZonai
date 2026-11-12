@@ -37,6 +37,15 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Encode official historical settlement events as native InstrumentClose data.
+    InstrumentCloses {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        instruments: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Derive received-time oracle/mark CSV sidecars from published context files.
     ContextPrices {
         #[arg(long)]
@@ -1471,6 +1480,16 @@ fn trade_memory_limit() -> Result<()> {
 
 fn main() {
     let result = match Arguments::parse().command {
+        Command::InstrumentCloses {
+            source,
+            instruments,
+            output,
+        } => job::ticks::economic::closes::import(&source, &instruments, &output).and_then(
+            |result| {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            },
+        ),
         Command::HyperliquidFunding {
             instruments,
             start_seconds,
