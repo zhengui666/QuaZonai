@@ -29,6 +29,7 @@ use std::{
 };
 
 pub(super) mod books;
+pub mod closes;
 mod models;
 mod native;
 mod source_books;
@@ -687,6 +688,7 @@ fn rates_at(
     unknown: &mut Option<(u64, String)>,
     seen: &mut BTreeSet<(String, u64)>,
     contexts: &mut Option<ContextPrices>,
+    settling: &BTreeSet<nautilus_model::identifiers::InstrumentId>,
 ) -> Result<Vec<NativeRate>> {
     let mut native = Vec::new();
     while funding
@@ -706,11 +708,10 @@ fn rates_at(
                 );
                 seen.insert((r.instrument_id.clone(), at / HOUR));
                 if let Some(ledger) = ledger.as_mut() {
-                    for p in ledger
-                        .positions()
-                        .into_iter()
-                        .filter(|p| p.instrument_id == asset.instrument.id())
-                    {
+                    for p in ledger.positions().into_iter().filter(|p| {
+                        p.instrument_id == asset.instrument.id()
+                            && !settling.contains(&p.instrument_id)
+                    }) {
                         let price = match contexts.as_mut() {
                             Some(context) => context.price(&r.instrument_id, at, age, true)?,
                             None => mark(asset, at, age),
@@ -795,7 +796,16 @@ fn funding_before(
         .filter(|at| *at < limit)
     {
         let rows = rates_at(
-            funding, ledger, assets, at, start, age, unknown, seen, contexts,
+            funding,
+            ledger,
+            assets,
+            at,
+            start,
+            age,
+            unknown,
+            seen,
+            contexts,
+            &BTreeSet::new(),
         )?;
         if let Some(ledger) = ledger.as_mut() {
             if !rows.is_empty() {
@@ -2008,6 +2018,18 @@ pub(crate) fn funding_sources(
             "ECONOMIC_FUNDING_COVERAGE_INVALID"
         );
     }
+    if let Some(manifest) = closes::manifest(root, request)? {
+        files.push((
+            closes::MANIFEST.into(),
+            std::fs::metadata(root.join(closes::MANIFEST))?.len(),
+        ));
+        files.extend(
+            manifest
+                .files
+                .into_iter()
+                .map(|file| (file.path, file.bytes.get())),
+        );
+    }
     if root.join(CONTEXT_MANIFEST).exists() {
         let context = context_manifest(root, request)?;
         files.push((
@@ -2102,6 +2124,30 @@ pub fn replay_models_with_funding_and_cores(
         }
     }
     let cache = cohort_cache::load(root, &source_request)?;
+    let lifecycle = closes::load(funding_root, &source_request)?;
+    let lifecycle_evidence = lifecycle.as_ref().map(|(_, manifest)| serde_json::json!({
+        "source_revision":manifest.source_revision, "research_source_revision":manifest.research_source_revision,
+        "event_clock":manifest.event_clock, "availability":manifest.availability, "scheduling":manifest.scheduling,
+        "native_records":manifest.rows, "coverage":manifest.source["coverage"], "manifest":closes::MANIFEST,
+    }));
+    let lifecycle = lifecycle.map(|(events, _)| events);
+    let has_lifecycle = lifecycle.is_some();
+    let mut closed = lifecycle
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter(|close| close.at < request.research.input.event_start_ns.get())
+        .map(|close| close.instrument_id)
+        .collect::<BTreeSet<_>>();
+    let mut lifecycle = std::collections::VecDeque::from(
+        lifecycle
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|close| close.at >= request.research.input.event_start_ns.get())
+            .collect::<Vec<_>>(),
+    );
+    let mut settlement_unknown: Option<(u64, String)> = None;
+
     let mut defs = definitions(root)?
         .into_iter()
         .map(|i| (i.id().to_string(), i))
@@ -2166,6 +2212,7 @@ pub fn replay_models_with_funding_and_cores(
             .total_fuel
             .map(|v| v.get() - consumed);
         let model = if a.cohort_count == 0
+            || closed.contains(&instrument.id())
             || !request
                 .research
                 .input
@@ -2395,6 +2442,7 @@ pub fn replay_models_with_funding_and_cores(
         .map(|Reverse((at, _))| *at)
         .into_iter()
         .chain(book_heap.peek().map(|Reverse((at, _))| *at))
+        .chain(lifecycle.front().map(|close| close.at))
         .chain(
             decision_timer
                 .as_ref()
@@ -2501,6 +2549,11 @@ pub fn replay_models_with_funding_and_cores(
             &mut contexts,
         )?;
         // Same-timestamp rates and marks share one complete native streaming cohort.
+        let settling = lifecycle
+            .iter()
+            .take_while(|close| close.at == event)
+            .map(|close| close.instrument_id)
+            .collect::<BTreeSet<_>>();
         let rates = rates_at(
             &mut funding,
             &mut margin,
@@ -2511,7 +2564,60 @@ pub fn replay_models_with_funding_and_cores(
             &mut funding_unknown,
             &mut seen_rates,
             &mut contexts,
+            &settling,
         )?;
+        for id in &settling {
+            if event.is_multiple_of(HOUR) || rates.iter().any(|rate| rate.instrument_id == *id) {
+                expected_rates.remove(&(id.to_string(), event / HOUR));
+            }
+        }
+
+        let mut closing_cash = false;
+        let mut closing_margin = false;
+        let mut closing_cycles = Vec::new();
+        while lifecycle.front().is_some_and(|close| close.at == event) {
+            let close = lifecycle.pop_front().unwrap();
+            let i = assets
+                .iter()
+                .position(|asset| asset.instrument.id() == close.instrument_id)
+                .context("INSTRUMENT_CLOSE_OUTSIDE_SCOPE")?;
+            closed.insert(close.instrument_id);
+            assets[i].pending = None;
+            assets[i].score = None;
+            assets[i].target_weight = None;
+            assets[i].model = None;
+            assets[i].feature_books = None;
+            decision_fresh.remove(&i);
+            if let Some(small) = &mut small {
+                if let Some(cycle) = small.cycles[i].take() {
+                    closing_cycles.push((i, cycle));
+                }
+            }
+            let is_cash = matches!(assets[i].instrument, InstrumentAny::CurrencyPair(_));
+            let ledger = if is_cash { &mut cash } else { &mut margin };
+            if let Some(ledger) = ledger {
+                if close.data.is_some()
+                    && close.fee_currency == Some(assets[i].instrument.settlement_currency())
+                {
+                    ledger.queue_close(&close)?;
+                    if is_cash {
+                        closing_cash = true;
+                    } else {
+                        closing_margin = true;
+                    }
+                } else if !ledger.current_quantity(close.instrument_id).is_zero()
+                    && settlement_unknown.is_none()
+                {
+                    settlement_unknown = Some((
+                        event,
+                        format!(
+                            "INSTRUMENT_SETTLEMENT_UNAVAILABLE:instrument_id={}:event_ns={event}",
+                            close.instrument_id
+                        ),
+                    ));
+                }
+            }
+        }
         for (&i, frame) in &snapshots {
             assets[i].mark = frame.midpoint.map(|price| (event, price));
         }
@@ -2885,7 +2991,8 @@ pub fn replay_models_with_funding_and_cores(
             }
         }
         if let Some(ledger) = cash.as_mut() {
-            if !marks_cash.is_empty()
+            if closing_cash
+                || !marks_cash.is_empty()
                 || observed
                     && snapshots
                         .keys()
@@ -2904,7 +3011,8 @@ pub fn replay_models_with_funding_and_cores(
             }
         }
         if let Some(ledger) = margin.as_mut() {
-            if !marks_margin.is_empty()
+            if closing_margin
+                || !marks_margin.is_empty()
                 || !rates.is_empty()
                 || observed
                     && snapshots
@@ -2933,6 +3041,14 @@ pub fn replay_models_with_funding_and_cores(
         }
         if let (Some(small), Some(c)) = (&mut small, &cash) {
             let m = margin.as_ref();
+            for (i, cycle) in closing_cycles {
+                let quantity = small_quantity(&assets[i], c, m);
+                if quantity.is_zero() {
+                    small.cycles[i] = Some(cycle);
+                    small.reconcile(i, event, quantity, false, &mut assets, s, &mut seed)?;
+                    small.cycles[i] = None;
+                }
+            }
             let reconciled = if observed {
                 snapshots.keys().copied().collect::<Vec<_>>()
             } else {
@@ -3184,6 +3300,15 @@ pub fn replay_models_with_funding_and_cores(
     })?;
     let margin_summary = margin.as_ref().map(|l| l.summary()).unwrap_or_default();
     let cash_summary = cash.as_ref().map(|l| l.summary()).unwrap_or_default();
+    if let Some((at, reason)) = &settlement_unknown {
+        for day in &mut days {
+            if day.day_start_ns.get().saturating_add(DAY) > *at {
+                day.equity_usdt = None;
+                day.net_return = None;
+                day.unknown_reason = Some(reason.clone());
+            }
+        }
+    }
     let mut result = NativeTickEconomicResultV1 {
         schema_version: SchemaV1, request: request.clone(),
         small_capital_diagnostics: small.as_ref().map(|p| p.report(&assets)).transpose()?, model: if request.scenario.execution_model.is_some() { "SEGREGATED_SYNTHETIC_QUOTE_IOC_V1" } else { "SEGREGATED_COHORT_MARK_ESTIMATE_V1" }.into(),
@@ -3218,6 +3343,28 @@ pub fn replay_models_with_funding_and_cores(
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if funding_manifest.is_none(){"PERIODIC_FUNDING_INAPPLICABLE_TO_CURRENCY_PAIR_ASSETS"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if has_lifecycle {
+        result
+            .coverage
+            .source_evidence
+            .insert("instrument_closes".into(), lifecycle_evidence.unwrap());
+        result
+            .limitations
+            .retain(|limit| limit != "HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED");
+        result
+            .limitations
+            .push("HISTORICAL_ADL_BORROWING_AND_UNOBSERVED_LIFECYCLE_EVENTS_NOT_REPLICATED".into());
+        result.methods.insert("instrument_closes".into(), "Official historical exchange settlement events feed native InstrumentClose(CONTRACT_EXPIRED) and native account fills at their declared price and fee rate. ts_init=ts_event schedules exchange-effective settlement only; historical collector availability is unknown and these events are not alpha features. Original receipts and coverage limitations remain in instrument-closes.manifest.json.".into());
+        result
+            .limitations
+            .push("INSTRUMENT_CLOSE_HISTORICAL_COLLECTOR_AVAILABILITY_UNKNOWN".into());
+        result
+            .limitations
+            .push("PUBLIC_LIFECYCLE_COVERAGE_RETAINS_SOURCE_LIMITATIONS".into());
+        if let Some((_, reason)) = settlement_unknown {
+            result.limitations.push(reason);
+        }
+    }
     if book_profile {
         result.methods.insert(
             "features".into(),

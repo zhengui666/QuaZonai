@@ -1595,7 +1595,9 @@ pub fn prepare_views(
         publish(&root.join(MANIFEST_FILE), manifest)?;
         for (name, _) in &economic_sources {
             if name != "spot-valuation.jsonl" {
-                fs::hard_link(cache_path(&source, name)?, root.join(name))?;
+                let target = root.join(name);
+                fs::create_dir_all(target.parent().unwrap())?;
+                fs::hard_link(cache_path(&source, name)?, target)?;
             }
         }
     }

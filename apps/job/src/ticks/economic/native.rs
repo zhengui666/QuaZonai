@@ -37,7 +37,7 @@ use nautilus_model::{
     identifiers::{InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orderbook::OrderBook,
-    orders::OrderAny,
+    orders::{Order, OrderAny},
     position::Position,
     types::{
         fixed::{check_fixed_raw_i128, check_fixed_raw_u128},
@@ -195,21 +195,29 @@ fn closing_limit(
 }
 
 #[derive(Debug)]
-struct ScenarioFee(MakerTakerFeeSchedule);
+struct ScenarioFee(
+    MakerTakerFeeSchedule,
+    Rc<RefCell<BTreeMap<InstrumentId, Decimal>>>,
+);
 impl FeeModel for ScenarioFee {
     fn get_commission(
         &self,
-        _order: &OrderAny,
+        order: &OrderAny,
         quantity: Quantity,
         price: Price,
         instrument: &InstrumentAny,
     ) -> Result<Money> {
         let notional = instrument.try_calculate_notional_value(quantity, price, None)?;
-        let amount = arithmetic(
-            notional
-                .as_decimal()
-                .checked_mul(self.0.rates_for(instrument.id()).taker),
-        )?;
+        let settlement_fees = self.1.borrow();
+        let rate = if order.client_order_id().as_str().starts_with("EXPIRATION-") {
+            settlement_fees
+                .get(&instrument.id())
+                .copied()
+                .unwrap_or(self.0.rates_for(instrument.id()).taker)
+        } else {
+            self.0.rates_for(instrument.id()).taker
+        };
+        let amount = arithmetic(notional.as_decimal().checked_mul(rate))?;
         let currency = if matches!(instrument, InstrumentAny::CurrencyPair(_)) {
             instrument.quote_currency()
         } else {
@@ -748,6 +756,8 @@ pub(super) struct NativeLedger {
     synthetic_quote_ioc: bool,
     observed_l2: bool,
     normalize_book_sizes: bool,
+    closes: Vec<nautilus_model::data::InstrumentClose>,
+    settlement_fees: Rc<RefCell<BTreeMap<InstrumentId, Decimal>>>,
 }
 impl NativeLedger {
     #[allow(clippy::too_many_arguments)]
@@ -961,6 +971,7 @@ impl NativeLedger {
                 Money::from_decimal(value, currency).map_err(anyhow::Error::from)
             })
             .collect::<Result<Vec<_>>>()?;
+        let settlement_fees = Rc::new(RefCell::new(BTreeMap::new()));
         engine.add_venue(
             SimulatedVenueConfig::builder()
                 .venue(venue)
@@ -983,7 +994,10 @@ impl NativeLedger {
                     maintenance: maintenance_margin_fraction,
                 }))
                 .modules(vec![SimulationModuleHandle::new(adjustments.clone())])
-                .fee_model(FeeModelHandle::new(ScenarioFee(fees.clone())))
+                .fee_model(FeeModelHandle::new(ScenarioFee(
+                    fees.clone(),
+                    settlement_fees.clone(),
+                )))
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     1.0,
                     0.0,
@@ -1074,6 +1088,8 @@ impl NativeLedger {
             synthetic_quote_ioc,
             observed_l2,
             normalize_book_sizes,
+            closes: Vec::new(),
+            settlement_fees,
         })
     }
 
@@ -1139,7 +1155,7 @@ impl NativeLedger {
         );
         ensure!(
             self.last_event.is_none_or(|last| last < event)
-                && (!rows.is_empty() || !rates.is_empty()),
+                && (!rows.is_empty() || !rates.is_empty() || !self.closes.is_empty()),
             "TICK_ECONOMIC_NATIVE_EVENT_ORDER"
         );
         set_message_bus(self.bus.clone());
@@ -1234,7 +1250,7 @@ impl NativeLedger {
         ensure!(
             self.observed_l2
                 && self.last_event.is_none_or(|last| last < event)
-                && (!rows.is_empty() || !rates.is_empty()),
+                && (!rows.is_empty() || !rates.is_empty() || !self.closes.is_empty()),
             "TICK_ECONOMIC_NATIVE_EVENT_ORDER"
         );
         set_message_bus(self.bus.clone());
@@ -1302,7 +1318,7 @@ impl NativeLedger {
             }
         }
         // shortcut: observed IOC uses outer NAV; revisit for native Portfolio NAV/base currency FX, resting orders or latency.
-        if !events.is_empty() {
+        if !events.is_empty() || !self.closes.is_empty() {
             self.run_events(event, events)?;
         }
         self.check_funding_rates(event, rates)?;
@@ -1335,12 +1351,44 @@ impl NativeLedger {
         Ok(())
     }
 
-    fn run_events(&mut self, event: u64, events: Vec<Data>) -> Result<()> {
+    pub fn queue_close(&mut self, close: &super::closes::Close) -> Result<()> {
+        let instrument = self
+            .instruments
+            .get(&close.instrument_id)
+            .context("INSTRUMENT_CLOSE_NATIVE_INSTRUMENT")?;
+        ensure!(
+            close.fee_currency == Some(instrument.settlement_currency()),
+            "INSTRUMENT_CLOSE_FEE_CURRENCY"
+        );
+        self.settlement_fees.borrow_mut().insert(
+            close.instrument_id,
+            close.fee_rate.context("INSTRUMENT_CLOSE_FEE_UNKNOWN")?,
+        );
+        self.state.borrow_mut().targets.remove(&close.instrument_id);
+        self.closes
+            .push(close.data.context("INSTRUMENT_CLOSE_PRICE_UNKNOWN")?);
+        Ok(())
+    }
+
+    fn run_events(&mut self, event: u64, mut events: Vec<Data>) -> Result<()> {
+        let closing = self
+            .closes
+            .iter()
+            .map(|close| close.instrument_id)
+            .collect::<Vec<_>>();
+        events.extend(self.closes.drain(..).map(Data::InstrumentClose));
         self.engine.add_data(events, None, true, true)?;
         self.engine.run(None, None, None, true)?;
         self.engine.clear_data();
         self.last_event = Some(event);
         self.check()?;
+        for id in closing {
+            ensure!(
+                self.current_quantity(id).is_zero(),
+                "INSTRUMENT_CLOSE_NATIVE_POSITION_NOT_SETTLED"
+            );
+        }
+
         let day = event / 86_400_000_000_000;
         if self.purge_day != Some(day) {
             let mut cache = self.engine.kernel().cache.borrow_mut();
@@ -2473,6 +2521,115 @@ mod tests {
             assert_eq!(ledger.last_event, Some(2_000_000_000));
             assert_eq!(ledger.summary().submitted, 1);
             ledger.finish().unwrap();
+        }
+    }
+
+    #[test]
+    fn official_instrument_close_settles_without_liquidity_and_uses_source_fee() {
+        use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType};
+        for with_market_data in [false, true] {
+            let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
+                unreachable!()
+            };
+            definition.quote_currency = Currency::USDC();
+            let instrument = InstrumentAny::CryptoPerpetual(definition);
+            let mut native = NativeLedger::new_observed(
+                vec![instrument.clone()],
+                Decimal::from(1000),
+                true,
+                fees(Decimal::from(10)),
+                Decimal::new(5, 1),
+                Decimal::new(25, 2),
+            )
+            .unwrap();
+            native
+                .step_books(
+                    1_000_000_000,
+                    vec![NativeBook {
+                        snapshot: observed_snapshot(
+                            &instrument,
+                            1_000_000_000,
+                            "99.00",
+                            "10.0000",
+                            &[("100.00", "10.0000")],
+                        ),
+                        capacity: Decimal::from(10),
+                        target_quantity: Some(Decimal::ONE),
+                    }],
+                    &[],
+                )
+                .unwrap();
+            assert_eq!(native.current_quantity(instrument.id()), Decimal::ONE);
+            let before = native.balance(Currency::USDC()).unwrap().as_decimal();
+            let fees_before = native.summary().commissions;
+            let at = 2_000_000_000;
+            native
+                .queue_close(&super::super::closes::Close {
+                    instrument_id: instrument.id(),
+                    at,
+                    data: Some(InstrumentClose::new(
+                        instrument.id(),
+                        Price::from("110.00"),
+                        InstrumentCloseType::ContractExpired,
+                        at.into(),
+                        at.into(),
+                    )),
+                    fee_rate: Some(Decimal::ZERO),
+                    fee_currency: Some(Currency::USDC()),
+                })
+                .unwrap();
+            let rows = if with_market_data {
+                vec![NativeBook {
+                    snapshot: observed_snapshot(
+                        &instrument,
+                        at,
+                        "98.00",
+                        "10.0000",
+                        &[("99.00", "10.0000")],
+                    ),
+                    capacity: Decimal::ZERO,
+                    target_quantity: None,
+                }]
+            } else {
+                vec![]
+            };
+            let rates = if with_market_data {
+                vec![NativeRate {
+                    instrument_id: instrument.id(),
+                    rate: Decimal::new(1, 2),
+                    settlement_mark: Some((at, Decimal::from(100))),
+                }]
+            } else {
+                vec![]
+            };
+            native.step_books(at, rows, &rates).unwrap();
+            assert!(native.positions().is_empty());
+            assert_eq!(native.current_quantity(instrument.id()), Decimal::ZERO);
+            assert_eq!(
+                native.balance(Currency::USDC()).unwrap().as_decimal(),
+                before + Decimal::from(10)
+            );
+            assert_eq!(native.summary().commissions, fees_before);
+            let rejected = native.summary().rejected;
+            native
+                .step_books(
+                    3_000_000_000,
+                    vec![NativeBook {
+                        snapshot: observed_snapshot(
+                            &instrument,
+                            3_000_000_000,
+                            "99.00",
+                            "10.0000",
+                            &[("100.00", "10.0000")],
+                        ),
+                        capacity: Decimal::from(10),
+                        target_quantity: Some(Decimal::ONE),
+                    }],
+                    &[],
+                )
+                .unwrap();
+            assert!(native.summary().rejected > rejected);
+            assert!(native.positions().is_empty());
         }
     }
 

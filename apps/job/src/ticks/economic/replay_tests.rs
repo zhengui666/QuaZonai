@@ -849,6 +849,22 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         ),
     )
     .unwrap();
+    let mut settling_funding = Funding::open(&rates, BTreeSet::from([LATE.into()])).unwrap();
+    let mut settlement_unknown = None;
+    rates_at(
+        &mut settling_funding,
+        &mut margin,
+        &assets,
+        at,
+        0,
+        HOUR,
+        &mut settlement_unknown,
+        &mut BTreeSet::new(),
+        &mut contexts,
+        &BTreeSet::from([instrument.id()]),
+    )
+    .unwrap();
+    assert!(settlement_unknown.is_none());
     let mut funding = Funding::open(&rates, BTreeSet::from([LATE.into()])).unwrap();
     let mut unknown = None;
     let batch = rates_at(
@@ -861,6 +877,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         &mut unknown,
         &mut BTreeSet::new(),
         &mut contexts,
+        &BTreeSet::new(),
     )
     .unwrap();
     assert!(unknown.is_none());
@@ -1292,6 +1309,83 @@ fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
             } else {
                 assert_eq!(decimal(&result.funding_usdc).unwrap(), Decimal::ZERO);
             }
+        }
+    }
+}
+
+#[test]
+fn historical_settlement_survives_preparation_and_ends_future_funding_exposure() {
+    for (known, after_boundary) in [(true, 0), (false, 0), (true, SECOND)] {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, request, wasm) = source(
+            directory.path(),
+            0,
+            Some(4 * HOUR + 45 * 60 * SECOND),
+            false,
+        );
+        let original = directory.path().join("source/catalog");
+        let source_file = directory.path().join("lifecycle.json");
+        let instruments = directory.path().join("instruments.json");
+        std::fs::write(&instruments, serde_json::to_vec(&definitions()).unwrap()).unwrap();
+        let at = 4 * HOUR + after_boundary;
+        std::fs::write(&source_file, serde_json::to_vec(&json!({
+            "source_revision":"public-settlements", "research_source_revision":"fixed-source",
+            "event_clock":"EVENT_TIME_OBSERVED", "historical_received_ns":null,
+            "window":{"start_ns":"0","end_ns":(3*DAY).to_string()}, "coverage":{"complete":false},
+            "events":[{"type":"SETTLEMENT","instrument_id":LATE,"event_ns":at.to_string(),
+                "price":"110", "fee_rate":if known {Some("0")} else {None}, "fee_currency":"USDC"}]
+        })).unwrap()).unwrap();
+        let sidecar = directory.path().join("settlements");
+        closes::import(&source_file, &instruments, &sidecar).unwrap();
+        let manifest: closes::Manifest =
+            serde_json::from_slice(&std::fs::read(sidecar.join(closes::MANIFEST)).unwrap())
+                .unwrap();
+        for file in &manifest.files {
+            let target = original.join(&file.path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(sidecar.join(&file.path), target).unwrap();
+        }
+        std::fs::copy(
+            sidecar.join(closes::MANIFEST),
+            original.join(closes::MANIFEST),
+        )
+        .unwrap();
+        let prepared = directory.path().join("with-settlements");
+        let metadata =
+            cohort_cache::prepare_views(&original, &request.research, &prepared, 1_000_000)
+                .unwrap();
+        assert!(metadata["economic_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["path"] == closes::MANIFEST));
+        for view in ["research/catalog", "independent/catalog"] {
+            assert_eq!(
+                std::fs::read(prepared.join(view).join(closes::MANIFEST)).unwrap(),
+                std::fs::read(original.join(closes::MANIFEST)).unwrap()
+            );
+        }
+        let result = replay(&prepared.join("independent/catalog"), &request, &wasm).unwrap();
+        assert!(result.methods.contains_key("instrument_closes"));
+        if known && after_boundary > 0 {
+            assert_eq!(result.native_fills.get(), 5);
+            assert!(result.days.iter().all(|day| day.equity_usdt.is_none()));
+            assert!(result
+                .limitations
+                .iter()
+                .any(|reason| reason.starts_with("FUNDING_FIRST_CAUSE:MISSING_RATE:")));
+        } else if known {
+            assert_eq!(result.native_fills.get(), 5);
+            assert!(result.days.iter().all(|day| day.equity_usdt.is_some()));
+            assert!(!result
+                .limitations
+                .iter()
+                .any(|reason| reason.starts_with("FUNDING_FIRST_CAUSE:")));
+        } else {
+            assert!(result.days.iter().all(|day| day.equity_usdt.is_none()
+                && day.unknown_reason.as_ref().is_some_and(
+                    |reason| reason.starts_with("INSTRUMENT_SETTLEMENT_UNAVAILABLE:")
+                )));
         }
     }
 }
@@ -3150,6 +3244,7 @@ fn native_mark_funding_settles_after_same_timestamp_closing_commands() {
         &mut None,
         &mut BTreeSet::new(),
         &mut None,
+        &BTreeSet::new(),
     )
     .unwrap();
     margin
