@@ -14,17 +14,18 @@ import { createNautilusWorker } from '../../nautilus/src/server.ts';
 import { withNativeProgress } from '../../research/src/native-execution.ts';
 import { built, setup, wat } from './support.ts';
 
+// Controlled child tests transport lifetime/isolation only, not strategy computation or returns.
 test('native execution has no application deadline and owner abort joins the real child', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-execution-test-')); const binary = join(directory, 'controlled-child'); const script = join(directory, 'child.mjs');
   try {
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
     await writeFile(script, `setTimeout(() => console.log(JSON.stringify({completed:true, secret:process.env.QZ_TEST_PROVIDER_SECRET ?? null})), 120);\n`);
     process.env.QZ_TEST_PROVIDER_SECRET = 'synthetic-child-isolation-only';
-    assert.deepEqual(await nativeJob(binary, 'forecast', {}, [], directory, BACKGROUND_CONTEXT), { completed: true, secret: null });
+    assert.deepEqual(await nativeJob(binary, 'native-strategy-backtest', {}, [], directory, BACKGROUND_CONTEXT), { completed: true, secret: null });
     const pidPath = join(directory, 'child.pid');
     await writeFile(script, `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000);\n`);
     const controller = new AbortController();
-    const pending = nativeJob(binary, 'forecast', {}, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT));
+    const pending = nativeJob(binary, 'native-strategy-backtest', {}, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT));
     const rejected = assert.rejects(pending);
     let pid: number;
     for (;;) { try { pid = Number(await readFile(pidPath, 'utf8')); break; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await new Promise(resolve => setTimeout(resolve, 5)); } }

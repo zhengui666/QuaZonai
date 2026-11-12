@@ -38,9 +38,17 @@ pub fn market_direction(
         volume,
         equities,
         models,
-        0,
-        "1",
+        InstrumentSize {
+            precision: 0,
+            increment: "1",
+        },
     )
+}
+
+/// Paired quantity precision and increment for the synthetic instrument definition.
+pub struct InstrumentSize<'a> {
+    pub precision: u8,
+    pub increment: &'a str,
 }
 
 /// Explicit TEST instrument specification; never change the existing integer-lot fixtures.
@@ -51,8 +59,7 @@ pub fn market_direction_with_size(
     volume: &str,
     equities: bool,
     models: [NativeModelRefV1; 3],
-    size_precision: u8,
-    size_increment: &str,
+    size: InstrumentSize<'_>,
 ) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     let [fill_model, fee_model, latency_model] = models;
     let directory = tempfile::tempdir().unwrap();
@@ -99,9 +106,9 @@ pub fn market_direction_with_size(
                     .base_currency(Currency::from_str(base).unwrap())
                     .quote_currency(usd)
                     .price_precision(5)
-                    .size_precision(size_precision)
+                    .size_precision(size.precision)
                     .price_increment(Price::from("0.00001"))
-                    .size_increment(Quantity::from(size_increment))
+                    .size_increment(Quantity::from(size.increment))
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())

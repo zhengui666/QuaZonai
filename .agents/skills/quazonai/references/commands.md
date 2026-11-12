@@ -28,9 +28,9 @@
 | `research delete ID` | 隐藏可删除研究，保留原始证据 |
 | `portfolio list` / `portfolio get ID` / `portfolio delete ID` | 组合列表、结果、隐藏 |
 | `portfolio watch ID [--timeout SECONDS]` / `portfolio wait ID [--timeout SECONDS]` | 等待同一组合结束 |
-| `portfolio replay-ticks --file REQUEST.json` | `TickEconomicReplayStart` |
-| `portfolio tick-replay ID` | 查询回放，不是 portfolio ID |
 
+
+旧 `portfolio replay-ticks` / `tick-replay` 服务路由已移除；不要用历史 TickEconomicReplayStart 类型构造新请求。原生回放通过 `research` 执行。
 
 ## PM、Campaign 与 Strategy
 

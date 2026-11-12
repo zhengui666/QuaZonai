@@ -29,8 +29,10 @@ pub fn micro_lot_market(
             execution_models::fee(),
             execution_models::latency(1_000_000),
         ],
-        4,
-        "0.0001",
+        market_catalog::InstrumentSize {
+            precision: 4,
+            increment: "0.0001",
+        },
     )
 }
 

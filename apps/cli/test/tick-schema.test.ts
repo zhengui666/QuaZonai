@@ -13,7 +13,8 @@ test('CLI exposes the same explicit native request source used by service and We
 });
 
 
-test('owner economic replay source contracts are available without a native-schema hand mirror', async () => {
+// Historical schema readability is not an executable replay endpoint.
+test('retained historical economic replay schema does not require a hand-written mirror', async () => {
   const value = await schemas('TickEconomicReplayStart');
   assert.equal(value.entry, 'TickEconomicReplayStart');
   assert.match(value.source!, /factorId: string/);

@@ -272,28 +272,25 @@ test('delete commands retain exact original identities, send once without bodies
     let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /portfolio list.*delete ID/]) assert.match(help, line);
+    assert.doesNotMatch(help, /replay-ticks|tick-replay/);
+    assert.match(help, /Equity metric IDs retain source and 252\/365 frequency/);
   } finally { await config.close(); await api.close(); }
 });
 
 
-test('economic tick CLI submits original bytes and reads the opaque replay through existing device auth', async () => {
-  const requests: { method: string; path: string; body: string }[] = [];
-  const api = await server((request, response, body) => {
-    assert.equal(request.headers.authorization, `Bearer ${fakeToken}`);
-    assert.equal(request.headers['x-quazonai-cli'], '1');
-    requests.push({ method: request.method!, path: request.url!, body });
-    json(response, { id: 'replay:original', status: 'QUEUED' });
+test('retired economic replay commands are refused without reading payloads or sending HTTP', async () => {
+  const requests: string[] = [];
+  const api = await server((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    json(response, { error: 'unexpected_request' }, 500);
   });
   const config = await configuration(api.origin);
   try {
-    const body = '{\n "requestId":"original-economic", "datasetId":"ticks", "factorId":"r1.t2.m0", "request":{"scenario":{"initial_usdt":"3000.000000000000000001"}}\n}\n';
-    const file = join(config.directory, 'economic.json'); await writeFile(file, body);
-    await run(['portfolio', 'replay-ticks', '--file', file], () => {});
-    await run(['portfolio', 'tick-replay', 'replay:original'], () => {});
-    assert.deepEqual(requests, [
-      { method: 'POST', path: '/api/v3/tick-economic-replays', body },
-      { method: 'GET', path: '/api/v3/tick-economic-replays/replay%3Aoriginal', body: '' },
-    ]);
+    for (const group of ['portfolio', 'backtest']) {
+      await assert.rejects(run([group, 'replay-ticks', '--file', join(config.directory, 'must-not-be-read.json')]), { code: 'unknown_portfolio_command' });
+      await assert.rejects(run([group, 'tick-replay', 'original-id']), { code: 'unknown_portfolio_command' });
+    }
+    assert.deepEqual(requests, []);
   } finally { await config.close(); await api.close(); }
 });
 

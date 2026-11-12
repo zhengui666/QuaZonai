@@ -34,7 +34,7 @@ quazonai account-strategy stop "$observation_id" --request-id "$stop_request_id"
 quazonai account-strategy receipt "$observation_id" "$request_id"
 ```
 
-START 的 accountSourceId/strategyRevision 必须来自用户决定启动时已读到的 status。过期拒绝后先报告，不自动获取新修订替旧命令重新授权。STOP 不要求修订；仍须明确用户操作意图。当前账户仅已接入官方 EMA_CROSS，OBI 账户运行尚未支持。连接中的策略配置并非由历史回测自动部署；当前 CLI 不是策略代码上传器或连接配置器。
+START 的 accountSourceId/strategyRevision 必须来自用户决定启动时已读到的 status。过期拒绝后先报告，不自动获取新修订替旧命令重新授权。STOP 不要求修订；仍须明确用户操作意图。当前账户仅已接入官方 EMA_CROSS；ORDER_BOOK_IMBALANCE、GRID_MARKET_MAKER、HURST_VPIN_DIRECTIONAL 目前只接研究回测，不支持账户运行。连接中的策略配置并非由历史回测自动部署；当前 CLI 不是策略代码上传器或连接配置器。
 
 默认启动宿主不等于启动交易。paper/live 使用独立连接；live START 可能实际下单，必须满足用户明确授权及适用确认要求，不能因回测评级良好自行启动。恢复会重新预热，不承诺无缝恢复策略内部指标状态。STOP 沿用上游配置语义，不保证不撤单或不清仓；观测停止也不是策略 STOP。
 

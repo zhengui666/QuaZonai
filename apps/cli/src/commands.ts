@@ -32,10 +32,10 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   parameter-scan trials ID [--file QUERY.json] | surface ID --file QUERY.json
   parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
     Native scan: source={kind:"research",researchId}; axes use existing numeric request paths.
-    objective={metricId:<native_key>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency}.
+    objective={metricId:<options.metricId>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency}.
+    Equity metric IDs retain source and 252/365 frequency; stopped runs do not enter full-window ranking.
   portfolio list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
-  portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   account-strategy status OBSERVATION_ID | receipt OBSERVATION_ID ORIGINAL_REQUEST_ID
   account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
@@ -208,11 +208,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       method = 'POST'; path += `/${action}`; body = file.bytes;
     } else if (action !== 'status') throw new CliError('unknown_maintenance_command');
   } else if (group === 'portfolio' || group === 'backtest') {
-    if (action === 'replay-ticks') {
-      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
-      body = file.bytes; method = 'POST'; path = '/tick-economic-replays';
-    } else if (action === 'tick-replay') path = `/tick-economic-replays/${resourceId(id)}`;
-    else if (action === 'list') path = '/portfolios';
+    if (action === 'list') path = '/portfolios';
     else if (['get', 'delete', 'watch', 'wait'].includes(action)) { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
     else throw new CliError('unknown_portfolio_command');
   } else if (group === 'observation') {
