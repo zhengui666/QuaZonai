@@ -28,7 +28,7 @@ const nativeCatalogInspectSchema = resolveSchema(schemas.NativeCatalogInspectReq
 const validateCatalogQuery = compile(nativeCatalogInspectSchema);
 export const nativeStrategyCatalogTool = defineTool({
   name: 'native_strategy_catalog',
-  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. next_cursor non-null means INCOMPLETE: pass cursor unchanged to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence.',
+  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. next_cursor non-null means INCOMPLETE: pass cursor unchanged to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
   parameters: nativeCatalogInspectSchema,
   prepareArguments(args) {
     validateNumbers(args);
@@ -102,13 +102,14 @@ export const nativeStrategyConfigureTool = defineTool({
       study.final = null;
     }, context);
     return { output: [{ type: 'text', text: JSON.stringify({ request, configurationTaskId: api.taskId,
-      scope: 'CONFIGURED_NOT_EXECUTED', limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
+      scope: 'CONFIGURED_NOT_EXECUTED', instrumentDefinition: request.instrument_definition ?? { mode: 'HISTORICAL_AS_OF_START' }, limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
   },
 });
 
 export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject {
   const expected = structuredClone(request);
   if (expected.available_start_ns === null) delete expected.available_start_ns;
+  if (expected.instrument_definition === null) delete expected.instrument_definition;
   const venue = object(expected.venue, 'native_strategy_venue');
   if (venue.base_currency === undefined) venue.base_currency = null;
   const strategy = object(expected.strategy, 'native_strategy_config');
@@ -126,6 +127,14 @@ export function nativeStrategyResult(value: Parameters<typeof object>[0], reques
   const expected = normalizedNativeStrategyRequest(request);
   if (canonical(result.request ?? null) !== canonical(expected)) throw new Error('native_strategy_request_mismatch');
   if (result.schema_version !== 1 || typeof result.native_version !== 'string' || !executionVersions.has(result.native_version)) throw new Error('native_strategy_version_mismatch');
+  const basis = object(result.instrument_definition, 'native_instrument_definition');
+  const assumption = request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) ? request.instrument_definition : { mode: 'HISTORICAL_AS_OF_START' };
+  const scenario = assumption.mode === 'STATIC_SCENARIO';
+  for (const key of ['ts_init_ns', 'ts_event_ns']) if (typeof basis[key] !== 'string' || !/^(0|[1-9][0-9]*)$/.test(basis[key] as string) || BigInt(basis[key] as string) > 9223372036854775807n) throw new Error('native_instrument_definition_timestamp_invalid');
+  if (!['STATIC_SCENARIO', 'HISTORICAL_AS_OF_START'].includes(String(assumption.mode)) || basis.mode !== assumption.mode
+    || basis.scope !== (scenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START')) throw new Error('native_instrument_definition_scope_mismatch');
+  if (scenario ? basis.ts_init_ns !== assumption.ts_init_ns || basis.ts_event_ns !== assumption.ts_event_ns
+    : BigInt(basis.ts_init_ns as string) > BigInt(String(request.available_start_ns ?? request.event_start_ns))) throw new Error('native_instrument_definition_binding_mismatch');
   const report = object(result.canonical_result, 'native_strategy_canonical_result');
   const run = object(report.run, 'native_strategy_run');
   if (report.schema !== 'nautilus-backtest-result/v1' || !['completed', 'stopped'].includes(String(run.outcome))) throw new Error('native_strategy_report_invalid');

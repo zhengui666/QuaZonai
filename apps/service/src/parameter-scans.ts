@@ -105,7 +105,7 @@ function sourceFromStudy(source: ParameterScanSource, _mode: ParameterScanMode, 
   const name = study.input.specification?.name ?? study.input.goal;
   const view: ParameterScanSourceView = { source, label: name, researchId: ref.researchId, datasetId: null, datasetName: null,
     modality: 'NATIVE', currency: typeof venue.base_currency === 'string' ? venue.base_currency : null,
-    interval: { startNs: String(request.event_start_ns), endExclusiveNs: String(request.event_end_ns) }, assumptions: ['UNCHANGED_UPSTREAM_STRATEGY', 'INDEPENDENT_ACCOUNT_PER_CANDIDATE', 'UNQUALIFIED_EXPLORATORY'] };
+    interval: { startNs: String(request.event_start_ns), endExclusiveNs: String(request.event_end_ns) }, assumptions: [...(request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO' ? ['HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED'] : ['CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT']), 'UNCHANGED_UPSTREAM_STRATEGY', 'INDEPENDENT_ACCOUNT_PER_CANDIDATE', 'UNQUALIFIED_EXPLORATORY'] };
   return { researchId: ref.researchId, name, data, request, target, defaults: numericLeaves(request), view };
 }
 function effectivePoint(source: RetainedSource, parameters: ParameterValues) {
@@ -174,7 +174,7 @@ function resultTrial(trial: ScanTrial, child: TaskRecord<unknown, unknown, unkno
     const value = object(outcome.result, 'parameter_scan_result');
     const summary = value;
     const metrics = trialMetrics(summary);
-    return { ...trial, status: 'COMPLETED', metrics, metric: selectedMetric(metrics, objective), sampleCounts: sampleCounts(summary), error: null };
+    return { ...trial, status: 'COMPLETED', metrics, metric: selectedMetric(metrics, objective), sampleCounts: sampleCounts(summary), details: { ...(trial.details ?? {}), instrumentDefinition: value.instrument_definition ?? null }, error: null };
   }
   const detail = 'error' in outcome ? classifyExecutionError(outcome.error?.message, 'scientific_execution_failed', outcome.error?.detail && typeof outcome.error.detail === 'object' && !Array.isArray(outcome.error.detail) ? outcome.error.detail : undefined) : null;
   return { ...trial, status: outcome.status === 'aborted' ? 'STOPPED' : 'FAILED', error: detail?.code ?? (outcome.status === 'aborted' ? null : 'parameter_scan_trial_failed'), ...(detail ? { details: json({ error: detail }) } : {}) };

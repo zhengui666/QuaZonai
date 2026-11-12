@@ -184,3 +184,7 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 原生策略请求默认按窗口起点读取当时已进入 catalog 的 instrument 定义。可显式使用 `instrument_definition.mode=STATIC_SCENARIO` 并指定目录中原始定义的精确 `ts_init_ns` 与 `ts_event_ns`，将该版本作为整个窗口的固定模拟规格交给官方 `BacktestEngine.add_instrument`。此路径不改原定义时间、不回填历史、不改行情数据、不重写上游，也不在情景中混入其他规格更新。
 
 单次回测及每个 walk-forward 训练/测试结果均携带实际使用的定义时间和 `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED` 口径。时间外测试只表示该假设下按时间分离的结果，不验证历史规格，也不构成实盘证据。费用、币种和资金费模型仍须分别明确；无隐式 USDT/USDC 转换。默认严格路径的 `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` 仅描述目录可用时间，不冒称独立历史来源审计。
+
+原生请求的 `instrument_definition` 缺省为严格目录时点定义；只有显式 `STATIC_SCENARIO` 并给出真实目录定义的精确 `ts_init_ns`/`ts_event_ns` 才表示“假设这一规格整个窗口不变”。不改目录、行情或定义时间，不将未来定义偷偷重标历史。每个原生结果必须保存定义依据，严格模式仅证明目录定义在窗口开始已可用，不是独立源准确性审计。
+
+STATIC_SCENARIO 原样贯穿配置、回测、walk-forward 与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和探索扫描保留定义原时间与scope，不能混用严格历史与情景依据。

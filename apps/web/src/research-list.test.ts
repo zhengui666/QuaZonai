@@ -138,3 +138,13 @@ it('allows explicit continuation after owner stops validation following a histor
   expect(canContinueResearch(detail, true)).toBe(false);
   expect(canContinueResearch({ ...detail, submission: { id: 3, status: 'unanswered', reason: 'model_error' } }, false)).toBe(false);
 });
+
+it('keeps static instrument scenarios visibly conditional in original native results and star reports', async () => {
+  const { ResearchAssessments } = await import('./research');
+  const basis = { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000', scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' };
+  const native = renderToStaticMarkup(createElement(NativeStrategyResultView, { value: { instrumentDefinition: basis, canonicalResult: {}, request: { instrument_definition: basis } } }));
+  expect(visibleText(native)).toContain('静态规格情景'); expect(visibleText(native)).toContain('未验证当时真实规格'); expect(visibleText(native)).toContain('1795000000000000001');
+  const report = renderToStaticMarkup(createElement(ResearchAssessments, { assessments: [{ taskId: 1, mode: 'SYNTHESIS', status: 'completed', configuration: 'CURRENT', error: null, result: { instrumentDefinitionAssumption: basis, judgment: { stars: 3, rationale: 'Conditional only' }, ratingStatus: 'RATED_CONDITIONAL_STATIC_SCENARIO' }, evidenceLinks: [] }] }));
+  expect(visibleText(report)).toContain('条件性情景评级'); expect(visibleText(report)).toContain('历史合约规格未核实');
+
+});

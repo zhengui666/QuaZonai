@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeStrategyBacktestTask, normalizedNativeStrategyRequest } from '../plugins/native-strategy-backtest.ts';
+import { NativeStrategyBacktestTask, normalizedNativeStrategyRequest, nativeStrategyResult } from '../plugins/native-strategy-backtest.ts';
 import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
@@ -37,7 +37,7 @@ for (const behavior of ['recover', 'stop', 'mismatch', 'tool', 'tool-finish'] as
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: completed ? 'COMPLETED' : 'UNKNOWN',
       ...(completed ? { result: { schema_version: 1, native_version: '0.69.0',
         request: behavior === 'mismatch' ? { ...original.input as JsonObject, instrument_id: 'OTHER.SIM' } : original.input,
-        canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
+        instrument_definition: { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
           accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} },
         data_rows_by_type: { QuoteTick: '2' }, notes: [] } } : { error: 'original_receipt_temporarily_unknown' }) }));
   });
@@ -123,4 +123,20 @@ test('Grid absent optional quantities and expiry match official None echo withou
   const explicit = { venue: { base_currency: null }, strategy: { kind: 'GRID_MARKET_MAKER', trade_size: '0.00000001', expire_time_secs: 2, base: { strategy_id: 'OWNER-001' } } };
   assert.deepEqual(normalizedNativeStrategyRequest(explicit), explicit);
   assert.deepEqual(request.strategy, { kind: 'GRID_MARKET_MAKER', num_levels: 2 });
+});
+
+test('instrument definition evidence cannot silently upgrade static assumptions into historical rules', () => {
+  const request: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }], event_start_ns: '10', event_end_ns: '20', available_end_ns: '20', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS' } };
+  const basis = { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' };
+  const result: JsonObject = { schema_version: 1, native_version: '0.69.0', request, instrument_definition: basis, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} }, data_rows_by_type: { QuoteTick: '1' }, notes: [] };
+  assert.deepEqual(nativeStrategyResult(result, request).instrument_definition, basis);
+  assert.throws(() => nativeStrategyResult({ ...result, instrument_definition: null }, request), /native_instrument_definition/);
+  assert.throws(() => nativeStrategyResult({ ...result, instrument_definition: { ...basis, ts_init_ns: '11' } }, request), /binding_mismatch/);
+  const scenario = { ...request, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: '30', ts_event_ns: '29' } };
+  const evidence = { ...result, request: scenario, instrument_definition: { ...scenario.instrument_definition, scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } };
+  assert.deepEqual(nativeStrategyResult(evidence, scenario).instrument_definition, evidence.instrument_definition);
+  assert.throws(() => nativeStrategyResult({ ...evidence, instrument_definition: basis }, scenario), /scope_mismatch/);
+  assert.throws(() => nativeStrategyResult({ ...evidence, instrument_definition: { ...evidence.instrument_definition, ts_init_ns: '31' } }, scenario), /binding_mismatch/);
+  assert.throws(() => nativeStrategyResult(evidence, request), /request_mismatch/);
+
 });

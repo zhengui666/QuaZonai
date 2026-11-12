@@ -90,11 +90,12 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
 export function NativeStrategyResultView({ value }: { value: NonNullable<ResearchDetail['final']>['nativeStrategyResult'] }) {
   if (!value) return null;
   return <section aria-label="Nautilus 原始策略结果">
-    <p>这是 Nautilus 官方策略的历史执行报告，不代表独立样本验证通过、综合星级或模拟盘与实盘准入。原始配置、数据选择、费用假设和报告保持原生含义；不在浏览器重算绩效。</p>
+    {value.instrumentDefinition && typeof value.instrumentDefinition === 'object' && !Array.isArray(value.instrumentDefinition) && value.instrumentDefinition.mode === 'STATIC_SCENARIO' && <p role="note">静态规格情景：假设所选目录合约规格在整个窗口不变，未验证当时真实规格；这不是实际历史可交易性或实盘证据。</p>}
+    <p>这是 Nautilus 官方策略的回测执行报告，不代表独立样本验证通过、综合星级或模拟盘与实盘准入。原始配置、数据选择、费用假设和报告保持原生含义；不在浏览器重算绩效。</p>
     <Facts items={[["Nautilus 版本", typeof value.nativeVersion === 'string' ? value.nativeVersion : '未记录'], ["证据范围", typeof value.scientificClaim === 'string' ? value.scientificClaim : '未记录']]} />
     <details><summary>原始策略配置与数据选择</summary><Copy value={JSON.stringify(value.request ?? null, null, 2)} label="复制原始请求" /><pre>{JSON.stringify(value.request ?? null, null, 2)}</pre></details>
     <details><summary>上游原始执行报告</summary><p className="quiet">保留官方统计键和原始编码；未把持仓收益统计转换成日权益收益。</p><Copy value={JSON.stringify(value.canonicalResult ?? null, null, 2)} label="复制原生报告" /><pre>{JSON.stringify(value.canonicalResult ?? null, null, 2)}</pre></details>
-    <details><summary>输入记录数与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null }, null, 2)}</pre></details>
+    <details><summary>输入记录数与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null, instrumentDefinition: value.instrumentDefinition ?? null }, null, 2)}</pre></details>
   </section>;
 }
 
@@ -110,6 +111,7 @@ export function ResearchAssessments({ assessments }: { assessments: ResearchDeta
         <h3>{row.mode === 'LOGIC' ? '事前逻辑审阅' : '综合研究报告'} #{row.taskId}</h3>
         <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'} · {row.status}</p>
         <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', typeof result.ratingStatus === 'string' ? result.ratingStatus : '未完成']]} />
+        {record(result.instrumentDefinitionAssumption).mode === 'STATIC_SCENARIO' && <p role="note">条件性情景评级：历史合约规格未核实，不是实际历史验证或交易许可。</p>}
         {typeof judgment.rationale === 'string' && <p>{judgment.rationale}</p>}
         {row.error && <p>{row.error}</p>}
         <TextDisclosure label="原始报告、证据范围与未完成事项" value={JSON.stringify(row.result, null, 2)} collapsed />

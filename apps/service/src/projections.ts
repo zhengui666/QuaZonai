@@ -38,7 +38,7 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
 function nativeStrategyDetails(value: Json | undefined, claim: Json | undefined): { nativeStrategyResult?: JsonObject } {
   if (claim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION' || !value || typeof value !== 'object' || Array.isArray(value) || !value.canonical_result) return {};
   return { nativeStrategyResult: { request: value.request ?? null, scientificClaim: claim, nativeVersion: value.native_version ?? null,
-    canonicalResult: value.canonical_result, dataRowsByType: value.data_rows_by_type ?? null, notes: value.notes ?? null } };
+    instrumentDefinition: value.instrument_definition ?? null, canonicalResult: value.canonical_result, dataRowsByType: value.data_rows_by_type ?? null, notes: value.notes ?? null } };
 }
 
 /** Retain native scalar values; missing metrics are not converted into zero. */

@@ -30,17 +30,22 @@ test('configuration consumes generated native schema without coercing nanosecond
   assert.equal(validator.check({ ...request, catalog: '/different' }), false);
   assert.equal(validator.check({ ...request, venue: { ...request.venue, starting_balances: [5000] } }), false);
   assert.equal(validator.check({ ...request, strategy: { kind: 'CUSTOM_SIGNAL' } }), false);
+  assert.equal(validator.check({ ...request, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000' } }), true);
+  assert.equal(validator.check({ ...request, instrument_definition: { mode: 'STATIC_SCENARIO' } }), false);
+  assert.equal(validator.check({ ...request, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: 1795000000000000001, ts_event_ns: '1' } }), false);
 });
 
 // Real official Pi tool loop and HTTP transport; peer reports are protocol data, not profitability evidence.
-test('catalog-only natural research inspects, configures, executes and reopens its unchanged binding', { timeout: 20000 }, async () => {
+const originalRequest = request;
+for (const scenario of [false, true]) test(`catalog-only natural research configures and reopens an exact binding (static=${scenario})`, { timeout: 20000 }, async () => {
+  const request = scenario ? { ...originalRequest, instrument_definition: { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000' } } : originalRequest;
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-configure-'));
   const posts: NativeExecutionRequest[] = [];
   const cursor = { offset: '2', total_items: '4', instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'] };
   const inspection = { schema_version: 1, timestamp_basis: 'ts_init', interval_bounds: 'inclusive',
     coverage_basis: 'native_file_intervals_not_event_completeness',
     instruments: [{ instrument: { id: request.instrument_id, quote_currency: 'USDC', price_precision: 2, size_precision: 3 },
-      ts_event_ns: '1780000000000000001', ts_init_ns: '1780000000000000002' }],
+      ts_event_ns: scenario ? '1795000000000000000' : '1780000000000000001', ts_init_ns: scenario ? '1795000000000000001' : '1780000000000000002' }],
     selectors: [{ ...request.selectors[0], file_intervals: [{ start_ns: request.available_start_ns, end_ns: request.available_end_ns }] }] };
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
@@ -49,7 +54,7 @@ test('catalog-only natural research inspects, configures, executes and reopens i
     let body = ''; for await (const chunk of incoming) body += chunk;
     const operation = JSON.parse(body) as NativeExecutionRequest; posts.push(operation);
     const result = operation.command === 'catalog-inspect' ? { ...inspection, next_cursor: (operation.input as { cursor?: unknown }).cursor ? null : cursor } : { schema_version: 1, native_version: '0.69.0', request: operation.input,
-      canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
+      instrument_definition: scenario ? { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000', scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
         accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} },
       data_rows_by_type: { OrderBookDelta: '2' }, notes: [] };
     response.end(JSON.stringify({ schemaVersion: 1, requestId: operation.requestId, status: 'COMPLETED', result }));
@@ -63,12 +68,13 @@ test('catalog-only natural research inspects, configures, executes and reopens i
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
   const data = { catalog: directory, nautilusTarget: { id: 'registered-backtest', url: `http://127.0.0.1:${address.port}` } };
-  const input = { goal: 'Research BTC on this catalog using 5000 USDC, 1x leverage, maker .00015 taker .00045. No live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: {} };
+  const input = { goal: `Research BTC on this catalog using 5000 USDC, 1x leverage, maker .00015 taker .00045. No live trading. ${scenario ? 'Explicitly assume the selected later catalog definition as a static scenario, without claiming historically verified rules.' : ''}`, model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: {} };
   try {
     const admission = await host.start('catalog-natural', input);
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
     const study = (await host.harness.snapshot(Study, admission.conversationId, context))!;
     assert.equal(study.final?.status, 'COMPUTED');
+    assert.equal((study.final!.result as any).instrument_definition.mode, scenario ? 'STATIC_SCENARIO' : 'HISTORICAL_AS_OF_START');
     assert.deepEqual(study.input!.data, { ...data, native_strategy_backtest_request: request });
     const configuration = (await host.harness.snapshot(ResearchConfiguration, admission.conversationId, context))!;
     assert.deepEqual(configuration.request, request); assert.ok(configuration.configuredByTaskId);

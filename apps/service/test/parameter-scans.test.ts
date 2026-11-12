@@ -10,14 +10,14 @@ import type { ParameterScanPlan, ParameterScanView } from '../../../packages/con
 import { setup, context } from './support.ts';
 
 // HTTP/Pi protocol only: controlled responses are NOT performance evidence.
-async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' = 'complete') {
+async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' | 'scenario' = 'complete') {
   const state = await setup(); const requests: NativeExecutionRequest[] = []; let deletes = 0; let settle = false;
   const version = '0.69.0';
   const result = (request: JsonObject): JsonObject => {
     if (mode === 'invalid') return { request, simulation: {}, observations: [] };
     const bytes = Buffer.alloc(8); bytes.writeDoubleBE(Number((request.strategy as JsonObject).fast_period));
     return { schema_version: 1, request, native_version: version,
-      canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': mode === 'rank' ? bytes.toString('hex') : null }, pnls: {} } },
+      instrument_definition: request.instrument_definition ? { ...(request.instrument_definition as JsonObject), scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' } : { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: { general: {}, returns: { 'Sharpe Ratio (252 days)': mode === 'rank' ? bytes.toString('hex') : null }, pnls: {} } },
       data_rows_by_type: { QuoteTick: '20' }, notes: [] };
   };
   const server = createServer(async (incoming, response) => {
@@ -38,6 +38,7 @@ async function protocol(mode: 'complete' | 'running' | 'invalid' | 'rank' = 'com
     event_start_ns: '9007199254740993', event_end_ns: '9007199254741993', available_end_ns: '9007199254741993',
     venue: { account_type: 'MARGIN', oms_type: 'NETTING', book_type: 'L1_MBP', starting_balances: ['10000 USD'], base_currency: 'USD', leverage: '1', maker_fee: '0', taker_fee: '0.000000000000000001' },
     strategy: { kind: 'EMA_CROSS', trade_size: '0.500000000000000001', fast_period: 14, slow_period: 50 } };
+  if (mode === 'scenario') request.instrument_definition = { mode: 'STATIC_SCENARIO', ts_init_ns: '9999999999999999', ts_event_ns: '9999999999999998' };
   const researchId = await state.service.research.harness.commit(async tx => {
     const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } }); const study = await tx.doc(Study, conversation.id);
     study.input = { goal: 'Controlled native scan routing', model: state.model, data: { catalog: '/registered/catalog', nautilusTarget: target, native_strategy_backtest_request: request }, policy: {} };
@@ -140,5 +141,20 @@ test('HTTP preview and execution reject collapsed f64 points but preserve decima
     assert.equal(response.statusCode, 202, response.body);
     await p.state.service.research.harness.waitForTask(response.json().taskId as TaskId, context);
     assert.deepEqual(p.requests.map(row => ((row.input as JsonObject).strategy as JsonObject).trade_size).sort(), ['0.500000000000000001', '0.500000000000000002']);
+  } finally { await p.close(); }
+});
+
+test('exploratory native scan retains static instrument assumptions rather than claiming historical rules', async () => {
+  const p = await protocol('scenario');
+  try {
+    const response = await p.state.service.app.inject({ method: 'POST', url: '/api/v3/parameter-scans', headers: p.state.headers, payload: { ...p.plan, requestId: 'static-native-scan' } });
+    assert.equal(response.statusCode, 202, response.body); const view = response.json();
+    await p.state.service.research.harness.waitForTask(view.taskId as TaskId, context);
+    const detail = (await p.state.service.app.inject({ url: `/api/v3/parameter-scans/${view.id}`, headers: p.state.headers })).json();
+    assert.ok(detail.sourceView.assumptions.includes('HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED'));
+    const trial = (await p.state.service.app.inject({ url: `/api/v3/parameter-scans/${view.id}/trials/0`, headers: p.state.headers })).json();
+    assert.equal(trial.status, 'COMPLETED'); assert.equal(trial.details.instrumentDefinition.mode, 'STATIC_SCENARIO');
+    assert.equal(trial.details.instrumentDefinition.ts_init_ns, '9999999999999999');
+    assert.deepEqual(trial.details.nativeResult.request.instrument_definition, p.request.instrument_definition);
   } finally { await p.close(); }
 });

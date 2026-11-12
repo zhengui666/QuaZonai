@@ -26,7 +26,7 @@ const request: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', sele
   strategy: { kind: 'EMA_CROSS', trade_size: '0.01', fast_period: 2, slow_period: 3 } };
 function wireResult(original: JsonObject, large = false): JsonObject {
   return { schema_version: 1, request: original, native_version: version, data_rows_by_type: { QuoteTick: '20' }, notes: [],
-    canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: {},
+    instrument_definition: { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], components: {}, statistics: {},
       ...(large ? { payload: 'x'.repeat(2 * 1024 * 1024) } : {}) } };
 }
 

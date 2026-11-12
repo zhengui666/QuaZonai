@@ -19,7 +19,11 @@ function executionSource(data: JsonObject): JsonObject {
 }
 function sameRequest(a: JsonValue | undefined, b: JsonObject): boolean {
   if (!a || typeof a !== 'object' || Array.isArray(a) || !a.venue || !a.strategy) return false;
-  return canonical(normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(a)))) === canonical(normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(b))));
+  const left = normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(a))); const right = normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(b)));
+  // Explicit default and omitted mode have identical semantics, while wire echoes stay exact.
+  for (const value of [left, right]) if (value.instrument_definition && typeof value.instrument_definition === 'object' && !Array.isArray(value.instrument_definition)
+    && value.instrument_definition.mode === 'HISTORICAL_AS_OF_START') delete value.instrument_definition;
+  return canonical(left) === canonical(right);
 }
 function sameSource(invocation: JsonObject, source: JsonObject): boolean {
   return canonical({ catalog: invocation.catalog ?? null, target: invocation.target ?? null }) === canonical(source);
@@ -109,9 +113,11 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const model = runtime.models.getModel(task.input.model.provider, task.input.model.modelId);
     if (!model) throw new Error('research_assessment_model_unavailable');
     const synthesis = task.input.mode === 'SYNTHESIS';
+    const instrumentDefinition = task.input.request.instrument_definition && typeof task.input.request.instrument_definition === 'object' && !Array.isArray(task.input.request.instrument_definition) ? task.input.request.instrument_definition : { mode: 'HISTORICAL_AS_OF_START' };
+    const staticScenario = instrumentDefinition.mode === 'STATIC_SCENARIO';
     const eligible = synthesis && object(task.input.evidence.ratingReadiness ?? {}, 'rating_readiness').eligible === true;
     const answer = await runtime.models.completeSimple(model, {
-      systemPrompt: `${rubric}\n${synthesis
+      systemPrompt: `${rubric}\nInstrument assumption: ${staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
         ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Inspect actual fold windows, native data rows, fills and failed trials; a high Sharpe in a short sample does not establish annual return. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
       messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
@@ -122,10 +128,10 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const judgment = assessmentJudgment(response);
     const dataJudgment = synthesis && response.dataJudgment !== undefined ? assessmentJudgment(response.dataJudgment) : null;
     const rated = eligible && response.evidenceSufficient === true && dataJudgment?.stars !== null && dataJudgment !== null && judgment.stars !== null;
-    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST',
+    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST', instrumentDefinitionAssumption: { ...instrumentDefinition, qualification: staticScenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT' },
       model: task.input.model, rubricVersion: 'SCOPED_RESEARCH_ADVISORY_V2', judgment: synthesis && !rated ? { ...judgment, stars: null } : judgment,
-      ...(synthesis ? { dataJudgment: dataJudgment ? { ...dataJudgment, stars: rated ? dataJudgment.stars : null } : null, ratingStatus: rated ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE' } : {}),
-      evidence: task.input.evidence, claim: synthesis ? rated ? 'SCOPED_TWO_LANE_RESEARCH_ASSESSMENT' : 'INCOMPLETE_TWO_LANE_RESEARCH_ASSESSMENT' : 'CONFIGURATION_ONLY_LOGIC_REVIEW', tradingPermission: false };
+      ...(synthesis ? { dataJudgment: dataJudgment ? { ...dataJudgment, stars: rated ? dataJudgment.stars : null } : null, ratingStatus: rated ? staticScenario ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE' } : {}),
+      evidence: task.input.evidence, claim: synthesis ? rated ? staticScenario ? 'CONDITIONAL_STATIC_SCENARIO_RESEARCH_ASSESSMENT' : 'SCOPED_TWO_LANE_RESEARCH_ASSESSMENT' : 'INCOMPLETE_TWO_LANE_RESEARCH_ASSESSMENT' : 'CONFIGURATION_ONLY_LOGIC_REVIEW', tradingPermission: false };
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
   } },
   abort: (_task, runtime, context) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context),
@@ -206,6 +212,7 @@ export const assessmentReportTool = defineTool({
             folds: (result.folds as JsonObject[]).map(fold => ({ index: fold.index!, trainStartNs: fold.train_start_ns!, trainEndNs: fold.train_end_ns!, testStartNs: fold.test_start_ns!, testEndNs: fold.test_end_ns!, status: fold.status!, reason: fold.reason!, selectedCandidateIndex: fold.selected_candidate_index!,
               trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error!,
                 nativeOutcome: trial.result === null ? null : object(object(object(trial.result, 'training_result').canonical_result, 'training_report').run, 'native_run').outcome!,
+                instrumentDefinition: trial.result === null ? null : object(trial.result, 'training_result').instrument_definition!,
                 dataRowsByType: trial.result === null ? null : object(trial.result, 'training_result').data_rows_by_type!,
                 notes: trial.result === null ? null : object(trial.result, 'training_result').notes! })),
               selectedTrainingOutcome: typeof fold.selected_candidate_index !== 'number' ? null : (() => {
@@ -216,6 +223,7 @@ export const assessmentReportTool = defineTool({
               nativeObjectiveValue: fold.test_result === null ? null : nativeAssessmentMetric(object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics, 'native_statistics'), object(object(result.request, 'walk_forward_request').objective, 'native_objective')),
               nativeOutcome: fold.test_result === null ? null : object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').run, 'native_run').outcome!,
               notes: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').notes!,
+              instrumentDefinition: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').instrument_definition!,
               dataRowsByType: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').data_rows_by_type!,
               fills: fold.test_result === null ? null : (object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').fills as JsonValue[]).length })),
             logicCoverage: matchingLogic && logic!.id < task.id && reviewedCandidateMatch(object(logic!.input, 'logic_input'), object(result.request, 'walk_forward_request'))
@@ -249,6 +257,7 @@ export const assessmentReportTool = defineTool({
             const result = nativeStrategyResult(task.state.outcome.result, actual); const report = object(result.canonical_result, 'native_report');
             row.nativeStatistics = report.statistics!; row.nativeObjectiveValue = objective ? nativeAssessmentMetric(object(report.statistics, 'native_statistics'), objective) : null;
             row.fills = (report.fills as JsonValue[]).length; row.nativeVersion = result.native_version!;
+            row.instrumentDefinition = result.instrument_definition!;
             row.nativeOutcome = object(report.run, 'native_run').outcome!; row.notes = result.notes!; row.dataRowsByType = result.data_rows_by_type!;
           }
           cases.push(row);
@@ -295,8 +304,9 @@ export const assessmentReportTool = defineTool({
       dataValidation.metricInterpretation = { nativeObjective: objective, returnBasis: 'UPSTREAM_NATIVE_STATISTIC_UNCHANGED_NOT_ASSUMED_DAILY_EQUITY',
         selection: 'TRAINING_OBJECTIVE_ONLY_WITH_RECORDED_CANDIDATE_SEARCH', caution: 'MAXIMIZING_SHARPE_CAN_SELECT_NOISY_SHORT_SAMPLES; HIGH_RATIO_IS_NOT_VALIDATION_OR_ESTABLISHED_ANNUAL_RETURN',
         observedScope: 'PER_FOLD_AVAILABILITY_WINDOWS_DATA_ROWS_AND_FILLS; REGISTERED_EVENT_RANGE_IS_NOT_PROOF_OF_CONTINUOUS_COVERAGE' };
-      const ratingReadiness: JsonObject = { eligible: reasons.length === 0, reasons, scope: 'RECORDED_PROTOCOL_AND_THIS_CONVERSATION_ONLY',
-        limitations: ['CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
+      const staticScenario = request.instrument_definition && typeof request.instrument_definition === 'object' && !Array.isArray(request.instrument_definition) && request.instrument_definition.mode === 'STATIC_SCENARIO';
+      const ratingReadiness: JsonObject = { eligible: reasons.length === 0, reasons, scope: staticScenario ? 'CONDITIONAL_STATIC_SCENARIO_RECORDED_PROTOCOL_ONLY' : 'RECORDED_PROTOCOL_AND_THIS_CONVERSATION_ONLY',
+        limitations: [...(staticScenario ? ['HISTORICAL_INSTRUMENT_RULES_NOT_VERIFIED'] : []), 'CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
       const evidence: JsonObject = {
         executionSource: source,
         logic: matchingLogic ? { taskId: logic!.id, result: logic!.state.outcome!.status === 'completed' ? logic!.state.outcome!.result : null } : { status: 'MISSING_OR_DIFFERENT_CONFIGURATION', stars: null },
