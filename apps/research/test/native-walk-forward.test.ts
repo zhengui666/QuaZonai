@@ -23,11 +23,11 @@ const source: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selec
   strategy: { kind: 'EMA_CROSS', trade_size: '0.001', fast_period: 2, slow_period: 3 } };
 const request: JsonObject = { schema_version: 1, candidates: [source], split: { n_splits: 1, gap: 0 }, objective: { native_key: 'Sharpe Ratio', direction: 'MAXIMIZE' } };
 // Protocol-only native wire. Numerical native execution is tested in the Rust job tests, not mocked here.
-function wire(walkRequest: JsonObject = request, outcome = 'completed') {
-  const native = (start: string, end: string, candidate: JsonObject = source) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
-    canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
+function wire(walkRequest: JsonObject = request, outcome = 'completed', selected = 0, trainOutcome = outcome) {
+  const native = (start: string, end: string, candidate: JsonObject = source, runOutcome = outcome) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
+    canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
   return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
-    trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate) })), selected_candidate_index: 0, test_result: native('1790000000000000003', '1790000000000000004'), status: 'COMPLETED', reason: null }] };
+    trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: selected === 1 ? candidate_index + 1 : 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate, trainOutcome) })), selected_candidate_index: selected, test_result: native('1790000000000000003', '1790000000000000004', (walkRequest.candidates as JsonObject[])[selected]), status: 'COMPLETED', reason: null }] };
 }
 
 test('walk-forward evidence binds original strategies, chronology, availability and untouched native statistics', () => {
@@ -43,13 +43,13 @@ test('walk-forward evidence binds original strategies, chronology, availability 
   }
 });
 
-for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
-  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain'].includes(behavior);
+for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
+  const withSensitivity = ['rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped'].includes(behavior);
   const neighbourStrategies = [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }];
   const costs = [{ maker_fee: '0', taker_fee: behavior === 'same-cost' ? '0.0010' : '0.002' }];
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-walk-forward-'));
   const posts: NativeExecutionRequest[] = []; const deletes: string[] = []; let complete = behavior !== 'recover' && behavior !== 'stop';
-  const strategies = behavior === 'reviewed' || behavior === 'changed' ? [source.strategy, { ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }] : [source.strategy];
+  const strategies = behavior === 'reviewed' || behavior === 'changed' || behavior.startsWith('winner-') ? [source.strategy, { ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }] : [source.strategy];
   const planned: JsonObject = { ...request, candidates: strategies.map(strategy => ({ ...source, strategy: strategy! })) };
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
@@ -59,7 +59,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
     if (incoming.method === 'DELETE') { deletes.push(incoming.url!); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
     if (behavior === 'failed-cost' && original.command === 'native-strategy-backtest' && (original.input as any).venue.taker_fee === '0.002') { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'actual_cost_case_failed' })); return; }
     if (behavior === 'repeat' && posts.length === 1) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'FAILED', error: 'recorded_first_attempt_failure' })); return; }
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject, behavior === 'wf-stopped' ? 'stopped' : 'completed') : { ...wire().folds[0]!.trials[0]!.result, request: original.input, canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: behavior === 'stopped' ? 'stopped' : 'completed' } } } } : { error: 'pending_original_receipt' }) }));
+    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: original.command === 'native-walk-forward' ? wire(original.input as JsonObject, behavior === 'wf-stopped' ? 'stopped' : 'completed', behavior.startsWith('winner-') ? 1 : 0, behavior === 'train-stopped' ? 'stopped' : 'completed') : { ...wire().folds[0]!.trials[0]!.result, request: original.input, canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: behavior === 'stopped' ? 'stopped' : 'completed' } } } } : { error: 'pending_original_receipt' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -78,11 +78,11 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const review = behavior === 'reviewed' || behavior === 'changed' || withSensitivity;
       faux.setResponses([
         ...(behavior === 'full-chain' ? [fauxAssistantMessage(fauxToolCall('native_strategy_brief', {}), { stopReason: 'toolUse' })] : []),
-        ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' ? strategies : [source.strategy], ...(withSensitivity ? { validationMethod: { split: request.split, objective: request.objective, neighbourStrategies, costs: behavior === 'changed-method' ? [{ maker_fee: '0', taker_fee: '0.003' }] : costs } } : {}) }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
+        ...(review ? [fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence', strategies: behavior === 'reviewed' || behavior.startsWith('winner-') ? strategies : [source.strategy], ...(withSensitivity ? { validationMethod: { split: request.split, objective: request.objective, neighbourStrategies, ...(behavior === 'winner-uncovered' ? { sensitivityStrategies: [source.strategy] } : {}), costs: behavior === 'changed-method' ? [{ maker_fee: '0', taker_fee: '0.003' }] : costs } } : {}) }), { stopReason: 'toolUse' }), fauxAssistantMessage(JSON.stringify({ stars: 3, rationale: 'Plausible mechanism; test needed', risks: ['Parameter selection'], uncertainties: ['No results seen'] }))] : []),
         ...(behavior === 'full-chain' ? [fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' })] : []),
         ...(behavior === 'repeat' ? [fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { split: request.split, objective: request.objective }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective: request.objective }), { stopReason: 'toolUse' }),
-        ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs }), { stopReason: 'toolUse' })] : []),
+        ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs, ...(behavior === 'winner-covered' ? { strategies } : {}) }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
         (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes('PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
         fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
@@ -99,26 +99,45 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const task = await host.harness.getTask(assessment!.reportTaskIds[0]!, context);
       assert.equal(task?.state.outcome?.status, 'completed');
       if (task?.state.outcome?.status !== 'completed') assert.fail('report did not complete');
-      assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' || behavior === 'full-chain' ? 4 : null);
-      assert.equal(task.state.outcome.result.ratingStatus, behavior === 'rated' || behavior === 'full-chain' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
+      assert.equal((task.state.outcome.result.judgment as any).stars, behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' ? 4 : null);
+      assert.equal(task.state.outcome.result.ratingStatus, behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
       assert.equal(evidence.trialHistory.scope, 'THIS_CONVERSATION_ONLY'); assert.equal(evidence.trialHistory.crossConversationCoverage, 'NOT_CHECKED');
       assert.equal(evidence.trialHistory.runCount, behavior === 'repeat' ? 2 : 1);
       if (behavior === 'repeat') { assert.deepEqual(evidence.trialHistory.runs.map((run: any) => run.status), ['failed', 'completed']); assert.equal(evidence.trialHistory.runs[0].error, 'recorded_first_attempt_failure'); }
       if (withSensitivity) {
-        assert.equal(evidence.sensitivity.cases.length, 3);
+        assert.equal(evidence.sensitivity.cases.length, behavior === 'winner-covered' ? 5 : 3);
         assert.equal(evidence.sensitivity.cases[0].request.strategy.trade_size, '0.001');
         assert.equal(evidence.sensitivity.cases[1].request.strategy.fast_period, 3);
-        assert.equal(evidence.sensitivity.cases[2].request.venue.taker_fee, costs[0]!.taker_fee);
+        assert.equal(evidence.sensitivity.cases[behavior === 'winner-covered' ? 3 : 2].request.venue.taker_fee, costs[0]!.taker_fee);
         assert.equal(evidence.sensitivity.cases[0].nativeObjectiveValue, 1);
         assert.equal(evidence.ratingReadiness.notTradingPermission, true);
         assert.ok(evidence.ratingReadiness.limitations.includes('CPCV_NOT_RUN'));
-        assert.equal(evidence.ratingReadiness.eligible, behavior === 'rated' || behavior === 'insufficient' || behavior === 'full-chain');
+        assert.equal(evidence.ratingReadiness.eligible, behavior === 'rated' || behavior === 'insufficient' || behavior === 'full-chain' || behavior === 'winner-covered');
+        if (behavior.startsWith('winner-')) {
+          const coverage = evidence.dataValidation.selectedCandidateSensitivity[0];
+          assert.equal(coverage.candidateIndex, 1);
+          assert.equal(coverage.strategy.fast_period, 3);
+          assert.equal(coverage.costTaskIds.length, behavior === 'winner-covered' ? 1 : 0);
+          assert.equal(evidence.ratingReadiness.reasons.includes('SELECTED_CANDIDATE_COST_EVIDENCE_MISSING'), behavior === 'winner-uncovered');
+          assert.ok(evidence.dataValidation.metricInterpretation.caution.includes('MAXIMIZING_SHARPE'));
+          await host.harness.commit(async tx => { (await tx.doc(Study, receipt!.conversationId)).input!.data.native_strategy_backtest_request = (planned.candidates as JsonObject[])[1]!; }, context);
+          faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'This evaluated winner is now the registered base.' }), { stopReason: 'toolUse' }), fauxAssistantMessage('Cannot relabel an already evaluated candidate as pre-execution.')]);
+          await (await (await host.harness.conversation(receipt!.conversationId, context))!.submit({ type: 'input', content: 'Review this candidate', requestId: 'winner-review-after-execution' }, context)).wait(context);
+          assert.equal((await host.harness.snapshot(ResearchAssessment, receipt!.conversationId, context))!.logicTaskId, assessment!.logicTaskId);
+          await host.harness.commit(async tx => { (await tx.doc(Study, receipt!.conversationId)).input!.data.native_strategy_backtest_request = { ...source, strategy: { ...(source.strategy as JsonObject), fast_period: 4, slow_period: 8 } }; }, context);
+          faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'New base with an already observed candidate.', strategies: [strategies[1]] }), { stopReason: 'toolUse' }), fauxAssistantMessage('New base cannot make an already evaluated candidate unseen.')]);
+          await (await (await host.harness.conversation(receipt!.conversationId, context))!.submit({ type: 'input', content: 'Review this family', requestId: 'known-candidate-under-new-base' }, context)).wait(context);
+          assert.equal((await host.harness.snapshot(ResearchAssessment, receipt!.conversationId, context))!.logicTaskId, assessment!.logicTaskId);
+
+
+        }
         if (behavior === 'same-cost') assert.ok(evidence.ratingReadiness.reasons.includes('COST_VARIATION_EVIDENCE_MISSING'));
         if (behavior === 'changed-method') assert.ok(evidence.ratingReadiness.reasons.includes('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW'));
         if (behavior === 'failed-cost') { assert.equal(evidence.sensitivity.cases[2].status, 'failed'); assert.equal(evidence.sensitivity.cases[2].error, 'actual_cost_case_failed'); }
         if (behavior === 'rated') assert.equal((task.state.outcome.result.dataJudgment as any).stars, 2, 'synthesis is not average of logic and data');
+        if (behavior === 'train-stopped') { assert.equal(evidence.dataValidation.folds[0].selectedTrainingOutcome, 'stopped'); assert.equal(evidence.dataValidation.folds[0].nativeOutcome, 'completed'); assert.ok(evidence.ratingReadiness.reasons.includes('NATIVE_TEST_EVIDENCE_INCOMPLETE')); }
         if (behavior === 'wf-stopped') { assert.equal(evidence.dataValidation.folds[0].nativeOutcome, 'stopped'); assert.ok(evidence.ratingReadiness.reasons.includes('NATIVE_TEST_EVIDENCE_INCOMPLETE')); }
         if (behavior === 'stopped') { assert.equal(evidence.sensitivity.status, 'INCOMPLETE'); assert.equal(evidence.sensitivity.cases[0].nativeOutcome, 'stopped'); assert.deepEqual(evidence.sensitivity.cases[0].dataRowsByType, { QuoteTick: '2' }); }
         if (behavior === 'rated') for (const change of ['catalog', 'target', 'normalized'] as const) {
@@ -173,7 +192,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         const result = await host.harness.waitForTask(id, context); assert.equal(result.state.outcome.status, 'completed');
       }
     }
-    assert.equal(posts.length, behavior === 'full-chain' ? 5 : withSensitivity ? 4 : behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.find(post => post.command === 'native-walk-forward')!.input, planned);
+    assert.equal(posts.length, behavior === 'winner-covered' ? 6 : behavior === 'full-chain' ? 5 : withSensitivity ? 4 : behavior === 'history' || behavior === 'repeat' ? 2 : 1); assert.deepEqual(posts.find(post => post.command === 'native-walk-forward')!.input, planned);
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 

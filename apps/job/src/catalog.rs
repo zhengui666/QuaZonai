@@ -5,6 +5,7 @@ pub mod aggregation;
 pub mod coverage;
 pub mod currencies;
 mod file_batches;
+pub mod inspect;
 pub mod publish;
 pub use file_batches::{file_batch_session, FileBatchSession};
 

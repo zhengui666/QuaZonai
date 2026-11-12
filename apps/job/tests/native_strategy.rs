@@ -519,3 +519,72 @@ fn official_hourly_interval_settles_without_invented_next_funding_timestamp() {
         "99999.00000000 USDT"
     );
 }
+
+#[test]
+fn catalog_inspect_discovers_real_l2_files_without_modifying_catalog() {
+    let books = snapshot(SECOND, 2 * SECOND, "10.000000", "0.100000");
+    let dir = catalog(&books, &[]);
+    let exact_time = 1_790_000_000_000_000_001_u64;
+    let original = serde_json::to_value(InstrumentAny::CurrencyPair(currency_pair_btcusdt())).unwrap();
+    let mut updated = original.clone();
+    updated["CurrencyPair"]["ts_init"] = exact_time.into();
+    updated["CurrencyPair"]["ts_event"] = (exact_time - 1).into();
+    let native = ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, None, None, None).unwrap();
+    native.write_instruments(vec![serde_json::from_value::<InstrumentAny>(updated.clone()).unwrap()]).unwrap();
+    let files = || {
+        let native =
+            ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, None, None, None)
+                .unwrap();
+        let mut paths = native.list_parquet_files("data").unwrap();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|p| {
+                let bytes = std::fs::read(dir.path().join(&p)).unwrap();
+                (p, bytes)
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = files();
+    let result = job::catalog::inspect::query(
+        dir.path(),
+        contracts::catalog_coverage::NativeCatalogInspectRequestV1 {},
+    )
+    .unwrap();
+    assert_eq!(before, files());
+    // Exercise the actual CLI dispatch as well as the projection function.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_job"))
+        .args(["catalog-inspect", "--catalog", dir.path().to_str().unwrap()])
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    std::io::Write::write_all(child.stdin.take().as_mut().unwrap(), b"{}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(), serde_json::to_value(&result).unwrap());
+    assert_eq!(before, files());
+    assert_eq!(result.instruments.len(), 2);
+    assert!(result.instruments.iter().any(|row| row.instrument == original));
+    let version = result.instruments.iter().find(|row| row.instrument == updated).unwrap();
+    assert_eq!(serde_json::to_value(version).unwrap()["ts_init_ns"], exact_time.to_string());
+    assert_eq!(result.selectors.len(), 1);
+    assert_eq!(result.selectors[0].data_type, "OrderBookDelta");
+    assert_eq!(result.selectors[0].identifier, id().to_string());
+    assert_eq!(
+        result.selectors[0].file_intervals[0].start_ns.get(),
+        2 * SECOND
+    );
+    let json = serde_json::to_value(result).unwrap();
+    assert_eq!(
+        json["selectors"][0]["file_intervals"][0]["end_ns"],
+        "2000000000"
+    );
+    assert_eq!(
+        json["coverage_basis"],
+        "native_file_intervals_not_event_completeness"
+    );
+    assert!(
+        serde_json::from_value::<contracts::catalog_coverage::NativeCatalogInspectRequestV1>(
+            json!({"path":"/other"})
+        )
+        .is_err()
+    );
+}

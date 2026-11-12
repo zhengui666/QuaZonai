@@ -2,10 +2,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    io::Write,
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
 
 mod native_stdout;
 
@@ -39,6 +36,11 @@ enum Operation {
         input_root: PathBuf,
         #[arg(long, default_value = "/output")]
         output_root: PathBuf,
+    },
+    /// Discover stored native instruments and market-data file intervals without modifying them.
+    CatalogInspect {
+        #[arg(long)]
+        catalog: PathBuf,
     },
     /// Read native catalog file coverage; inclusive ts_init bounds, not event completeness.
     CatalogCoverage {
@@ -103,7 +105,6 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-
 }
 
 fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
@@ -164,6 +165,9 @@ fn run(operation: Operation) -> Result<()> {
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
+        Operation::CatalogInspect { catalog } => {
+            output(&job::catalog::inspect::query(&catalog, input()?)?)
+        }
         Operation::CatalogCoverage { catalog } => {
             output(&job::catalog::coverage::query(&catalog, input()?)?)
         }

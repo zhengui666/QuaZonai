@@ -307,3 +307,25 @@ test('upstream native strategy command preserves exact clocks and only registere
     assert.equal(rejected.status, 'FAILED'); assert.equal(rejected.error, 'nautilus_catalog_outside_configured_roots');
   } finally { await f.cleanup(); }
 });
+
+test('catalog inspection forwards an empty read-only request only within the configured root', async () => {
+  const f = await fixture();
+  try {
+    const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
+    assert.equal(capabilities.commands.includes('catalog-inspect'), true);
+    const request = f.request({}, ['--catalog', f.catalog]);
+    request.command = 'catalog-inspect';
+    const { requestId: _old, ...input } = request;
+    request.requestId = executionId(input);
+    const receipt = await (await f.post(request)).json();
+    assert.equal(receipt.status, 'COMPLETED');
+    assert.deepEqual(receipt.result.input, {});
+    assert.deepEqual(receipt.result.args, ['--catalog', f.catalog]);
+    const outside = { ...input, args: ['--catalog', tmpdir()] };
+    const denied = await f.post({ ...outside, requestId: executionId(outside) });
+    const failure = await denied.json();
+    assert.equal(failure.status, "FAILED");
+    assert.match(failure.error, /nautilus_catalog_outside_configured_roots/);
+    assert.equal((await readFile(f.count, "utf8")).trim().split("\n").length, 1);
+  } finally { await f.cleanup(); }
+});

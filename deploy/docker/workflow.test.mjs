@@ -60,12 +60,25 @@ test('only the remote native image installs the tick OS limiter and native paylo
   assert.doesNotMatch(application, /\/native\/job|\butil-linux\b|\bprlimit\b|QZ_TICK_JOB_BINARY/);
 });
 
-test('science CI exports a new controlled high-precision fixture and runs connected native ticks before archiving both formats', async () => {
+test('science CI exercises original high-precision data and upstream strategies before archiving both formats', async () => {
   const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-  assert.ok(ci.includes('test ! -e "$tick_fixture"'));
-  assert.match(ci, /QZ_TICK_NATIVE_FIXTURE_DIR="\$tick_fixture" cargo test[^\n]*--features market-history,catalog-prepare,hyperliquid-offline --lib ticks::/);
-  assert.ok(ci.includes('test -s "$tick_fixture/prepared/catalog-metadata.json"'));
-  assert.match(ci, /QZ_JOB_BINARY="\$RUNNER_TEMP\/native-artifacts\/job" QZ_TICK_JOB_BINARY="\$RUNNER_TEMP\/native-artifacts\/job-high-precision" QZ_TICK_NATIVE_FIXTURE_DIR="\$tick_fixture" node --experimental-strip-types --test apps\/service\/test\/tick-native\.test\.ts/);
+  const make = await readFile(new URL('../../Makefile', import.meta.url), 'utf8');
+  assert.match(ci, /cargo test[^\n]*--features market-history,catalog-prepare,hyperliquid-offline --lib ticks::/);
+  for (const target of ['native_strategy', 'native_walk_forward', 'native_instrument_updates']) {
+    assert.ok(ci.includes(`--test ${target}`));
+    await readFile(new URL(`../../apps/job/tests/${target}.rs`, import.meta.url));
+  }
+  assert.doesNotMatch(ci, /QZ_TICK_NATIVE_FIXTURE_DIR|tick-native\.test\.ts|--test instrument_versions/);
+  assert.match(ci, /run: make check-science PROFILE="\$PROFILE"/);
+  assert.match(ci, /run: make check-core/);
+  assert.match(make, /-p job --features \$\(SCIENCE_FEATURES\) --lib --tests -- --test-threads=1/);
+  assert.ok(make.includes('npm --prefix apps/service run test:native'));
+  assert.ok(make.includes('npm --prefix apps/nautilus test'));
+  for (const path of ['remote-native.test.ts', 'remote-admission.test.ts', 'native-scan-recovery.test.ts']) {
+    assert.ok(make.includes(`apps/research/test/${path}`));
+    await readFile(new URL(`../../apps/research/test/${path}`, import.meta.url));
+  }
+  assert.doesNotMatch(make, /QZ_PM_(?:EXPORT|NATIVE|OBSERVED|FORWARD)_FIXTURE/);
   const archive = ci.split('\n').find(line => line.includes('tar -czf') && line.includes('native.tar.gz'));
   for (const name of ['job source-tools catalog-prepare', 'job-high-precision catalog-prepare-high-precision market-history']) assert.ok(archive?.includes(name));
 });

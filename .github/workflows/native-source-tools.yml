@@ -36,5 +36,5 @@ jobs:
       - run: |
           cargo test --locked -p job --features native-sandbox-test,catalog-prepare,hyperliquid-offline \
             --lib --test source_tools --test catalog_prepare --test catalog --test managed \
-            --test instrument_versions --test native_instrument_updates \
+            --test native_strategy --test native_walk_forward --test native_instrument_updates \
             --test batched_observation

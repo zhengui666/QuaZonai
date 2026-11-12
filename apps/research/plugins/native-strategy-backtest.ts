@@ -1,14 +1,103 @@
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
-import { bool, obj, opt } from '@earendil-works/pi-schema';
+import { bool, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
+import { readFile } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint } from '../src/native-execution.ts';
+import { validateNumbers } from '../src/input.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
-import { ResearchConfiguration, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
+import { ResearchConfiguration, assertResearchRunSettled, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 import { executionVersions } from '../src/native-result-version.ts';
+
+
+// Consume the generated Rust wire schema; no parallel strategy language or parameter allowlist.
+const schemas = JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8')).components.schemas;
+function resolveSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(resolveSchema);
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  if (typeof record.$ref === 'string') return resolveSchema(schemas[record.$ref.split('/').at(-1)!]);
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, resolveSchema(item)]));
+}
+export const nativeStrategyRequestSchema = resolveSchema(schemas.NativeStrategyBacktestRequestV1) as Schema<JsonObject>;
+const validateRequest = compile(nativeStrategyRequestSchema);
+export const nativeStrategyCatalogTool = defineTool({
+  name: 'native_strategy_catalog',
+  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence.',
+  parameters: obj({}), replay: 'safe',
+  async execute(_args, api, context) {
+    const input = await studyInput(api, context);
+    if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
+    const binding = structuredClone(input);
+    binding.data.native_strategy_backtest_request = {};
+    registeredNativeStrategyRequest(binding);
+    const id = await api.commit(async tx => {
+      const child = await tx.doc(NativeStrategyChild, api.taskId);
+      child.taskId ??= await tx.createTask(NativeStrategyCatalogTask, { catalog: input.data.catalog as string, target: nativeTargetForData(input.data) }, { ownership: { kind: 'task', taskId: api.taskId } });
+      return child.taskId;
+    }, context);
+    const task = await api.waitForTask(id, context);
+    if (task.state.outcome.status !== 'completed') throw new Error(task.state.outcome.status === 'failed' ? task.state.outcome.error.message : 'native_catalog_inspection_aborted');
+    return { output: [{ type: 'text', text: JSON.stringify(task.state.outcome.result) }] };
+  },
+});
+
+export const NativeStrategyCatalogTask = defineTask<{ catalog: string; target: NativeTarget }, { phase: 'read' }, JsonObject>({
+  name: 'qz.native-strategy.catalog', version: 1, initial: () => ({ phase: 'read' }),
+  phases: { async read(task, runtime, context) {
+    const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-catalog-'));
+    try {
+      const result = object(await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(task.input.target,
+        'catalog-inspect', {}, ['--catalog', task.input.catalog], directory, context)), 'native_catalog_inspection');
+      if (result.schema_version !== 1 || result.timestamp_basis !== 'ts_init' || result.interval_bounds !== 'inclusive'
+        || result.coverage_basis !== 'native_file_intervals_not_event_completeness' || !Array.isArray(result.instruments) || !Array.isArray(result.selectors)) throw new Error('native_catalog_inspection_invalid');
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
+    } catch (error) {
+      if (runtime.signal.aborted) throw error;
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: error instanceof Error ? error.message : 'native_catalog_inspection_failed' } } }), context);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  } },
+  async abort(task, runtime, context) {
+    await cancelUnsettledNativeExecutions(task.id, runtime, context);
+    await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
+  },
+});
+
+export const nativeStrategyConfigureTool = defineTool({
+  name: 'native_strategy_configure',
+  description: 'Configure an official compiled Nautilus strategy on the unchanged registered catalog in this research conversation. First inspect native_strategy_catalog for real instrument definitions, selectors and file coverage. Use the generated request schema verbatim. Explicitly choose source event and availability windows, instrument, native strategy, simulation venue balances, currency, leverage and fees from the owner mandate and registered evidence; ask for missing consequential assumptions. Never invent prices, convert USDT/USDC, infer historical fee rates from current instrument definitions or claim file intervals prove completeness. This saves configuration only; the Rust runner validates native semantics when run. Existing official Tasks keep prior results. An unresolved execution must be settled before replacing configuration. No live trading.',
+  parameters: obj({ request: nativeStrategyRequestSchema }), replay: 'safe', executionMode: 'sequential',
+  prepareArguments(args) {
+    // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
+    validateNumbers(args);
+    if (!args || typeof args !== 'object' || !validateRequest.check((args as Record<string, unknown>).request)) throw new Error('native_strategy_request_schema_invalid');
+    return args as { request: JsonObject };
+  },
+  async execute(args, api, context) {
+    validateNumbers(args.request);
+    if (!validateRequest.check(args.request)) throw new Error('native_strategy_request_schema_invalid');
+    const request = structuredClone(args.request);
+    await api.commit(async tx => {
+      const study = await tx.doc(Study, api.conversationId);
+      if (!study.input || typeof study.input.data.catalog !== 'string' || !study.input.data.catalog) throw new Error('catalog_required');
+      // Run the existing historical-binding check without changing the admitted catalog or executor.
+      registeredNativeStrategyRequest({ ...study.input, data: { ...study.input.data, native_strategy_backtest_request: request } });
+      const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
+      if (configuration.configuredByTaskId === api.taskId) return;
+      await assertResearchRunSettled(tx, api.conversationId);
+      configuration.request = request;
+      configuration.configuredByTaskId = api.taskId;
+      study.input.data.native_strategy_backtest_request = request;
+      // The previous result remains on its original Pi Task; it is not the result of this configuration.
+      study.final = null;
+    }, context);
+    return { output: [{ type: 'text', text: JSON.stringify({ request, configurationTaskId: api.taskId,
+      scope: 'CONFIGURED_NOT_EXECUTED', limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
+  },
+});
 
 export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject {
   const expected = structuredClone(request);
@@ -120,11 +209,11 @@ export const nativeStrategyBriefTool = defineTool({
   parameters: obj({}), replay: 'safe',
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
-    const request = registeredNativeStrategyRequest(input);
+    const request = input.data.native_strategy_backtest_request === undefined ? null : registeredNativeStrategyRequest(input);
     return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, specification: input.specification ?? null,
-      request, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
+      request, requestSchema: nativeStrategyRequestSchema, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
       scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
   },
 });
-export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask], tools: [nativeStrategyBriefTool, nativeStrategyBacktestTool] });
+export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask, NativeStrategyCatalogTask], tools: [nativeStrategyBriefTool, nativeStrategyCatalogTool, nativeStrategyConfigureTool, nativeStrategyBacktestTool] });

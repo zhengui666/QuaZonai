@@ -55,3 +55,33 @@ pub struct NativeCatalogCoverageResultV1 {
     pub coverage_basis: String,
     pub series: Vec<NativeCatalogSeriesCoverageV1>,
 }
+
+/// Discovery reads only the bound catalog; no caller-supplied path or guessed selector.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCatalogInspectRequestV1 {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeCatalogInspectSeriesV1 {
+    pub data_type: String,
+    pub identifier: String,
+    pub file_intervals: Vec<NativeCatalogIntervalV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeCatalogInstrumentVersionV1 {
+    pub instrument: serde_json::Value,
+    pub ts_init_ns: DbCounter,
+    pub ts_event_ns: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeCatalogInspectResultV1 {
+    pub schema_version: SchemaV1,
+    pub timestamp_basis: String,
+    pub interval_bounds: String,
+    pub coverage_basis: String,
+    /// Official instrument serialization, with every returned definition retained.
+    pub instruments: Vec<NativeCatalogInstrumentVersionV1>,
+    pub selectors: Vec<NativeCatalogInspectSeriesV1>,
+}

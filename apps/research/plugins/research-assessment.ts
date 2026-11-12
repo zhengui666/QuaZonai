@@ -9,7 +9,7 @@ import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
 import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
-import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
+import { ResearchConfiguration, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 
 function executionSource(data: JsonObject): JsonObject {
   let target: JsonValue = null;
@@ -30,7 +30,10 @@ async function upstreamExecution(tx: Tx, conversationId: ConversationId, request
     const page = await tx.scanTasks({ conversationId, kind: 'qz.native-strategy.backtest' }, 100, cursor);
     for (const task of page.items) {
       const input = object(task.input, 'native_input');
-      if (sameSource(input, source) && sameRequest((includeValidation ? input.sourceRequest : undefined) ?? input.request, request) && (!found || task.id > found.id)) found = task;
+      const actualRequest = input.request && typeof input.request === 'object' && !Array.isArray(input.request) ? input.request : null;
+      const previouslyEvaluated = sameRequest(input.request, request) || includeValidation && (sameRequest(input.sourceRequest, request)
+        || input.walkForward === true && actualRequest && Array.isArray(actualRequest.candidates) && actualRequest.candidates.some(candidate => sameRequest(candidate, request)));
+      if (sameSource(input, source) && previouslyEvaluated && (!found || task.id > found.id)) found = task;
     }
     cursor = page.next;
   } while (cursor);
@@ -109,7 +112,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const eligible = synthesis && object(task.input.evidence.ratingReadiness ?? {}, 'rating_readiness').eligible === true;
     const answer = await runtime.models.completeSimple(model, {
       systemPrompt: `${rubric}\n${synthesis
-        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity and selection bias; return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
+        ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Inspect actual fold windows, native data rows, fills and failed trials; a high Sharpe in a short sample does not establish annual return. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
       messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
     }, { signal: runtime.signal });
@@ -131,7 +134,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
 export const logicReviewTool = defineTool({
   name: 'native_strategy_logic_review',
   description: 'Before evaluating this configured native strategy, ask an isolated Pi child Agent to review its declared economic mechanism, lookahead risks, parameter freedom and execution assumptions. Supply a hypothesis, not backtest results. For upstream strategies, provide the same ordered strategies list intended for walk-forward and validationMethod (split, objective, neighbourStrategies, costs) before any results; omitted means just the registered strategy. The review does not cover later changed candidates. This records an advisory logic star rating (or null when unknown), not data validation or permission to trade. No market data is read. Already-executed configurations cannot be retrospectively labelled pre-execution.',
-  parameters: obj({ hypothesis: str(), strategies: opt(arr(map(unknown()))), validationMethod: opt(obj({ split: map(unknown()), objective: map(unknown()), neighbourStrategies: arr(map(unknown())), costs: arr(obj({ maker_fee: str(), taker_fee: str() })) })) }), replay: 'safe', executionMode: 'sequential',
+  parameters: obj({ hypothesis: str(), strategies: opt(arr(map(unknown()))), validationMethod: opt(obj({ split: map(unknown()), objective: map(unknown()), sensitivityStrategies: opt(arr(map(unknown()))), neighbourStrategies: arr(map(unknown())), costs: arr(obj({ maker_fee: str(), taker_fee: str() })) })) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     const request = registeredNativeStrategyRequest(input);
@@ -140,12 +143,12 @@ export const logicReviewTool = defineTool({
     if (candidates?.length === 0) throw new Error('research_assessment_candidates_required');
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
-      if (await upstreamExecution(tx, api.conversationId, request, source, true)) throw new Error('research_assessment_pre_execution_required');
+      for (const candidate of [request, ...candidates]) if (await upstreamExecution(tx, api.conversationId, candidate, source, true)) throw new Error('research_assessment_pre_execution_required');
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
       if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
-        configurationTaskId: null,
-        evidence: { executionSource: source, hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ?? null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
+        configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null,
+        evidence: { executionSource: source, hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ? { ...args.validationMethod, sensitivityStrategies: args.validationMethod.sensitivityStrategies ?? args.strategies ?? [object(request.strategy, 'native_strategy_config')] } : null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
       { ownership: { kind: 'task', taskId: api.taskId } });
       (await tx.doc(ResearchAssessment, api.conversationId)).logicTaskId = child.taskId;
       return child.taskId;
@@ -171,7 +174,7 @@ export const assessmentReportTool = defineTool({
       const assessment = await tx.doc(ResearchAssessment, api.conversationId);
       const logic = assessment.logicTaskId ? await tx.task(assessment.logicTaskId) : undefined;
       const matchingLogic = logic?.kind === 'qz.research.assessment' && object(logic.input, 'logic_input').mode === 'LOGIC' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'
-        && sameRequest(object(logic.input, 'logic_input').request, request) && canonical(object(object(logic.input, 'logic_input').evidence, 'logic_evidence').executionSource ?? null) === canonical(source) && object(logic.input, 'logic_input').configurationTaskId === (null);
+        && sameRequest(object(logic.input, 'logic_input').request, request) && canonical(object(object(logic.input, 'logic_input').evidence, 'logic_evidence').executionSource ?? null) === canonical(source) && object(logic.input, 'logic_input').configurationTaskId === ((await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null);
       const native = await upstreamExecution(tx, api.conversationId, request, source);
       const nativeMatches = native && native.kind === 'qz.native-strategy.backtest' && sameRequest(object(native.input, 'native_input').request, request) && sameSource(object(native.input, 'native_input'), source);
       const validation = await tx.doc(NativeWalkForward, api.conversationId);
@@ -201,7 +204,14 @@ export const assessmentReportTool = defineTool({
           dataValidation = { ...dataValidation, status: completedTests ? 'PARTIAL_WALK_FORWARD_EVIDENCE' : 'WALK_FORWARD_NO_COMPLETED_TESTS', completedTests, totalFolds: (result.folds as JsonObject[]).length,
             missing: [...(dataValidation.missing as string[]), ...(completedTests ? [] : ['INDEPENDENT_OUT_OF_SAMPLE'])], request: result.request!, nativeVersion: result.native_version!, performanceScope: result.performance_scope!, notes: result.notes!,
             folds: (result.folds as JsonObject[]).map(fold => ({ index: fold.index!, trainStartNs: fold.train_start_ns!, trainEndNs: fold.train_end_ns!, testStartNs: fold.test_start_ns!, testEndNs: fold.test_end_ns!, status: fold.status!, reason: fold.reason!, selectedCandidateIndex: fold.selected_candidate_index!,
-              trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error! })),
+              trainingTrials: (fold.trials as JsonObject[]).map(trial => ({ candidateIndex: trial.candidate_index!, metric: trial.metric_value!, error: trial.error!,
+                nativeOutcome: trial.result === null ? null : object(object(object(trial.result, 'training_result').canonical_result, 'training_report').run, 'native_run').outcome!,
+                dataRowsByType: trial.result === null ? null : object(trial.result, 'training_result').data_rows_by_type!,
+                notes: trial.result === null ? null : object(trial.result, 'training_result').notes! })),
+              selectedTrainingOutcome: typeof fold.selected_candidate_index !== 'number' ? null : (() => {
+                const result = object((fold.trials as JsonObject[])[fold.selected_candidate_index], 'selected_training_trial').result;
+                return result === null ? null : object(object(object(result, 'training_result').canonical_result, 'training_report').run, 'native_run').outcome!;
+              })(),
               nativeTestStatistics: fold.test_result === null ? null : object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics!,
               nativeObjectiveValue: fold.test_result === null ? null : nativeAssessmentMetric(object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').statistics, 'native_statistics'), object(object(result.request, 'walk_forward_request').objective, 'native_objective')),
               nativeOutcome: fold.test_result === null ? null : object(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').run, 'native_run').outcome!,
@@ -221,16 +231,17 @@ export const assessmentReportTool = defineTool({
       for (const run of sensitivities.runs) {
         let matchingSource = sameRequest(run.sourceRequest, request);
         const cases: JsonObject[] = [];
-        let neighbourIndex = 0; let costIndex = 0;
+        const strategies = run.strategies ?? [object(run.sourceRequest.strategy, 'source_strategy')];
+        let baselineIndex = 0; let neighbourIndex = 0; let costIndex = 0;
         for (const item of run.tasks) {
           const task = await tx.task(item.taskId);
           if (!task || task.kind !== 'qz.native-strategy.backtest') throw new Error('native_sensitivity_task_missing');
           const invocation = object(task.input, 'sensitivity_input');
           const actual = object(invocation.request, 'sensitivity_request');
           matchingSource &&= sameSource(invocation, source);
-          const expected = item.role === 'BASELINE' ? run.sourceRequest : item.role === 'PARAMETER_NEIGHBOUR'
+          const expected = item.role === 'BASELINE' ? { ...run.sourceRequest, strategy: strategies[baselineIndex++]! } : item.role === 'PARAMETER_NEIGHBOUR'
             ? { ...run.sourceRequest, strategy: run.neighbourStrategies[neighbourIndex++]! }
-            : { ...run.sourceRequest, venue: { ...object(run.sourceRequest.venue, 'source_venue'), ...run.costs[costIndex++]! } };
+            : { ...run.sourceRequest, strategy: strategies[costIndex % strategies.length]!, venue: { ...object(run.sourceRequest.venue, 'source_venue'), ...run.costs[Math.floor(costIndex++ / strategies.length)]! } };
           if (invocation.walkForward === true || !sameRequest(invocation.sourceRequest, run.sourceRequest) || !sameRequest(actual, expected)) throw new Error('native_sensitivity_task_binding_mismatch');
           const row: JsonObject = { role: item.role, taskId: item.taskId, request: actual, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
             error: task.state.status === 'terminal' && task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null };
@@ -243,7 +254,7 @@ export const assessmentReportTool = defineTool({
           cases.push(row);
         }
         sensitivityHistory.push({ toolTaskId: run.toolTaskId, sameSource: matchingSource, cases });
-        if (matchingSource) sensitivity = { status: cases.every(row => row.status === 'completed' && row.nativeOutcome === 'completed') ? 'COMPLETED' : 'INCOMPLETE', toolTaskId: run.toolTaskId, neighbourStrategies: run.neighbourStrategies, costs: run.costs, cases, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS' };
+        if (matchingSource) sensitivity = { status: cases.every(row => row.status === 'completed' && row.nativeOutcome === 'completed') ? 'COMPLETED' : 'INCOMPLETE', toolTaskId: run.toolTaskId, strategies, neighbourStrategies: run.neighbourStrategies, costs: run.costs, cases, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS' };
       }
       const reasons: string[] = [];
       const logicInput = matchingLogic ? object(logic!.input, 'logic_input') : null;
@@ -253,19 +264,37 @@ export const assessmentReportTool = defineTool({
       if (matchingLogic && logic!.state.outcome?.status === 'completed' && object(object(logic!.state.outcome.result, 'logic_result').judgment, 'logic_judgment').stars === null) reasons.push('LOGIC_EVIDENCE_INSUFFICIENT');
       if (dataValidation.logicCoverage !== 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION') reasons.push('PRE_REVIEW_CANDIDATE_MISMATCH');
       const folds = (dataValidation.folds ?? []) as JsonObject[];
-      if (!folds.length || folds.some(fold => fold.status !== 'COMPLETED' || fold.nativeOutcome !== 'completed' || typeof fold.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_TEST_EVIDENCE_INCOMPLETE');
+      if (!folds.length || folds.some(fold => fold.status !== 'COMPLETED' || fold.nativeOutcome !== 'completed' || fold.selectedTrainingOutcome !== 'completed' || typeof fold.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_TEST_EVIDENCE_INCOMPLETE');
       if (method && wfRequest && (canonical(methodPart(method.split, ['test_size', 'max_train_size'])) !== canonical(methodPart(wfRequest.split, ['test_size', 'max_train_size']))
         || canonical(methodPart(method.objective, ['currency'])) !== canonical(methodPart(wfRequest.objective, ['currency'])))) reasons.push('WALK_FORWARD_METHOD_CHANGED_AFTER_REVIEW');
       const cases = sensitivity.cases as JsonObject[];
       if (sensitivity.status !== 'COMPLETED' || cases.some(row => typeof row.nativeObjectiveValue !== 'number')) reasons.push('NATIVE_SENSITIVITY_EVIDENCE_INCOMPLETE');
       if (!cases.some(row => row.role === 'PARAMETER_NEIGHBOUR' && changedNeighbour(object(row.request, 'case_request').strategy, request.strategy))) reasons.push('PARAMETER_NEIGHBOUR_EVIDENCE_MISSING');
       if (!cases.some(row => row.role === 'COST' && changedCost(object(row.request, 'case_request').venue, request.venue))) reasons.push('COST_VARIATION_EVIDENCE_MISSING');
-      if (method && (canonical(method.neighbourStrategies ?? null) !== canonical(sensitivity.neighbourStrategies ?? null) || canonical(method.costs ?? null) !== canonical(sensitivity.costs ?? null))) reasons.push('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW');
+      if (method && (canonical(method.sensitivityStrategies ?? [request.strategy!]) !== canonical(sensitivity.strategies ?? null) || canonical(method.neighbourStrategies ?? null) !== canonical(sensitivity.neighbourStrategies ?? null) || canonical(method.costs ?? null) !== canonical(sensitivity.costs ?? null))) reasons.push('SENSITIVITY_METHOD_CHANGED_AFTER_REVIEW');
       if (matchingLogic && (cases.some(row => typeof row.taskId !== 'number' || row.taskId <= logic!.id))) reasons.push('SENSITIVITY_PRECEDES_LOGIC_REVIEW');
       // Report which checks actually ran, without erasing outstanding independent audits.
       dataValidation.missing = (dataValidation.missing as string[]).filter(key =>
         !(key === 'PARAMETER_NEIGHBOURHOOD' && !reasons.includes('PARAMETER_NEIGHBOUR_EVIDENCE_MISSING') && sensitivity.status === 'COMPLETED')
         && !(key === 'COST_SENSITIVITY' && !reasons.includes('COST_VARIATION_EVIDENCE_MISSING') && sensitivity.status === 'COMPLETED'));
+      const selectedCandidateSensitivity: JsonObject[] = [];
+      if (wfRequest) for (const index of new Set(folds.map(fold => fold.selectedCandidateIndex).filter((value): value is number => typeof value === 'number'))) {
+        const candidate = object((wfRequest.candidates as JsonValue[])[index], 'selected_candidate');
+        const covered = (role: string) => cases.filter(row => row.role === role && row.status === 'completed' && row.nativeOutcome === 'completed'
+          && typeof row.nativeObjectiveValue === 'number'
+          && sameRequest({ ...candidate, strategy: object(row.request, 'sensitivity_case').strategy! }, candidate)
+          && (role !== 'COST' || changedCost(object(row.request, 'sensitivity_case').venue, candidate.venue))).map(row => row.taskId!);
+        const baselineTaskIds = covered('BASELINE'); const costTaskIds = covered('COST');
+        const neighbourTaskIds = cases.filter(row => ['BASELINE', 'PARAMETER_NEIGHBOUR'].includes(String(row.role)) && row.status === 'completed' && row.nativeOutcome === 'completed'
+          && typeof row.nativeObjectiveValue === 'number' && changedNeighbour(object(row.request, 'sensitivity_case').strategy, candidate.strategy)).map(row => row.taskId!);
+        selectedCandidateSensitivity.push({ candidateIndex: index, strategy: candidate.strategy!, baselineTaskIds, costTaskIds, neighbourTaskIds });
+        if (!baselineTaskIds.length || !costTaskIds.length) reasons.push('SELECTED_CANDIDATE_COST_EVIDENCE_MISSING');
+        if (!neighbourTaskIds.length) reasons.push('SELECTED_CANDIDATE_NEIGHBOUR_EVIDENCE_MISSING');
+      }
+      dataValidation.selectedCandidateSensitivity = selectedCandidateSensitivity;
+      dataValidation.metricInterpretation = { nativeObjective: objective, returnBasis: 'UPSTREAM_NATIVE_STATISTIC_UNCHANGED_NOT_ASSUMED_DAILY_EQUITY',
+        selection: 'TRAINING_OBJECTIVE_ONLY_WITH_RECORDED_CANDIDATE_SEARCH', caution: 'MAXIMIZING_SHARPE_CAN_SELECT_NOISY_SHORT_SAMPLES; HIGH_RATIO_IS_NOT_VALIDATION_OR_ESTABLISHED_ANNUAL_RETURN',
+        observedScope: 'PER_FOLD_AVAILABILITY_WINDOWS_DATA_ROWS_AND_FILLS; REGISTERED_EVENT_RANGE_IS_NOT_PROOF_OF_CONTINUOUS_COVERAGE' };
       const ratingReadiness: JsonObject = { eligible: reasons.length === 0, reasons, scope: 'RECORDED_PROTOCOL_AND_THIS_CONVERSATION_ONLY',
         limitations: ['CPCV_NOT_RUN', 'CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED', 'INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN', 'OTHER_EXPLORATORY_SCAN_HISTORY_NOT_AUDITED'], timeEvidence: 'NATIVE_EVENT_AND_AVAILABILITY_WINDOWS_AND_CHRONOLOGICAL_FOLDS', notTradingPermission: true };
       const evidence: JsonObject = {
@@ -274,7 +303,7 @@ export const assessmentReportTool = defineTool({
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
         dataValidation, trialHistory, sensitivity, sensitivityHistory, ratingReadiness,
       };
-      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
+      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
       assessment.reportTaskIds.push(child.taskId);
       return child.taskId;
     }, context);
@@ -286,4 +315,4 @@ export const assessmentReportTool = defineTool({
 
 
 export default defineExtension({ name: 'qz.research-assessment', tasks: [ResearchAssessmentTask], tools: [logicReviewTool, nativeSensitivityTool, assessmentReportTool],
-  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review with the same ordered strategies candidates planned for validation, before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_sensitivity with the same predeclared neighbourStrategies/costs, and native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });
+  sections: [section('research-assessment', () => 'When asked to assess overfitting, first request a pre-execution logic review with the same ordered strategies candidates planned for validation, before showing this configuration any backtest result. For an upstream native strategy, next use native_strategy_walk_forward with explicit split and native objective, then native_strategy_sensitivity with the same predeclared ordered strategies (all walk-forward candidates by default), neighbourStrategies/costs, and native_strategy_assessment_report. Ask for genuinely missing method inputs rather than inventing completed tests. Keep logic and actual data validation separate. Historical native backtests and exploratory scans are not independent OOS verification. Use the assessment report to disclose missing evidence; never invent stars or trading permission. Ordinary backtests do not require assessment.')] });

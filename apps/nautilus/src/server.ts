@@ -19,7 +19,7 @@ type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: st
 export const commands = ['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
   'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
   'capital-curve', 'compare-observed-spot', 'value-observed-spot',
-  'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
+  'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
 const flags = new Set(['--summary-only', '--plan-only']);
 const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
 const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);

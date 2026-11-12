@@ -156,28 +156,21 @@ jobs:
       - name: Build each required native executable once
         run: bash deploy/docker/native-build.sh "$PROFILE" "$RUNNER_TEMP/native-artifacts"
       - name: Retained native rules and real science
-        run: make check-science PROFILE="$PROFILE" QZ_EXPORT_OBSERVED_FIXTURES=0 QZ_SCIENCE_TEST_FILTER_ARGS="--skip export_disjoint_native_pm_revision_when_requested"
-      - name: Verify remote Nautilus integration
+        run: make check-science PROFILE="$PROFILE"
+      - name: Verify account and remote execution protocols
         env:
           QZ_JOB_BINARY: ${{ runner.temp }}/native-artifacts/job
-          QZ_PM_NATIVE_FIXTURE: ${{ runner.temp }}/qz-pm-native-fixture/source.json
-          QZ_PM_FORWARD_FIXTURE_DIR: ${{ runner.temp }}/qz-pm-forward-fixture
-        run: node --experimental-strip-types --test apps/service/test/remote-native.ts
+        run: make check-core
       - name: Mapped public history in the optional native format
         run: |
           profile_args=()
           if [[ "$PROFILE" == release ]]; then profile_args+=(--release); fi
           python3 -I -B -m unittest discover -s runtimes/data -p test_cryptohftdata.py -v
-          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --bin market-history --test catalog --test catalog_prepare --test managed --test instrument_versions --test native_instrument_updates
-          tick_fixture="$RUNNER_TEMP/tick-native-fixture"
-          test ! -e "$tick_fixture"
-          QZ_TICK_NATIVE_FIXTURE_DIR="$tick_fixture" cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib ticks::
+          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --bin market-history --test catalog --test catalog_prepare --test managed --test native_strategy --test native_walk_forward --test native_instrument_updates
+          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib ticks::
           cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib catalog::currencies
-          test -s "$tick_fixture/prepared/catalog-metadata.json"
-          test -s "$tick_fixture/SOFTWARE_FIXTURE.txt"
           test -x "$RUNNER_TEMP/native-artifacts/job"
           test -x "$RUNNER_TEMP/native-artifacts/job-high-precision"
-          QZ_JOB_BINARY="$RUNNER_TEMP/native-artifacts/job" QZ_TICK_JOB_BINARY="$RUNNER_TEMP/native-artifacts/job-high-precision" QZ_TICK_NATIVE_FIXTURE_DIR="$tick_fixture" node --experimental-strip-types --test apps/service/test/tick-native.test.ts
       - name: Retain the exact tested native binaries, not a second build
         run: |
           git rev-parse HEAD > "$RUNNER_TEMP/native-artifacts/tested-revision"

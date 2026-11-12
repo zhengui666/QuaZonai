@@ -48,6 +48,8 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     catalog_prefix::NativeCatalogPrefixResultV1,
+    catalog_coverage::NativeCatalogInspectRequestV1,
+    catalog_coverage::NativeCatalogInspectResultV1,
     catalog_coverage::NativeCatalogCoverageRequestV1,
     catalog_coverage::NativeCatalogCoverageResultV1,
     review_science::NativeReviewSourceRequestV1,
