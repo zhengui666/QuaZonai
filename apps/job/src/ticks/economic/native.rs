@@ -565,7 +565,7 @@ impl CohortStrategy {
 
 #[derive(Default)]
 struct AdjustmentState {
-    queue: VecDeque<(u64, Money)>,
+    queue: VecDeque<(u64, Money, Option<InstrumentId>)>,
     pending: Vec<Money>,
     applied_totals: BTreeMap<String, Decimal>,
     pending_funding: usize,
@@ -573,6 +573,7 @@ struct AdjustmentState {
     nominal_settlement_usdc: Decimal,
     applied: u64,
     failure: Option<String>,
+    first_margin_balance: Option<String>,
 }
 #[derive(Clone, Default)]
 struct Adjustments {
@@ -593,9 +594,10 @@ impl SimulationModule for Adjustments {
         while state
             .queue
             .front()
-            .is_some_and(|(at, _)| *at <= now.as_u64())
+            .is_some_and(|(at, _, _)| *at <= now.as_u64())
         {
-            batch.push(state.queue.pop_front().unwrap().1);
+            let (at, amount, instrument_id) = state.queue.pop_front().unwrap();
+            batch.push((amount, at, instrument_id));
         }
         state.pending_funding = batch.len();
         state.pending_nominal = Decimal::ZERO;
@@ -609,8 +611,12 @@ impl SimulationModule for Adjustments {
                 .context("TICK_ECONOMIC_NOMINAL_BALANCE_MISSING")?;
             if nominal.as_decimal() != Decimal::ZERO {
                 // Explicit quote-unit settlement model; native USD PnL has already rounded to cents.
-                batch.push(-nominal);
-                batch.push(Money::from_decimal(nominal.as_decimal(), Currency::USDC())?);
+                batch.push((-nominal, now.as_u64(), None));
+                batch.push((
+                    Money::from_decimal(nominal.as_decimal(), Currency::USDC())?,
+                    now.as_u64(),
+                    None,
+                ));
                 state.pending_nominal = nominal.as_decimal();
             }
         }
@@ -620,13 +626,15 @@ impl SimulationModule for Adjustments {
         // Native module batches apply sequentially. Preflight known failures, then make any
         // unexpected partial application terminal instead of returning a successful account.
         let mut totals = BTreeMap::new();
-        for amount in &batch {
+        for (index, (amount, event, instrument_id)) in batch.iter().enumerate() {
             let initial = account
                 .balance(Some(amount.currency))
                 .context("TICK_ECONOMIC_ADJUSTMENT_CURRENCY_MISSING")?;
             let entry = totals
                 .entry(amount.currency.code.to_string())
                 .or_insert((initial.total, initial.free));
+            let before_total = entry.0;
+            let before_free = entry.1;
             entry.0 = entry
                 .0
                 .checked_add(*amount)
@@ -635,15 +643,36 @@ impl SimulationModule for Adjustments {
                 .1
                 .checked_add(*amount)
                 .context("TICK_ECONOMIC_ADJUSTMENT_FREE_OVERFLOW")?;
+            let kind = if index < state.pending_funding {
+                "FUNDING"
+            } else {
+                "NOMINAL_SWEEP"
+            };
+            let context = || {
+                format!(
+                "stage=ADJUSTMENT_PREFLIGHT:kind={kind}:nominal_settlement={}:event_ns={event}:process_ns={}:account={}:account_type={:?}:instrument_id={}:currency={}:before_total={before_total}:before_free={before_free}:delta={amount}:next_total={}:next_free={}",
+                self.nominal_settlement, now.as_u64(), account.id(), account.account_type(),
+                instrument_id.map_or_else(|| "ACCOUNT".into(), |id| id.to_string()), amount.currency, entry.0, entry.1
+            )
+            };
+            let margin = account.account_type() == AccountType::Margin;
+            let negative =
+                entry.0.as_decimal() < Decimal::ZERO || entry.1.as_decimal() < Decimal::ZERO;
+            if margin
+                && !self.nominal_settlement
+                && negative
+                && state.first_margin_balance.is_none()
+            {
+                state.first_margin_balance = Some(context());
+            }
             ensure!(
-                self.nominal_settlement
-                    || (entry.0.as_decimal() >= Decimal::ZERO
-                        && entry.1.as_decimal() >= Decimal::ZERO),
-                "TICK_ECONOMIC_CASH_ADJUSTMENT_OVERDRAFT"
+                margin || !negative,
+                "TICK_ECONOMIC_CASH_ADJUSTMENT_OVERDRAFT:{}",
+                context()
             );
         }
-        state.pending = batch.clone();
-        Ok(SimulationModuleResult::Completed(batch))
+        state.pending = batch.iter().map(|(amount, _, _)| *amount).collect();
+        Ok(SimulationModuleResult::Completed(state.pending.clone()))
     }
     fn acknowledge(&self, outcomes: &[AccountAdjustmentOutcome]) -> Result<()> {
         let mut state = self.state.borrow_mut();
@@ -1261,7 +1290,7 @@ impl NativeLedger {
                 .borrow()
                 .queue
                 .front()
-                .is_some_and(|(at, _)| *at <= event);
+                .is_some_and(|(at, _, _)| *at <= event);
         let mut seen = BTreeSet::new();
         let mut events = Vec::new();
         for rate in rates {
@@ -1420,13 +1449,22 @@ impl NativeLedger {
             }],
         )
     }
-    pub fn queue_adjustment(&mut self, event: u64, amount: Money) -> Result<()> {
+    pub fn adjustment_balance_diagnostic(&self) -> Option<String> {
+        self.adjustments.state.borrow().first_margin_balance.clone()
+    }
+
+    pub fn queue_adjustment(
+        &mut self,
+        event: u64,
+        amount: Money,
+        instrument_id: Option<InstrumentId>,
+    ) -> Result<()> {
         let mut state = self.adjustments.state.borrow_mut();
         ensure!(
-            state.queue.back().is_none_or(|(last, _)| *last <= event),
+            state.queue.back().is_none_or(|(last, _, _)| *last <= event),
             "TICK_ECONOMIC_ADJUSTMENT_ORDER"
         );
-        state.queue.push_back((event, amount));
+        state.queue.push_back((event, amount, instrument_id));
         Ok(())
     }
     pub fn balance(&self, currency: Currency) -> Option<Money> {
@@ -1677,6 +1715,167 @@ mod tests {
     }
 
     #[test]
+    fn margin_oracle_funding_debits_real_reserved_balance_and_cash_preflight_stays_atomic() {
+        let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
+            unreachable!()
+        };
+        definition.quote_currency = Currency::USDC();
+        let instrument = InstrumentAny::CryptoPerpetual(definition);
+        let mut margin = NativeLedger::new_observed(
+            vec![instrument.clone()],
+            Decimal::from(1000),
+            true,
+            fees(Decimal::ZERO),
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+        )
+        .unwrap();
+        margin
+            .step_books(
+                1_000_000_000,
+                vec![NativeBook {
+                    snapshot: observed_snapshot(
+                        &instrument,
+                        1_000_000_000,
+                        "99.00",
+                        "30.0000",
+                        &[("100.00", "30.0000")],
+                    ),
+                    capacity: Decimal::from(30),
+                    target_quantity: Some(Decimal::from(14)),
+                }],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(margin.current_quantity(instrument.id()), Decimal::from(14));
+        assert!(!margin.adjustments.nominal_settlement);
+        // Record an initial-margin reservation through the official account API.
+        {
+            let mut cache = margin.engine.kernel().cache.borrow_mut();
+            let (account_id, available) = {
+                let account = cache.account_for_venue(&margin.venue).unwrap();
+                (
+                    account.id(),
+                    account.balance_free(Some(Currency::USDC())).unwrap(),
+                )
+            };
+            let mut account = cache.account_mut(&account_id).unwrap();
+            let nautilus_model::accounts::AccountAny::Margin(account) = &mut *account else {
+                unreachable!()
+            };
+            account.update_initial_margin(instrument.id(), available);
+        }
+        let balance = {
+            let cache = margin.engine.kernel().cache.borrow();
+            let account = cache.account_for_venue(&margin.venue).unwrap();
+            assert_eq!(account.account_type(), AccountType::Margin);
+            *account.balance(Some(Currency::USDC())).unwrap()
+        };
+        assert!(balance.total.as_decimal() > Decimal::ZERO);
+        assert_eq!(balance.free.as_decimal(), Decimal::ZERO);
+        assert!(
+            margin
+                .maintenance_at(instrument.id(), Decimal::from(100))
+                .unwrap()
+                .as_decimal()
+                < balance.total.as_decimal() - Decimal::ONE
+        );
+        let fills = margin.summary().fills;
+        margin
+            .queue_adjustment(2_000_000_000, Money::from("-1 USDC"), Some(instrument.id()))
+            .unwrap();
+        margin
+            .funding_batch(
+                2_000_000_000,
+                &[NativeRate {
+                    instrument_id: instrument.id(),
+                    rate: Decimal::new(1, 4),
+                    settlement_mark: None,
+                }],
+            )
+            .unwrap();
+        let after = {
+            let cache = margin.engine.kernel().cache.borrow();
+            let account = cache.account_for_venue(&margin.venue).unwrap();
+            *account.balance(Some(Currency::USDC())).unwrap()
+        };
+        assert_eq!(
+            after.total.as_decimal(),
+            balance.total.as_decimal() - Decimal::ONE
+        );
+        assert_eq!(after.locked + after.free, after.total);
+        assert_eq!(margin.summary().adjustments_applied, 1);
+        let diagnostic = margin.adjustment_balance_diagnostic().unwrap();
+        assert!(diagnostic.contains("event_ns=2000000000"));
+        assert!(diagnostic.contains("account_type=Margin"));
+        assert!(diagnostic.contains("stage=ADJUSTMENT_PREFLIGHT"));
+        assert!(diagnostic.contains("kind=FUNDING"));
+        assert!(diagnostic.contains("nominal_settlement=false"));
+        assert!(diagnostic.contains(&format!("instrument_id={}", instrument.id())));
+        assert!(diagnostic.contains(&format!("before_free={}", Money::from("0 USDC"))));
+        assert!(diagnostic.contains(&format!("next_total={}", Money::from("999 USDC"))));
+        assert!(diagnostic.contains(&format!("next_free={}", Money::from("-1 USDC"))));
+
+        assert_eq!(margin.summary().adjustment_totals["USDC"], -Decimal::ONE);
+        assert_eq!(margin.summary().fills, fills);
+        assert!(margin.adjustments.state.borrow().pending.is_empty());
+        assert!(margin.adjustments.state.borrow().failure.is_none());
+        assert_eq!(margin.current_quantity(instrument.id()), Decimal::from(14));
+        margin
+            .queue_adjustment(3_000_000_000, Money::from("-1 USDC"), Some(instrument.id()))
+            .unwrap();
+        margin
+            .funding_batch(
+                3_000_000_000,
+                &[NativeRate {
+                    instrument_id: instrument.id(),
+                    rate: Decimal::new(1, 4),
+                    settlement_mark: None,
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            margin.adjustment_balance_diagnostic().as_deref(),
+            Some(diagnostic.as_str())
+        );
+        assert_eq!(
+            margin.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(998)
+        );
+        assert_eq!(margin.summary().adjustments_applied, 2);
+
+        let spot = spot();
+        let mut cash = ledger(&spot, false, Decimal::ZERO);
+        cash.step(1_000_000_000, &spot, 100.0, 10.0, None).unwrap();
+        let before = cash.balance(Currency::USDC()).unwrap();
+        cash.queue_adjustment(2_000_000_000, Money::from("1 USDC"), None)
+            .unwrap();
+        cash.queue_adjustment(2_000_000_000, Money::from("-1002 USDC"), Some(spot.id()))
+            .unwrap();
+        let error = cash
+            .step(2_000_000_000, &spot, 100.0, 10.0, None)
+            .unwrap_err()
+            .to_string();
+        for field in [
+            "TICK_ECONOMIC_CASH_ADJUSTMENT_OVERDRAFT",
+            "event_ns=2000000000",
+            "process_ns=2000000000",
+            "account_type=Cash",
+            "currency=USDC",
+            "before_total=",
+            "before_free=",
+            "delta=",
+            "next_total=",
+            "next_free=",
+        ] {
+            assert!(error.contains(field), "{error}");
+        }
+        assert!(error.contains(&format!("instrument_id={}", spot.id())));
+        assert_eq!(cash.balance(Currency::USDC()).unwrap(), before);
+        assert!(cash.adjustments.state.borrow().pending.is_empty());
+    }
+
+    #[test]
     fn standard_mark_funding_updates_native_position_and_balance_once() {
         let InstrumentAny::CryptoPerpetual(mut definition) = perp() else {
             unreachable!()
@@ -1918,7 +2117,7 @@ mod tests {
         );
         assert_eq!(native.summary().commissions["USDC"], Decimal::new(5, 1));
         native
-            .queue_adjustment(3_000_000_000, Money::from("-5 USDC"))
+            .queue_adjustment(3_000_000_000, Money::from("-5 USDC"), None)
             .unwrap();
         native
             .step_batch_with_rates(
@@ -1981,7 +2180,7 @@ mod tests {
             .step(2_000_000_000, &perp, 100.0, 10.0, Some(-Decimal::ONE))
             .unwrap();
         margin
-            .queue_adjustment(3_000_000_000, Money::from("-5 USDC"))
+            .queue_adjustment(3_000_000_000, Money::from("-5 USDC"), None)
             .unwrap();
         cash.step(3_000_000_000, &spot, 100.0, 10.0, None).unwrap();
         margin
@@ -2073,7 +2272,7 @@ mod tests {
             .step(DAY - 1_000_000_000, &perp, 110.0, 10.0, Some(-Decimal::ONE))
             .unwrap();
         margin
-            .queue_adjustment(DAY + 1_000_000_000, Money::from("-3 USDC"))
+            .queue_adjustment(DAY + 1_000_000_000, Money::from("-3 USDC"), None)
             .unwrap();
         cash.step(DAY + 1_000_000_000, &spot, 100.0, 10.0, None)
             .unwrap();
@@ -2713,7 +2912,7 @@ mod tests {
         .unwrap();
         let next_day = 86_401_000_000_000;
         ledger
-            .queue_adjustment(4_000_000_000, Money::from("1 USDC"))
+            .queue_adjustment(4_000_000_000, Money::from("1 USDC"), None)
             .unwrap();
         for (at, bid, asks, target) in [
             (1_000_000_000, "99.00", &[("101.00", "10.0000")][..], None),
@@ -2815,7 +3014,7 @@ mod tests {
             ] {
                 if second == 5 {
                     ledger
-                        .queue_adjustment(4_000_000_000, Money::from("-5 USDC"))
+                        .queue_adjustment(4_000_000_000, Money::from("-5 USDC"), None)
                         .unwrap();
                     let rates = [NativeRate {
                         instrument_id: id,
