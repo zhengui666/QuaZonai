@@ -117,3 +117,28 @@ for (const actualVersion of ['v3.0.0-dev.2', 'v3.0.0-dev.1']) test(`application 
   if (actualVersion !== version) assert.match(result.stderr, /Image version differs/);
   assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
 });
+
+for (const actual of ['matching', 'wrong', 'absent', 'multiple', 'stopped']) test(`application verification checks actual container image and state (${actual})`, async t => {
+  const f = await fixture(t);
+  const result = f.run(`qz_compose() { printf '%s\\n' '${actual === 'absent' ? '' : actual === 'multiple' ? 'app-one\napp-two' : 'app-container'}'; };
+    docker() { case "$*" in *'image inspect'*) echo expected-id;; *'.Image'*) echo ${actual === 'wrong' ? 'other-id' : 'expected-id'};; *) echo ${actual === 'stopped' ? 'false' : 'true'};; esac; };
+    qz_app_verify "$ROOT/installation.json"`);
+  assert.equal(result.status === 0, actual === 'matching', result.stderr);
+  if (actual === 'wrong') assert.match(result.stderr, /Running application differs from the release image/);
+  assert.equal(await readFile(join(f.root, 'compose.override.yaml'), 'utf8'), f.original);
+  assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
+});
+test('application image mismatch refuses activation before publishing the new installation identity', async t => {
+  const f = await fixture(t);
+  const original = await readFile(join(f.root, 'installation.json'), 'utf8');
+  const result = f.run(`qz_compose() { echo app-container; };
+    docker() { case "$*" in *'image inspect'*) echo expected-id;; *'.Image'*) echo old-id;; *) echo true;; esac; };
+    qz_start() { qz_verify "$1"; };
+    qz_save() { touch "$ROOT/saved"; };
+    qz_activate "$ROOT" "$ROOT/installation.json"`);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Running application differs from the release image/);
+  await assert.rejects(readFile(join(f.root, 'saved')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(f.root, 'installation.json'), 'utf8'), original);
+  assert.equal(await readFile(join(f.root, 'compose.override.yaml'), 'utf8'), f.original);
+});

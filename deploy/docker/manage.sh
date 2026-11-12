@@ -80,6 +80,14 @@ qz_runtime_stopped() {
     [[ -z "$entrypoint" || "$entrypoint" == null || "$entrypoint" == '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]' ]] || qz_fail 'Candidate runtime overrides its standard worker entrypoint; account safety is not established.'
 
 }
+qz_app_verify() {
+    local file=$1 id expected
+    id=$(qz_compose "$file" ps --quiet app)
+    [[ -n "$id" && "$id" != *$'\n'* ]] || qz_fail 'Expected one running application container.'
+    expected=$(docker image inspect --format '{{.Id}}' "$(qz_get "$file" image)")
+    [[ $(docker inspect --format '{{.Image}}' "$id") == "$expected" ]] || qz_fail 'Running application differs from the release image; inspect the owner Compose override.'
+    [[ $(docker inspect --format '{{.State.Running}}' "$id") == true ]] || qz_fail 'Application did not remain running.'
+}
 qz_runtime_verify() {
     local file=$1 id expected
     [[ $(qz_get "$file" local_runtime_service 2>/dev/null || true) == nautilus ]] || return 0
@@ -124,6 +132,7 @@ qz_prepare() {
     fi
 }
 qz_verify() {
+    qz_app_verify "$1"
     local origin="http://localhost:$(qz_get "$1" port)" code
     code=$(curl --silent --show-error --noproxy '*' --max-time 10 --output /dev/null --write-out '%{http_code}' "$origin/health/live")
     [[ "$code" == 204 ]] || qz_fail 'Node API liveness failed.'
