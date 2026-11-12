@@ -294,3 +294,89 @@ fn cli_emits_real_walk_forward_evidence_as_one_json_document() {
                 .is_empty()
     }));
 }
+
+#[test]
+fn actual_walk_forward_preserves_static_scenario_in_every_training_and_test_result() {
+    use contracts::native_strategy::NativeInstrumentDefinitionV1;
+    let (dir, mut request) = walk_fixture(false);
+    let native =
+        ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, None, None, None).unwrap();
+    let mut raw =
+        serde_json::to_value(InstrumentAny::CurrencyPair(currency_pair_btcusdt())).unwrap();
+    raw["CurrencyPair"]["ts_init"] = json!(100 * SECOND + 11);
+    raw["CurrencyPair"]["ts_event"] = json!(100 * SECOND + 7);
+    native
+        .write_instruments(vec![serde_json::from_value(raw).unwrap()])
+        .unwrap();
+    for candidate in &mut request.candidates {
+        candidate.instrument_definition = Some(NativeInstrumentDefinitionV1::StaticScenario {
+            ts_init_ns: contracts::DbCounter::new(100 * SECOND + 11).unwrap(),
+            ts_event_ns: contracts::DbCounter::new(100 * SECOND + 7).unwrap(),
+        });
+    }
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .args([
+            "native-walk-forward",
+            "--catalog",
+            dir.path().to_str().unwrap(),
+        ])
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&request).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: contracts::native_walk_forward::NativeStrategyWalkForwardResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        result
+            .notes
+            .iter()
+            .any(|note| note.contains("HYPOTHETICAL_STATIC_RULES"))
+    );
+    for fold in result.folds {
+        assert_eq!(fold.status, "COMPLETED");
+        for result in fold
+            .trials
+            .iter()
+            .map(|trial| trial.result.as_ref().unwrap())
+            .chain(std::iter::once(fold.test_result.as_ref().unwrap()))
+        {
+            assert_eq!(result.instrument_definition.mode, "STATIC_SCENARIO");
+            assert_eq!(
+                result.instrument_definition.ts_init_ns.get(),
+                100 * SECOND + 11
+            );
+            assert_eq!(
+                result.instrument_definition.scope,
+                "HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED"
+            );
+            assert!(matches!(
+                result.request.instrument_definition,
+                Some(NativeInstrumentDefinitionV1::StaticScenario { .. })
+            ));
+            assert!(
+                !result.canonical_result["fills"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+}

@@ -666,3 +666,104 @@ fn upstream_grid_uses_real_quotes_and_preserves_all_config_fields() {
     assert_eq!(prefix.data_rows_by_type["QuoteTick"].get(), 2);
     assert_eq!(prefix.request.available_end_ns.get(), 3 * SECOND);
 }
+
+#[test]
+fn cli_static_scenario_keeps_future_definition_and_market_clocks_without_claiming_history() {
+    use contracts::native_strategy::{
+        NativeInstrumentDefinitionV1, NativeStrategyBacktestResultV1,
+    };
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let native =
+        ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, None, None, None).unwrap();
+    let mut raw =
+        serde_json::to_value(InstrumentAny::CurrencyPair(currency_pair_btcusdt())).unwrap();
+    let definition = raw.get_mut("CurrencyPair").unwrap();
+    let init = 100 * SECOND + 11;
+    let event = 100 * SECOND + 7;
+    definition["ts_init"] = json!(init);
+    definition["ts_event"] = json!(event);
+    let instrument: InstrumentAny = serde_json::from_value(raw.clone()).unwrap();
+    job::catalog::currencies::write(dir.path(), std::slice::from_ref(&instrument)).unwrap();
+    native.write_instruments(vec![instrument]).unwrap();
+    let mut books = snapshot(SECOND, 2 * SECOND, "10.000000", "0.100000");
+    books.extend(snapshot(3 * SECOND, 4 * SECOND, "10.000000", "0.100000"));
+    native.write_to_parquet(&books, None, None, None).unwrap();
+    assert!(
+        job::native_strategy::run(dir.path(), request(5 * SECOND))
+            .unwrap_err()
+            .to_string()
+            .contains("INSTRUMENT_UNAVAILABLE_AT_START")
+    );
+    let mut scenario = request(5 * SECOND);
+    scenario.instrument_definition = Some(NativeInstrumentDefinitionV1::StaticScenario {
+        ts_init_ns: contracts::DbCounter::new(init).unwrap(),
+        ts_event_ns: contracts::DbCounter::new(event).unwrap(),
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .args([
+            "native-strategy-backtest",
+            "--catalog",
+            dir.path().to_str().unwrap(),
+        ])
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&scenario).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: NativeStrategyBacktestResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        serde_json::to_value(&result.request).unwrap(),
+        serde_json::to_value(&scenario).unwrap()
+    );
+    assert_eq!(result.instrument_definition.mode, "STATIC_SCENARIO");
+    assert_eq!(
+        result.instrument_definition.scope,
+        "HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED"
+    );
+    assert_eq!(result.instrument_definition.ts_init_ns.get(), init);
+    assert_eq!(result.instrument_definition.ts_event_ns.get(), event);
+    assert!(
+        !result.canonical_result["fills"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // No data export, synthetic early definition or changed original timestamp was written.
+    let inspected = job::catalog::inspect::query(dir.path(), Default::default()).unwrap();
+    assert_eq!(inspected.instruments.len(), 1);
+    assert_eq!(inspected.instruments[0].instrument, raw);
+    let book = inspected
+        .selectors
+        .iter()
+        .find(|s| s.data_type == "OrderBookDelta")
+        .unwrap();
+    assert_eq!(book.file_intervals[0].start_ns.get(), 2 * SECOND);
+    assert_eq!(book.file_intervals[0].end_ns.get(), 4 * SECOND);
+    scenario.instrument_definition = Some(NativeInstrumentDefinitionV1::StaticScenario {
+        ts_init_ns: contracts::DbCounter::new(init - 1).unwrap(),
+        ts_event_ns: contracts::DbCounter::new(event).unwrap(),
+    });
+    assert!(
+        job::native_strategy::run(dir.path(), scenario)
+            .unwrap_err()
+            .to_string()
+            .contains("SCENARIO_DEFINITION_NOT_UNIQUE_OR_MISSING")
+    );
+}

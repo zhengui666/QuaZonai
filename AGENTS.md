@@ -178,3 +178,9 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 研究详情的 `assessments` 直接读取原 Pi 审阅 Task，返回真实状态、原始报告和 `CURRENT`/`HISTORICAL` 配置标识；比对原生请求、catalog/target 与配置 Task，不从 Agent 文本重算星级。现有 CLI `research get` 原样返回同一字段，Web 显示三路星级、未评级、限制和历史。证据链接 `/api/v3/research/:id/evidence/:taskId` 只读本研究原生回测/WF及审阅 Task，沿用 owner 认证；不暴露私有工具任务或跨研究记录，不建立第二报告存储。
 
 历史回测已保存后，后续验证仍由官方活跃 Task/Submission 决定是否可停止，不能因 `COMPUTED` 隐藏停止入口。用户停止后可继续同一研究，历史结果移入原 `previousNativeResults`，原 Task 不重写。新提交前核查本会话全部原生回测/WF/敏感性 Task 及原远端回执，未决只读原回执，不重新 POST、不把取消/未知变成成功；新提交获得新的停止任务，避免重复使用已完成的停止命令。
+
+## 显式固定规格研究情景
+
+原生策略请求默认按窗口起点读取当时已进入 catalog 的 instrument 定义。可显式使用 `instrument_definition.mode=STATIC_SCENARIO` 并指定目录中原始定义的精确 `ts_init_ns` 与 `ts_event_ns`，将该版本作为整个窗口的固定模拟规格交给官方 `BacktestEngine.add_instrument`。此路径不改原定义时间、不回填历史、不改行情数据、不重写上游，也不在情景中混入其他规格更新。
+
+单次回测及每个 walk-forward 训练/测试结果均携带实际使用的定义时间和 `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED` 口径。时间外测试只表示该假设下按时间分离的结果，不验证历史规格，也不构成实盘证据。费用、币种和资金费模型仍须分别明确；无隐式 USDT/USDC 转换。默认严格路径的 `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` 仅描述目录可用时间，不冒称独立历史来源审计。

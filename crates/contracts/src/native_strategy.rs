@@ -16,6 +16,10 @@ pub struct NativeStrategyBacktestRequestV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available_start_ns: Option<DbCounter>,
     pub available_end_ns: DbCounter,
+    /// Default: definitions available at the historical window start. Static scenarios keep the
+    /// original definition timestamps and explicitly assume its rules across the whole window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrument_definition: Option<NativeInstrumentDefinitionV1>,
     pub venue: NativeStrategyVenueV1,
     pub strategy: NativeCompiledStrategyV1,
 }
@@ -32,6 +36,25 @@ pub struct NativeStrategyVenueV1 {
     pub maker_fee: String,
     pub taker_fee: String,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum NativeInstrumentDefinitionV1 {
+    HistoricalAsOfStart,
+    StaticScenario {
+        ts_init_ns: DbCounter,
+        ts_event_ns: DbCounter,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeInstrumentDefinitionBasisV1 {
+    pub mode: String,
+    pub ts_init_ns: DbCounter,
+    pub ts_event_ns: DbCounter,
+    pub scope: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum NativeCompiledStrategyV1 {
@@ -73,6 +96,7 @@ pub struct NativeStrategyBacktestResultV1 {
     pub schema_version: SchemaV1,
     pub request: NativeStrategyBacktestRequestV1,
     pub native_version: String,
+    pub instrument_definition: NativeInstrumentDefinitionBasisV1,
     pub canonical_result: serde_json::Value,
     pub data_rows_by_type: std::collections::BTreeMap<String, DbCounter>,
     pub notes: Vec<String>,

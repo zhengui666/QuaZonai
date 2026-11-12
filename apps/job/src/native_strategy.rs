@@ -51,17 +51,61 @@ pub fn run(
     );
     let id: InstrumentId = request.instrument_id.parse()?;
     let catalog = crate::catalog::open_catalog(root)?;
+    let scenario = match &request.instrument_definition {
+        Some(NativeInstrumentDefinitionV1::StaticScenario {
+            ts_init_ns,
+            ts_event_ns,
+        }) => Some((*ts_init_ns, *ts_event_ns)),
+        _ => None,
+    };
     let definitions = catalog.query_instruments_filtered(
         Some(&[id.to_string()]),
         None,
-        Some(request.available_end_ns.get().into()),
+        Some(
+            scenario
+                .map(|(init, _)| init.get())
+                .unwrap_or(request.available_end_ns.get())
+                .into(),
+        ),
     )?;
-    let instrument = definitions
-        .iter()
-        .filter(|x| x.id() == id && x.ts_init().as_u64() <= available_start)
-        .cloned()
-        .max_by_key(|x| x.ts_init())
-        .ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_INSTRUMENT_UNAVAILABLE_AT_START"))?;
+    let instrument = if let Some((init, event)) = scenario {
+        let matches = definitions
+            .iter()
+            .filter(|x| {
+                x.id() == id
+                    && x.ts_init().as_u64() == init.get()
+                    && x.ts_event().as_u64() == event.get()
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            matches.len() == 1,
+            "NATIVE_STRATEGY_SCENARIO_DEFINITION_NOT_UNIQUE_OR_MISSING"
+        );
+        matches[0].clone()
+    } else {
+        definitions
+            .iter()
+            .filter(|x| x.id() == id && x.ts_init().as_u64() <= available_start)
+            .max_by_key(|x| x.ts_init())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_INSTRUMENT_UNAVAILABLE_AT_START"))?
+    };
+    let definition_basis = NativeInstrumentDefinitionBasisV1 {
+        mode: if scenario.is_some() {
+            "STATIC_SCENARIO"
+        } else {
+            "HISTORICAL_AS_OF_START"
+        }
+        .into(),
+        ts_init_ns: DbCounter::new(instrument.ts_init().as_u64()).map_err(anyhow::Error::msg)?,
+        ts_event_ns: DbCounter::new(instrument.ts_event().as_u64()).map_err(anyhow::Error::msg)?,
+        scope: if scenario.is_some() {
+            "HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED"
+        } else {
+            "CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START"
+        }
+        .into(),
+    };
     let config = BacktestEngineConfig {
         logging: LoggerConfig::builder()
             .bypass_logging(true)
@@ -105,7 +149,9 @@ pub fn run(
         engine.add_instrument(&instrument)?;
         let updates = definitions
             .into_iter()
-            .filter(|x| x.id() == id && x.ts_init().as_u64() > available_start)
+            .filter(|x| {
+                scenario.is_none() && x.id() == id && x.ts_init().as_u64() > available_start
+            })
             .collect::<Vec<_>>();
         if !updates.is_empty() {
             engine.add_data_batch(DataBatch::Instrument(updates.into()), None, true, true)?;
@@ -208,7 +254,7 @@ pub fn run(
             None,
             false,
         )?;
-        Ok(NativeStrategyBacktestResultV1 { schema_version: SchemaV1, request: request.clone(), native_version: crate::NAUTILUS_VERSION.into(), canonical_result: engine.get_canonical_result()?.as_value().clone(), data_rows_by_type: counts, notes: vec!["Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()] })
+        Ok(NativeStrategyBacktestResultV1 { schema_version: SchemaV1, request: request.clone(), native_version: crate::NAUTILUS_VERSION.into(), instrument_definition: definition_basis, canonical_result: engine.get_canonical_result()?.as_value().clone(), data_rows_by_type: counts, notes: vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()] })
     })();
     engine.dispose();
     result
