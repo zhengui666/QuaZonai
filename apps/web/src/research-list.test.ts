@@ -106,3 +106,16 @@ it('shows the official strategy report without custom indicator semantics or inv
   expect(visible).not.toContain('最后一条原生指标观测'); expect(visible).not.toContain('现金期');
   expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>');
 });
+
+it('renders original assessment stars, missing grades, historical scope and real evidence links without recalculating', async () => {
+  const { ResearchAssessments } = await import('./research');
+  const html = renderToStaticMarkup(createElement(ResearchAssessments, { assessments: [
+    { taskId: 41, mode: 'SYNTHESIS', status: 'completed', configuration: 'CURRENT', error: null,
+      result: { judgment: { stars: null, rationale: '真实样本尚不足' }, dataJudgment: { stars: null }, ratingStatus: 'NOT_RATED_INSUFFICIENT_EVIDENCE', evidence: { logic: { result: { judgment: { stars: 0 } } }, ratingReadiness: { limitations: ['CPCV_NOT_RUN'] } } }, evidenceLinks: [{ taskId: 41, href: '/api/v3/research/7/evidence/41' }] },
+    { taskId: 31, mode: 'LOGIC', status: 'completed', configuration: 'HISTORICAL', error: null, result: { judgment: { stars: 3, rationale: '原始逻辑结论' } }, evidenceLinks: [] },
+  ] }));
+  expect(visibleText(html)).toContain('未评级'); expect(visibleText(html)).toContain('0 / 5 星');
+  expect(visibleText(html)).toContain('历史配置，不适用于当前输入'); expect(visibleText(html)).toContain('真实样本尚不足');
+  expect(html).toContain('/api/v3/research/7/evidence/41'); expect(html).toContain('CPCV_NOT_RUN');
+  expect(visibleText(html)).toContain('不代表收益承诺或交易许可');
+});

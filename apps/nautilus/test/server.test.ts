@@ -91,6 +91,21 @@ test('removed scientific commands are absent from capabilities and rejected befo
   } finally { await f.cleanup(); }
 });
 
+test('retired artifact and solver arguments cannot launch native execution', async () => {
+  const f = await fixture();
+  try {
+    for (const option of ['--model', '--scope', '--features', '--calibration', '--objects', '--funding-catalog', '--model-artifact-id', '--feature-artifact-id', '--book-cores', '--summary-only', '--plan-only']) {
+      const result = await (await f.post(f.request({}, [option, 'retired']))).json();
+      assert.equal(result.status, 'FAILED');
+      assert.equal(result.error, 'nautilus_argument_unsupported');
+    }
+    const attached = await (await f.post(f.request({}, [], { model: 'eA==' }))).json();
+    assert.equal(attached.status, 'FAILED');
+    assert.equal(attached.error, 'nautilus_attachments_unsupported');
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+
 test('capabilities expose the verified build manifest of the actual executable', async () => {
   const f = await fixture();
   try {
@@ -107,7 +122,7 @@ test('capabilities expose the verified build manifest of the actual executable',
   } finally { await f.cleanup(); }
 });
 
-test('remote worker retains actual execution, attachments and original receipt across retries and restart', async () => {
+test('remote worker retains actual execution and original receipt across retries and restart', async () => {
   const f = await fixture();
   try {
     assert.equal((await fetch(`${f.url}/v1/capabilities`)).status, 401);
@@ -115,13 +130,12 @@ test('remote worker retains actual execution, attachments and original receipt a
     assert.match(caps.implementationDigest, /^sha256:[a-f0-9]{64}$/);
     assert.ok(caps.commands.includes('simulate')); assert.ok(!caps.commands.includes('paper'));
     const body = f.request({ decimal: '1.000000000000000001', ns: '1790000000000000000' },
-      ['--catalog', f.catalog, '--model', '@file:model-0', '--scope', '@file:scope-0', '--objects', '@objects:objects-0'],
-      { 'model-0': Buffer.from('wasm-bytes').toString('base64'), 'scope-0': Buffer.from('["instrument"]').toString('base64'), 'objects-0/uuid': Buffer.from('calibration').toString('base64') });
+      ['--catalog', f.catalog]);
     const responses = await Promise.all([f.post(body), f.post(body)]);
     const [first, duplicate] = await Promise.all(responses.map(response => response.json()));
     assert.equal(first.status, 'COMPLETED'); assert.deepEqual(duplicate, first);
     assert.deepEqual(first.result.input, body.input);
-    assert.deepEqual(first.result.contents, { '--model': 'wasm-bytes', '--scope': '["instrument"]', objects: ['uuid'] });
+    assert.deepEqual(first.result.contents, {});
     assert.equal(first.result.authLeaked, false);
     assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
     await f.restart();
@@ -141,7 +155,7 @@ test('worker rejects arbitrary commands and unregistered paths; failures remain 
     const outside = await (await f.post(f.request({}, ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const missing = await (await f.post(f.request({}, ['--model', '/etc/passwd']))).json();
-    assert.equal(missing.status, 'FAILED'); assert.equal(missing.error, 'nautilus_attachment_required');
+    assert.equal(missing.status, 'FAILED'); assert.equal(missing.error, 'nautilus_argument_unsupported');
     const traversal = f.request({}, [], { '../escape': 'eA==' });
     assert.equal((await f.post(traversal)).status, 400);
     const failure = f.request({ fail: true });

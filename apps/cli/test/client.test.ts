@@ -369,3 +369,13 @@ test('observation CLI rejects retired portfolio admission but preserves account 
     await assert.rejects(run(['observation', 'cancel-protection'], () => {}), /resource_id_required/);
   } finally { await config.close(); await api.close(); }
 });
+
+test('research get retains original advisory reports and evidence links without deriving stars', async () => {
+  const detail = { id: 42, assessments: [{ taskId: 61, mode: 'SYNTHESIS', configuration: 'HISTORICAL', status: 'completed', error: null,
+    result: { judgment: { stars: null, rationale: 'Actual validation is missing' }, dataJudgment: { stars: null }, evidence: { requestWindowNs: '1790000000000000001' } },
+    evidenceLinks: [{ taskId: 61, href: '/api/v3/research/42/evidence/61' }] }] };
+  const api = await server((request, response) => { assert.equal(request.url, '/api/v3/research/42'); json(response, detail); });
+  const config = await configuration(api.origin);
+  try { let output: unknown; assert.equal(await run(['research', 'get', '42'], value => { output = value; }), 0); assert.deepEqual(output, detail); }
+  finally { await config.close(); await api.close(); }
+});

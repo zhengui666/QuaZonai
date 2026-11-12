@@ -1,3 +1,4 @@
+import { researchTaskEvidence } from './research-assessments.ts';
 import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
@@ -202,6 +203,7 @@ export async function createService(options: ServiceOptions) {
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
+  app.get<{ Params: { id: string; taskId: string } }>(`${API}/research/:id/evidence/:taskId`, request => researchTaskEvidence(research, Number(request.params.id), Number(request.params.taskId)));
   app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
     const id = Number(request.params.id);
     await detail(id);

@@ -1,3 +1,4 @@
+import { readResearchAssessments } from './research-assessments.ts';
 import { AssistantEntry } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, EntryRecord, TaskRecord } from '@earendil-works/pi-durable';
@@ -166,6 +167,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
   const view = await host.state(id); const study = view.research;
   if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const tasks = await readTasks(id); const final = study.final;
+  const assessments = await readResearchAssessments(host, id, study.input);
   const conversation = await host.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
   if (!conversation) throw new Problem('research_not_found', 404);
   const messages: NonNullable<ResearchDetail['messages']> = [];
@@ -179,7 +181,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)
       ? [record.report as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport] : []),
-    messages, input: study.input as ResearchInput, submission: submissionView(view.submission),
+    messages, ...(assessments.length ? { assessments } : {}), input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(view.literature ? { literature: view.literature } : {}),
     ...(study.toolPolicy ? { toolPolicy: study.toolPolicy } : {}),
     ...(study.previousNativeResults ? { previousNativeResults: study.previousNativeResults } : {}),

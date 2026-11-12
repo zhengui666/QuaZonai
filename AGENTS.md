@@ -175,3 +175,5 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 多候选 walk-forward 的费用/邻域证据必须覆盖实际每折选出的官方策略，不能拿注册默认策略 A 的敏感性给胜出策略 B 评级。逻辑预审的 `validationMethod.sensitivityStrategies` 可明确声明敏感性候选，缺省采用本次预审的有序候选。`native_strategy_sensitivity` 的 `strategies` 列表为每个官方候选执行独立原费用回测与每个指定费用场景；未传时仍只跑注册策略，因此完整多候选研究须传相同候选列表。报告列出每个实际选中策略对应的原费用、费用变更和不同参数结果 Task ID，未覆盖如实保持证据不足。候选已在同源历史/WF/敏感性任务中执行后，不得把它改登记为新 base 再标为事前审阅。
 
 最大化训练 Sharpe 只用于真实训练候选比较，不证明样本外或年化目标；报告保留官方收益口径、每折可用时间窗口、数据行数、成交数及选择历史，让 Agent 评价短样本与选择偏差，不把高值当稳定年化绩效。
+
+研究详情的 `assessments` 直接读取原 Pi 审阅 Task，返回真实状态、原始报告和 `CURRENT`/`HISTORICAL` 配置标识；比对原生请求、catalog/target 与配置 Task，不从 Agent 文本重算星级。现有 CLI `research get` 原样返回同一字段，Web 显示三路星级、未评级、限制和历史。证据链接 `/api/v3/research/:id/evidence/:taskId` 只读本研究原生回测/WF及审阅 Task，沿用 owner 认证；不暴露私有工具任务或跨研究记录，不建立第二报告存储。

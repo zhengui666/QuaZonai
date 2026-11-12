@@ -77,6 +77,9 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     app = (await state.service.research.harness.snapshot(Application, context))!;
     const saved = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'unrecorded-stop')!;
     assert.equal(saved.status, 'UNCERTAIN'); assert.equal((saved.receipt as { persisted: boolean }).persisted, false);
+    const maintenance = await state.service.app.inject({ method: 'GET', url: '/api/v3/maintenance', headers: state.headers });
+    assert.equal(maintenance.statusCode, 200);
+    assert.ok(maintenance.json().blockingExternal.some((row: { kind: string }) => row.kind === 'STRATEGY_COMMAND'), 'Terminal Pi task cannot hide the actual non-durable STOP receipt.');
     const beforeRestart = calls.length;
     await state.restart();
     await send('unrecorded-stop', 'STOP');
@@ -84,6 +87,8 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     assert.equal(calls.length, beforeRestart, 'A non-durable remote STOP must only be read after Pi recovery, never resent.');
     const after = (await state.service.research.harness.snapshot(Application, context))!;
     assert.deepEqual(after.observations[source.connection.id]!.snapshot, source.observation.snapshot);
+    const recoveredMaintenance = await state.service.app.inject({ method: 'GET', url: '/api/v3/maintenance', headers: state.headers });
+    assert.ok(recoveredMaintenance.json().blockingExternal.some((row: { kind: string }) => row.kind === 'STRATEGY_COMMAND'));
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: { requestId: 'old-target', portfolioId: 'old', mode: 'paper' } })).statusCode, 410);
   } finally { await state.cleanup(); await remote.close(); }
 });

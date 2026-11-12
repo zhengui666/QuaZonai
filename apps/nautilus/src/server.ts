@@ -20,10 +20,8 @@ export const commands = ['review-source', 'simulate', 'native-strategy-backtest'
   'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
   'capital-curve', 'compare-observed-spot', 'value-observed-spot',
   'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
-const flags = new Set(['--summary-only', '--plan-only']);
-const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id', '--book-cores']);
-const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
-const catalogOptions = new Set(['--catalog', '--funding-catalog']);
+const scalarOptions = new Set(['--dataset-revision-id']);
+const catalogOptions = new Set(['--catalog']);
 
 export interface WorkerOptions {
   binary: string;
@@ -173,16 +171,11 @@ export async function createNautilusWorker(options: WorkerOptions) {
       return receipt;
     } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
   }
-  async function argumentsFor(request: Request, directory: string): Promise<string[]> {
-    const attachments = join(directory, 'attachments'); await mkdir(attachments);
-    for (const [name, encoded] of Object.entries(request.files)) {
-      const path = join(attachments, name); await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, Buffer.from(encoded, 'base64'), { mode: 0o600 });
-    }
+  async function argumentsFor(request: Request): Promise<string[]> {
+    if (Object.keys(request.files).length) fail('nautilus_attachments_unsupported');
     const args: string[] = [];
     for (let index = 0; index < request.args.length; index++) {
       const option = request.args[index]!;
-      if (flags.has(option)) { args.push(option); continue; }
       const value = request.args[++index];
       if (value === undefined) fail('nautilus_argument_missing');
       if (catalogOptions.has(option)) {
@@ -190,15 +183,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
         const path = await realpath(value);
         if (!roots.some(root => below(root, path))) fail('nautilus_catalog_outside_configured_roots');
         args.push(option, path);
-      } else if (fileOptions.has(option)) {
-        const name = value.startsWith('@file:') ? value.slice(6) : '';
-        if (!validName(name) || !(name in request.files)) fail('nautilus_attachment_required');
-        args.push(option, join(attachments, name));
-      } else if (option === '--objects') {
-        const name = value.startsWith('@objects:') ? value.slice(9) : '';
-        if (!validName(name)) fail('nautilus_object_directory_invalid');
-        const objects = join(attachments, name); await mkdir(objects, { recursive: true });
-        args.push(option, objects);
       } else if (scalarOptions.has(option) && !value.startsWith('-')) args.push(option, value);
       else fail('nautilus_argument_unsupported');
     }
@@ -234,7 +218,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
       let receipt: Receipt;
       try {
         directory = await mkdtemp(join(scratch, 'run-'));
-        const args = await argumentsFor(request, directory);
+        const args = await argumentsFor(request);
         if (await implementationIdentity() !== implementationDigest) fail('nautilus_implementation_changed', 409);
         if (cancelRequested) receipt = { ...running, status: 'CANCELLED' };
         else {

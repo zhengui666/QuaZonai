@@ -1,5 +1,5 @@
 name: Verify production container
-description: Assemble the application and separate remote Nautilus image from one native build, then run HTTP science and stopped-state acceptance.
+description: Assemble application and remote Nautilus images from tested native artifacts; validate deployment contracts and run account tests for source-built artifacts.
 inputs:
   source:
     description: Source checkout directory
@@ -18,7 +18,7 @@ inputs:
     default: ''
 outputs:
   runtime-image:
-    description: Tested remote Nautilus image
+    description: Remote Nautilus image assembled from tested native artifacts
     value: ${{ steps.native.outputs.image }}
 runs:
   using: composite

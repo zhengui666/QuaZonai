@@ -5,7 +5,7 @@ import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { defineDocFamily, defineTask, type Harness, type ConversationId, type JsonObject, type TaskId, type TaskRuntime } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { lstat, readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Agent, fetch } from 'undici';
@@ -195,32 +195,6 @@ export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, r
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
 }
 
-async function attachments(original: string[]): Promise<{ args: string[]; files: Record<string, string> }> {
-  const args = [...original]; const files: Record<string, string> = {}; let index = 0;
-  async function attach(path: string, name: string) {
-    if (!(await lstat(path)).isFile()) throw new Error('nautilus_artifact_file_required');
-    files[name] = (await readFile(path)).toString('base64');
-  }
-  for (let position = 0; position < args.length; position++) {
-    const flag = args[position];
-    if (!['--model', '--scope', '--objects'].includes(flag!)) continue;
-    const path = args[++position]; if (!path) throw new Error('nautilus_artifact_argument_missing');
-    if (flag === '--objects') {
-      const prefix = `objects-${index++}`;
-      for (const entry of (await readdir(path, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name))) {
-        // Only native UUID objects are consumed; request.json and temporary
-        // models in the same scratch directory are not object-store inputs.
-        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(entry.name)) continue;
-        await attach(join(path, entry.name), `${prefix}/${entry.name}`);
-      }
-      args[position] = `@objects:${prefix}`;
-    } else {
-      const name = `${flag.slice(2)}-${index++}`; await attach(path, name); args[position] = `@file:${name}`;
-    }
-  }
-  return { args, files };
-}
-
 type AdoptedReceipt = { requestId: string } & ({ status: 'COMPLETED'; native: JsonObject } | { status: 'FAILED' | 'CANCELLED'; error: string });
 const NativeCalls = defineDocFamily<{ taskId: TaskId<NativeJson> | null; adoptedReceipt?: AdoptedReceipt }, null>({
   kind: 'qz.native-call', version: 1, scope: 'task', family: true,
@@ -396,7 +370,7 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
 async function executeRemote(target: RemoteNativeTarget, command: string, input: NativeJson, originalArgs: string[], context: Context): Promise<NativeJson> {
   const owner = tracking.getStore(); const nativeHost = nativeBindings.getStore();
   if (!owner && !nativeHost) throw new Error('native_harness_required');
-  const artifacts = await attachments(originalArgs);
+  const artifacts = { args: [...originalArgs], files: {} as Record<string, string> };
   // A committed business-stage cache can skip earlier calls after a restart.
   // Bind immutable native inputs, not an invocation-local call ordinal.
   const callsKey = canonicalJsonDigest({ target: target as unknown as NativeJson, command, input, ...artifacts });

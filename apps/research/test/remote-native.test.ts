@@ -2,7 +2,7 @@ import { obj } from '@earendil-works/pi-schema';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -35,10 +35,9 @@ async function worker(handler: (request: IncomingMessage, response: ServerRespon
   return { target, host, execute: (command: string, input: NativeJson, args: string[], directory: string, context: Parameters<typeof executeNativeValue>[5]) => host.withNativeHost(() => executeNativeValue(target, command, input, args, directory, context)), close: async () => { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
-// Transport-only peer: attachment bytes are not an executable strategy or scientific result.
-test('remote science uploads original artifacts, keeps shared catalog paths and gives every invocation its own receipt', async () => {
+// Transport-only peer; original payload precision and receipt identity are preserved.
+test('remote science keeps original payloads, shared catalog paths and distinct invocation receipts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-native-')); const requests: NativeExecutionRequest[] = [];
-  const objectId = '00000000-0000-4000-8000-000000000001';
   const source = await worker(async (request, response) => {
     assert.equal(request.method, 'POST'); assert.equal(request.url, '/v1/execute');
     const admitted = await body(request); requests.push(admitted);
@@ -48,21 +47,14 @@ test('remote science uploads original artifacts, keeps shared catalog paths and 
     reply(response, { schemaVersion: 1, requestId, status: 'COMPLETED', result: { native: '受控协议', input: admitted.input } });
   });
   try {
-    await mkdir(join(directory, 'objects'));
-    await writeFile(join(directory, 'model.wasm'), new Uint8Array([0, 97, 115, 109]));
-    await writeFile(join(directory, 'scope.json'), '["BTC.TEST"]');
-    await writeFile(join(directory, 'objects', objectId), '{"native":"calibration"}');
-    await writeFile(join(directory, 'objects', 'request.json'), 'unrelated scratch data');
-    const args = ['--catalog', '/shared/catalog', '--model', join(directory, 'model.wasm'), '--scope', join(directory, 'scope.json'), '--objects', join(directory, 'objects')];
+    const args = ['--catalog', '/shared/catalog'];
     const input = { amount: '9007199254740993123', rows: Array.from({ length: 2048 }, (_, index) => ({
       clock: '1790000000000000001', index, label: '原生🐋',
     })) };
     for (let i = 0; i < 2; i++) assert.deepEqual(await source.execute('simulate', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
     assert.notEqual(requests[0]!.requestId, requests[1]!.requestId, 'changed bytes at an owner-managed catalog path cannot be replaced by an old invocation');
-    assert.deepEqual(requests[0]!.args, ['--catalog', '/shared/catalog', '--model', '@file:model-0', '--scope', '@file:scope-1', '--objects', '@objects:objects-2']);
-    assert.deepEqual(Object.keys(requests[0]!.files), ['model-0', 'scope-1', `objects-2/${objectId}`]);
-    assert.deepEqual(Buffer.from(requests[0]!.files['model-0']!, 'base64'), await readFile(join(directory, 'model.wasm')));
-    assert.equal(Buffer.from(requests[0]!.files[`objects-2/${objectId}`]!, 'base64').toString(), '{"native":"calibration"}');
+    assert.deepEqual(requests[0]!.args, args);
+    assert.deepEqual(requests[0]!.files, {});
   } finally { await source.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

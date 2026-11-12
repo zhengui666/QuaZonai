@@ -24,11 +24,18 @@ function resolveSchema(value: unknown): unknown {
 }
 export const nativeStrategyRequestSchema = resolveSchema(schemas.NativeStrategyBacktestRequestV1) as Schema<JsonObject>;
 const validateRequest = compile(nativeStrategyRequestSchema);
+const nativeCatalogInspectSchema = resolveSchema(schemas.NativeCatalogInspectRequestV1) as Schema<JsonObject>;
+const validateCatalogQuery = compile(nativeCatalogInspectSchema);
 export const nativeStrategyCatalogTool = defineTool({
   name: 'native_strategy_catalog',
-  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence.',
-  parameters: obj({}), replay: 'safe',
-  async execute(_args, api, context) {
+  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. next_cursor non-null means INCOMPLETE: pass cursor unchanged to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence.',
+  parameters: nativeCatalogInspectSchema,
+  prepareArguments(args) {
+    validateNumbers(args);
+    if (!validateCatalogQuery.check(args)) throw new Error('native_catalog_query_schema_invalid');
+    return args as JsonObject;
+  }, replay: 'safe',
+  async execute(args, api, context) {
     const input = await studyInput(api, context);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
     const binding = structuredClone(input);
@@ -36,7 +43,7 @@ export const nativeStrategyCatalogTool = defineTool({
     registeredNativeStrategyRequest(binding);
     const id = await api.commit(async tx => {
       const child = await tx.doc(NativeStrategyChild, api.taskId);
-      child.taskId ??= await tx.createTask(NativeStrategyCatalogTask, { catalog: input.data.catalog as string, target: nativeTargetForData(input.data) }, { ownership: { kind: 'task', taskId: api.taskId } });
+      child.taskId ??= await tx.createTask(NativeStrategyCatalogTask, { catalog: input.data.catalog as string, target: nativeTargetForData(input.data), query: args }, { ownership: { kind: 'task', taskId: api.taskId } });
       return child.taskId;
     }, context);
     const task = await api.waitForTask(id, context);
@@ -45,13 +52,13 @@ export const nativeStrategyCatalogTool = defineTool({
   },
 });
 
-export const NativeStrategyCatalogTask = defineTask<{ catalog: string; target: NativeTarget }, { phase: 'read' }, JsonObject>({
+export const NativeStrategyCatalogTask = defineTask<{ catalog: string; target: NativeTarget; query: JsonObject }, { phase: 'read' }, JsonObject>({
   name: 'qz.native-strategy.catalog', version: 1, initial: () => ({ phase: 'read' }),
   phases: { async read(task, runtime, context) {
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-catalog-'));
     try {
       const result = object(await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(task.input.target,
-        'catalog-inspect', {}, ['--catalog', task.input.catalog], directory, context)), 'native_catalog_inspection');
+        'catalog-inspect', task.input.query, ['--catalog', task.input.catalog], directory, context)), 'native_catalog_inspection');
       if (result.schema_version !== 1 || result.timestamp_basis !== 'ts_init' || result.interval_bounds !== 'inclusive'
         || result.coverage_basis !== 'native_file_intervals_not_event_completeness' || !Array.isArray(result.instruments) || !Array.isArray(result.selectors)) throw new Error('native_catalog_inspection_invalid');
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);

@@ -153,7 +153,7 @@ test('native catalog mounts remain restricted without a retired economic replay 
     const outside = await (await f.post(f.request({}, 'simulate', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const outsideFunding = await (await f.post(f.request({}, 'simulate', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
-    assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
+    assert.equal(outsideFunding.error, 'nautilus_argument_unsupported');
     const waiting = f.request({ wait: true }, 'simulate', mounted);
     const active = f.post(waiting); await f.started(2);
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
@@ -220,8 +220,8 @@ test('upstream strategy replay shares tick precision, mounted catalogs and admis
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
     assert.ok(caps.commands.includes('native-strategy-backtest'));
-    const mounted = ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.options.catalogRoots[0]!, '--model', '@file:model'];
-    const files = { model: Buffer.from('controlled model artifact').toString('base64') };
+    const mounted = ['--catalog', f.options.catalogRoots[0]!];
+    const files = {};
     const result = await (await f.post(f.request({}, 'native-strategy-backtest', mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
     const bar = await (await f.post(f.request({}, 'simulate'))).json();
@@ -229,7 +229,7 @@ test('upstream strategy replay shares tick precision, mounted catalogs and admis
     const outside = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const outsideFunding = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
-    assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
+    assert.equal(outsideFunding.error, 'nautilus_argument_unsupported');
     const waiting = f.request({ wait: true }, 'native-strategy-backtest', mounted, files);
     const active = f.post(waiting); await f.started(3);
     const refused = await f.post(f.request({}, 'native-strategy-backtest'));

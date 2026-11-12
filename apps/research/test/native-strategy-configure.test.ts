@@ -36,6 +36,7 @@ test('configuration consumes generated native schema without coercing nanosecond
 test('catalog-only natural research inspects, configures, executes and reopens its unchanged binding', { timeout: 20000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-configure-'));
   const posts: NativeExecutionRequest[] = [];
+  const cursor = { offset: '2', total_items: '4', instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'] };
   const inspection = { schema_version: 1, timestamp_basis: 'ts_init', interval_bounds: 'inclusive',
     coverage_basis: 'native_file_intervals_not_event_completeness',
     instruments: [{ instrument: { id: request.instrument_id, quote_currency: 'USDC', price_precision: 2, size_precision: 3 },
@@ -47,7 +48,7 @@ test('catalog-only natural research inspects, configures, executes and reopens i
     assert.equal(incoming.method, 'POST');
     let body = ''; for await (const chunk of incoming) body += chunk;
     const operation = JSON.parse(body) as NativeExecutionRequest; posts.push(operation);
-    const result = operation.command === 'catalog-inspect' ? inspection : { schema_version: 1, native_version: '0.69.0', request: operation.input,
+    const result = operation.command === 'catalog-inspect' ? { ...inspection, next_cursor: (operation.input as { cursor?: unknown }).cursor ? null : cursor } : { schema_version: 1, native_version: '0.69.0', request: operation.input,
       canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' },
         accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} },
       data_rows_by_type: { OrderBookDelta: '2' }, notes: [] };
@@ -57,7 +58,7 @@ test('catalog-only natural research inspects, configures, executes and reopens i
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const models = createModels(); const faux = fauxProvider(); models.setProvider(faux.provider);
   const call = (name: string, args = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
-  faux.setResponses([call('native_strategy_brief'), call('native_strategy_catalog'), call('native_strategy_configure', { request }),
+  faux.setResponses([call('native_strategy_brief'), call('native_strategy_catalog', { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 }), call('native_strategy_catalog', { cursor }), call('native_strategy_configure', { request }),
     call('native_strategy_backtest'), fauxAssistantMessage('Historical computation only; no independent qualification or live order.')]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
@@ -71,15 +72,29 @@ test('catalog-only natural research inspects, configures, executes and reopens i
     assert.deepEqual(study.input!.data, { ...data, native_strategy_backtest_request: request });
     const configuration = (await host.harness.snapshot(ResearchConfiguration, admission.conversationId, context))!;
     assert.deepEqual(configuration.request, request); assert.ok(configuration.configuredByTaskId);
-    assert.equal(posts.length, 2);
-    assert.equal(posts[0]!.command, 'catalog-inspect'); assert.deepEqual(posts[0]!.input, {});
-    assert.equal(posts[1]!.command, 'native-strategy-backtest'); assert.deepEqual(posts[1]!.input, request);
+    assert.equal(posts.length, 3);
+    assert.equal(posts[0]!.command, 'catalog-inspect'); assert.deepEqual(posts[0]!.input, { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 });
+    assert.equal(posts[1]!.command, 'catalog-inspect'); assert.deepEqual(posts[1]!.input, { cursor });
+    assert.equal(posts[2]!.command, 'native-strategy-backtest'); assert.deepEqual(posts[2]!.input, request);
     assert.ok(posts.every(post => JSON.stringify(post.args) === JSON.stringify(['--catalog', directory])));
-    assert.equal(faux.state.callCount, 5);
+    assert.equal(faux.state.callCount, 6);
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.start('catalog-natural', input), admission, 'original admission identity remains replayable after configuration');
     assert.deepEqual((await host.harness.snapshot(Study, admission.conversationId, context))!.input!.data, study.input!.data);
-    assert.equal(posts.length, 2);
+    assert.equal(posts.length, 3);
+    const nextRequest = { ...request, strategy: { ...request.strategy, trigger_imbalance_ratio: '0.3' } };
+    faux.setResponses([call('native_strategy_configure', { request: nextRequest }), fauxAssistantMessage('New configuration only; prior results are historical.')]);
+    const next = await host.resume(admission.conversationId, admission.submissionId, 'Change ratio to .3 without running it');
+    await (await host.harness.submission(next.submissionId, context))!.wait(context);
+    const changed = (await host.harness.snapshot(Study, admission.conversationId, context))!;
+    assert.equal(changed.final, null);
+    assert.deepEqual(changed.input!.data.native_strategy_backtest_request, nextRequest);
+    const nextConfig = (await host.harness.snapshot(ResearchConfiguration, admission.conversationId, context))!;
+    assert.notEqual(nextConfig.configuredByTaskId, configuration.configuredByTaskId);
+    const originalRun = await host.harness.getTask(configuration.evaluationTaskId!, context);
+    assert.equal(originalRun!.state.status, 'terminal');
+    assert.deepEqual((originalRun!.input as { request: unknown }).request, request);
+    assert.equal(posts.length, 3, 'changing parameters does not rerun or overwrite historical execution');
   } finally { await host.close(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 

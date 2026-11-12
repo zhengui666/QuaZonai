@@ -64,6 +64,7 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
       <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span></div></header>
       <ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
       <ResearchConversation messages={detail.messages} />
+      <ResearchAssessments assessments={detail.assessments} />
       {detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}
       <Tabs className="document-tabs" activeKey={tab} onChange={value => selectTab(value)} items={[
         { key: 'evidence', label: '证据', children: <div className="evidence-content">
@@ -91,6 +92,27 @@ export function NativeStrategyResultView({ value }: { value: NonNullable<Researc
     <details><summary>原始策略配置与数据选择</summary><Copy value={JSON.stringify(value.request ?? null, null, 2)} label="复制原始请求" /><pre>{JSON.stringify(value.request ?? null, null, 2)}</pre></details>
     <details><summary>上游原始执行报告</summary><p className="quiet">保留官方统计键和原始编码；未把持仓收益统计转换成日权益收益。</p><Copy value={JSON.stringify(value.canonicalResult ?? null, null, 2)} label="复制原生报告" /><pre>{JSON.stringify(value.canonicalResult ?? null, null, 2)}</pre></details>
     <details><summary>输入记录数与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null }, null, 2)}</pre></details>
+  </section>;
+}
+
+export function ResearchAssessments({ assessments }: { assessments: ResearchDetail['assessments'] }) {
+  if (!assessments?.length) return null;
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const stars = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5 ? `${value} / 5 星` : '未评级';
+  return <section aria-label="双路研究原始评级"><h2>双路研究评级</h2><p>来自原始 Pi 任务，不从 Agent 对话重新推断。评级仅评价已记录方法和证据，不代表收益承诺或交易许可。</p>
+    {assessments.map(row => {
+      const result = row.result ?? {}; const judgment = record(result.judgment); const data = record(result.dataJudgment);
+      const evidence = record(result.evidence); const logic = record(record(record(evidence.logic).result).judgment);
+      return <article key={row.taskId} id={`assessment-${row.taskId}`}>
+        <h3>{row.mode === 'LOGIC' ? '事前逻辑审阅' : '综合研究报告'} #{row.taskId}</h3>
+        <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'} · {row.status}</p>
+        <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', typeof result.ratingStatus === 'string' ? result.ratingStatus : '未完成']]} />
+        {typeof judgment.rationale === 'string' && <p>{judgment.rationale}</p>}
+        {row.error && <p>{row.error}</p>}
+        <TextDisclosure label="原始报告、证据范围与未完成事项" value={JSON.stringify(row.result, null, 2)} collapsed />
+        <nav aria-label={`报告 ${row.taskId} 原始证据`}>{row.evidenceLinks.map(link => <a key={link.taskId} href={link.href} target="_blank" rel="noreferrer">原任务 #{link.taskId} </a>)}</nav>
+      </article>;
+    })}
   </section>;
 }
 

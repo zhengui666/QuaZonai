@@ -82,7 +82,14 @@ export interface DatasetPreparation {
 }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
 export interface ResearchMessage { entryId: number; text: string }
+export interface ResearchAssessmentView {
+  taskId: number; mode: 'LOGIC' | 'SYNTHESIS'; status: string;
+  configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
+  evidenceLinks: { taskId: number; href: string }[];
+}
 export interface ResearchDetail extends ResearchSummary {
+  /** Original official Pi assessment outcomes, never reconstructed from assistant prose. */
+  assessments?: ResearchAssessmentView[];
   /** Visible assistant text from the original Pi conversation, not model reasoning or tool payloads. */
   messages?: ResearchMessage[];
   reviews?: ReviewReport[];
