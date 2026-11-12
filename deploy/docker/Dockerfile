@@ -61,7 +61,6 @@ COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 COPY --from=nautilus-source / /
 # One payload layer; bind inputs are read-only and never enter the app target.
 RUN --mount=type=bind,from=native,source=/,target=/native \
-    --mount=type=bind,from=compiler,source=/,target=/compiler \
     mkdir -p /opt/quazonai/bin /opt/quazonai/operator/bin \
  && install -m755 /native/job /opt/quazonai/bin/job \
  && install -m755 /native/account-runtime /opt/quazonai/bin/account-runtime \
@@ -69,9 +68,7 @@ RUN --mount=type=bind,from=native,source=/,target=/native \
  && install -m644 /native/native-manifest.json /opt/quazonai/bin/native-manifest.json \
  && install -m755 /native/catalog-prepare-high-precision /opt/quazonai/operator/bin/catalog-prepare-high-precision \
  && install -m755 /native/market-history /opt/quazonai/operator/bin/market-history \
- && install -m755 /native/source-tools /opt/quazonai/operator/bin/source-tools \
- && cp -a /compiler/opt/rust /opt/rust \
- && cp -a /compiler/usr/share/doc/rust /usr/share/doc/rust
+ && install -m755 /native/source-tools /opt/quazonai/operator/bin/source-tools
 ARG VERSION=development
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="QuaZonai remote Nautilus" \

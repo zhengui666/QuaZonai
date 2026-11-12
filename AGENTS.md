@@ -8,7 +8,7 @@ QuaZonai 是基于 **NautilusTrader 与官方 Pi Durable 封装**的单人量化
 
 - NautilusTrader 负责市场数据目录、原生指标、回测、撮合、共享账户模拟和原生交易模型。沿用其数据格式、精度和公开接口，不修改、裁剪或替换上游功能与行为，不另写回测引擎、撮合器或指标框架。QuaZonai 尚未接入的能力必须明确标为接线范围，而不是限制 Nautilus 本体。
 - Pi Durable 负责 Agent 的 Conversation、Submission、Task、Doc、持久化、恢复、重放、子任务、等待、取消和工具循环。沿用其 Harness、Extension 和 Storage，不另建 Agent 调度器、任务状态机、任务数据库或恢复协议。
-- 模型与提供方调用复用官方 pi-ai；并发和上下文能力复用 Chord；列式数据复用 Arrow。当前资金 forward 仍依赖的 Clarabel 分配与 WASM 计算不能按关键词盲删；它们不是新的研究入口，也不是 Nautilus 官方能力。已存在的库能力不重复实现。
+- 模型与提供方调用复用官方 pi-ai；并发和上下文能力复用 Chord；列式数据复用 Arrow。旧资金 forward、自研 Clarabel 分配与 WASM 执行链已退役，不得恢复为研究或账户执行入口；历史合同、错误诊断和原始资金记录不因此删除。已存在的库能力不重复实现。
 - 新功能先找同类入口、合同与调用链，在原位置扩展。局部需求用局部修改解决，避免平行系统、通用平台和多层转接。
 
 ## 当前架构：必须保持
@@ -43,7 +43,7 @@ Web / CLI
     → TypeScript Service / api/v3
         → Research Host / 官方 Pi Durable / pi-ai
             → 远程 Nautilus HTTP 适配
-                → Rust job / NautilusTrader / Clarabel / Arrow
+                → Rust job / NautilusTrader / Arrow
         → 独立的模拟盘或实盘账户连接：目标回执与观测
 ```
 
@@ -95,7 +95,7 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 - 同一可用时间的 BAR 在批次末才决策；原生订单未结算时跳过该次决策并报告计数，不积压未来补做的目标。绩效覆盖完整选区，包含决策开始前现金期；VWAP 从选区起点累计，不按交易日重置。缺失与未预热值保持空值。
 - `indicator_strategy_batch_request` 的各项共享 selection/settings；同一次原生调用通过官方 `BacktestEngine.reset` 重用数据、重新创建策略，结果按请求顺序返回，失败不冒充部分成功。完成且远端回执结算后可以在原会话继续研究，历史结果不覆盖。
 - Web/API/CLI 参数扫描基于已有原生研究请求，枚举其实际数值字段。通过同一 Pi Task 和原生单次/批次执行，不另写优化器；使用官方统计原始键比较，缺失指标不可比较。扫描仅属 `UNQUALIFIED_EXPLORATORY`，排名不是独立资格评定，不自动授予实盘权限。
-- 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。当前资金/账户调用仍需要的底层代码要按调用图另行处理，不能误称仓库已完全没有 WASM 或 Clarabel。
+- 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。Rust job 已不依赖 WASM 解释器或 Clarabel 求解器；历史 Wire 类型及拒绝旧请求的测试仍可保留相关标识，不等于支持执行。真实资金/账户与原始数据代码须按调用图保留，不能按关键词盲删。
 - 原生兼容方向是使用官方配置、策略、指标、数据与报告接口，而不是再造策略 DSL。当前 Rust `add_strategy<T>` 需要编译时具体类型；尚无任意 Python `ImportableStrategyConfig` 动态执行接线，原生策略入口也不支持用户源码即席运行。三个现有信号不是 Nautilus 全部能力，扩展应接官方公开接口，不修改上游。
 
 ## 账户资金退出运行配置

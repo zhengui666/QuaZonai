@@ -1,4 +1,4 @@
-# The build context contains only native compiler/runtime files selected by build-native-image.mjs.
+# The build context contains only native job/runtime files selected by build-native-image.mjs.
 # No package manager, model profile, project checkout, database or credential enters the image.
 FROM scratch
 COPY native-root/ /

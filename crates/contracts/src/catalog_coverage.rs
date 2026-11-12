@@ -57,9 +57,38 @@ pub struct NativeCatalogCoverageResultV1 {
 }
 
 /// Discovery reads only the bound catalog; no caller-supplied path or guessed selector.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCatalogInspectRequestV1 {
+    /// Exact instrument IDs; also matches the instrument component of BAR identifiers.
+    #[serde(default)]
+    pub instrument_ids: Option<Vec<String>>,
+    /// Official NautilusDataType names/aliases; filters market-data selectors, not definitions.
+    #[serde(default)]
+    pub data_types: Option<Vec<String>>,
+    /// Projection records per page, default 100. Not an upstream catalog limit.
+    pub page_size: Option<u32>,
+    /// Return next_cursor unchanged. Omitted filters inherit its scope. Requires unchanged catalog.
+    pub cursor: Option<NativeCatalogInspectCursorV1>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NativeCatalogInspectRequestV1 {}
+pub struct NativeCatalogInspectCursorV1 {
+    pub offset: DbCounter,
+    pub total_items: DbCounter,
+    pub instrument_ids: Vec<String>,
+    pub data_types: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeCatalogInspectPageV1 {
+    pub offset: DbCounter,
+    pub returned_items: DbCounter,
+    pub total_items: DbCounter,
+    pub unit: String,
+    pub consistency: String,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct NativeCatalogInspectSeriesV1 {
@@ -84,4 +113,7 @@ pub struct NativeCatalogInspectResultV1 {
     /// Official instrument serialization, with every returned definition retained.
     pub instruments: Vec<NativeCatalogInstrumentVersionV1>,
     pub selectors: Vec<NativeCatalogInspectSeriesV1>,
+    pub page: NativeCatalogInspectPageV1,
+    /// Non-null means incomplete: continue to read required metadata. Same selector can span pages.
+    pub next_cursor: Option<NativeCatalogInspectCursorV1>,
 }

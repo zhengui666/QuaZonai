@@ -1,21 +1,7 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
-import wabtFactory from 'wabt';
 import { object } from '../src/trials.ts';
 import { partitionBoundaries } from './native-exposure.ts';
-import { ExecutionFailure } from '../src/execution-errors.ts';
 import { clipTickRegimeEvaluation, isTickResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
-
-const wabt = await wabtFactory();
-
-export function compileWasm(model: string, filename = 'factor.wat', operation = 'evaluate-factor'): Uint8Array {
-  let module: ReturnType<typeof wabt.parseWat> | undefined;
-  try {
-    module = wabt.parseWat(filename, model);
-    module.validate();
-    return module.toBinary({}).buffer;
-  } catch (error) { throw new ExecutionFailure(error, { operation, stage: 'compile' }); }
-  finally { module?.destroy(); }
-}
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.

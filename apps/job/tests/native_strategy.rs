@@ -548,7 +548,7 @@ fn catalog_inspect_discovers_real_l2_files_without_modifying_catalog() {
     let before = files();
     let result = job::catalog::inspect::query(
         dir.path(),
-        contracts::catalog_coverage::NativeCatalogInspectRequestV1 {},
+        contracts::catalog_coverage::NativeCatalogInspectRequestV1::default(),
     )
     .unwrap();
     assert_eq!(before, files());
@@ -587,4 +587,36 @@ fn catalog_inspect_discovers_real_l2_files_without_modifying_catalog() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn catalog_inspect_pages_every_interval_and_rejects_changed_filters() {
+    use contracts::catalog_coverage::NativeCatalogInspectRequestV1;
+    let exact = 1_790_000_000_000_000_001_u64;
+    let dir = catalog(&snapshot(exact - 1, exact, "1.000000", "2.000000"), &[]);
+    let native = ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, None, None, None).unwrap();
+    for offset in [10, 20] {
+        native.write_to_parquet(&snapshot(exact + offset - 1, exact + offset, "1.000000", "2.000000"), None, None, None).unwrap();
+    }
+    let query = |value| job::catalog::inspect::query(dir.path(), serde_json::from_value::<NativeCatalogInspectRequestV1>(value).unwrap());
+    let full = query(json!({"instrument_ids":[id().to_string()],"data_types":["OrderBookDelta"],"page_size":100})).unwrap();
+    assert_eq!(full.selectors[0].file_intervals.len(), 3);
+    let mut page = query(json!({"instrument_ids":[id().to_string()],"data_types":["OrderBookDelta"],"page_size":1})).unwrap();
+    let first_cursor = page.next_cursor.clone().unwrap();
+    let mut definitions = Vec::new();
+    let mut intervals = Vec::new();
+    loop {
+        assert_eq!(page.page.returned_items.get(), 1);
+        definitions.extend(page.instruments);
+        for series in page.selectors { assert_eq!(series.identifier, id().to_string()); intervals.extend(series.file_intervals); }
+        match page.next_cursor { Some(cursor) => page = query(json!({"cursor":cursor,"page_size":1})).unwrap(), None => break }
+    }
+    assert_eq!(serde_json::to_value(definitions).unwrap(), serde_json::to_value(full.instruments).unwrap());
+    assert_eq!(serde_json::to_value(intervals).unwrap(), serde_json::to_value(&full.selectors[0].file_intervals).unwrap());
+    assert_eq!(full.selectors[0].file_intervals[0].start_ns.get(), exact);
+    assert!(query(json!({"cursor":first_cursor,"instrument_ids":["OTHER.SIM"]})).unwrap_err().to_string().contains("FILTER_MISMATCH"));
+    let absent = query(json!({"instrument_ids":["OTHER.SIM"]})).unwrap();
+    assert!(absent.instruments.is_empty() && absent.selectors.is_empty() && absent.next_cursor.is_none());
+    native.write_to_parquet(&snapshot(exact+29,exact+30,"1.000000","2.000000"),None,None,None).unwrap();
+    assert!(query(json!({"cursor":first_cursor})).unwrap_err().to_string().contains("CATALOG_CHANGED"));
 }
