@@ -48,7 +48,8 @@ for (const mismatch of ['none', 'revision', 'version']) test(`runtime prepare ve
   await writeFile(join(f.root, 'bundle/json.awk'), await readFile(new URL('./json.awk', import.meta.url)));
   await writeFile(join(f.root, 'bundle/release.json'), JSON.stringify({ schema_version: 5, version, revision, image: 'sha256:'+'a'.repeat(64), runtime_image: 'sha256:'+'b'.repeat(64) }));
   const result = f.run(`QZ_BUNDLE="$ROOT/bundle"; QZ_BUNDLE_FILES=(); docker() {
-    if [[ "$*" == *'org.opencontainers.image.version'* ]]; then echo ${mismatch === 'version' ? 'v0.0.0' : version};
+    if [[ "$*" == *'org.opencontainers.image.version'* && "$*" == *"${'b'.repeat(64)}"* ]]; then echo ${mismatch === 'version' ? 'v0.0.0' : version};
+    elif [[ "$*" == *'org.opencontainers.image.version'* ]]; then echo ${version};
     elif [[ "$*" == *"${'b'.repeat(64)}"* ]]; then echo ${mismatch === 'revision' ? 'wrong' : revision};
     else echo ${revision}; fi;
   }; qz_prepare "$ROOT" "$ROOT/installation.json"; qz_get "$QZ_PREPARED" local_runtime_service`);
@@ -99,4 +100,20 @@ for (const configured of ['old', 'candidate', 'invalid', 'unknown-entrypoint']) 
   assert.match(result.stderr, /[Aa]ccount|recovery plan/);
   assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
   assert.equal(await readFile(join(f.root, 'compose.override.yaml'), 'utf8'), f.original);
+});
+
+for (const actualVersion of ['v3.0.0-dev.2', 'v3.0.0-dev.1']) test(`application prepare checks release version as well as matching revision (${actualVersion})`, async t => {
+  const f = await fixture(t), revision = 'c'.repeat(40), version = 'v3.0.0-dev.2';
+  await mkdir(join(f.root, 'bundle'));
+  await writeFile(join(f.root, 'bundle/json.awk'), await readFile(new URL('./json.awk', import.meta.url)));
+  await writeFile(join(f.root, 'bundle/release.json'), JSON.stringify({ schema_version: 5, version, revision, image: 'sha256:'+'a'.repeat(64), runtime_image: 'sha256:'+'b'.repeat(64) }));
+  const config = JSON.parse(await readFile(join(f.root, 'installation.json'), 'utf8'));
+  delete config.local_runtime_service;
+  await writeFile(join(f.root, 'installation.json'), JSON.stringify(config));
+  const result = f.run(`QZ_BUNDLE="$ROOT/bundle"; QZ_BUNDLE_FILES=(); docker() {
+    if [[ "$*" == *'org.opencontainers.image.version'* ]]; then echo ${actualVersion}; else echo ${revision}; fi;
+  }; qz_prepare "$ROOT" "$ROOT/installation.json"`);
+  assert.equal(result.status === 0, actualVersion === version, result.stderr);
+  if (actualVersion !== version) assert.match(result.stderr, /Image version differs/);
+  assert.equal(await readFile(join(f.root, 'data/original'), 'utf8'), 'original receipts');
 });

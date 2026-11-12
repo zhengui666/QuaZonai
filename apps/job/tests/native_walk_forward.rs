@@ -382,3 +382,69 @@ fn actual_walk_forward_preserves_static_scenario_in_every_training_and_test_resu
         }
     }
 }
+
+#[test]
+fn cli_equity_objective_never_substitutes_canonical_position_returns() {
+    use contracts::native_walk_forward::NativeMetricSourceV1;
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let (dir, mut request) = walk_fixture(false);
+    request.objective.metric_source = NativeMetricSourceV1::EquityPerformance;
+    request.objective.annualization_days = Some(365);
+    request.objective.native_key = "Sharpe Ratio (365 days)".into();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .args([
+            "native-walk-forward",
+            "--catalog",
+            dir.path().to_str().unwrap(),
+        ])
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&request).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: contracts::native_walk_forward::NativeStrategyWalkForwardResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.request.objective.annualization_days, Some(365));
+    assert_eq!(
+        result.request.objective.metric_source,
+        NativeMetricSourceV1::EquityPerformance
+    );
+    for fold in result.folds {
+        assert!(fold.selected_candidate_index.is_none());
+        assert!(fold.test_result.is_none());
+        for trial in fold.trials {
+            assert!(trial.metric_value.is_none());
+            assert!(
+                trial
+                    .error
+                    .as_deref()
+                    .unwrap()
+                    .contains("EQUITY_RETURNS_UNAVAILABLE")
+            );
+            let actual = trial.result.unwrap();
+            assert_eq!(actual.equity_performance.status, "UNAVAILABLE");
+            assert_eq!(
+                actual.equity_performance.source,
+                "NAUTILUS_PORTFOLIO_SNAPSHOTS"
+            );
+            assert_eq!(actual.equity_performance.statistics.len(), 4);
+            assert!(actual.canonical_result["statistics"].is_object());
+        }
+    }
+}

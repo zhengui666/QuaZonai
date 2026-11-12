@@ -98,6 +98,7 @@ qz_prepare() {
         image=$(qz_get "$release" "$field")
         if [[ "$image" != sha256:* ]]; then docker pull "$image"; fi
         [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$(qz_get "$release" revision)" ]] || qz_fail 'Image source differs from the release manifest.'
+        [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image") == "$(qz_get "$release" version)" ]] || qz_fail 'Image version differs from the release manifest.'
     done
     directory="$root/releases/$(qz_get "$release" version)/deployment"
     if [[ -e "$directory/release.json" ]]; then
