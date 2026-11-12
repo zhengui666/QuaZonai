@@ -744,6 +744,7 @@ fn rates_at(
                                         amount,
                                         asset.instrument.settlement_currency(),
                                     )?,
+                                    Some(asset.instrument.id()),
                                 )?;
                             }
                         } else {

@@ -1077,7 +1077,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
     inventory_margin
         .as_mut()
         .unwrap()
-        .queue_adjustment(2 * SECOND, Money::from("1 ETH"))
+        .queue_adjustment(2 * SECOND, Money::from("1 ETH"), None)
         .unwrap();
     inventory_margin
         .as_mut()
