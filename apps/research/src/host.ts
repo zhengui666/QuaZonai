@@ -1,7 +1,7 @@
 import nativeWalkForward from '../plugins/native-walk-forward.ts';
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
-import indicatorStrategy, { assertIndicatorRunSettled, IndicatorConfiguration } from '../plugins/indicator-strategy.ts';
+import { assertResearchRunSettled, ResearchConfiguration } from './research-configuration.ts';
 import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
@@ -75,7 +75,6 @@ export async function openResearch(options: {
       const module = await import(pathToFileURL(resolve(path)).href);
       registry.install(module.default as Extension);
     }
-    registry.install(indicatorStrategy);
     registry.install(researchAssessment);
     registry.install(nativeWalkForward);
     registry.install(nativeStrategyBacktest);
@@ -211,7 +210,7 @@ export async function openResearch(options: {
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
     const current = await state(id);
-    const nativeRun = await harness.snapshot(IndicatorConfiguration, handle.id, context);
+    const nativeRun = await harness.snapshot(ResearchConfiguration, handle.id, context);
     if (nativeRun?.evaluationTaskId) await reconcileNativeRemoteTasks(harness, [{ id: nativeRun.evaluationTaskId, conversationId: handle.id }], context);
     const nextId = await harness.commit(async (tx) => {
       await options.authorizeResume?.(tx, handle.id);
@@ -223,7 +222,7 @@ export async function openResearch(options: {
       const nativeContinuation = study.toolPolicy === 'NAUTILUS_ONLY' && !study.input.campaign && !study.trials.length
         && current.submission?.status === 'done' && instruction !== undefined
         && (!study.final || study.final.scientificClaim === 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
-      if (nativeContinuation) await assertIndicatorRunSettled(tx, handle.id);
+      if (nativeContinuation) await assertResearchRunSettled(tx, handle.id);
       const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
       const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
         && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');

@@ -11,7 +11,7 @@ import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from 
 import { useResearchDetail, useResource } from './data-hooks';
 import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import { currentRoute, href, navigate, type Route } from './router';
-import { Copy, DraftNotice, Empty, ErrorNotice, Facts, Loading, Metrics, PendingCommand, Status, Timestamp, useConfirm } from './ui';
+import { Copy, DraftNotice, Empty, ErrorNotice, Facts, Loading, PendingCommand, Status, Timestamp, useConfirm } from './ui';
 import { RecordTitle, TextDisclosure } from './disclosure';
 import { shortTitle } from './titles';
 import { ExecutionFailure, Reason } from './diagnostics';
@@ -68,9 +68,9 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
       <Tabs className="document-tabs" activeKey={tab} onChange={value => selectTab(value)} items={[
         { key: 'evidence', label: '证据', children: <div className="evidence-content">
           {nativeSettings.modality === 'TRADE_TICK' && <section className="result-section"><h3>逐笔输入与证据范围</h3><NativeInputFacts settings={nativeSettings} preparation={detail.dataset?.preparation} coverage={detail.final?.inputCoverage ?? detail.dataset?.inputCoverage} /></section>}
-          {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeIndicatorResult ? '原生指标历史回测' : '执行结果'}</h3></div>
-            {detail.final.nativeIndicatorResult && <><p>仅历史回测，不代表独立样本合格、模拟盘或实盘准入。绩效覆盖完整选区，包含决策开始前的现金期，不是仅交易期绩效。同一可用时间的 BAR 在批次末决策；原生订单未结算时跳过该次决策，不排队补做。指标周期按所选 BAR 计；VWAP 自数据选区起点累计，不按交易日重置。下方仅显示最后一条观测，完整序列保留在原生任务结果。</p><details><summary>参数与最后一条原生指标观测</summary><pre>{JSON.stringify(detail.final.nativeIndicatorResult, null, 2)}</pre></details></>}
-            {detail.final.status === 'COMPUTED' ? (detail.final.nativeIndicatorResult ? <Metrics metrics={detail.final.metrics} /> : null) : <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? '原生执行中' : detail.final.status === 'FAILED' ? '原生执行失败' : undefined} />}
+          {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? 'Nautilus 官方策略历史回测' : '执行结果'}</h3></div>
+            {detail.final.nativeStrategyResult && <NativeStrategyResultView value={detail.final.nativeStrategyResult} />}
+            {detail.final.status !== 'COMPUTED' && <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? '原生执行中' : detail.final.status === 'FAILED' ? '原生执行失败' : undefined} />}
             <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={`研究 #${detail.id}${detail.final.trialId !== null ? ` / 试验 #${detail.final.trialId}` : ''}`} title="原生执行失败" />
             {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>研究结论</summary><p>{detail.final.reason}</p></details>}
           </section>}
@@ -83,6 +83,17 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
       ]} />
   </article>;
 }
+export function NativeStrategyResultView({ value }: { value: NonNullable<ResearchDetail['final']>['nativeStrategyResult'] }) {
+  if (!value) return null;
+  return <section aria-label="Nautilus 原始策略结果">
+    <p>这是 Nautilus 官方策略的历史执行报告，不代表独立样本验证通过、综合星级或模拟盘与实盘准入。原始配置、数据选择、费用假设和报告保持原生含义；不在浏览器重算绩效。</p>
+    <Facts items={[["Nautilus 版本", typeof value.nativeVersion === 'string' ? value.nativeVersion : '未记录'], ["证据范围", typeof value.scientificClaim === 'string' ? value.scientificClaim : '未记录']]} />
+    <details><summary>原始策略配置与数据选择</summary><Copy value={JSON.stringify(value.request ?? null, null, 2)} label="复制原始请求" /><pre>{JSON.stringify(value.request ?? null, null, 2)}</pre></details>
+    <details><summary>上游原始执行报告</summary><p className="quiet">保留官方统计键和原始编码；未把持仓收益统计转换成日权益收益。</p><Copy value={JSON.stringify(value.canonicalResult ?? null, null, 2)} label="复制原生报告" /><pre>{JSON.stringify(value.canonicalResult ?? null, null, 2)}</pre></details>
+    <details><summary>输入记录数与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null }, null, 2)}</pre></details>
+  </section>;
+}
+
 export function ResearchConversation({ messages }: { messages: ResearchDetail['messages'] }) {
   if (!messages?.length) return null;
   return <section className="research-conversation" aria-label="Agent 对话"><h2>Agent 对话</h2>
@@ -96,7 +107,7 @@ export function canContinueResearch(detail: ResearchDetail, active: boolean): bo
   const ownerStopped = stopped && detail.final?.reason === 'owner_stop'
     && detail.submission.status === 'unanswered' && detail.submission.reason === 'aborted';
   return !!ownerStopped || detail.submission.status === 'done'
-    && (!detail.final || !!detail.final.nativeIndicatorResult || stopped);
+    && (!detail.final || !!detail.final.nativeStrategyResult || stopped);
 }
 
 /** Reuses the existing resume endpoint and original submission identity, including uncertain retries. */
@@ -165,7 +176,7 @@ function NewStudy({ route }: { route: Route }) {
     <PendingCommand command={command} />
     <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values: Record<string, unknown>) => { if (!command.pending) setDraftSaved(saveDraft('research', values)); }} onFinish={(values: Record<string, string>) => { try { const input = nativeResearchInput(values); setSpecError(undefined); void command.submit(input); } catch (error) { setSpecError(error); } }}  disabled={!!command.pending || command.busy}>
       <div className="form-section-heading"><FlaskIcon size={16} /><h2>研究问题</h2></div><p className="quiet">描述策略、数据范围与参数要求。Agent 使用 Nautilus 原生配置与计算，不再生成 Wasm 因子或自定义评分。</p>
-      <Form.Item label="研究问题" name="goal" rules={[{ required: true, whitespace: true, message: '请输入研究问题' }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="例如：使用这个数据集运行 Nautilus 原生指标策略，展示原生回测结果。" /></Form.Item>
+      <Form.Item label="研究问题" name="goal" rules={[{ required: true, whitespace: true, message: '请输入研究问题' }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="例如：使用这个数据集运行 Nautilus 官方策略，使用原配置并展示原生回测报告。" /></Form.Item>
       <Form.Item label="公开论文检索主题（可选）" name="publicLiteratureTopics" extra="仅这些主题会发送到论文检索服务，Agent 会自动检索整理。每行一个，最多 3 个，每个最多 500 字。" rules={[{ validator: (_rule, value?: string) => { try { publicLiteratureTopics(value); return Promise.resolve(); } catch { return Promise.reject(new Error('请输入最多 3 个公开主题，每行 1 个、最多 500 字，不含控制字符')); } } }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="market microstructure&#10;momentum transaction costs" /></Form.Item>
       <div className="form-section-heading"><DatabaseIcon size={16} /><h2>市场与数据</h2></div>
       <Form.Item label="数据集" name="datasetId" rules={[{ required: true, message: '请选择数据集' }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error('数据集尚未就绪')) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder="选择已登记数据集" options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>

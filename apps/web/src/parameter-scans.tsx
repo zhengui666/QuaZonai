@@ -57,12 +57,12 @@ function ScanList({ route }: { route: Route }) {
 
 type AxisFields = { enabled: boolean; kind: 'values' | 'range'; valuesText: string; start: string; end: string; step: string };
 type ScanFields = {
-  name: string; researchId: string; metricId: string; direction: 'maximize' | 'minimize'; concurrency: string; batchSize: string;
+  name: string; researchId: string; metricId: string; direction: 'maximize' | 'minimize'; concurrency: string;
   parameters: Partial<Record<string, AxisFields>>;
 };
 function fieldsFromPlan(plan: ParameterScanPlan): Partial<ScanFields> {
   return { name: plan.name, researchId: String(plan.source.researchId), metricId: plan.objective.metricId, direction: plan.objective.direction,
-    concurrency: String(plan.execution.concurrency), batchSize: String(plan.execution.batchSize ?? 1),
+    concurrency: String(plan.execution.concurrency),
     parameters: Object.fromEntries(plan.axes.map(axis => [axis.key, axis.domain.kind === 'values' ? { enabled: true, kind: 'values', valuesText: axis.domain.values.join(', '), start: '', end: '', step: '1' } : { enabled: true, valuesText: '', ...axis.domain }])) };
 }
 function ScanBuilder({ route }: { route: Route }) {
@@ -77,7 +77,7 @@ function ScanBuilder({ route }: { route: Route }) {
     if (initialized.current) return;
     initialized.current = true;
     const pending = command.values ? fieldsFromPlan(command.values as unknown as ParameterScanPlan) : undefined;
-    form.setFieldsValue({ concurrency: '1', batchSize: '1', ...draft,
+    form.setFieldsValue({ concurrency: '1', ...draft,
       ...(route.params.get('researchId') ? { researchId: route.params.get('researchId')! } : {}), ...pending });
   }, [command.values, draft, form, route.params]);
   useEffect(() => {
@@ -97,14 +97,14 @@ function ScanBuilder({ route }: { route: Route }) {
         return { key: item.key, domain: field.kind === 'range' ? { kind: 'range', start: field.start, end: field.end, step: field.step } : { kind: 'values', values: (field.valuesText ?? '').split(/[,，\s]+/).filter(Boolean) } };
       });
       const input = parameterScanPlan({ name: values.name, source: options.data.source.source, mode: 'STRATEGY', axes,
-        objective: { metricId: values.metricId, partition: 'FULL_SELECTION', direction: values.direction }, execution: { concurrency: Number(values.concurrency), batchSize: Number(values.batchSize) } });
+        objective: { metricId: values.metricId, partition: 'FULL_SELECTION', direction: values.direction }, execution: { concurrency: Number(values.concurrency) } });
       setPreviewing(true); const result = await api<ParameterScanPreview>(`${collection}/preview`, { method: 'POST', body: input }); setPreview(result);
     } catch (failure) { setError(failure); } finally { setPreviewing(false); }
   };
   const positiveInteger = { validator: (_rule: unknown, value: string) => /^[1-9]\d*$/.test(value ?? '') && Number.isSafeInteger(Number(value)) ? Promise.resolve() : Promise.reject(new Error('请输入正整数')) };
   return <div className="parameter-scans authoring-page"><a className="text-link back-link" href={href(collection)}><ArrowLeftIcon size={14} />参数扫描</a>
     <div className="authoring-heading"><div className="authoring-symbol"><SlidersHorizontalIcon size={24} /></div><h1>新建参数扫描</h1></div>
-    <p className="quiet">复用研究中已绑定的原生请求，按现有数值字段路径扫描；不创建因子模型、不拟合或评分。统计覆盖整个选择区间，包括交易开始前的现金期。</p>
+    <p className="quiet">复用研究中已绑定的 Nautilus 官方策略请求，按实际数值字段路径扫描。每个参数点独立执行官方策略，不创建因子模型、不拟合或评分。原生统计沿用实际运行窗口及官方定义。</p>
     <Form form={form} layout="vertical" scrollToFirstError={{ focus: true }} disabled={!!command.pending || command.busy || previewing} onValuesChange={(_change, values) => { setPreview(undefined); setError(undefined); if (!command.pending) setSaved(saveDraft('parameter-scan', values)); }} onFinish={values => { void inspect(values); }}>
       <PendingCommand command={command} />
       <Form.Item label="扫描名称" name="name" rules={[{ required: true, whitespace: true, message: '请输入扫描名称' }]}><Input autoFocus /></Form.Item>
@@ -115,12 +115,11 @@ function ScanBuilder({ route }: { route: Route }) {
       {options.data?.source && <>
         <Facts items={[["数据集", options.data.source.datasetName ?? options.data.source.datasetId], ["选择开始（ns）", <Exact value={options.data.source.interval.startNs} />], ["选择结束（不含，ns）", <Exact value={options.data.source.interval.endExclusiveNs} />], ["来源", options.data.source.label]]} />
         <div className="form-section-heading"><SlidersHorizontalIcon size={16} /><h2>原生请求参数路径</h2></div>
-        <p className="quiet">可选项来自绑定请求中的数值字段，不限于预设指标参数。未勾选项保持原值；原生引擎负责校验取值。</p>
+        <p className="quiet">可选项来自绑定请求中的数值字段，不另设自定义指标参数。未勾选项保持原值；原生引擎负责校验取值。</p>
         <div className="scan-parameters">{options.data.parameters.map(item => <AxisEditor key={item.key} definition={item} form={form} current={options.data!.defaults[item.key]} />)}</div>
         <Form.Item label="原生统计键（native_key）" name="metricId" rules={[{ required: true, whitespace: true, message: '请输入原生统计键' }]} extra="建议项不是白名单；可输入原生分析器返回的其他统计键。缺失值保持不可用，不补零。"><AutoComplete options={options.data.objectives.map(item => ({ value: item.metricId, label: item.label }))} /></Form.Item>
         <Form.Item label="比较方向" name="direction" rules={[{ required: true, message: '请明确选择比较方向' }]}><Select options={[{ value: 'maximize', label: '最大化' }, { value: 'minimize', label: '最小化' }]} /></Form.Item>
-        <Form.Item label="并发批次数" name="concurrency" rules={[{ required: true }, positiveInteger]}><Input inputMode="numeric" /></Form.Item>
-        <Form.Item label="每批最多参数点数" name="batchSize" rules={[{ required: true }, positiveInteger]} extra="默认 1。配置或数据范围不同会自动分批；相同配置复用 Nautilus reset。同批整体成功、失败或取消；数据区间不得超出来源研究授权范围。"><Input inputMode="numeric" /></Form.Item>
+        <Form.Item label="并发任务数" name="concurrency" rules={[{ required: true }, positiveInteger]}><Input inputMode="numeric" /></Form.Item>
       </>}
       <ErrorNotice error={error} /><DraftNotice saved={saved} />
       {preview && <div className="scan-notice"><Facts items={[["组合总数", preview.grid.total], ["可执行", preview.grid.eligible], ["跳过", preview.grid.skipped]]} />{preview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}<Copy value={JSON.stringify(preview.input, null, 2)} label="复制原始扫描计划" /></div>}
@@ -153,7 +152,7 @@ function ScanDetail({ route, id }: { route: Route; id: string }) {
       { key: 'trials', label: '结果表', children: <div className="scan-detail-content"><ScanTrials scan={value} route={route} update={update} /></div> },
       { key: 'surface', label: '参数分析', children: <div className="scan-detail-content"><ScanSurface scan={value} route={route} update={update} /></div> },
       { key: 'compare', label: '曲线对比', children: <div className="scan-detail-content"><ScanComparison scan={value} route={route} update={update} /></div> },
-      { key: 'inputs', label: '输入与执行', children: <div className="scan-detail-content"><Facts items={[["扫描", value.id], ["原请求", value.requestId], ["主任务", value.taskId], ["来源", value.sourceView.label], ["来源研究", value.sourceView.researchId], ["创建时间", <Timestamp value={value.createdAt} />], ["更新时间", <Timestamp value={value.updatedAt} />], ["并发批次", value.execution.concurrency], ["每批最多参数点", value.execution.batchSize ?? 1]]} />{value.sourceView.assumptions.length > 0 && <section className="result-section"><h3>原始假设</h3><ul>{value.sourceView.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></section>}<details><summary>原始参数计划</summary><Copy value={JSON.stringify(value.input, null, 2)} label="复制扫描计划" /><pre className="scan-code">{JSON.stringify(value.input, null, 2)}</pre></details><details><summary>参数组合与固定值</summary><pre className="scan-code">{JSON.stringify(value.grid, null, 2)}</pre></details></div> },
+      { key: 'inputs', label: '输入与执行', children: <div className="scan-detail-content"><Facts items={[["扫描", value.id], ["原请求", value.requestId], ["主任务", value.taskId], ["来源", value.sourceView.label], ["来源研究", value.sourceView.researchId], ["创建时间", <Timestamp value={value.createdAt} />], ["更新时间", <Timestamp value={value.updatedAt} />], ["并发任务", value.execution.concurrency]]} />{value.sourceView.assumptions.length > 0 && <section className="result-section"><h3>原始假设</h3><ul>{value.sourceView.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></section>}<details><summary>原始参数计划</summary><Copy value={JSON.stringify(value.input, null, 2)} label="复制扫描计划" /><pre className="scan-code">{JSON.stringify(value.input, null, 2)}</pre></details><details><summary>参数组合与固定值</summary><pre className="scan-code">{JSON.stringify(value.grid, null, 2)}</pre></details></div> },
     ]} />}
   </article></div>;
 }
@@ -164,7 +163,7 @@ function ScanOverview({ value }: { value: ParameterScanView }) {
     {active(value) && <div className="scan-notice" role="status"><p>{value.status === 'STOPPING' ? '停止请求已记录；等待当前原生执行结束及远端回执核对。' : value.status === 'RECONCILING' ? '原执行结果尚不确定，正在核对同一远端身份。' : '进度来自已记录的参数任务；关闭页面不会取消扫描。'}</p><p className="quiet">更新于 <Timestamp value={value.updatedAt} />。本地任务停止不代表远端已停止。</p></div>}
     <ExecutionFailure error={value.error} identity={`参数扫描 ${value.id} / 主任务 #${value.taskId}`} title="扫描未完整完成" />
     <section className="result-section"><h3>{active(value) ? '当前最佳可比原生结果（扫描未结束）' : '最佳可比原生结果'}</h3>{value.best ? <><p>试验 #{value.best.ordinal} · <Exact value={value.best.metric.value} unit={value.best.metric.unit} /></p><ParameterFacts values={value.best.parameters} copy /></> : <p className="quiet">尚无目标指标可用、口径一致的结果。</p>}</section>
-    <div className="scan-notice"><p>本次扫描覆盖 FULL_SELECTION，按用户指定方向{value.objective.direction === 'minimize' ? '最小化' : '最大化'}原生统计值；包含交易开始前的现金期，不代表独立证据通过。</p><p className="quiet">扫描结果用于调参，不创建独立评估、组合资格或目标交付。费用、输入分区和市场口径继承来源；不在浏览器重算收益。</p></div>
+    <div className="scan-notice"><p>本次扫描覆盖 FULL_SELECTION，按用户指定方向{value.objective.direction === 'minimize' ? '最小化' : '最大化'}原生统计值；沿用官方策略运行与统计定义，不代表独立证据通过。</p><p className="quiet">扫描结果用于调参，不创建独立评估、组合资格或目标交付。费用、输入分区和市场口径继承来源；不在浏览器重算收益。</p></div>
   </>;
 }
 

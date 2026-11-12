@@ -4,10 +4,11 @@ import { obj } from '@earendil-works/pi-schema';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanCheckpoint } from '../src/native-execution.ts';
+import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint } from '../src/native-execution.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
-import { executionVersions } from '../src/indicator-result.ts';
+import { ResearchConfiguration } from '../src/research-configuration.ts';
+import { executionVersions } from '../src/native-result-version.ts';
 
 export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject {
   const expected = structuredClone(request);
@@ -58,6 +59,11 @@ export const nativeStrategyBacktestTool = defineTool({
       if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
         request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
       }, { ownership: { kind: 'task', taskId: api.taskId } });
+      const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
+      if (configuration.evaluationTaskId !== binding.taskId) {
+        if (configuration.evaluationTaskId) configuration.previousTaskIds = [...(configuration.previousTaskIds ?? []), configuration.evaluationTaskId];
+        configuration.evaluationTaskId = binding.taskId;
+      }
       return binding.taskId;
     }, context);
     const settled = await api.waitForTask(id, context);
@@ -76,14 +82,14 @@ export const nativeStrategyBacktestTool = defineTool({
   },
 });
 
-export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; walkForward?: boolean; sourceRequest?: JsonObject }, NativeScanCheckpoint, JsonObject>({
+export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-strategy-'));
     try {
       const raw = await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(
         task.input.target, task.input.walkForward ? 'native-walk-forward' : 'native-strategy-backtest', task.input.request,
-        ['--catalog', task.input.catalog], directory, context));
+        ['--catalog', task.input.catalog], directory, context), task.input.scanContext);
       const result = task.input.walkForward ? nativeWalkForwardResult(raw, task.input.request) : nativeStrategyResult(raw, task.input.request);
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
     } catch (error) {

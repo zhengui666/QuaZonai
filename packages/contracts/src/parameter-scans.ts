@@ -13,7 +13,7 @@ export type ParameterScanMetricId = string;
 export interface ParameterScanObjective { metricId: ParameterScanMetricId; partition: 'FULL_SELECTION'; direction: 'maximize' | 'minimize' }
 export interface ParameterScanPlan {
   name: string; source: ParameterScanSource; mode: ParameterScanMode; axes: ParameterAxis[];
-  objective: ParameterScanObjective; execution: { concurrency: number; batchSize?: number };
+  objective: ParameterScanObjective; execution: { concurrency: number };
 }
 export interface ParameterScanStart extends ParameterScanPlan { requestId: string }
 export interface NormalizedParameterAxis extends ParameterAxis { count: string; duplicates: string }
@@ -22,10 +22,10 @@ export interface ParameterScanGrid {
 }
 export interface ParameterScanPoint { ordinal: string; parameters: ParameterValues; skipReason: string | null }
 export interface ParameterScanParameterDefinition {
-  key: ParameterScanKey; label: string; kind: 'integer' | 'number' | 'decimal' | 'nanoseconds'; modes: ParameterScanMode[]; modalities?: ('BAR' | 'TRADE_TICK')[];
+  key: ParameterScanKey; label: string; kind: 'integer' | 'number' | 'decimal' | 'nanoseconds'; modes: ParameterScanMode[]; modalities?: ('BAR' | 'TRADE_TICK' | 'NATIVE')[];
 }
 export interface ParameterScanObjectiveDefinition {
-  metricId: ParameterScanMetricId; label: string; mode: ParameterScanMode; partition: 'FULL_SELECTION'; direction: 'maximize' | 'minimize'; nativeKey: string; unit: string; modalities?: ('BAR' | 'TRADE_TICK')[];
+  metricId: ParameterScanMetricId; label: string; mode: ParameterScanMode; partition: 'FULL_SELECTION'; direction: 'maximize' | 'minimize'; nativeKey: string; unit: string; modalities?: ('BAR' | 'TRADE_TICK' | 'NATIVE')[];
 }
 /** Source-specific paths are discovered from the unchanged native request. */
 export const parameterScanParameters: readonly ParameterScanParameterDefinition[] = [];
@@ -37,7 +37,7 @@ export const parameterScanObjectives = ['Sharpe Ratio (252 days)', 'Sortino Rati
 
 export interface ParameterScanSourceView {
   source: ParameterScanSource; label: string; researchId: number;
-  datasetId: string | null; datasetName: string | null; modality: 'BAR' | 'TRADE_TICK'; currency: string | null;
+  datasetId: string | null; datasetName: string | null; modality: 'BAR' | 'TRADE_TICK' | 'NATIVE'; currency: string | null;
   interval: { startNs: string; endExclusiveNs: string }; assumptions: string[];
 }
 export interface ParameterScanOptions {
@@ -53,17 +53,17 @@ export interface ParameterScanCounts {
   total: string; eligible: string; skipped: string; completed: string; failed: string; stopped: string;
   running: string; pending: string; unknown: string; comparable: string;
 }
-export interface ParameterScanMetric extends Metric { value: number | null; reason: string | null }
+export interface ParameterScanMetric extends Metric { value: number | null; reason: string | null; nativeGroup?: string; currency?: string }
 export interface ParameterScanBest { ordinal: string; parameters: ParameterValues; metric: ParameterScanMetric }
 export interface ParameterScanView {
   id: string; requestId: string; name: string; source: ParameterScanSource; sourceView: ParameterScanSourceView;
   mode: ParameterScanMode; input: ParameterScanPlan; grid: ParameterScanGrid; taskId: number; createdAt: string; updatedAt: string;
-  status: ParameterScanStatus; execution: { concurrency: number; batchSize?: number }; objective: ParameterScanObjective; counts: ParameterScanCounts;
+  status: ParameterScanStatus; execution: { concurrency: number }; objective: ParameterScanObjective; counts: ParameterScanCounts;
   best: ParameterScanBest | null; error: string | null; scientificQualification: 'UNQUALIFIED_EXPLORATORY';
 }
 export type ParameterScanTrialStatus = 'PENDING' | 'RUNNING' | 'RECONCILING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'SKIPPED';
 export interface ParameterScanTrial extends ParameterScanPoint {
-  batchIndex?: number; taskId: number | null; status: ParameterScanTrialStatus; metric: ParameterScanMetric | null; metrics: Metric[];
+  taskId: number | null; status: ParameterScanTrialStatus; metric: ParameterScanMetric | null; metrics: Metric[];
   sampleCounts: Record<string, string> | null; error: string | null; remoteStatus: string | null;
   curve?: EquityPoint[]; details?: JsonObject;
 }
@@ -153,12 +153,11 @@ function parsePlan(value: unknown, requireRequest: boolean): ParameterScanStart 
   const objective = record(input.objective, 'objective'); fields(objective, ['metricId', 'partition', 'direction'], 'objective');
   const selected = parameterScanObjective(text(objective.metricId, 'objective.metricId'));
   if (!selected || objective.partition !== 'FULL_SELECTION' || !['maximize', 'minimize'].includes(String(objective.direction))) fail('parameter_scan_objective_unsupported', 'objective');
-  const execution = input.execution === undefined ? { concurrency: 1 } : record(input.execution, 'execution'); fields(execution, ['concurrency', 'batchSize'], 'execution');
-  if (execution.batchSize !== undefined && (!Number.isSafeInteger(execution.batchSize) || Number(execution.batchSize) < 1)) fail('parameter_scan_batch_size_invalid', 'execution.batchSize');
+  const execution = input.execution === undefined ? { concurrency: 1 } : record(input.execution, 'execution'); fields(execution, ['concurrency'], 'execution');
   if (!Number.isSafeInteger(execution.concurrency) || Number(execution.concurrency) < 1) fail('parameter_scan_concurrency_invalid', 'execution.concurrency');
   return { requestId: requireRequest ? text(input.requestId, 'requestId') : typeof input.requestId === 'string' ? input.requestId : '',
     name: text(input.name, 'name'), source: parsedSource, mode,
-    axes: input.axes as ParameterAxis[], objective: { metricId: selected.metricId, partition: 'FULL_SELECTION', direction: objective.direction as 'maximize' | 'minimize' }, execution: { concurrency: execution.concurrency as number, ...(execution.batchSize === undefined ? {} : { batchSize: execution.batchSize as number }) } };
+    axes: input.axes as ParameterAxis[], objective: { metricId: selected.metricId, partition: 'FULL_SELECTION', direction: objective.direction as 'maximize' | 'minimize' }, execution: { concurrency: execution.concurrency as number } };
 }
 export function parameterScanStart(value: unknown): ParameterScanStart { return parsePlan(value, true); }
 export function parameterScanPlan(value: unknown): ParameterScanPlan { const { requestId: _requestId, ...plan } = parsePlan(value, false); return plan; }

@@ -16,6 +16,7 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     const body = request.body as { requestId: string; action: string; clientId: string; accountId: string };
     assert.equal(body.clientId, envelope.clientId); assert.equal(body.accountId, envelope.accountId); calls.push(body.action);
     const receipt = { ...envelope, requestId: body.requestId, action: body.action, status: 'COMPLETED', result: { ...native, state: body.action === 'STOP' ? 'STOPPED' : 'RUNNING' }, error: null };
+    if (body.requestId === 'start-rejected') Object.assign(receipt, { status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'account_native_cache_write_failed' }, error: 'account_native_cache_write_failed' });
     receipts.set(body.requestId, receipt);
     if (body.requestId === 'start-once') { reply.raw.destroy(); return; } // Original accepted command, response lost.
     return receipt;
@@ -48,6 +49,14 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     const stop = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'stop-once')!;
     await state.service.research.harness.waitForTask(stop.taskId as never, context);
     assert.deepEqual(calls, ['START', 'STOP']);
+    assert.equal((await send('start-rejected', 'START')).statusCode, 202);
+    app = (await state.service.research.harness.snapshot(Application, context))!;
+    const rejection = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'start-rejected')!;
+    await state.service.research.harness.waitForTask(rejection.taskId as never, context);
+    const rejected = await state.service.app.inject({ method: 'GET', url: url + '/commands/start-rejected', headers: state.headers });
+    assert.equal(rejected.json().status, 'REJECTED'); assert.equal(rejected.json().receipt.result.started, false);
+    const count = calls.length;
+    await send('start-rejected', 'START'); assert.equal(calls.length, count, 'Confirmed rejection is not silently retried.');
     const after = (await state.service.research.harness.snapshot(Application, context))!;
     assert.deepEqual(after.observations[source.connection.id]!.snapshot, source.observation.snapshot);
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: { requestId: 'old-target', portfolioId: 'old', mode: 'paper' } })).statusCode, 410);

@@ -94,7 +94,7 @@ export interface ResearchDetail extends ResearchSummary {
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   criterion?: CriterionView; factors?: string[];
-  final: { nativeIndicatorResult?: JsonObject; status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
+  final: { nativeStrategyResult?: JsonObject; status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;

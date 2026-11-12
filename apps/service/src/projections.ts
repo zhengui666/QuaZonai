@@ -33,35 +33,16 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
     ...(typeof input?.event_start_ns === 'string' && typeof input?.event_end_ns === 'string' ? { event_start_ns: input.event_start_ns, event_end_ns: input.event_end_ns } : {}) } };
 }
 
-/** Bounded detail projection; the complete observation tape remains in the native task. */
-function nativeIndicatorDetails(value: Json | undefined, claim: Json | undefined): { nativeIndicatorResult?: JsonObject } {
-  if (claim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION' || !value || typeof value !== 'object' || Array.isArray(value)) return {};
-  if (value.reuse === 'NAUTILUS_ENGINE_RESET' && Array.isArray(value.results)) {
-    return { nativeIndicatorResult: { scientificClaim: claim, reuse: value.reuse, nativeVersion: value.native_version ?? null,
-      cases: value.results.map((row, index) => ({ ordinal: index, ...nativeIndicatorDetails(row, claim).nativeIndicatorResult })) } };
-  }
-  const observations = Array.isArray(value.observations) ? value.observations : [];
-  return { nativeIndicatorResult: { request: value.request ?? null, scientificClaim: claim,
-    performanceScope: value.performance_scope ?? null, decisionPolicy: value.decision_policy ?? null,
-    skippedUnsettledDecisions: value.skipped_unsettled_decisions ?? null, mergedSameTimeBars: value.merged_same_time_bars ?? null,
-    observationCount: observations.length, latestObservation: observations.at(-1) ?? null } };
+/** Preserve the official report verbatim; no project signal/metric projection. */
+function nativeStrategyDetails(value: Json | undefined, claim: Json | undefined): { nativeStrategyResult?: JsonObject } {
+  if (claim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION' || !value || typeof value !== 'object' || Array.isArray(value) || !value.canonical_result) return {};
+  return { nativeStrategyResult: { request: value.request ?? null, scientificClaim: claim, nativeVersion: value.native_version ?? null,
+    canonicalResult: value.canonical_result, dataRowsByType: value.data_rows_by_type ?? null, notes: value.notes ?? null } };
 }
 
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
-  if (!Array.isArray(value) && value.reuse === 'NAUTILUS_ENGINE_RESET' && Array.isArray(value.results)) {
-    return value.results.flatMap((row, index) => metrics(row).map(metric => ({ ...metric,
-      key: `batch.${index}.${metric.key}`, label: `case ${index + 1}: ${metric.label}`, component: index })));
-  }
-  if (!Array.isArray(value) && value.simulation && Array.isArray(value.observations)) {
-    const simulation = object(value.simulation, 'native_indicator_simulation');
-    return (Array.isArray(simulation.statistics) ? simulation.statistics : []).map(item => {
-      const statistic = object(item, 'native_statistic');
-      const key = String(statistic.native_key);
-      return { key, label: key, value: typeof statistic.value === 'number' ? statistic.value : null };
-    });
-  }
   if (!Array.isArray(value) && value.economic) {
     const { economic, ...result } = value;
     return [...metrics(result, prefix), ...tickEconomicMetrics(economic)];
@@ -214,7 +195,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
       reason: typeof final.reason === 'string' ? final.reason : null,
       ...publicExecutionError(final.error, 'scientific_execution_failed',
         Array.isArray((study.trials.find(trial => trial.taskId === final.trialId)?.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', final.errorDetail),
-      metrics: metrics(final.result), ...tickInputDetails(final.result), ...nativeIndicatorDetails(final.result, final.scientificClaim) } : null,
+      metrics: metrics(final.result), ...tickInputDetails(final.result), ...nativeStrategyDetails(final.result, final.scientificClaim) } : null,
   };
 }
 

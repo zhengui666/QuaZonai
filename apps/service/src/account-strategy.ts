@@ -13,16 +13,19 @@ import { assertBusinessAdmission } from './pm-maintenance.ts';
 
 interface CommandRecord {
   original: JsonObject; connection: ConnectionConfig; currency: string; observationId: string;
-  status: 'PENDING' | 'UNCERTAIN' | 'COMPLETED'; receipt: JsonObject | null; error: string | null; taskId: number;
+  status: 'PENDING' | 'UNCERTAIN' | 'COMPLETED' | 'REJECTED'; receipt: JsonObject | null; error: string | null; taskId: number;
 }
 const context = BACKGROUND_CONTEXT;
 const commandRecord = (value: unknown) => value as CommandRecord;
 function accept(record: CommandRecord, value: JsonObject) {
   assertEnvelope(record.connection, value, record.currency);
   if (value.requestId !== record.original.requestId || value.action !== record.original.action
-    || !['UNCERTAIN', 'COMPLETED'].includes(String(value.status))) throw new Problem('strategy_receipt_identity_mismatch');
+    || !['UNCERTAIN', 'COMPLETED', 'REJECTED'].includes(String(value.status))) throw new Problem('strategy_receipt_identity_mismatch');
   if (value.status === 'COMPLETED') { const result = object(value.result, 'strategy_native_result');
     if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') throw new Problem('strategy_native_result_invalid');
+  }
+  if (value.status === 'REJECTED') { const result = object(value.result, 'strategy_native_rejection');
+    if (value.action !== 'START' || result.admission !== 'REJECTED' || result.started !== false || typeof result.reason !== 'string') throw new Problem('strategy_native_rejection_invalid');
   }
   record.receipt = value; record.status = value.status as CommandRecord['status']; record.error = typeof value.error === 'string' ? value.error : null;
 }

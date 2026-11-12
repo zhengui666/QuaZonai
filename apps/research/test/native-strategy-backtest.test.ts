@@ -110,13 +110,7 @@ test('bound upstream research exposes only its native tool and never translates 
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Cannot use a sealed historical binding.')]);
   const host = await openResearch({ database: join(directory, 'research.sqlite'), models });
   try {
-    const admission = await host.start('bound-upstream', { goal: 'Run the exact registered upstream strategy', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-      data: { catalog: '/registered/catalog', native_strategy_backtest_request: {}, indicator_strategy_request: {} }, policy: {} });
-    await (await host.harness.submission(admission.submissionId, context))!.wait(context);
-    const agent = await (await host.harness.conversation(admission.conversationId, context))!.agent(context);
-    assert.deepEqual(agent.extensions.map(extension => extension.name), ['qz.native-strategy-backtest', 'qz.native-walk-forward', 'qz.research-assessment']);
-    assert.deepEqual(agent.tools.map(tool => tool.name), ['native_strategy_backtest', 'native_strategy_walk_forward', 'native_strategy_logic_review', 'native_strategy_assessment_report']);
-    const study = (await host.harness.snapshot(Study, admission.conversationId, context))!;
-    assert.equal(study.final, null); assert.equal(study.trials.length, 0);
+    await assert.rejects(host.start('bound-upstream', { goal: 'Reject mixed historical binding without translating it', model: { provider: faux.provider.id, modelId: faux.getModel().id },
+      data: { catalog: '/registered/catalog', native_strategy_backtest_request: {}, indicator_strategy_request: {} }, policy: {} }), /custom_indicator_strategy_removed/);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });

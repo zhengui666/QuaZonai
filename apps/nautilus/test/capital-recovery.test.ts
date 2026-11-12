@@ -294,3 +294,42 @@ test('reserved capital prevents native strategy restart and pause stops reductio
     assert.deepEqual((await account.saved()).targets, {});
   } finally { await account.close(); }
 });
+
+test('strategy admission rejection remains distinct from lost transport and is never replayed', async () => {
+  const native = new ControlledProtocol();
+  const original = native.request.bind(native);
+  let calls = 0, loseReply = false;
+  native.request = async (operation, payload = {}) => {
+    if (operation === 'STRATEGY_START') {
+      calls++;
+      if (loseReply) throw new Error('account_runtime_outcome_uncertain');
+      return { admission: 'REJECTED', started: false, reason: 'account_native_strategy_capital_reserved' };
+    }
+    return original(operation, payload);
+  };
+  const account = await openAccount(native);
+  try {
+    const body = (requestId: string) => ({ requestId, action: 'START', clientId: paperOptions.clientId, accountId: paperOptions.accountId });
+    const rejected = await account.call('POST', '/strategy/commands', body('rejected'));
+    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'account_native_strategy_capital_reserved');
+    assert.deepEqual(await account.call('POST', '/strategy/commands', body('rejected')), rejected); assert.equal(calls, 1);
+    loseReply = true;
+    const uncertain = await account.call('POST', '/strategy/commands', body('lost'));
+    assert.equal(uncertain.status, 'UNCERTAIN');
+    assert.deepEqual(await account.call('GET', '/strategy/commands/lost'), uncertain); assert.equal(calls, 2);
+  } finally { await account.close(); }
+});
+
+test('native account capabilities do not advertise replay-only order-book strategy', async () => {
+  const native = new ControlledProtocol();
+  const account = await openAccount(native, { ...paperOptions, nativeStrategy: { instrument_id: instrumentId, strategy: {
+    kind: 'ORDER_BOOK_IMBALANCE', max_trade_size: '1', trigger_min_size: '1', trigger_imbalance_ratio: '0.2',
+    min_seconds_between_triggers: 1, time_in_force: 'IOC', dry_run: false,
+  } } });
+  try {
+    const capabilities = await account.call('GET', '/capabilities');
+    assert.equal((capabilities.nativeStrategy as Json).supported, false);
+    assert.deepEqual((capabilities.nativeStrategy as Json).supportedKinds, ['EMA_CROSS']);
+    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance');
+  } finally { await account.close(); }
+});

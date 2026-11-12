@@ -1,4 +1,4 @@
-import { executionVersions } from './indicator-result.ts';
+import { executionVersions } from './native-result-version.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { JsonValue } from '@earendil-works/chord';
 import { canonical } from './documents.ts';

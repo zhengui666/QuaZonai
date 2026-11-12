@@ -11,13 +11,13 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
 import { openRetainedResearch as openResearch } from './frozen-input.ts';
-import { IndicatorStrategyTask } from '../plugins/indicator-strategy.ts';
+import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 import { NativeRemoteUncertainty, executeNativeValue, remoteNativeExecutionReceipt, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
-test('untrusted 429 and 501 responses never prove native indicator non-execution', { timeout: 15_000 }, async () => {
-  for (const command of ['simulate-indicator-strategy']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
+test('untrusted 429 and 501 responses never prove native upstream strategy non-execution', { timeout: 15_000 }, async () => {
+  for (const command of ['native-strategy-backtest']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
     let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
     const server = createServer(async (request, response) => {
@@ -114,7 +114,7 @@ test('receipt observation is a single read; durable tasks own waiting and a canc
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-test('native indicator HTTP capacity response keeps its original invocation across restart without an unproven retry', { timeout: 15_000 }, async () => {
+test('native upstream strategy HTTP capacity response keeps its original invocation across restart without an unproven retry', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-capacity-'));
   const requests: NativeExecutionRequest[] = []; let completed = false; let reads = 0;
   const server = createServer(async (request, response) => {
@@ -136,7 +136,7 @@ test('native indicator HTTP capacity response keeps its original invocation acro
   const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
   try {
     const root = await host.harness.root(BACKGROUND_CONTEXT);
-    const id = await root.commit(tx => tx.createTask(IndicatorStrategyTask, { request: { selection: {}, settings: {} }, catalog: directory, target }, { ownership: { kind: 'conversation' } }), BACKGROUND_CONTEXT);
+    const id = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }], event_start_ns: '0', event_end_ns: '20', available_end_ns: '20', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS', trade_size: '0.01', fast_period: 2, slow_period: 3 } }, catalog: directory, target }, { ownership: { kind: 'conversation' } }), BACKGROUND_CONTEXT);
     const deadline = Date.now() + 5000;
     for (;;) {
       const task = await host.harness.getTask(id, BACKGROUND_CONTEXT);
@@ -148,7 +148,7 @@ test('native indicator HTTP capacity response keeps its original invocation acro
     const settled = await host.harness.waitForTask(id, BACKGROUND_CONTEXT);
     // Receipt was adopted, but a protocol-only object is not valid backtest evidence.
     assert.equal(settled.state.outcome.status, 'failed');
-    assert.match(settled.state.outcome.status === 'failed' ? settled.state.outcome.error.message : '', /indicator_strategy/);
+    assert.match(settled.state.outcome.status === 'failed' ? settled.state.outcome.error.message : '', /native_strategy/);
     assert.ok(reads > 0); assert.deepEqual(requests, [original], 'only GET may observe uncertain original work');
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), BACKGROUND_CONTEXT);
     assert.equal(facts!.requests[0]!.status, 'COMPLETED');

@@ -134,27 +134,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (!registry.extension('qz.native-strategy-backtest')) throw new Problem('native_strategy_adapter_not_configured');
       object(validated.data.native_strategy_backtest_request, 'native_strategy_backtest_request');
     }
-    const indicatorBatch = validated.data.indicator_strategy_batch_request;
-    if (indicatorBatch !== undefined && validated.data.indicator_strategy_request !== undefined) throw new Problem('indicator_strategy_binding_ambiguous');
-    const indicatorStrategy = indicatorBatch !== undefined ? indicatorBatch : validated.data.indicator_strategy_request;
-    if (indicatorStrategy !== undefined) {
-      text(validated.data.catalog, 'catalog');
-      if (validated.data.sealed || validated.campaign || validated.data.request || validated.data.catalog_scan_request || validated.data.nativeInput) throw new Problem('indicator_strategy_requires_explicit_historical_binding');
-      if (!registry.extension('qz.indicator-strategy')) throw new Problem('indicator_strategy_adapter_not_configured');
-      const binding = object(indicatorStrategy, 'indicator_strategy_request');
-      const requests = indicatorBatch === undefined ? [binding] : binding.requests;
-      if (!Array.isArray(requests) || requests.length === 0) throw new Problem('indicator_strategy_batch_requests_required');
-      let shared: string | undefined;
-      for (const value of requests) {
-        const nativeRequest = object(value, 'indicator_strategy_request');
-        const nativeSelection = object(nativeRequest.selection, 'indicator_strategy_selection');
-        if (!Array.isArray(nativeSelection.bar_types) || nativeSelection.bar_types.length !== 1) throw new Problem('indicator_strategy_single_series_required');
-        validateNativeSimulationSettings(nativeRequest.settings);
-        const basis = canonical({ selection: nativeSelection, settings: nativeRequest.settings! });
-        if (shared !== undefined && shared !== basis) throw new Problem('indicator_strategy_batch_shared_selection_settings_required');
-        shared = basis;
-      }
-    }
+    if (validated.data.indicator_strategy_request !== undefined || validated.data.indicator_strategy_batch_request !== undefined) throw new Problem('custom_indicator_strategy_removed', 410);
     await host.harness.commit(async tx => {
       assertBusinessAdmission(await tx.doc(Application));
       if (validated.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), validated.campaign.mandateRevisionId));

@@ -10,7 +10,6 @@ import { bindReviewSourceEvidence } from './review-source.ts';
 import type { CapturedReviewSource } from './review-source.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import { ModelTiers } from './models.ts';
-import indicatorStrategy from '../plugins/indicator-strategy.ts';
 import { nativeResearchExtension } from '../plugins/research.ts';
 
 export type ResearchAdmission = { conversationId: ConversationId; submissionId: SubmissionId };
@@ -27,10 +26,10 @@ export const ResearchIntakeTask = defineTask<IntakeInput, IntakeCheckpoint, Rese
         const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
         const input = task.input.input;
         const upstreamBinding = input.data.native_strategy_backtest_request !== undefined;
-        const nativeBinding = input.data.indicator_strategy_request !== undefined || input.data.indicator_strategy_batch_request !== undefined;
-        await configure(tx, conversation.id, { model: input.model, thinkingLevel: task.input.thinkingLevel, instructions: upstreamBinding ? `${researchInstructions(input)}\nUse native_strategy_backtest for the exact bound historical upstream strategy. Do not infer paper/live deployment or trading permission.` : nativeBinding
-          ? `${researchInstructions(input)}\nUse native_indicator_strategy_evaluate for the exact bound historical strategy. Do not call legacy factor, review, fitting or optimization tools. A backtest is not trading permission.` : researchInstructions(input),
-          extensions: upstreamBinding ? [nativeStrategyBacktest, nativeWalkForward, researchAssessment] : nativeBinding ? [indicatorStrategy, researchAssessment] : [nativeResearchExtension(), indicatorStrategy, researchAssessment], tools: null,
+        if (input.data.indicator_strategy_request !== undefined || input.data.indicator_strategy_batch_request !== undefined) throw new Error('custom_indicator_strategy_removed');
+        await configure(tx, conversation.id, { model: input.model, thinkingLevel: task.input.thinkingLevel,
+          instructions: upstreamBinding ? `${researchInstructions(input)}\nUse native_strategy_backtest for the unchanged bound upstream strategy. A historical backtest is not independent OOS evidence or trading permission.` : researchInstructions(input),
+          extensions: upstreamBinding ? [nativeStrategyBacktest, nativeWalkForward, researchAssessment] : [nativeResearchExtension(), nativeStrategyBacktest, nativeWalkForward, researchAssessment], tools: null,
         });
         if (input.serviceTier) (await tx.doc(ModelTiers)).tiers[(await tx.doc(ProviderDoc, conversation.id)).sessionId] = input.serviceTier;
         (await tx.doc(Study, conversation.id)).toolPolicy = 'NAUTILUS_ONLY';

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { ListPage, ResearchListItem } from '../../../packages/contracts/src/lists.ts';
-import Research, { NativeResearchContinuation, nativeResearchInput, ResearchConversation, canContinueResearch } from './research';
+import Research, { NativeResearchContinuation, nativeResearchInput, ResearchConversation, canContinueResearch, NativeStrategyResultView } from './research';
 import type { ResearchDetail } from '../../../packages/contracts/src/index.ts';
 import { listQuery } from './list-values';
 
@@ -66,7 +66,7 @@ describe('same-conversation native continuation', () => {
   it('offers native follow-up after dialogue and native results, but never while active', () => {
     expect(render(detail)).toContain('后续研究要求');
     expect(render(detail)).toContain('继续研究');
-    expect(render({ ...detail, final: { status: 'COMPUTED', trialId: null, reason: null, metrics: [], nativeIndicatorResult: {} } })).toContain('继续研究');
+    expect(render({ ...detail, final: { status: 'COMPUTED', trialId: null, reason: null, metrics: [], nativeStrategyResult: {} } })).toContain('继续研究');
     expect(render(detail, true)).toBe('');
   });
   it('does not turn historical scored finals into editable native research', () => {
@@ -76,7 +76,7 @@ describe('same-conversation native continuation', () => {
 });
 
  it('submits natural-language research through the native host without scored-model defaults', () => {
-  expect(nativeResearchInput({ goal: '运行原生指标策略', datasetId: 'native-data', model: '{"provider":"p","modelId":"m"}', thinkingLevel: 'high', serviceTier: 'priority', publicLiteratureTopics: 'momentum', metric: 'pearson_ic', scope: 'single-factor', maxMembers: '1', scenarios: '1000' })).toEqual({ goal: '运行原生指标策略', datasetId: 'native-data', model: {provider:'p',modelId:'m'}, thinkingLevel:'high',serviceTier:'priority', publicLiteratureQueries:['momentum'] });
+  expect(nativeResearchInput({ goal: '运行官方原生策略', datasetId: 'native-data', model: '{"provider":"p","modelId":"m"}', thinkingLevel: 'high', serviceTier: 'priority', publicLiteratureTopics: 'momentum', metric: 'pearson_ic', scope: 'single-factor', maxMembers: '1', scenarios: '1000' })).toEqual({ goal: '运行官方原生策略', datasetId: 'native-data', model: {provider:'p',modelId:'m'}, thinkingLevel:'high',serviceTier:'priority', publicLiteratureQueries:['momentum'] });
 });
 
 it('shows continuation for completed discussion stops and settled owner stops, not active or scored finals', () => {
@@ -93,4 +93,16 @@ it('renders the original Agent question as safe text alongside the existing repl
   expect(html).toContain('Agent 对话'); expect(html).toContain('请选择周期：');
   expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>');
   expect(renderToStaticMarkup(createElement(ResearchConversation, { messages: [] }))).toBe('');
+});
+
+it('shows the official strategy report without custom indicator semantics or invented performance', () => {
+  const value = { request: { instrument_id: 'TEST.SIM', available_start_ns: '1790000000000000001', strategy: { kind: 'EMA_CROSS', trade_size: '0.500000000000000001' } },
+    nativeVersion: '0.69.0', scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION',
+    canonicalResult: { statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, diagnostics: ['<script>not markup</script>'] }, dataRowsByType: { QuoteTick: '9007199254740993' }, notes: ['原生费用假设'] };
+  const html = renderToStaticMarkup(createElement(NativeStrategyResultView, { value }));
+  const visible = visibleText(html);
+  for (const exact of ['0.69.0', '1790000000000000001', '0.500000000000000001', '9007199254740993', '3ff0000000000000', '原生费用假设']) expect(visible).toContain(exact);
+  expect(visible).toContain('不在浏览器重算绩效');
+  expect(visible).not.toContain('最后一条原生指标观测'); expect(visible).not.toContain('现金期');
+  expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>');
 });

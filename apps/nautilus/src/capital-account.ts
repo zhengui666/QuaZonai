@@ -666,6 +666,10 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     await save(); // No automatic replay once this point is persisted, including after process restart.
     try {
       const result = await runtime.request(command.action === 'START' ? 'STRATEGY_START' : 'STRATEGY_STOP', { epoch: state.epoch });
+      if (result.admission === 'REJECTED' && result.started === false && command.action === 'START' && typeof result.reason === 'string') {
+        receipt.result = result; receipt.status = 'REJECTED'; receipt.error = result.reason;
+        await save(); return structuredClone(receipt);
+      }
       if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') fail('strategy_native_result_invalid');
       receipt.result = result;
       receipt.status = 'COMPLETED';
@@ -713,7 +717,9 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
           capitalExit: { version: 2, supported: !reason(), readable: true, reason: reason(), policies: ['CASH_ONLY', 'NATURAL_RELEASE', 'BOUNDED_LIMIT'], actions: ['START', 'PAUSE', 'CANCEL', 'RESUME', 'RELEASE_RESERVATION', 'RECONCILE_EXTERNAL_TRANSFER', 'RECONCILE_WITHDRAWAL'] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
           nativeBrackets: { supported: false, reason: options.mode === 'paper' ? 'account_native_paper_bracket_recovery_unverified' : 'account_native_live_brackets_not_supported', defaultEnabled: false, scope: 'NEW_LONG_POSITION', cancellationPath: '/targets/<id>/cancel-protection', atomicOco: false },
-          nativeStrategy: { version: 1, supported: true, defaultStart: 'PAUSED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
+          nativeStrategy: { version: 1, supported: options.nativeStrategy.strategy.kind === 'EMA_CROSS' && !failure,
+            configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
+            reason: options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure, defaultStart: 'PAUSED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
           automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
         if (request.method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);

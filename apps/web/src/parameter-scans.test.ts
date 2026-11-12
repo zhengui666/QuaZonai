@@ -9,9 +9,9 @@ import { listQuery } from './list-values';
 
 const scan: ParameterScanView = {
   id: 'scan-identity', requestId: 'original-request', name: 'EMA 参数敏感性', source: { kind: 'research', researchId: 3 },
-  sourceView: { source: { kind: 'research', researchId: 3 }, label: '原生请求研究', researchId: 3, datasetId: 'native-data', datasetName: '原始市场数据', modality: 'BAR', currency: 'USD', interval: { startNs: '9007199254740993', endExclusiveNs: '9007199254741993' }, assumptions: [] },
-  mode: 'STRATEGY', input: { name: 'EMA 参数敏感性', source: { kind: 'research', researchId: 3 }, mode: 'STRATEGY', axes: [{ key: 'signal.fast_period', domain: { kind: 'values', values: ['5', '10'] } }], objective: { metricId: 'Custom Native Statistic', partition: 'FULL_SELECTION', direction: 'maximize' }, execution: { concurrency: 1 } },
-  grid: { axes: [{ key: 'signal.fast_period', domain: { kind: 'values', values: ['5', '10'] }, count: '2', duplicates: '0' }], fixed: { 'signal.slow_period': '20' }, total: '9007199254740993', eligible: '9007199254740993', skipped: '0' },
+  sourceView: { source: { kind: 'research', researchId: 3 }, label: '原生请求研究', researchId: 3, datasetId: 'native-data', datasetName: '原始市场数据', modality: 'NATIVE', currency: 'USD', interval: { startNs: '9007199254740993', endExclusiveNs: '9007199254741993' }, assumptions: [] },
+  mode: 'STRATEGY', input: { name: 'EMA 参数敏感性', source: { kind: 'research', researchId: 3 }, mode: 'STRATEGY', axes: [{ key: 'strategy.fast_period', domain: { kind: 'values', values: ['5', '10'] } }], objective: { metricId: 'Custom Native Statistic', partition: 'FULL_SELECTION', direction: 'maximize' }, execution: { concurrency: 1 } },
+  grid: { axes: [{ key: 'strategy.fast_period', domain: { kind: 'values', values: ['5', '10'] }, count: '2', duplicates: '0' }], fixed: { 'strategy.slow_period': '20' }, total: '9007199254740993', eligible: '9007199254740993', skipped: '0' },
   taskId: 5, createdAt: '2026-11-11T00:00:00Z', updatedAt: '2026-11-11T00:00:05Z', status: 'RUNNING', execution: { concurrency: 1 }, objective: { metricId: 'Custom Native Statistic', partition: 'FULL_SELECTION', direction: 'maximize' },
   counts: { total: '9007199254740993', eligible: '9007199254740993', skipped: '0', completed: '1', failed: '0', stopped: '0', running: '1', pending: '9007199254740991', unknown: '0', comparable: '0' },
   best: null, error: null, scientificQualification: 'UNQUALIFIED_EXPLORATORY',
@@ -62,10 +62,12 @@ it('renders the chosen minimizing direction and preserves the native key', () =>
   expect(visible).not.toContain('VALIDATION');
 });
 
-it('shows native batching separately from concurrency in the input record', () => {
-  const value = { ...scan, execution: { concurrency: 2, batchSize: 7 } };
+it('shows independent official strategy task concurrency without retired batching controls', () => {
+  const value = { ...scan, execution: { concurrency: 2 } };
   const visible = text(render(value, 'tab=inputs'));
-  expect(visible).toContain('并发批次');
-  expect(visible).toContain('每批最多参数点');
-  expect(visible).toContain('7');
+  expect(visible).toContain('并发任务');
+  expect(visible).not.toContain('每批最多参数点');
+  expect(visible).toContain('strategy.fast_period');
+  expect(visible).not.toContain('batchSize');
+  expect(visible).not.toContain('signal.fast_period');
 });

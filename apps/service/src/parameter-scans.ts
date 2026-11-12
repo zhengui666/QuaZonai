@@ -1,4 +1,4 @@
-import { IndicatorStrategyTask, IndicatorConfiguration } from '../../research/plugins/indicator-strategy.ts';
+import { NativeStrategyBacktestTask } from '../../research/plugins/native-strategy-backtest.ts';
 import { randomUUID } from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc, defineDocFamily, defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -56,8 +56,8 @@ function gridFor(plan: ParameterScanPlan, source: RetainedSource): ParameterScan
   for (const axis of plan.axes) if (source.defaults[axis.key] === undefined) throw new Problem('parameter_scan_numeric_path_required', 422);
   for (const axis of plan.axes) {
     const values = axis.domain.kind === 'values' ? axis.domain.values : [axis.domain.start, axis.domain.end];
-    if (axis.key === 'selection.event_start_ns' && values.some(value => compareDecimal(value, source.defaults[axis.key]!) < 0)
-      || ['selection.event_end_ns', 'selection.decision_cutoff_ns'].includes(axis.key) && values.some(value => compareDecimal(value, source.defaults[axis.key]!) > 0)) throw new Problem('parameter_scan_outside_registered_data_scope', 422);
+    if (['event_start_ns', 'available_start_ns'].includes(axis.key) && values.some(value => compareDecimal(value, source.defaults[axis.key]!) < 0)
+      || ['event_end_ns', 'available_end_ns'].includes(axis.key) && values.some(value => compareDecimal(value, source.defaults[axis.key]!) > 0)) throw new Problem('parameter_scan_outside_registered_data_scope', 422);
   }
   try {
     const grid = normalizeParameterScan(plan, source.defaults);
@@ -92,21 +92,20 @@ function numericLeaves(value: JsonObject | readonly unknown[], prefix = ''): Par
   }
   return result;
 }
-function sourceFromStudy(source: ParameterScanSource, _mode: ParameterScanMode, study: NonNullable<Awaited<ReturnType<ResearchHost['state']>>['research']>, config: ServiceConfig, configured?: JsonObject | null): RetainedSource {
+function sourceFromStudy(source: ParameterScanSource, _mode: ParameterScanMode, study: NonNullable<Awaited<ReturnType<ResearchHost['state']>>['research']>, config: ServiceConfig): RetainedSource {
   const ref = reference(source);
   if (!study.input || study.deletedAt) throw new Problem('parameter_scan_source_not_found', 404);
   const data = json(study.input.data);
-  // Configuration tool already bounds conventional data to its authorized prefix.
-  // An explicit bound request is historical only; never derive it from old trials.
-  if (study.input.campaign || data.indicator_strategy_batch_request !== undefined || data.sealed && !configured) throw new Problem('parameter_scan_explicit_native_configuration_required', 422);
-  const request = json(object(configured ?? data.indicator_strategy_request, 'parameter_scan_native_request'));
+  // Never translate legacy RSI/MACD or weight-target signals into a different upstream strategy.
+  if (study.input.campaign || data.sealed || data.indicator_strategy_request !== undefined || data.indicator_strategy_batch_request !== undefined) throw new Problem('parameter_scan_explicit_native_configuration_required', 422);
+  const request = json(object(data.native_strategy_backtest_request, 'parameter_scan_native_request'));
   if (typeof data.catalog !== 'string') throw new Problem('catalog_required', 422);
-  const selection = object(request.selection, 'selection'); const settings = object(request.settings, 'settings');
+  const venue = object(request.venue, 'native_strategy_venue'); object(request.strategy, 'native_strategy');
   const target = boundScienceTarget(config, data);
   const name = study.input.specification?.name ?? study.input.goal;
   const view: ParameterScanSourceView = { source, label: name, researchId: ref.researchId, datasetId: null, datasetName: null,
-    modality: 'BAR', currency: typeof settings.base_currency === 'string' ? settings.base_currency : null,
-    interval: { startNs: String(selection.event_start_ns), endExclusiveNs: String(selection.event_end_ns) }, assumptions: ['FULL_SELECTION_INCLUDING_PRE_DECISION_CASH', 'UNQUALIFIED_EXPLORATORY'] };
+    modality: 'NATIVE', currency: typeof venue.base_currency === 'string' ? venue.base_currency : null,
+    interval: { startNs: String(request.event_start_ns), endExclusiveNs: String(request.event_end_ns) }, assumptions: ['UNCHANGED_UPSTREAM_STRATEGY', 'INDEPENDENT_ACCOUNT_PER_CANDIDATE', 'UNQUALIFIED_EXPLORATORY'] };
   return { researchId: ref.researchId, name, data, request, target, defaults: numericLeaves(request), view };
 }
 function effectivePoint(source: RetainedSource, parameters: ParameterValues) {
@@ -141,20 +140,26 @@ function metricValue(value: unknown, metricId: ParameterScanMetricId): ScanMetri
   return { ...unavailable('', metricId), value: row.value, status: 'AVAILABLE', reason: null };
 }
 function trialMetrics(value: JsonObject): ScanMetric[] {
-  const simulation = object(value.simulation, 'parameter_scan_simulation');
-  const rows = Array.isArray(simulation.statistics) ? simulation.statistics.map(row => object(row, 'native_statistic')) : [];
-  return rows.map(row => ({ ...metricValue(row, String(row.native_key)), nativeGroup: row.group, ...(typeof row.currency === 'string' ? { currency: row.currency } : {}) }));
+  const report = object(value.canonical_result, 'native_strategy_report'); const statistics = object(report.statistics, 'native_statistics');
+  const rows: ScanMetric[] = [];
+  const append = (metrics: JsonObject, group: string, currency?: string) => {
+    for (const [key, encoded] of Object.entries(metrics)) {
+      // Decode the upstream canonical IEEE754 representation; do not recompute a statistic.
+      const decoded = typeof encoded === 'string' && /^[a-fA-F0-9]{16}$/.test(encoded) ? Buffer.from(encoded, 'hex').readDoubleBE() : null;
+      rows.push({ ...metricValue({ value: decoded }, key), nativeGroup: group, ...(currency ? { currency } : {}) });
+    }
+  };
+  for (const group of ['general', 'returns']) if (statistics[group]) append(object(statistics[group]), group);
+  if (statistics.pnls) for (const [currency, metrics] of Object.entries(object(statistics.pnls))) append(object(metrics), 'pnls', currency);
+  return rows;
 }
 function selectedMetric(metrics: Metric[], metricId: ParameterScanMetricId): ScanMetric {
   const rows = metrics.filter(row => row.key === metricId);
   return rows.length === 1 ? rows[0] as ScanMetric : unavailable(rows.length ? 'ambiguous_native_metric' : 'metric_missing', metricId);
 }
 function sampleCounts(value: JsonObject): Record<string, string> {
-  const simulation = object(value.simulation, 'parameter_scan_simulation');
-  return Object.fromEntries(['iterations', 'events', 'orders', 'positions'].flatMap(key => typeof simulation[key] === 'string' ? [[key, simulation[key] as string]] : []));
-}
-function caseResult(value: JsonObject, trial: ScanTrial): JsonObject {
-  return trial.batchIndex === undefined ? value : object((value.results as JsonObject[])[trial.batchIndex], 'parameter_scan_batch_case');
+  const report = object(value.canonical_result, 'native_strategy_report');
+  return Object.fromEntries(['orders', 'positions', 'fills'].flatMap(key => Array.isArray(report[key]) ? [[key, String(report[key].length)]] : []));
 }
 
 async function scanFact(tx: Tx, conversationId: ConversationId, id: string) {
@@ -167,7 +172,7 @@ function resultTrial(trial: ScanTrial, child: TaskRecord<unknown, unknown, unkno
   const outcome = child.state.outcome;
   if (outcome.status === 'completed') {
     const value = object(outcome.result, 'parameter_scan_result');
-    const summary = caseResult(value, trial);
+    const summary = value;
     const metrics = trialMetrics(summary);
     return { ...trial, status: 'COMPLETED', metrics, metric: selectedMetric(metrics, objective), sampleCounts: sampleCounts(summary), error: null };
   }
@@ -185,22 +190,12 @@ export const ParameterScanTask = defineTask<ScanInput, ScanCheckpoint, null>({
         if (fact.stoppedAt) return { status: 'terminal', outcome: { status: 'aborted' } };
         const active: Child[] = []; let next = BigInt(task.state.checkpoint.nextOrdinal); let children = 0;
         while (next < BigInt(task.input.grid.total) && children++ < task.input.original.execution.concurrency) {
-          const points = []; const requests: JsonObject[] = []; const size = task.input.original.execution.batchSize ?? 1;
-          let basis: string | undefined;
-          while (next < BigInt(task.input.grid.total) && points.length < size) {
-            const point = parameterScanPoint(task.input.grid, String(next)); const request = effectivePoint(task.input.source, point.parameters);
-            const candidate = canonical({ selection: request.selection!, settings: request.settings! });
-            if (basis !== undefined && candidate !== basis) break;
-            basis = candidate; points.push(point); requests.push(request); next++;
-          }
-          const batch = size > 1;
-          const scanContext = { scanId: task.input.id, ordinal: points[0]!.ordinal, ...(task.input.implementationDigest ? { implementationDigest: task.input.implementationDigest } : {}) };
-          const child = await tx.createTask(IndicatorStrategyTask, { request: batch ? { schema_version: 1, requests } : requests[0]!, batch,
+          const point = parameterScanPoint(task.input.grid, String(next)); const request = effectivePoint(task.input.source, point.parameters); next++;
+          const scanContext = { scanId: task.input.id, ordinal: point.ordinal, ...(task.input.implementationDigest ? { implementationDigest: task.input.implementationDigest } : {}) };
+          const child = await tx.createTask(NativeStrategyBacktestTask, { request,
             catalog: String(task.input.source.data.catalog), target: task.input.source.target, scanContext }, { ownership: { kind: 'task', taskId: task.id } });
-          for (const [batchIndex, point] of points.entries()) {
-            active.push({ ordinal: point.ordinal, taskId: child });
-            fact.trials[point.ordinal] = { ...point, ...(batch ? { batchIndex } : {}), taskId: child, status: 'PENDING', metric: null, metrics: [], sampleCounts: null, error: null, remoteStatus: null };
-          }
+          active.push({ ordinal: point.ordinal, taskId: child });
+          fact.trials[point.ordinal] = { ...point, taskId: child, status: 'PENDING', metric: null, metrics: [], sampleCounts: null, error: null, remoteStatus: null };
         }
         fact.updatedAt = new Date(runtime.now()).toISOString();
         const checkpoint: ScanCheckpoint = { ...task.state.checkpoint, nextOrdinal: String(next), active, phase: active.length ? 'collect' : 'dispatch' };
@@ -268,7 +263,7 @@ export function createParameterScanExtension(harness: () => Harness) {
     },
     abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
   });
-  const scientificTasks: (typeof IndicatorStrategyTask)[] = [];
+  const scientificTasks: (typeof NativeStrategyBacktestTask)[] = [];
   return { stopTask: StopTask, scientificTasks, extension: defineExtension({ name: 'qz.parameter-scans', tasks: [ParameterScanTask, StopTask] }) };
 }
 
@@ -276,8 +271,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
   async function source(input: ParameterScanSource, mode: ParameterScanMode) {
     const ref = reference(input); const state = await host.state(ref.researchId);
     if (!state.research) throw new Problem('parameter_scan_source_not_found', 404);
-    const configuration = await host.harness.snapshot(IndicatorConfiguration, ref.researchId as ConversationId, context);
-    const retained = sourceFromStudy(input, mode, state.research, config, configuration?.request);
+    const retained = sourceFromStudy(input, mode, state.research, config);
     const admissions = await readResearchAdmissions(host);
     const original = state.originalSubmission?.requestId ? admissions[`request:${state.originalSubmission.requestId}`] : null;
     const dataset = original?.dataset;
@@ -298,7 +292,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     const grid = gridFor(input, retained);
     const examples = Array.from({ length: Number(BigInt(grid.total) < 5n ? BigInt(grid.total) : 5n) }, (_, index) => parameterScanPoint(grid, String(index)));
     return { input, source: retained.view, grid, objective: { ...parameterScanObjective(input.objective.metricId), direction: input.objective.direction }, examples,
-      warnings: ['UNQUALIFIED_EXPLORATORY', ...((input.execution.batchSize ?? 1) > 1 ? ['BATCH_FAILURE_OR_STOP_APPLIES_TO_EVERY_POINT_IN_BATCH'] : [])] };
+      warnings: ['UNQUALIFIED_EXPLORATORY', 'EXPLORATORY_BEST_IS_NOT_INDEPENDENT_OOS_EVIDENCE'] };
   }
   async function read(id: string) {
     const indexJson = (await host.harness.snapshot(ParameterScans, context))?.runs[id];
@@ -370,7 +364,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
     let implementationDigest: string | undefined;
     if (typeof retained.target !== 'string') {
       const capabilities = await remoteNativeCapabilities(retained.target);
-      const required = [(input.execution.batchSize ?? 1) > 1 ? 'simulate-indicator-strategy-batch' : 'simulate-indicator-strategy'];
+      const required = ['native-strategy-backtest'];
       if (required.some(command => !capabilities.commands.includes(command))) throw new Problem('nautilus_command_unsupported', 422);
       implementationDigest = capabilities.implementationDigest;
     }
@@ -382,7 +376,7 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
         return existing[0];
       }
       assertBusinessAdmission(await tx.doc(Application));
-      const current = sourceFromStudy(input.source, input.mode, await tx.doc(Study, retained.researchId as ConversationId), config, (await tx.doc(IndicatorConfiguration, retained.researchId as ConversationId)).request);
+      const current = sourceFromStudy(input.source, input.mode, await tx.doc(Study, retained.researchId as ConversationId), config);
       if (canonical(current.request) !== canonical(retained.request)) throw new Problem('parameter_scan_configuration_changed', 409);
       const id = randomUUID(); const createdAt = new Date().toISOString();
       const taskId = await tx.createTask(ParameterScanTask, { id, original: input, grid, source: retained, ...(implementationDigest ? { implementationDigest } : {}) },
@@ -441,15 +435,15 @@ export function parameterScanWorkbench(host: ResearchHost, config: ServiceConfig
       const child = await host.harness.getTask(row.taskId as TaskId<JsonObject>, context);
       if (child?.state.status === 'terminal' && child.state.outcome.status === 'completed') {
         const value = object(child.state.outcome.result, 'parameter_scan_result');
-        native = caseResult(value, row);
+        native = value;
       }
     }
     const input = task.input as unknown as ScanInput;
     const effective = effectivePoint(input.source, point.parameters);
     const details = json({ ...row.details, effectiveRequest: effective, ...(row.taskId === null ? {} : { evidenceTaskId: row.taskId }), ...(native ? { nativeResult: native } : {}) });
-    const currency = object(effective.settings).base_currency;
-    if (native?.simulation && typeof currency === 'string') {
-      try { return { ...row, curve: nativeCurve(object(native.simulation), currency), details }; }
+    const currency = object(effective.venue).base_currency;
+    if (native?.canonical_result && typeof currency === 'string') {
+      try { return { ...row, curve: nativeCurve(native, currency), details }; }
       catch (error) { if (!(error instanceof Problem)) throw error; details.curveReason = error.message; }
     }
     return { ...row, details };

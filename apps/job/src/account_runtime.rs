@@ -487,24 +487,80 @@ impl AccountController {
     }
     fn process(&mut self, r: &Request) -> Result<Value> {
         match r.operation.as_str() {
+            #[cfg(test)]
+            "TEST_RESTING_LIMIT" => {
+                let instrument = self.ids[0];
+                let order = self.order_factory().limit(
+                    instrument,
+                    OrderSide::Buy,
+                    nautilus_model::types::Quantity::from("1.00"),
+                    Price::from("1.00"),
+                    Some(TimeInForce::Gtc),
+                    None,
+                    Some(false),
+                    Some(false),
+                    Some(false),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(ClientOrderId::from("fault-resting")),
+                );
+                self.submit_order(order, None, Some(self.client), None)?;
+                Ok(json!({"sent":true}))
+            }
+            #[cfg(test)]
+            "TEST_MODIFY_LIMIT" => {
+                self.modify_order(
+                    ClientOrderId::from("fault-resting"),
+                    None,
+                    Some(Price::from("2.00")),
+                    None,
+                    Some(self.client),
+                    None,
+                )?;
+                Ok(json!({"sent":true}))
+            }
+            #[cfg(test)]
+            "TEST_CANCEL_LIMIT" => {
+                self.cancel_order(
+                    ClientOrderId::from("fault-resting"),
+                    Some(self.client),
+                    None,
+                )?;
+                Ok(json!({"sent":true}))
+            }
             "STRATEGY_STATUS" => self.strategy_status(),
             "STRATEGY_START" => {
-                let control = self.fence(r.text("epoch")?.parse()?)?;
-                ensure!(
-                    control.mode == "NORMAL"
-                        && control.reserved == Decimal::ZERO
-                        && control.buffer == Decimal::ZERO
-                        && control.exits.is_empty(),
-                    "account_native_strategy_capital_reserved"
-                );
-                ensure!(
-                    !self.cache_failed.load(Ordering::SeqCst),
-                    "account_native_cache_write_failed"
-                );
-                let id = self
-                    .signal_strategy_id
-                    .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
-                let state = component_state(&id.inner())?;
+                let prepared = (|| -> Result<_> {
+                    let control = self.fence(r.text("epoch")?.parse()?)?;
+                    ensure!(
+                        control.mode == "NORMAL"
+                            && control.reserved == Decimal::ZERO
+                            && control.buffer == Decimal::ZERO
+                            && control.exits.is_empty(),
+                        "account_native_strategy_capital_reserved"
+                    );
+                    ensure!(
+                        !self.cache_failed.load(Ordering::SeqCst),
+                        "account_native_cache_write_failed"
+                    );
+                    let id = self
+                        .signal_strategy_id
+                        .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
+                    let state = component_state(&id.inner())?;
+                    Ok((id, state))
+                })();
+                let (id, state) = match prepared {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return Ok(
+                            json!({"admission":"REJECTED","started":false,"reason":error.to_string()}),
+                        );
+                    }
+                };
                 if state == ComponentState::Stopped {
                     reset_component(&id.inner())?;
                 }
@@ -1302,6 +1358,28 @@ fn buy_cost_per_unit(
         .ok_or_else(|| anyhow!("account_native_decimal_range"))
 }
 
+// Keep the official risk engine and queued dispatch. Cache persistence failures
+// are otherwise log-only upstream; halt at the execution boundary, not a timer.
+fn install_cache_failure_risk_fence(node: &LiveNode, failed: Arc<AtomicBool>) {
+    use nautilus_common::{
+        messages::execution::TradingCommand,
+        msgbus::{self, MessagingSwitchboard, TypedIntoHandler},
+    };
+    let risk = std::rc::Rc::downgrade(node.kernel().risk_engine());
+    msgbus::register_trading_command_endpoint(
+        MessagingSwitchboard::risk_engine_execute(),
+        TypedIntoHandler::from(move |command: TradingCommand| {
+            if let Some(risk) = risk.upgrade() {
+                let mut risk = risk.borrow_mut();
+                if failed.load(Ordering::SeqCst) {
+                    risk.set_trading_state(nautilus_model::enums::TradingState::Halted);
+                }
+                risk.execute(command);
+            }
+        }),
+    );
+}
+
 pub async fn run() -> Result<()> {
     let mut first = String::new();
     io::stdin().read_line(&mut first)?;
@@ -1520,6 +1598,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     cache_factory
         .install(node.kernel().cache(), trader, node.instance_id())
         .await?;
+    install_cache_failure_risk_fence(&node, cache_failed.clone());
     let handle = node.handle();
     let session = node.instance_id().to_string();
     let (sender, inbox) = mpsc::sync_channel::<Request>(64);
@@ -1890,6 +1969,7 @@ mod tests {
         factory
             .install(node.kernel().cache(), trader, node.instance_id())
             .await?;
+        install_cache_failure_risk_fence(&node, factory.failed.clone());
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
         let native_config = NativeCompiledStrategyV1::EmaCross {
@@ -2019,6 +2099,125 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn native_strategy_cache_failure_halts_before_submission() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(directory.path()).await?;
+        let handle = native.handle();
+        let cache = native.kernel().cache();
+        let risk = native.kernel().risk_engine().clone();
+        let stop = handle.clone();
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            request(&tx, &replies, "TEST_RESTING_LIMIT", json!({})).await?;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ensure!(
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .is_some_and(|o| o.status() == nautilus_model::enums::OrderStatus::Accepted),
+                "resting_order_not_accepted"
+            );
+            // A real backing-store failure, not a synthetic successful response.
+            // Preserve existing test files while obstructing the orders directory.
+            let orders = directory.path().join("native-cache/orders");
+            std::fs::rename(&orders, directory.path().join("saved-orders"))?;
+            std::fs::write(&orders, b"unwritable order directory")?;
+            for price in [
+                "100.00", "99.00", "98.00", "97.00", "103.00", "106.00", "90.00", "110.00",
+            ] {
+                publish_native_quote(&cache, price)?;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+            ensure!(
+                risk.borrow().trading_state() == nautilus_model::enums::TradingState::Halted,
+                "risk_not_halted"
+            );
+            let cached = cache.borrow();
+            let orders = cached.orders(None, None, None, None, None);
+            ensure!(
+                orders
+                    .iter()
+                    .any(|o| o.strategy_id().to_string().starts_with("EMA_CROSS")),
+                "official_strategy_did_not_attempt_order"
+            );
+            ensure!(
+                orders
+                    .iter()
+                    .filter(|o| o.client_order_id() != ClientOrderId::from("fault-resting"))
+                    .all(|o| o.ts_submitted().is_none() && o.filled_qty().is_zero()),
+                "cache_failure_reached_execution"
+            );
+            ensure!(
+                cached.positions(None, None, None, None, None).is_empty(),
+                "cache_failure_opened_position"
+            );
+            drop(orders);
+            drop(cached);
+            request(&tx, &replies, "TEST_MODIFY_LIMIT", json!({})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            ensure!(
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .price()
+                    == Some(Price::from("1.00")),
+                "halted_order_modified"
+            );
+            request(&tx, &replies, "TEST_CANCEL_LIMIT", json!({})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            ensure!(
+                cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .status()
+                    == nautilus_model::enums::OrderStatus::Canceled,
+                "halted_cancel_blocked"
+            );
+            let status = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
+            ensure!(
+                status["recovery_required"] == true && status["fenced"] == true,
+                "fault_not_exposed"
+            );
+            let exit = request(&tx, &replies, "SLICE", json!({"epoch":"1"})).await?;
+            ensure!(
+                exit["admission"] == "REJECTED"
+                    && exit["submitted"] == false
+                    && exit["reason"] == "account_native_cache_write_failed",
+                "fault_did_not_reject_new_exit"
+            );
+            let stopped = request(&tx, &replies, "STRATEGY_STOP", json!({})).await?;
+            ensure!(stopped["state"] == "STOPPED", "explicit_stop_unavailable");
+            let error = request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            ensure!(
+                error["admission"] == "REJECTED"
+                    && error["reason"] == "account_native_cache_write_failed",
+                "fault_allowed_restart"
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+        run?;
+        result?;
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn compiled_strategy_explicit_start_stop_capital_pause_and_restart_warmup() -> Result<()>
     {
         let directory = tempfile::tempdir()?;
@@ -2130,12 +2329,11 @@ mod tests {
                         stopped["state"] == "STOPPED",
                         "capital_control_did_not_pause_strategy"
                     );
-                    let rejected = request(&tx, &replies, "STRATEGY_START", json!({"epoch":"2"}))
-                        .await
-                        .unwrap_err()
-                        .to_string();
+                    let rejected =
+                        request(&tx, &replies, "STRATEGY_START", json!({"epoch":"2"})).await?;
                     ensure!(
-                        rejected == "account_native_strategy_capital_reserved",
+                        rejected["admission"] == "REJECTED"
+                            && rejected["reason"] == "account_native_strategy_capital_reserved",
                         "reserved_capital_not_protected"
                     );
                     let retired = request(&tx, &replies, "TARGET", json!({}))
