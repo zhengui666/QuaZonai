@@ -50,3 +50,7 @@ pub mod ticks;
 pub mod validation;
 
 pub mod native_strategy;
+
+#[cfg(test)]
+#[path = "../tests/support/native_portfolio.rs"]
+mod native_test_portfolio;

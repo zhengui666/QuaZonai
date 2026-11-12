@@ -23,13 +23,16 @@ test('assessment schema keeps missing evidence distinct from zero and rejects in
   assert.throws(() => assessmentJudgment({ ...judgment(3), rationale: '' }), /rationale_required/);
 });
 
-test('official child Agent tasks isolate logic context, retain evidence identity and report missing OOS without averaging', async () => {
+for (const thinkingLevel of ['off', 'high', 'max'] as const) test(`official child Agent tasks inherit ${thinkingLevel}, isolate logic context and report missing OOS without averaging`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-assessment-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  faux.getModel().reasoning = true;
+  faux.getModel().thinkingLevelMap = { max: 'max' };
   let logicCalls = 0; let synthesisCalls = 0;
   faux.setResponses([
     fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Trend persistence after transaction costs.' }), { stopReason: 'toolUse' }),
-    (input) => {
+    (input, options) => {
+      assert.equal(options?.reasoning, thinkingLevel === 'off' ? undefined : thinkingLevel);
       logicCalls++;
       const wire = JSON.stringify(input);
       assert.ok(!wire.includes('PRIVATE_CONVERSATION_SENTINEL'));
@@ -38,7 +41,8 @@ test('official child Agent tasks isolate logic context, retain evidence identity
       return fauxAssistantMessage(JSON.stringify(judgment(3)));
     },
     fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
-    (input) => {
+    (input, options) => {
+      assert.equal(options?.reasoning, thinkingLevel === 'off' ? undefined : thinkingLevel);
       synthesisCalls++;
       const wire = JSON.stringify(input);
       assert.ok(wire.includes('NOT_RUN')); assert.ok(wire.includes('INDEPENDENT_OUT_OF_SAMPLE'));
@@ -46,7 +50,7 @@ test('official child Agent tasks isolate logic context, retain evidence identity
     },
     fauxAssistantMessage('Logic reviewed; independent data validation remains absent.'),
   ]);
-  const options = { database: join(directory, 'research.sqlite'), models };
+  const options = { database: join(directory, 'research.sqlite'), models, thinkingLevel };
   let host = await openResearch(options);
   try {
     const receipt = await host.start('assessment', { goal: 'PRIVATE_CONVERSATION_SENTINEL', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, native_strategy_backtest_request: request }, policy: {} });

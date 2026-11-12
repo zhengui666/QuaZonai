@@ -103,8 +103,7 @@ impl Drop for LiveProgress {
 }
 
 #[cfg(test)]
-#[path = "../tests/support/native_portfolio.rs"]
-mod native_portfolio;
+use crate::native_test_portfolio as native_portfolio;
 
 #[cfg(test)]
 mod tests {

@@ -21,10 +21,18 @@ fn window(
     // Native strategy, account and all indicator state cold-start in this window.
     Ok(request)
 }
+fn require_completed_training(outcome: Option<&str>) -> Result<()> {
+    ensure!(
+        outcome == Some("completed"),
+        "WALK_FORWARD_TRAINING_WINDOW_NOT_COMPLETED"
+    );
+    Ok(())
+}
 fn metric(
     result: &contracts::native_strategy::NativeStrategyBacktestResultV1,
     objective: &NativeWalkForwardObjectiveV1,
 ) -> Result<f64> {
+    require_completed_training(result.canonical_result["run"]["outcome"].as_str())?;
     if objective.metric_source == NativeMetricSourceV1::EquityPerformance {
         return equity_metric(&result.equity_performance, objective);
     }
@@ -237,6 +245,17 @@ pub fn run(
 #[cfg(test)]
 mod equity_objective_tests {
     use super::*;
+    #[test]
+    fn stopped_or_missing_training_outcomes_are_not_selection_candidates() {
+        assert!(require_completed_training(Some("completed")).is_ok());
+        for outcome in [Some("stopped"), None] {
+            assert_eq!(
+                require_completed_training(outcome).unwrap_err().to_string(),
+                "WALK_FORWARD_TRAINING_WINDOW_NOT_COMPLETED"
+            );
+        }
+    }
+
     #[test]
     fn explicitly_selects_official_source_and_frequency_and_refuses_unavailable() {
         let mut performance: contracts::native_strategy::NativeEquityPerformanceV1 = serde_json::from_value(serde_json::json!({

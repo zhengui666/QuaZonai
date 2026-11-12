@@ -1,3 +1,4 @@
+import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { NativeSensitivity, nativeSensitivityTool } from './native-sensitivity.ts';
@@ -97,7 +98,7 @@ const AssessmentChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   kind: 'qz.research-assessment-child', checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 type AssessmentInput = JsonObject & {
-  mode: 'LOGIC' | 'SYNTHESIS'; model: { provider: string; modelId: string };
+  mode: 'LOGIC' | 'SYNTHESIS'; thinkingLevel?: ModelThinkingLevel; model: { provider: string; modelId: string };
   request: JsonObject; configurationTaskId: number | null; evidence: JsonObject;
 };
 const rubric = `Return only a JSON object with stars (integer 0 to 5 or null), rationale (nonempty string), risks (string array), uncertainties (string array).
@@ -126,7 +127,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
         ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Structural evidence readiness is ${eligible}; false means overall and data stars MUST be null. True is not a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. Inspect actual fold windows, native data rows, fills and failed trials; distinguish sampled book snapshots from event-complete incremental feeds, disclose known depth/cadence, dropped empty or malformed books and carry/checkpoint limitations; simulated fills on snapshots do not prove actual high-frequency fillability; a high Sharpe in a short sample does not establish annual return. equityPerformance is the separate official snapshot-only return series: inspect status/reason, actual observed UTC days versus return_days (which can include upstream carry-forward), unpriced counts, currency and 252 versus 365 annualization. CAGR is a short-window extrapolation, not a realized annual return or proof a 500% target was achieved. Never substitute canonical position returns when equityPerformance is unavailable. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`,
       messages: [{ role: 'user', content: JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence }), timestamp: 0 }],
-    }, { signal: runtime.signal });
+    }, { signal: runtime.signal, ...(task.input.thinkingLevel && task.input.thinkingLevel !== 'off' ? { reasoning: task.input.thinkingLevel } : {}) });
     if (answer.stopReason === 'error' || answer.stopReason === 'aborted') throw new Error('research_assessment_model_failed');
     const text = answer.content.filter(part => part.type === 'text').map(part => part.text).join('');
     const response = object(JSON.parse(text), 'research_assessment_response');
@@ -148,6 +149,7 @@ export const logicReviewTool = defineTool({
   parameters: obj({ hypothesis: str(), strategies: opt(arr(map(unknown()))), validationMethod: opt(obj({ split: map(unknown()), objective: map(unknown()), sensitivityStrategies: opt(arr(map(unknown()))), neighbourStrategies: arr(map(unknown())), costs: arr(obj({ maker_fee: str(), taker_fee: str() })) })) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
+    const thinkingLevel = (await api.agent(context)).thinkingLevel;
     const request = registeredNativeStrategyRequest(input);
     const source = executionSource(input.data);
     const candidates = (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }));
@@ -157,7 +159,7 @@ export const logicReviewTool = defineTool({
       for (const candidate of [request, ...candidates]) if (await upstreamExecution(tx, api.conversationId, candidate, source, true)) throw new Error('research_assessment_pre_execution_required');
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
       if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
-      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, model: input.model, request,
+      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, thinkingLevel, model: input.model, request,
         configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null,
         evidence: { executionSource: source, hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ? { ...args.validationMethod, sensitivityStrategies: args.validationMethod.sensitivityStrategies ?? args.strategies ?? [object(request.strategy, 'native_strategy_config')] } : null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
       { ownership: { kind: 'task', taskId: api.taskId } });
@@ -176,6 +178,7 @@ export const assessmentReportTool = defineTool({
   parameters: obj({}), replay: 'safe', executionMode: 'sequential',
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
+    const thinkingLevel = (await api.agent(context)).thinkingLevel;
     const request = registeredNativeStrategyRequest(input);
     const source = executionSource(input.data);
     const id = await api.commit(async tx => {
@@ -322,7 +325,7 @@ export const assessmentReportTool = defineTool({
         historicalNativeExecution: nativeMatches ? { taskId: native!.id, status: native!.state.status === 'terminal' ? native!.state.outcome.status : native!.state.status, claim: 'HISTORICAL_ONLY_NOT_OOS' } : { status: 'NOT_RUN' },
         dataValidation, trialHistory, sensitivity, sensitivityHistory, ratingReadiness,
       };
-      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: input.model, request, configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
+      child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, thinkingLevel, model: input.model, request, configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null, evidence }, { ownership: { kind: 'task', taskId: api.taskId } });
       assessment.reportTaskIds.push(child.taskId);
       return child.taskId;
     }, context);

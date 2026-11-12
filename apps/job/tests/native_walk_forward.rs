@@ -174,6 +174,7 @@ fn genuine_native_training_selects_past_only_and_test_is_independent_cold_start(
         );
         for trial in &fold.trials {
             let run = trial.result.as_ref().unwrap();
+            assert_eq!(run.canonical_result["run"]["outcome"], "completed");
             assert!(run.request.available_end_ns < fold.test_start_ns);
             assert!(!run.canonical_result["fills"].as_array().unwrap().is_empty());
         }

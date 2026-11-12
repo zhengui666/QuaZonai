@@ -2203,27 +2203,27 @@ mod tests {
                 risk.borrow().trading_state() == nautilus_model::enums::TradingState::Halted,
                 "risk_not_halted"
             );
-            let cached = cache.borrow();
-            let orders = cached.orders(None, None, None, None, None);
-            ensure!(
-                orders
-                    .iter()
-                    .any(|o| o.strategy_id().to_string().starts_with("EMA_CROSS")),
-                "official_strategy_did_not_attempt_order"
-            );
-            ensure!(
-                orders
-                    .iter()
-                    .filter(|o| o.client_order_id() != ClientOrderId::from("fault-resting"))
-                    .all(|o| o.ts_submitted().is_none() && o.filled_qty().is_zero()),
-                "cache_failure_reached_execution"
-            );
-            ensure!(
-                cached.positions(None, None, None, None, None).is_empty(),
-                "cache_failure_opened_position"
-            );
-            drop(orders);
-            drop(cached);
+            {
+                let cached = cache.borrow();
+                let orders = cached.orders(None, None, None, None, None);
+                ensure!(
+                    orders
+                        .iter()
+                        .any(|o| o.strategy_id().to_string().starts_with("EMA_CROSS")),
+                    "official_strategy_did_not_attempt_order"
+                );
+                ensure!(
+                    orders
+                        .iter()
+                        .filter(|o| o.client_order_id() != ClientOrderId::from("fault-resting"))
+                        .all(|o| o.ts_submitted().is_none() && o.filled_qty().is_zero()),
+                    "cache_failure_reached_execution"
+                );
+                ensure!(
+                    cached.positions(None, None, None, None, None).is_empty(),
+                    "cache_failure_opened_position"
+                );
+            }
             request(&tx, &replies, "TEST_MODIFY_LIMIT", json!({})).await?;
             tokio::time::sleep(Duration::from_millis(40)).await;
             ensure!(

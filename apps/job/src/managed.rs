@@ -13,7 +13,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(|_| anyhow::anyhow!("NATIVE_COUNTER_RANGE"))
 }
@@ -377,7 +376,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::MetadataExt;
 
     fn test_outputs(root: &Path, remaining: u64) -> Outputs {
         Outputs {
@@ -385,15 +384,6 @@ mod tests {
             remaining: Some(remaining),
             items: Vec::new(),
         }
-    }
-
-    fn signal() -> Vec<u8> {
-        wat::parse_str(
-            r#"(module (func (export "predict")
-                (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64)
-                f64.const 0))"#,
-        )
-        .unwrap()
     }
 
     // Exercises output mount and byte-accounting rules; no compiler is run.

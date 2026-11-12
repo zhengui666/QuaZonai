@@ -68,26 +68,7 @@ impl AccountCacheFactory {
             .try_borrow_mut()
             .map_err(|_| anyhow!("account_native_cache_busy"))?;
         cache.set_database(database);
-        // Our file adapter's load_all and every load_* it awaits execute only
-        // synchronous reads. Poll the official restoration once without yielding
-        // a RefCell guard. This is NOT support for an asynchronous remote adapter:
-        // an unexpected Pending aborts startup rather than running a partial cache.
-        let loaded = {
-            use std::{
-                future::Future,
-                task::{Context, Waker},
-            };
-            let mut future = std::pin::pin!(cache.cache_all());
-            future
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-        };
-        match loaded {
-            std::task::Poll::Ready(result) => result?,
-            std::task::Poll::Pending => {
-                bail!("account_native_file_cache_restore_unexpectedly_pending")
-            }
-        }
+        restore_file_cache(&mut cache)?;
         cache.build_index();
         restore_order_list_index(&mut cache)?;
         Ok(())
@@ -116,6 +97,30 @@ impl AccountCacheFactory {
             })
             .transpose()
     }
+}
+
+fn restore_file_cache(cache: &mut Cache) -> Result<()> {
+    // Our file adapter's load_all and every load_* it awaits execute only
+    // synchronous reads. Poll the official restoration once without yielding
+    // a RefCell guard. This is NOT support for an asynchronous remote adapter:
+    // an unexpected Pending aborts startup rather than running a partial cache.
+    let loaded = {
+        use std::{
+            future::Future,
+            task::{Context, Waker},
+        };
+        let mut future = std::pin::pin!(cache.cache_all());
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+    };
+    match loaded {
+        std::task::Poll::Ready(result) => result?,
+        std::task::Poll::Pending => {
+            bail!("account_native_file_cache_restore_unexpectedly_pending")
+        }
+    }
+    Ok(())
 }
 
 /// OrderList is an index, not a second order state machine. Its source of truth
@@ -920,7 +925,7 @@ mod order_list_tests {
                         "filled quantity changed"
                     );
                     // Mirrors LiveNode.prepare_cache after the explicit backing installation.
-                    cache.borrow_mut().cache_all().await?;
+                    restore_file_cache(&mut cache.borrow_mut())?;
                     restore_order_list_index(&mut cache.borrow_mut())?;
                     ensure!(
                         cache.borrow().order_lists(None, None, None, None).len() == 1,

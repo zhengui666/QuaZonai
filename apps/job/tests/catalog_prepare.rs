@@ -357,7 +357,8 @@ fn physical_partition_keeps_selected_causal_versions_without_future_definitions(
         let output = native(&f.output().join("catalog"));
         let published = output.query_instruments_filtered(None, None, None).unwrap();
         assert_eq!(published.len(), 3);
-        for id in ["EUR/USD.SIM"] {
+        {
+            let id = "EUR/USD.SIM";
             let times = published
                 .iter()
                 .filter(|v| v.id().to_string() == id)

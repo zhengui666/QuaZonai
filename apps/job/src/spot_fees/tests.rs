@@ -112,7 +112,8 @@ fn fee(
 fn official_handle_uses_all_four_frozen_rules_without_changing_instruments() {
     let native = pair();
     let before = serde_json::to_value(&native).unwrap();
-    let adapter = FrozenSpotFeeModel::try_new(schedule(), &[native.clone()], 10, 20).unwrap();
+    let adapter =
+        FrozenSpotFeeModel::try_new(schedule(), std::slice::from_ref(&native), 10, 20).unwrap();
     assert_eq!(
         adapter.schedule().source.status,
         SpotFeeEvidenceStatusV1::Synthetic

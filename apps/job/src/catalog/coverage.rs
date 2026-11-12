@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn native_file_coverage_keeps_receive_time_exact_type_and_inclusive_bounds() {
         let root = tempfile::tempdir().unwrap();
-        let mut catalog =
+        let catalog =
             ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
                 .unwrap();
         let kind = "BTC/USDT.BINANCE-1-MINUTE-LAST-EXTERNAL";
@@ -181,7 +181,7 @@ mod tests {
             identifiers::{InstrumentId, TradeId},
         };
         let root = tempfile::tempdir().unwrap();
-        let mut catalog =
+        let catalog =
             ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
                 .unwrap();
         let instrument = InstrumentId::from("BTC/USDT.BINANCE");

@@ -1,4 +1,4 @@
-//! Controlled native TradeTick/Wasmi counterexamples; not market-quality evidence.
+//! Controlled native TradeTick counterexamples; not market-quality evidence.
 use super::*;
 use domain::ticks::evaluation_request;
 use nautilus_model::{
@@ -27,24 +27,6 @@ fn trade(time: u64, id: &str, price: &str, quantity: &str) -> TradeTick {
         time.into(),
         time.into(),
     )
-}
-
-pub(super) fn series() -> BTreeMap<String, Vec<TradeTick>> {
-    BTreeMap::from([(
-        "AUD/USD.SIM".to_owned(),
-        (1..=7)
-            .map(|i| trade(i * 10, &i.to_string(), &(10 + i).to_string(), "1"))
-            .collect(),
-    )])
-}
-
-pub(super) fn model(slot: i32) -> Vec<u8> {
-    wat::parse_str(format!(r#"(module
-        (global $value (mut f64) (f64.const 0))
-        (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
-            local.get 0 i32.const {slot} i32.eq
-            if local.get 1 global.set $value end)
-        (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#)).unwrap()
 }
 
 #[test]
