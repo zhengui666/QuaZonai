@@ -1,14 +1,16 @@
 //! Shared compiled upstream constructors for backtest and explicitly configured account hosts.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::native_strategy::NativeCompiledStrategyV1;
 use nautilus_model::{enums::BookType, identifiers::InstrumentId};
 use nautilus_trading::examples::strategies::{
     ema_cross::{EmaCross, EmaCrossConfig},
+    grid_mm::{GridMarketMaker, GridMarketMakerConfig},
     orderbook_imbalance::{OrderBookImbalance, OrderBookImbalanceConfig},
 };
 
 pub enum CompiledNativeStrategy {
     EmaCross(EmaCross),
+    GridMarketMaker(GridMarketMaker),
     OrderBookImbalance(OrderBookImbalance),
 }
 
@@ -38,6 +40,39 @@ pub fn build_strategy(
                 config.base = serde_json::from_value(base.clone())?;
             }
             CompiledNativeStrategy::EmaCross(EmaCross::from_config(config))
+        }
+        NativeCompiledStrategyV1::GridMarketMaker {
+            base,
+            trade_size,
+            num_levels,
+            grid_step_bps,
+            skew_factor,
+            max_position,
+            requote_threshold_bps,
+            expire_time_secs,
+            on_cancel_resubmit,
+        } => {
+            let mut config = GridMarketMakerConfig::builder()
+                .instrument_id(id)
+                .maybe_trade_size(
+                    trade_size
+                        .as_deref()
+                        .map(str::parse)
+                        .transpose()
+                        .map_err(anyhow::Error::msg)?,
+                )
+                .num_levels(*num_levels)
+                .grid_step_bps(*grid_step_bps)
+                .skew_factor(*skew_factor)
+                .max_position(max_position.parse().map_err(anyhow::Error::msg)?)
+                .requote_threshold_bps(*requote_threshold_bps)
+                .maybe_expire_time_secs(*expire_time_secs)
+                .on_cancel_resubmit(*on_cancel_resubmit)
+                .build();
+            if let Some(base) = base {
+                config.base = serde_json::from_value(base.clone())?;
+            }
+            CompiledNativeStrategy::GridMarketMaker(GridMarketMaker::new(config))
         }
         NativeCompiledStrategyV1::OrderBookImbalance {
             base,

@@ -113,6 +113,10 @@ export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject
   if (venue.base_currency === undefined) venue.base_currency = null;
   const strategy = object(expected.strategy, 'native_strategy_config');
   if (strategy.base === null) delete strategy.base;
+  if (strategy.kind === 'GRID_MARKET_MAKER') {
+    if (strategy.trade_size === undefined) strategy.trade_size = null;
+    if (strategy.expire_time_secs === undefined) strategy.expire_time_secs = null;
+  }
   return expected;
 }
 
@@ -141,7 +145,7 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
 
 export const nativeStrategyBacktestTool = defineTool({
   name: 'native_strategy_backtest',
-  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS consumes QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
+  description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS and GRID_MARKET_MAKER consume QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
   parameters: obj({ finishResearch: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context);

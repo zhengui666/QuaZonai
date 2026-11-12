@@ -1,5 +1,5 @@
 //! Explicit configuration for compiled upstream strategies, not a strategy language.
-use crate::{DbCounter, SchemaV1, catalog_coverage::NativeCatalogSelectorV1};
+use crate::{catalog_coverage::NativeCatalogSelectorV1, DbCounter, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -42,6 +42,19 @@ pub enum NativeCompiledStrategyV1 {
         trade_size: String,
         fast_period: usize,
         slow_period: usize,
+    },
+    /// Compiled official GridMarketMaker. All strategy-specific fields map directly upstream.
+    GridMarketMaker {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<serde_json::Value>,
+        trade_size: Option<String>,
+        num_levels: usize,
+        grid_step_bps: u32,
+        skew_factor: f64,
+        max_position: String,
+        requote_threshold_bps: u32,
+        expire_time_secs: Option<u64>,
+        on_cancel_resubmit: bool,
     },
     OrderBookImbalance {
         /// Original official StrategyConfig JSON, decoded directly upstream.

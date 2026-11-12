@@ -1,6 +1,6 @@
 //! Execute compiled official strategies against original native catalog events.
-use anyhow::{Result, ensure};
-use contracts::{DbCounter, SchemaV1, native_strategy::*};
+use anyhow::{ensure, Result};
+use contracts::{native_strategy::*, DbCounter, SchemaV1};
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
@@ -17,7 +17,7 @@ use nautilus_model::{
 };
 use nautilus_persistence::catalog::types::CatalogQuery;
 pub mod registry;
-use registry::{CompiledNativeStrategy, build_strategy};
+use registry::{build_strategy, CompiledNativeStrategy};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -119,6 +119,14 @@ pub fn run(
                         == Some(NautilusDataType::QuoteTick)),
                 "NATIVE_EMA_QUOTE_DATA_REQUIRED"
             ),
+            NativeCompiledStrategyV1::GridMarketMaker { .. } => ensure!(
+                request
+                    .selectors
+                    .iter()
+                    .any(|x| x.data_type.parse::<NautilusDataType>().ok()
+                        == Some(NautilusDataType::QuoteTick)),
+                "NATIVE_GRID_QUOTE_DATA_REQUIRED"
+            ),
             NativeCompiledStrategyV1::OrderBookImbalance { .. } => {
                 ensure!(book == BookType::L2_MBP, "NATIVE_IMBALANCE_L2_REQUIRED");
                 ensure!(
@@ -133,6 +141,7 @@ pub fn run(
         }
         match build_strategy(id, &request.strategy)? {
             CompiledNativeStrategy::EmaCross(strategy) => engine.add_strategy(strategy)?,
+            CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(strategy)?,
             CompiledNativeStrategy::OrderBookImbalance(strategy) => {
                 engine.add_strategy(strategy)?
             }

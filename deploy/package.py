@@ -216,6 +216,15 @@ If you explicitly do not want a new backup, use this target release's installer:
 bash install.sh --version {version} --directory "$HOME/.local/share/quazonai" --no-backup --skill-dir "$HOME/.agents/skills/quazonai"
 ```
 
+For an existing local `nautilus` service in `compose.override.yaml`, add
+`--local-runtime` to enroll it for same-release runtime image updates. First
+finish and reconcile its tasks and safely stop that container. The installer
+refuses a running runtime rather than cancelling work. It retains the owner's
+Compose environment, mounts, CPU settings and credentials, overriding only the
+image from the same release manifest. Enrollment persists for later updates.
+Independent remote servers are not changed. Runtime image revision/version and
+the running container image ID are verified; this is not a trading-readiness test.
+
 `--no-backup` skips only the recovery-point copy. The existing database, keys,
 configuration and account data remain in place; graceful stop and unresolved-task
 checks are unchanged. A refusal leaves the old application stopped for explicit

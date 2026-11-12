@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
+import { NativeStrategyBacktestTask, normalizedNativeStrategyRequest } from '../plugins/native-strategy-backtest.ts';
 import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
@@ -114,4 +114,13 @@ test('bound upstream research exposes only its native tool and never translates 
     await assert.rejects(host.start('bound-upstream', { goal: 'Reject mixed historical binding without translating it', model: { provider: faux.provider.id, modelId: faux.getModel().id },
       data: { catalog: '/registered/catalog', native_strategy_backtest_request: {}, indicator_strategy_request: {} }, policy: {} }), /custom_indicator_strategy_removed/);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('Grid absent optional quantities and expiry match official None echo without changing explicit values', () => {
+  const request = { venue: {}, strategy: { kind: 'GRID_MARKET_MAKER', num_levels: 2 } };
+  assert.deepEqual(normalizedNativeStrategyRequest(request), { venue: { base_currency: null }, strategy: { kind: 'GRID_MARKET_MAKER', num_levels: 2, trade_size: null, expire_time_secs: null } });
+  const explicit = { venue: { base_currency: null }, strategy: { kind: 'GRID_MARKET_MAKER', trade_size: '0.00000001', expire_time_secs: 2, base: { strategy_id: 'OWNER-001' } } };
+  assert.deepEqual(normalizedNativeStrategyRequest(explicit), explicit);
+  assert.deepEqual(request.strategy, { kind: 'GRID_MARKET_MAKER', num_levels: 2 });
 });

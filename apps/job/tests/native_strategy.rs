@@ -620,3 +620,49 @@ fn catalog_inspect_pages_every_interval_and_rejects_changed_filters() {
     native.write_to_parquet(&snapshot(exact+29,exact+30,"1.000000","2.000000"),None,None,None).unwrap();
     assert!(query(json!({"cursor":first_cursor})).unwrap_err().to_string().contains("CATALOG_CHANGED"));
 }
+
+#[test]
+fn upstream_grid_uses_real_quotes_and_preserves_all_config_fields() {
+    use nautilus_model::data::QuoteTick;
+    let dir = catalog(&snapshot(SECOND, 2 * SECOND, "1.000000", "1.000000"), &[]);
+    let native =
+        ParquetDataCatalog::from_uri(dir.path().to_str().unwrap(), None, Some(4096), None, None)
+            .unwrap();
+    let quotes: Vec<_> = [100.0, 101.0, 102.0, 99.0, 97.0, 103.0, 105.0, 96.0]
+        .iter()
+        .enumerate()
+        .map(|(index, bid)| {
+            QuoteTick::new(
+                id(),
+                Price::new(*bid, 2),
+                Price::new(bid + 1.0, 2),
+                Quantity::from("1.000000"),
+                Quantity::from("1.000000"),
+                ((index as u64 + 1) * SECOND).into(),
+                ((index as u64 + 1) * SECOND + SECOND / 2).into(),
+            )
+        })
+        .collect();
+    native.write_to_parquet(&quotes, None, None, None).unwrap();
+    let mut config = request(9 * SECOND);
+    config.selectors[0].data_type = "QuoteTick".into();
+    config.venue.book_type = "L1_MBP".into();
+    config.strategy = serde_json::from_value(
+        json!({"kind":"GRID_MARKET_MAKER","trade_size":"0.010000","num_levels":2,"grid_step_bps":10,"skew_factor":0.1,"max_position":"1.000000","requote_threshold_bps":5,"expire_time_secs":2,"on_cancel_resubmit":true}),
+    )
+    .unwrap();
+    let result = job::native_strategy::run(dir.path(), config.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&result.request.strategy).unwrap(),
+        serde_json::to_value(&config.strategy).unwrap()
+    );
+    assert_eq!(result.data_rows_by_type["QuoteTick"].get(), 8);
+    assert!(!result.canonical_result["fills"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    config.available_end_ns = contracts::DbCounter::new(3 * SECOND).unwrap();
+    let prefix = job::native_strategy::run(dir.path(), config).unwrap();
+    assert_eq!(prefix.data_rows_by_type["QuoteTick"].get(), 2);
+    assert_eq!(prefix.request.available_end_ns.get(), 3 * SECOND);
+}
