@@ -70,7 +70,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
         .unwrap();
     let raw: PortfolioSnapshot = serde_json::from_value(raw).unwrap();
     let snapshot = job::account_observer::project_snapshot(&raw).unwrap();
-    let initial_state = NativeObservedSpotStartV1 {
+    NativeObservedSpotStartV1 {
         schema_version: SchemaV1,
         snapshot_evidence_ref: "CONTROLLED_ORIGINAL_NATIVE_PUBLICATION".into(),
         source_native_version: "0.69.0".into(),
@@ -81,8 +81,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
         open_orders_available_ns: count(snapshot.ts_init.get() + 2),
         open_orders_count: produced.summary["orders.open"].parse().unwrap(),
         snapshot,
-    };
-    initial_state
+    }
 }
 
 fn completed(leg: &NativeObservedSpotSimulationLegV1) -> &NativeSimulationResultV1 {

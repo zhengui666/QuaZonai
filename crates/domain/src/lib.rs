@@ -30,3 +30,7 @@ pub enum DomainError {
     #[error("capability unavailable: {0}")]
     CapabilityUnavailable(&'static str),
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/execution_models.rs"]
+mod test_execution_models;

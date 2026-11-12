@@ -194,24 +194,6 @@ pub fn validation_folds(policy: &SplitPolicyV1, rows: usize) -> Result<Vec<Split
     Ok(folds)
 }
 
-#[cfg(test)]
-mod representation_tests {
-    use super::*;
-
-    #[test]
-    fn combinations_are_checked_before_native_allocation_without_magic_group_limits() {
-        assert_eq!(checked_fold_count(16, 8).unwrap(), 12_870);
-        assert_eq!(checked_fold_count(17, 1).unwrap(), 17);
-        assert_eq!(checked_fold_count(65_535, 1).unwrap(), 65_535);
-        assert_eq!(checked_fold_count(65_535, 65_534).unwrap(), 65_535);
-        assert!(checked_fold_count(34, 17).is_err());
-        assert!(checked_fold_count(65_535, 2).is_err());
-        assert!(checked_fold_count(1, 1).is_err());
-        assert!(checked_fold_count(17, 0).is_err());
-        assert_eq!(MAX_VALIDATION_FOLDS, 65_536);
-    }
-}
-
 /// Original solow-cv rolling/expanding splits for native strategy availability batches.
 /// No label-based horizon or proprietary policy is inferred for trading strategies.
 pub fn native_walk_forward_folds(
@@ -254,3 +236,22 @@ pub fn native_walk_forward_folds(
     }
     Ok(folds)
 }
+
+#[cfg(test)]
+mod representation_tests {
+    use super::*;
+
+    #[test]
+    fn combinations_are_checked_before_native_allocation_without_magic_group_limits() {
+        assert_eq!(checked_fold_count(16, 8).unwrap(), 12_870);
+        assert_eq!(checked_fold_count(17, 1).unwrap(), 17);
+        assert_eq!(checked_fold_count(65_535, 1).unwrap(), 65_535);
+        assert_eq!(checked_fold_count(65_535, 65_534).unwrap(), 65_535);
+        assert!(checked_fold_count(34, 17).is_err());
+        assert!(checked_fold_count(65_535, 2).is_err());
+        assert!(checked_fold_count(1, 1).is_err());
+        assert!(checked_fold_count(17, 0).is_err());
+        assert_eq!(MAX_VALIDATION_FOLDS, 65_536);
+    }
+}
+

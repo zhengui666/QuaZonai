@@ -11,8 +11,7 @@ use contracts::{
     DbCounter, Id, SchemaV1,
 };
 use serde_json::json;
-#[path = "../../../../../../tests/support/execution_models.rs"]
-mod models;
+use crate::test_execution_models as models;
 const DAY: u64 = 86_400_000_000_000;
 const INSTRUMENT: &str = "BTC-USDC.HYPERLIQUID";
 const BAR: &str = "BTC-USDC.HYPERLIQUID-1-MINUTE-LAST-EXTERNAL";
@@ -32,8 +31,7 @@ fn snapshot(
     context: &SpotCashContext,
     sequence: u64,
     clock: u64,
-    usdc: &str,
-    btc: Option<&str>,
+    (usdc, btc): (&str, Option<&str>),
     prices: &[NativeSpotPriceV1],
     origin: NativeSpotSnapshotOriginV1,
 ) -> NativeSpotCashObservationV1 {
@@ -181,14 +179,13 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         has_expiration: false,
         multiplier: amount("1"),
     };
-    let context = SpotCashContext::new(&settings, session.clone(), &[instrument.clone()]).unwrap();
+    let context = SpotCashContext::new(&settings, session.clone(), std::slice::from_ref(&instrument)).unwrap();
     let mut observations = vec![snapshot(
         &session,
         &context,
         1,
         DAY,
-        "1000",
-        None,
+        ("1000", None),
         &[],
         NativeSpotSnapshotOriginV1::NativePublication,
     )];
@@ -233,8 +230,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
             &context,
             seq + 1,
             clock,
-            "100",
-            Some("9"),
+            ("100", Some("9")),
             &prices,
             if publication {
                 NativeSpotSnapshotOriginV1::NativePublication
@@ -770,8 +766,7 @@ fn same_clock_display_selects_last_real_sequence_but_daily_boundary_keeps_first_
         &context,
         777,
         2 * DAY,
-        "100",
-        Some("8.99"),
+        ("100", Some("8.99")),
         &frame.prices,
         NativeSpotSnapshotOriginV1::DecisionBuild,
     );

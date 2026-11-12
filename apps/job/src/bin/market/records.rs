@@ -332,14 +332,6 @@ pub(super) struct Aggregation {
 }
 
 impl Aggregation {
-    pub(super) fn new(seconds: Option<u32>) -> Self {
-        Self {
-            seconds,
-            milliseconds: None,
-            series: BTreeMap::new(),
-        }
-    }
-
     pub(super) fn with_milliseconds(
         seconds: Option<u32>,
         milliseconds: Option<u32>,
@@ -767,7 +759,7 @@ mod tests {
     #[test]
     fn observed_trade_aggregation_does_not_fill_empty_intervals() {
         let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
-        let mut aggregation = Aggregation::new(Some(60));
+        let mut aggregation = Aggregation::with_milliseconds(Some(60), None).unwrap();
         for event in [1_u64, 20] {
             let trade = TradeTick::new_checked(
                 id,
@@ -803,7 +795,7 @@ mod tests {
     #[test]
     fn aggregation_preserves_changes_within_and_between_intervals() {
         let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
-        let mut aggregation = Aggregation::new(Some(60));
+        let mut aggregation = Aggregation::with_milliseconds(Some(60), None).unwrap();
         let mut bars = Vec::new();
         for (event, price, size) in [
             (1_u64, "1.23", "2"),
