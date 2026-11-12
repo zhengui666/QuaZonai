@@ -225,16 +225,16 @@ export async function openResearch(options: {
       const intent = requests.requests[key];
       if (!study.input) throw new Error('research_not_found');
       if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || intent.recovery.instruction !== instruction || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
+      const failed = current.submission?.status === 'unanswered' && current.submission.reason === 'model_error';
       const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
       const nativeContinuation = study.toolPolicy === 'NAUTILUS_ONLY' && !study.input.campaign && !study.trials.length
-        && (current.submission?.status === 'done' && instruction !== undefined || ownerAborted)
+        && (current.submission?.status === 'done' && instruction !== undefined || ownerAborted || failed && !!study.final)
         && (!study.final || study.final.scientificClaim === 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION');
       if (nativeContinuation) await assertResearchRunSettled(tx, handle.id);
       const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
         && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');
       if (study.final && (intent || !stopped && !nativeContinuation)) throw new Error('research_already_final');
       if (current.submission?.id !== previousId) throw new Error('research_not_recoverable_conflict');
-      const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop && !nativeContinuation) throw new Error('research_not_recoverable_conflict');
       if (study.toolPolicy === 'NAUTILUS_ONLY' && (stopped || nativeContinuation)) for (const task of await nativeTasks(tx)) {

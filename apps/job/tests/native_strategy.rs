@@ -644,8 +644,13 @@ fn upstream_grid_uses_real_quotes_and_preserves_all_config_fields() {
         })
         .collect();
     native.write_to_parquet(&quotes, None, None, None).unwrap();
+    let bars: Vec<_> = ["BTCUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL", "BTCUSDT.BINANCE-2-MINUTE-LAST-EXTERNAL"].into_iter().map(|kind| {
+        nautilus_model::data::Bar::new(kind.parse().unwrap(), Price::from("100.00"), Price::from("101.00"), Price::from("99.00"), Price::from("100.00"), Quantity::from("1.000000"), (2 * SECOND).into(), (2 * SECOND + SECOND / 2).into())
+    }).collect();
+    for bar in &bars { native.write_to_parquet(std::slice::from_ref(bar), None, None, None).unwrap(); }
     let mut config = request(9 * SECOND);
     config.selectors[0].data_type = "QuoteTick".into();
+    for bar in &bars { config.selectors.push(contracts::catalog_coverage::NativeCatalogSelectorV1 { data_type: "Bar".into(), identifier: bar.bar_type.to_string() }); }
     config.venue.book_type = "L1_MBP".into();
     config.strategy = serde_json::from_value(
         json!({"kind":"GRID_MARKET_MAKER","trade_size":"0.010000","num_levels":2,"grid_step_bps":10,"skew_factor":0.1,"max_position":"1.000000","requote_threshold_bps":5,"expire_time_secs":2,"on_cancel_resubmit":true}),
@@ -656,6 +661,10 @@ fn upstream_grid_uses_real_quotes_and_preserves_all_config_fields() {
         serde_json::to_value(&result.request.strategy).unwrap(),
         serde_json::to_value(&config.strategy).unwrap()
     );
+    assert_eq!(result.data_rows_by_type["Bar"].get(), 2);
+    let mut outside = config.clone();
+    outside.selectors[1].identifier = "OTHER.BINANCE-1-MINUTE-LAST-EXTERNAL".into();
+    assert!(job::native_strategy::run(dir.path(), outside).unwrap_err().to_string().contains("NATIVE_STRATEGY_SINGLE_INSTRUMENT_SELECTOR"));
     assert_eq!(result.data_rows_by_type["QuoteTick"].get(), 8);
     assert!(!result.canonical_result["fills"]
         .as_array()

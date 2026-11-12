@@ -9,7 +9,7 @@ use nautilus_common::logging::logger::LoggerConfig;
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::fee::{FeeModelHandle, MakerTakerFeeModel};
 use nautilus_model::{
-    data::{DataBatch, NautilusDataType, OrderBookDelta, OrderBookDeltas},
+    data::{BarType, DataBatch, NautilusDataType, OrderBookDelta, OrderBookDeltas},
     enums::{BookType, RecordFlag},
     identifiers::InstrumentId,
     instruments::Instrument,
@@ -192,18 +192,17 @@ pub fn run(
                 engine.add_strategy(strategy)?
             }
         }
-        let mut counts = BTreeMap::new();
+        let mut counts: BTreeMap<String, DbCounter> = BTreeMap::new();
         let mut selected = BTreeSet::new();
         for selector in &request.selectors {
-            ensure!(
-                selector.identifier == id.to_string(),
-                "NATIVE_STRATEGY_SINGLE_INSTRUMENT_SELECTOR"
-            );
             let kind: NautilusDataType = selector.data_type.parse()?;
-            ensure!(
-                selected.insert(kind.to_string()),
-                "NATIVE_STRATEGY_DUPLICATE_SELECTOR"
-            );
+            let selector_instrument = if kind == NautilusDataType::Bar {
+                selector.identifier.parse::<BarType>()?.instrument_id()
+            } else {
+                selector.identifier.parse::<InstrumentId>()?
+            };
+            ensure!(selector_instrument == id, "NATIVE_STRATEGY_SINGLE_INSTRUMENT_SELECTOR");
+            ensure!(selected.insert((kind.to_string(), selector.identifier.clone())), "NATIVE_STRATEGY_DUPLICATE_SELECTOR");
             let query = CatalogQuery::new(kind.clone())
                 .with_identifiers(Some(vec![selector.identifier.clone()]))
                 .with_range(
@@ -241,7 +240,7 @@ pub fn run(
             ensure!(pending.is_empty(), "NATIVE_BOOK_INCOMPLETE_EVENT_BATCH");
             counts.insert(
                 kind.to_string(),
-                DbCounter::new(rows).map_err(anyhow::Error::msg)?,
+                DbCounter::new(counts.get(&kind.to_string()).map_or(0, |count| count.get()).checked_add(rows).ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_ROW_COUNT_OVERFLOW"))?).map_err(anyhow::Error::msg)?,
             );
         }
         ensure!(

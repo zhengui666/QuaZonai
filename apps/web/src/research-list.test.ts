@@ -136,7 +136,8 @@ it('allows explicit continuation after owner stops validation following a histor
   const detail = { toolPolicy: 'NAUTILUS_ONLY', final: { status: 'COMPUTED', trialId: null, reason: 'explicit_native_strategy_backtest_completed', metrics: [], nativeStrategyResult: {} }, submission: { id: 3, status: 'unanswered', reason: 'aborted' } } as unknown as ResearchDetail;
   expect(canContinueResearch(detail, false)).toBe(true);
   expect(canContinueResearch(detail, true)).toBe(false);
-  expect(canContinueResearch({ ...detail, submission: { id: 3, status: 'unanswered', reason: 'model_error' } }, false)).toBe(false);
+  expect(canContinueResearch({ ...detail, submission: { id: 3, status: 'unanswered', reason: 'model_error' } }, false)).toBe(true);
+  expect(canContinueResearch({ ...detail, submission: { id: 3, status: 'unanswered', reason: 'model_error' } }, true)).toBe(false);
 });
 
 it('keeps static instrument scenarios visibly conditional in original native results and star reports', async () => {

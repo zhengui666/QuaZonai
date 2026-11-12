@@ -177,7 +177,7 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 
 研究详情的 `assessments` 直接读取原 Pi 审阅 Task，返回真实状态、原始报告和 `CURRENT`/`HISTORICAL` 配置标识；比对原生请求、catalog/target 与配置 Task，不从 Agent 文本重算星级。现有 CLI `research get` 原样返回同一字段，Web 显示三路星级、未评级、限制和历史。证据链接 `/api/v3/research/:id/evidence/:taskId` 只读本研究原生回测/WF及审阅 Task，沿用 owner 认证；不暴露私有工具任务或跨研究记录，不建立第二报告存储。
 
-历史回测已保存后，后续验证仍由官方活跃 Task/Submission 决定是否可停止，不能因 `COMPUTED` 隐藏停止入口。用户停止后可继续同一研究，历史结果移入原 `previousNativeResults`，原 Task 不重写。新提交前核查本会话全部原生回测/WF/敏感性 Task 及原远端回执，未决只读原回执，不重新 POST、不把取消/未知变成成功；新提交获得新的停止任务，避免重复使用已完成的停止命令。
+历史回测已保存后，后续验证仍由官方活跃 Task/Submission 决定是否可停止，不能因 `COMPUTED` 隐藏停止入口。用户停止，或历史结果保存后模型调用失败（`model_error`），均可继续同一研究，历史结果移入原 `previousNativeResults`，原 Task 不重写。新提交前核查本会话全部原生回测/WF/敏感性 Task 及原远端回执，未决只读原回执，不重新 POST、不把取消/未知变成成功；新提交获得新的停止任务，避免重复使用已完成的停止命令。
 
 ## 显式固定规格研究情景
 

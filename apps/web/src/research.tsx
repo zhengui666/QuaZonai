@@ -133,7 +133,8 @@ export function canContinueResearch(detail: ResearchDetail, active: boolean): bo
   const stopped = detail.final?.status === 'STOPPED' && detail.final.trialId === null;
   const ownerStopped = detail.submission.status === 'unanswered' && detail.submission.reason === 'aborted'
     && (stopped && detail.final?.reason === 'owner_stop' || !!detail.final?.nativeStrategyResult);
-  return !!ownerStopped || detail.submission.status === 'done'
+  const modelFailedAfterResult = detail.submission.status === 'unanswered' && detail.submission.reason === 'model_error' && !!detail.final?.nativeStrategyResult;
+  return !!ownerStopped || modelFailedAfterResult || detail.submission.status === 'done'
     && (!detail.final || !!detail.final.nativeStrategyResult || stopped);
 }
 
