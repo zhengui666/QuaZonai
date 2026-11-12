@@ -1,3 +1,4 @@
+import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
 import { arr, map, obj, opt, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
@@ -16,7 +17,7 @@ const WalkForwardChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, initial: () => ({ taskId: null }),
 });
 export const nativeWalkForwardTool = defineTool({
-  name: 'native_strategy_walk_forward',
+  name: 'native_strategy_walk_forward', outputLimits: nativeToolOutputLimits,
   description: 'Run actual chronological train-selection/test evaluation using the registered upstream Nautilus strategy and data. Optional strategies contains upstream strategy objects only; all candidates retain the same registered venue, instrument, data and event/availability window. split is solow TimeSeriesSplit {n_splits,test_size?,gap,max_train_size?}; counts are unique availability-time batches, not invented independent observations. objective {native_key,currency?,metric_source?:CANONICAL|EQUITY_PERFORMANCE,annualization_days?:252|365,direction:MAXIMIZE|MINIMIZE} refers to an unambiguous official training statistic. EQUITY_PERFORMANCE requires explicit annualization_days and available official snapshot-only daily equity returns; CANONICAL preserves original statistics and may use position returns. Never assume default canonical Sharpe is an equity Sharpe. Every candidate training run and chosen test run starts a fresh official account/strategy/indicators inside its own window. No prior-window warmup. Never select using test results. This is real walk-forward evidence, not comprehensive overfitting protection, CPCV, parameter-neighbourhood or cost validation. Run logic review before exposing these results when asked for two-lane assessment; then use the assessment report. No live orders or trading gate.',
   parameters: obj({ strategies: opt(arr(map(unknown()))), split: map(unknown()), objective: map(unknown()) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
@@ -43,7 +44,7 @@ export const nativeWalkForwardTool = defineTool({
     const task = await api.waitForTask(id, context);
     if (task.state.outcome.status !== 'completed') throw new Error('native_walk_forward_not_completed');
     const result = nativeWalkForwardResult(task.state.outcome.result, request);
-    return { output: [{ type: 'text', text: JSON.stringify({ taskId: id, ...result }) }] };
+    return { output: [{ type: 'text', text: nativeToolText(nativeResultView(result, id), id) }] };
   },
 });
 

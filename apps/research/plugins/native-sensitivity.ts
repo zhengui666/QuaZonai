@@ -1,3 +1,4 @@
+import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import { arr, map, obj, opt, str, unknown } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { registeredNativeStrategyRequest } from '../src/research-configuration.ts';
@@ -13,7 +14,7 @@ export const NativeSensitivity = defineDoc<{ runs: { toolTaskId: number; sourceR
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127, initial: () => ({ runs: [] }),
 });
 export const nativeSensitivityTool = defineTool({
-  name: 'native_strategy_sensitivity',
+  name: 'native_strategy_sensitivity', outputLimits: nativeToolOutputLimits,
   description: 'Actually run each explicitly supplied official strategies candidate as a baseline and under every supplied fee case, plus explicitly chosen parameter neighbours and/or maker/taker fee assumptions with the registered official Nautilus strategy, account settings and data. Each case is a real independent native backtest. Only strategy parameters or the specified two fees change. This uses the registered historical window; it is sensitivity evidence, not a new independent OOS test or a live order. Supply the same ordered strategies as the walk-forward candidate family, or explicitly predeclare validationMethod.sensitivityStrategies; omitted strategies means the registered strategy only. Declare the same neighbourStrategies/costs in the pre-execution logic review validationMethod when requesting a two-lane rating. Preserve failed attempts; read their original Task IDs rather than claiming missing results succeeded.',
   parameters: obj({ strategies: opt(arr(map(unknown()))), neighbourStrategies: opt(arr(map(unknown()))), costs: opt(arr(obj({ maker_fee: str(), taker_fee: str() }))) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
@@ -46,8 +47,8 @@ export const nativeSensitivityTool = defineTool({
     const results = await Promise.all(run.tasks.map(async ({ role, taskId }) => {
       const task = await api.waitForTask(taskId, context);
       if (task.state.outcome.status !== 'completed') return { role, taskId, status: task.state.outcome.status, error: task.state.outcome.status === 'failed' ? task.state.outcome.error.message : null, result: null };
-      return { role, taskId, status: 'completed', error: null, result: nativeStrategyResult(task.state.outcome.result, object(object(task.input, 'sensitivity_input').request, 'sensitivity_request')) };
+      return { role, taskId, status: 'completed', error: null, result: nativeResultView(nativeStrategyResult(task.state.outcome.result, object(object(task.input, 'sensitivity_input').request, 'sensitivity_request')), taskId) };
     }));
-    return { output: [{ type: 'text', text: JSON.stringify({ sourceRequest: run.sourceRequest, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS', toolTaskId: run.toolTaskId, results }) }] };
+    return { output: [{ type: 'text', text: nativeToolText({ sourceRequest: run.sourceRequest, scope: 'FULL_REGISTERED_WINDOW_SENSITIVITY_NOT_NEW_OOS', toolTaskId: run.toolTaskId, results }, run.toolTaskId) }] };
   },
 });

@@ -1,3 +1,4 @@
+import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
@@ -76,7 +77,7 @@ export const NativeStrategyCatalogTask = defineTask<{ catalog: string; target: N
 
 export const nativeStrategyConfigureTool = defineTool({
   name: 'native_strategy_configure',
-  description: 'Configure an official compiled Nautilus strategy on the unchanged registered catalog in this research conversation. First inspect native_strategy_catalog for real instrument definitions, selectors and file coverage. Use the generated request schema verbatim. Explicitly choose source event and availability windows, instrument, native strategy, simulation venue balances, currency, leverage and fees from the owner mandate and registered evidence; ask for missing consequential assumptions. Never invent prices, convert USDT/USDC, infer historical fee rates from current instrument definitions or claim file intervals prove completeness. This saves configuration only; the Rust runner validates native semantics when run. Existing official Tasks keep prior results. An unresolved execution must be settled before replacing configuration. No live trading.',
+  description: 'Configure an official compiled Nautilus strategy on the unchanged registered catalog in this research conversation. First inspect native_strategy_catalog for real instrument definitions, selectors and file coverage. Use the generated request schema verbatim. Explicitly choose source event and availability windows, instrument, native strategy, simulation venue balances, currency, leverage and fees from the owner mandate and registered evidence; ask for missing consequential assumptions. Never invent prices, convert USDT/USDC, infer historical fee rates from current instrument definitions or claim file intervals prove completeness. MARGIN starting balances are collateral rather than a position-notional cap; OBI max_trade_size is per trade, not a cumulative-position limit. leverage=1 alone does not prove unlevered exposure because native margin requirements also depend on instrument.margin_init. This saves configuration only; the Rust runner validates native semantics when run. Existing official Tasks keep prior results. An unresolved execution must be settled before replacing configuration. No live trading.',
   parameters: obj({ request: nativeStrategyRequestSchema }), replay: 'safe', executionMode: 'sequential',
   prepareArguments(args) {
     // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
@@ -191,7 +192,7 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
 });
 
 export const nativeStrategyBacktestTool = defineTool({
-  name: 'native_strategy_backtest',
+  name: 'native_strategy_backtest', outputLimits: nativeToolOutputLimits,
   description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS and GRID_MARKET_MAKER consume QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. HURST_VPIN_DIRECTIONAL uses official BAR/QuoteTick/TradeTick subscriptions; non-time external bars require explicit venue.bar_execution=false with quotes/trades for execution. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
   parameters: obj({ finishResearch: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
@@ -224,7 +225,7 @@ export const nativeStrategyBacktestTool = defineTool({
       study.final = { taskId: api.taskId, trialId: null, comparedTrials: [], status: 'COMPUTED',
         reason: 'explicit_native_strategy_backtest_completed', scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result };
     }, context);
-    return { output: [{ type: 'text', text: JSON.stringify(result) }], ...(args.finishResearch === true ? { control: { terminate: true } } : {}) };
+    return { output: [{ type: 'text', text: nativeToolText(nativeResultView(result, id), id) }], ...(args.finishResearch === true ? { control: { terminate: true } } : {}) };
   },
 });
 
