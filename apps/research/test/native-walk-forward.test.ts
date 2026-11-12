@@ -207,6 +207,14 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         assert.equal(evidence.dataValidation.folds[0].equityPerformance.status, 'AVAILABLE');
         assert.equal(evidence.dataValidation.folds[0].nativeObjectiveValue, 3);
         assert.equal(evidence.sensitivity.cases[0].equityPerformance.source, 'NAUTILUS_PORTFOLIO_SNAPSHOTS');
+        assert.equal(evidence.dataValidation.folds[0].equityPerformance.returns.source, 'ORIGINAL_TASK_ROWS_NOT_INCLUDED');
+        assert.equal(evidence.dataValidation.folds[0].equityPerformance.returns.rowCount, 1);
+        assert.equal(evidence.dataValidation.folds[0].equityPerformance.returns.path, '$.folds[0].test_result.equity_performance.returns');
+        assert.equal(evidence.dataValidation.folds[0].trainingTrials[0].equityPerformance.returns.path, '$.folds[0].trials[0].result.equity_performance.returns');
+        assert.equal(evidence.sensitivity.cases[0].equityPerformance.returns.path, '$.equity_performance.returns');
+        assert.equal(evidence.sensitivity.cases[0].equityPerformance.statistics.length, 4);
+        const original = await host.harness.getTask(validation!.taskIds[0]!, context);
+        assert.equal((original!.state.outcome as any).result.folds[0].test_result.equity_performance.returns.length, 1);
       }
       if (behavior === 'scenario') {
           assert.equal(task.state.outcome.result.claim, 'CONDITIONAL_STATIC_SCENARIO_RESEARCH_ASSESSMENT');
