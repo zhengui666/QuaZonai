@@ -27,6 +27,7 @@ interface AccountState {
   previews: Record<string, { original: unknown; preview: CapitalExitPreview; context: CapitalExitPlanningContext }>;
   commands: Record<string, Command>; exits: Record<string, Exit>; targets: Record<string, { original: Json; receipt: Json; epoch: string; budget_basis?: Json }>;
   ledgerClaims: Record<string, { amount: string; original: unknown }>;
+  strategyRevision?: string;
   strategyCommands?: Record<string, { original: Json; receipt: Json }>;
   reverseTransferPending: boolean;
 }
@@ -105,6 +106,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     state = { schema_version: 2, sourceId: id(), identity, revision: '1', epoch: '1', previews: {}, commands: {}, exits: {}, targets: {}, ledgerClaims: {}, reverseTransferPending: false };
   }
+  state.strategyRevision ??= '1';
+  if (!/^\d+$/.test(state.strategyRevision)) fail('strategy_revision_invalid');
   let writeFailed = false;
   async function save() {
     if (writeFailed) fail('account_receipts_write_failed');
@@ -650,8 +653,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     } catch (error) { target.receipt.error = error instanceof Error ? error.message : 'target_original_receipt_unavailable'; }
   }
   async function strategyCommand(body: Json) {
-    if (Object.keys(body).some(key => !['requestId', 'action', 'clientId', 'accountId'].includes(key))) fail('strategy_command_invalid', 422);
-    const command = accountStrategyCommand({ requestId: body.requestId, action: body.action });
+    if (Object.keys(body).some(key => !['requestId', 'action', 'clientId', 'accountId', 'expectedAccountSourceId', 'expectedStrategyRevision'].includes(key))) fail('strategy_command_invalid', 422);
+    const command = accountStrategyCommand({ requestId: body.requestId, action: body.action, ...(body.action === 'START' ? { expectedAccountSourceId: body.expectedAccountSourceId, expectedStrategyRevision: body.expectedStrategyRevision } : {}) });
     const commands = state.strategyCommands ??= {};
     const prior = commands[command.requestId];
     if (prior) { if (canonical(prior.original) !== canonical(body)) fail('strategy_request_id_conflict'); return structuredClone(prior.receipt); }
@@ -659,8 +662,15 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       if (reason()) fail(reason()!);
       if (reserved() !== 0n || Object.values(state.exits).some(exit => !['COMPLETED', 'CLOSED'].includes(exit.view.state))) fail('strategy_account_exit_unsettled');
       if (Object.values(state.targets).some(target => target.receipt.status === 'PENDING')) fail('strategy_original_target_unsettled');
+      if (typeof body.expectedAccountSourceId !== 'string' || typeof body.expectedStrategyRevision !== 'string' || !/^\d+$/.test(body.expectedStrategyRevision)) fail('strategy_start_fence_required', 422);
+      if (body.expectedAccountSourceId !== state.sourceId || body.expectedStrategyRevision !== state.strategyRevision) {
+        const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'strategy_start_fence_changed' }, error: 'strategy_start_fence_changed' };
+        commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
+      }
       await applyControl();
     }
+    // Worker-owned, persisted CAS fence; never infer order from Pi Task IDs.
+    state.strategyRevision = String(BigInt(state.strategyRevision!) + 1n);
     const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'UNCERTAIN', result: null, error: null };
     commands[command.requestId] = { original: structuredClone(body), receipt };
     // START must have a durable intent. An explicitly requested STOP must remain
@@ -736,7 +746,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
             configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
             reason: options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure, defaultStart: 'PAUSED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
           automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
-        if (request.method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), strategy: await runtime.request('STRATEGY_STATUS') } };
+        if (request.method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision } };
+        if (request.method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);
         if (request.method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
         if (request.method === 'GET' && path === '/account') return { status: 200, value: account() };

@@ -1,3 +1,4 @@
+import { accountStrategyCommand } from '../../../packages/contracts/src/account-strategy.ts';
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { connect } from './client.ts';
@@ -37,8 +38,9 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   account-strategy status OBSERVATION_ID | receipt OBSERVATION_ID ORIGINAL_REQUEST_ID
-  account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID
+  account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
   account-strategy stop OBSERVATION_ID --request-id ORIGINAL_ID
+    Read status first; copy its accountSourceId/strategyRevision unchanged. Stale START is rejected, never auto-refreshed.
     Explicit commands operate the configured native strategy (EMA_CROSS account wiring only); live START can place real orders.
   observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
   capital status OBSERVATION_ID | context OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
@@ -49,7 +51,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
 Delete hides an inactive object; original evidence and receipts remain. It never cancels remote work or liquidates positions.
-Paper/live bind an observed account, never launch trading. 'client' is a thin alias.
+Observation start only binds an account. Account-strategy start explicitly starts trading under the configured native strategy. 'client' is a thin alias.
 `;
 const options = {
   help: { type: 'boolean' as const, short: 'h' }, version: { type: 'boolean' as const },
@@ -60,6 +62,7 @@ const options = {
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
   instruction: { type: 'string' as const },
+  'account-source-id': { type: 'string' as const }, 'expected-revision': { type: 'string' as const },
   'tick-book-cores': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
@@ -232,7 +235,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (action === 'start' || action === 'stop') {
       if (!values['request-id']?.trim()) throw new CliError('original_request_id_required');
       method = 'POST'; path += '/commands';
-      body = JSON.stringify({ requestId: values['request-id'], action: action.toUpperCase() });
+      body = JSON.stringify(accountStrategyCommand({ requestId: values['request-id'], action: action.toUpperCase(), ...(action === 'start' ? { expectedAccountSourceId: values['account-source-id'], expectedStrategyRevision: values['expected-revision'] } : {}) }));
     } else if (action !== 'status') throw new CliError('unknown_account_strategy_command');
   } else if (group === 'capital') {
     path = `/observations/${resourceId(id)}/capital-exits`;

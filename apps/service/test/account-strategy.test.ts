@@ -7,15 +7,19 @@ import { context, setup } from './support.ts';
 
 test('native strategy commands retain exact identity across HTTP uncertainty and Durable restart without replay', async () => {
   const state = await setup(); const source = accountSourceFixture(); const remote = Fastify();
+  let revision = '4', fenceReads = 0;
   const calls: string[] = []; const receipts = new Map<string, object>();
   const envelope = { clientId: source.connection.clientId, accountId: source.connection.accountId, currency: 'USDC', mode: 'paper' };
   const native = { strategy_id: 'EMACross-001', state: 'RUNNING', native_version: 'original-upstream', instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID',
     config: { kind: 'EMA_CROSS', trade_size: '1.000000000000000001', fast_period: 10, slow_period: 50 }, restart_warmup: 'OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS', default_start: 'PAUSED' };
-  remote.get('/strategy', () => ({ ...envelope, strategy: native }));
+  remote.get('/strategy/fence', () => { fenceReads++; return { ...envelope, accountSourceId: 'original-worker', strategyRevision: revision }; });
+  remote.get('/strategy', () => ({ ...envelope, accountSourceId: 'original-worker', strategyRevision: revision, strategy: native }));
   remote.post('/strategy/commands', (request, reply) => {
-    const body = request.body as { requestId: string; action: string; clientId: string; accountId: string };
+    const body = request.body as { requestId: string; action: string; clientId: string; accountId: string; expectedAccountSourceId?: string; expectedStrategyRevision?: string };
     assert.equal(body.clientId, envelope.clientId); assert.equal(body.accountId, envelope.accountId); calls.push(body.action);
+    if (body.action === 'START') { assert.equal(body.expectedAccountSourceId, 'original-worker'); assert.equal(body.expectedStrategyRevision, '4'); }
     const receipt = { ...envelope, requestId: body.requestId, action: body.action, status: 'COMPLETED', result: { ...native, state: body.action === 'STOP' ? 'STOPPED' : 'RUNNING' }, error: null };
+    if (body.action === 'START' && body.expectedStrategyRevision !== revision) Object.assign(receipt, { status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'strategy_start_fence_changed' }, error: 'strategy_start_fence_changed' });
     if (body.requestId === 'start-rejected') Object.assign(receipt, { status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'account_native_cache_write_failed' }, error: 'account_native_cache_write_failed' });
     if (body.requestId === 'unrecorded-stop') return { ...receipt, status: 'UNCERTAIN', persisted: false, persistenceError: 'account_receipts_write_failed', error: 'strategy_outcome_not_durably_recorded' };
     receipts.set(body.requestId, receipt);
@@ -34,7 +38,7 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     assert.equal((await state.service.app.inject({ method: 'GET', url })).statusCode, 401);
     const current = await state.service.app.inject({ method: 'GET', url, headers: state.headers });
     assert.equal(current.statusCode, 200); assert.deepEqual(current.json().strategy.config, native.config);
-    const send = (requestId: string, action: string) => state.service.app.inject({ method: 'POST', url: url + '/commands', headers: state.headers, payload: { requestId, action } });
+    const send = (requestId: string, action: string) => state.service.app.inject({ method: 'POST', url: url + '/commands', headers: state.headers, payload: { requestId, action, ...(action === 'START' ? { expectedAccountSourceId: 'original-worker', expectedStrategyRevision: '4' } : {}) } });
     const first = await send('start-once', 'START'); assert.equal(first.statusCode, 202, first.body);
     let app = (await state.service.research.harness.snapshot(Application, context))!;
     const command = Object.values(app.strategyCommands!)[0]!;
@@ -58,6 +62,14 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     assert.equal(rejected.json().status, 'REJECTED'); assert.equal(rejected.json().receipt.result.started, false);
     const count = calls.length;
     await send('start-rejected', 'START'); assert.equal(calls.length, count, 'Confirmed rejection is not silently retried.');
+    revision = '5'; // STOP or another command changed the worker after the client saw revision 4.
+    await send('stale-start', 'START');
+    app = (await state.service.research.harness.snapshot(Application, context))!;
+    const stale = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'stale-start')!;
+    await state.service.research.harness.waitForTask(stale.taskId as never, context);
+    const staleReceipt = await state.service.app.inject({method:'GET',url:url+'/commands/stale-start',headers:state.headers});
+    assert.equal(staleReceipt.json().status, 'REJECTED'); assert.equal(staleReceipt.json().error, 'strategy_start_fence_changed');
+    assert.equal(fenceReads, 0, 'The service must not refresh the client fence and silently authorize an old START.');
     await send('unrecorded-stop', 'STOP');
     app = (await state.service.research.harness.snapshot(Application, context))!;
     const unrecorded = Object.values(app.strategyCommands!).find(row => (row.original as { requestId: string }).requestId === 'unrecorded-stop')!;

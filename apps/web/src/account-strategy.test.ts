@@ -7,7 +7,7 @@ import AccountStrategy, { strategyResultText } from './account-strategy';
 const mocks=vi.hoisted(()=>({kind:'EMA_CROSS',commands:[] as string[]}));
 vi.mock('./commands',()=>({readDraft:()=>undefined,saveDraft:()=>true,useCommand:(kind:string,_accepted:unknown,path:string)=>{mocks.commands.push(`${kind}:${path}`);return {pending:undefined,busy:false,submit:()=>{},values:undefined};}}));
 vi.mock('./ui',()=>({useConfirm:()=>()=>{},ErrorNotice:()=>null,PendingCommand:()=>null,Status:({value}:{value:string})=>value,Facts:()=>null}));
-vi.mock('./data-hooks',()=>({useResource:(path:string)=>({refetch:()=>{},data:path.endsWith('/strategy')?{strategy:{strategy_id:'EMA_CROSS-001',state:'STOPPED',instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',native_version:'0.69.0',config:{kind:mocks.kind,trade_size:'0.000000000000000001',fast_period:2,slow_period:3}}}:undefined})}));
+vi.mock('./data-hooks',()=>({useResource:(path:string)=>({refetch:()=>{},data:path.endsWith('/strategy')?{accountSourceId:'source-original',strategyRevision:'7',strategy:{strategy_id:'EMA_CROSS-001',state:'STOPPED',instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',native_version:'0.69.0',config:{kind:mocks.kind,trade_size:'0.000000000000000001',fast_period:2,slow_period:3}}}:undefined})}));
 const value={id:'account/a',mode:'live',connectionName:'Explicit account'} as ObservationView;
 it('exposes real HTTP strategy command hooks separately from account observation and funds',()=>{
   mocks.commands=[];mocks.kind='EMA_CROSS';const html=renderToStaticMarkup(createElement(AccountStrategy,{value}));
@@ -25,4 +25,5 @@ it('distinguishes confirmed STOP without durable receipt from a missing native r
  expect(strategyResultText({...base,receipt:{persisted:false,result:{state:'STOPPED'}}})).toContain('原生已确认停止');
  expect(strategyResultText({...base,receipt:{persisted:false,result:null}})).toContain('未确认停止');
  expect(strategyResultText({...base,receipt:null})).toContain('不自动重发');
+ expect(strategyResultText({...base,action:'START',status:'REJECTED',error:'strategy_start_fence_changed',receipt:null})).toContain('不会自动换版本重试');
 });

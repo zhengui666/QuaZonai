@@ -24,16 +24,17 @@ test('native strategy CLI uses explicit command identity and read-only receipt r
     const output:unknown[]=[];
     await run(['account-strategy','status','account/a'],v=>output.push(v));
     await run(['account-strategy','stop','account/a','--request-id','stop-original'],v=>output.push(v));
-    await assert.rejects(run(['account-strategy','start','account/a','--request-id','lost-start'],()=>{}),/write_outcome_unknown_retain_original_request/);
+    await assert.rejects(run(['account-strategy','start','account/a','--request-id','lost-start','--account-source-id','source-original','--expected-revision','7'],()=>{}),/write_outcome_unknown_retain_original_request/);
     await run(['account-strategy','receipt','account/a','lost-start'],()=>{});
     assert.deepEqual(requests.map(r=>[r.method,r.path]),[
       ['GET','/api/v3/observations/account%2Fa/strategy'],['POST','/api/v3/observations/account%2Fa/strategy/commands'],
       ['POST','/api/v3/observations/account%2Fa/strategy/commands'],['GET','/api/v3/observations/account%2Fa/strategy/commands/lost-start'],
     ]);
     assert.deepEqual(JSON.parse(requests[1]!.body),{requestId:'stop-original',action:'STOP'});
-    assert.deepEqual(JSON.parse(requests[2]!.body),{requestId:'lost-start',action:'START'});
+    assert.deepEqual(JSON.parse(requests[2]!.body),{requestId:'lost-start',action:'START',expectedAccountSourceId:'source-original',expectedStrategyRevision:'7'});
     assert.equal((output[1] as {status:string}).status,'UNCERTAIN','Never relabel a raw stopped result as a durable receipt.');
     await assert.rejects(run(['account-strategy','start','account/a'],()=>{}),/original_request_id_required/);
+    await assert.rejects(run(['account-strategy','start','account/a','--request-id','no-fence'],()=>{}),/strategy_start_fence_required/);
     await assert.rejects(run(['observation','automatic','account/a'],()=>{}),/unknown_observation_command/);
     const file=join(directory,'old.json');await writeFile(file,JSON.stringify({requestId:'old',portfolioId:'p',mode:'paper'}));
     await assert.rejects(run(['observation','start','--file',file],()=>{}),/native_strategy_only_account_binding_required/);

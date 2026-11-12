@@ -92,6 +92,7 @@ export function accountStrategyWorkbench(host: ResearchHost) {
   async function status(id: string) {
     const binding = await fact(id); const result = await downstreamRequest(binding.connection, 'strategy', 'GET');
     assertEnvelope(binding.connection, result, binding.view.currency);
+    if (typeof result.accountSourceId !== 'string' || typeof result.strategyRevision !== 'string' || !/^\d+$/.test(result.strategyRevision)) throw new Problem('strategy_fence_invalid');
     const native = object(result.strategy);
     if (typeof native.strategy_id !== 'string' || typeof native.state !== 'string' || typeof native.native_version !== 'string') throw new Problem('native_strategy_status_invalid');
     return result;
@@ -99,6 +100,12 @@ export function accountStrategyWorkbench(host: ResearchHost) {
   async function command(id: string, value: unknown) {
     let input; try { input = accountStrategyCommand(value); } catch (error) { throw new Problem((error as Error).message, 422); }
     const binding = await fact(id);
+    const snapshot = (await host.harness.snapshot(Application, context))!;
+    const old = snapshot.strategyCommands?.[`${accountKey(binding.connection, snapshot.accountControls)}:${input.requestId}`];
+    if (old) {
+      if (canonical(commandRecord(old).original) !== canonical(json(input))) throw new Problem('request_id_conflict', 409);
+      return old;
+    }
     const key = await host.harness.commit(async tx => {
       const app = await tx.doc(Application); const key = `${accountKey(binding.connection, app.accountControls)}:${input.requestId}`;
       const old = app.strategyCommands?.[key];

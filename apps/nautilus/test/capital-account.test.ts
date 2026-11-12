@@ -1,3 +1,4 @@
+import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import type { NativeOrderPreview } from '../../../packages/contracts/src/native-order-preview.ts';
 import { test } from 'node:test';
@@ -60,7 +61,7 @@ test('R/X/W/A conservation, transfer proof association and restart preserve phys
   const reader = { async account() { return proof; }, async ledger() { return ledger; } };
   let account = await createCapitalAccount(options, directory, '/unused', native, reader);
   const call = async (method: string, path: string, body: unknown = {}) => {
-    const value = (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+    const value = (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
     if (value.result) validateCapitalDocument('VIEW', value.result);
     for (const exit of value.exits as CapitalExitView[] ?? []) validateCapitalDocument('VIEW', exit);
     return value;
@@ -106,7 +107,7 @@ test('retained rejection and lost original zero-order ACK reconcile after expiry
   const directory = await mkdtemp(join(tmpdir(), 'qz-target-receipt-')), native = new NativeProtocol();
   const configured = { ...options, mode: 'paper' as const, startingBalance: '1000', paperFeeRate: '0.001' };
   let account = await createCapitalAccount(configured, directory, '/unused', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   try {
     await call('GET', '/account'); await account.close();
     // Persist only the original pre-upgrade receipt input. Recovery itself must
@@ -132,7 +133,7 @@ test('native confirmed zero-child failure settles a retained target before a new
   const directory = await mkdtemp(join(tmpdir(), 'qz-target-not-submitted-')), native = new NativeProtocol();
   const configured = { ...options, mode: 'paper' as const, startingBalance: '1000', paperFeeRate: '0.001' };
   let account = await createCapitalAccount(configured, directory, '/unused', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   try {
     await call('GET', '/account'); await account.close();
     const file = join(directory, 'capital-receipts.json'), saved = JSON.parse(await readFile(file, 'utf8'));
@@ -154,7 +155,7 @@ test('native confirmed zero-child failure settles a retained target before a new
 test('native strategy startup preserves the configured cash buffer and native equity without deriving weight targets', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-cash-buffer-')), native = new NativeProtocol();
   const account = await createCapitalAccount({ ...options, mode: 'paper', startingBalance: '1000', paperFeeRate: '0.001', cashBuffer: '100' }, directory, '/unused', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   try {
     const observed = await call('GET', '/account'); assert.equal(observed.equity, '1000');
     const body = { requestId: 'ordinary-start', action: 'START', clientId: options.clientId, accountId: options.accountId };
@@ -174,7 +175,7 @@ test('a favorable current bid permits a zero-loss preview and START using the sa
     instruments: [{ instrument_id: instrumentId, base_currency: 'HYPE', quote_currency: 'USDC', size_increment: '0.001', price_increment: '0.001',
       minimum_quantity: null, minimum_notional: '10', taker_fee_rate: '0.001', bid: '100', ask: '100.1', asof_ns: native.snapshot.observed_at_ns, bid_depth: [{ price: '100', quantity: '1000' }] }] });
   const account = await createCapitalAccount({ ...options, mode: 'paper', startingBalance: '1000', paperFeeRate: '0.001' }, directory, '/unused', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   try {
     const context = (await call('GET', '/capital-exits/planning-context')).context as CapitalExitPlanningContext;
     const instrument = native.snapshot.instruments[0]!;
@@ -198,7 +199,7 @@ test('a favorable current bid permits a zero-loss preview and START using the sa
 test('a natural release plan cannot be combined with active liquidation on the same account', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-capital-policy-')), native = new NativeProtocol();
   const account = await createCapitalAccount({ ...options, mode: 'paper', startingBalance: '1000', paperFeeRate: '0.001' }, directory, '/unused', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   const wrap = (requestId: string, value: unknown) => ({ requestId, clientId: options.clientId, accountId: options.accountId, ...(value && typeof value === 'object' && 'scope' in value ? { request: value } : { command: value }) });
   const preview = async (requestId: string, policy: CapitalExitPolicy) => {
     const context = (await call('GET', '/capital-exits/planning-context')).context as CapitalExitPlanningContext;
@@ -308,7 +309,7 @@ test('native strategy control persists uncertain original commands without repla
   const native = new StrategyProtocol();
   const reader = { account: async () => accountProof(), ledger: async () => [] };
   let account = await createCapitalAccount(options, directory, '/unused', native, reader);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   const body = { requestId: 'start-once', action: 'START', clientId: options.clientId, accountId: options.accountId };
   try {
     assert.equal((await call('POST', '/strategy/commands', body)).status, 'UNCERTAIN'); assert.equal(native.starts, 1);

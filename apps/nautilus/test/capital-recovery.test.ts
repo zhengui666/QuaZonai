@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -75,7 +77,7 @@ async function openAccount(native: ControlledProtocol, options = paperOptions, r
   const account = await createCapitalAccount(options, directory, '/unused-controlled-protocol', native, reader);
   let serial = 0;
   const call = async (method: string, path: string, body: unknown = {}) => {
-    const value = (await account.handle(path, request(method), async () => body)).value as Json;
+    const value = (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Json;
     if (path.startsWith('/capital-exits') && value.result != null) validateCapitalDocument('VIEW', value.result);
     if (value.exit != null) validateCapitalDocument('VIEW', value.exit);
     for (const exit of value.exits as CapitalExitView[] ?? []) validateCapitalDocument('VIEW', exit);
@@ -338,7 +340,7 @@ test('explicit STOP crosses receipt disk failure without claiming a durable resu
   const directory = await mkdtemp(join(tmpdir(), 'qz-stop-disk-failure-'));
   const native = new ControlledProtocol();
   const account = await createCapitalAccount(paperOptions, directory, '/unused-controlled-protocol', native);
-  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Json;
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Json;
   const body = (requestId: string, action: string) => ({ requestId, action, clientId: paperOptions.clientId, accountId: paperOptions.accountId });
   try {
     assert.equal((await call('POST', '/strategy/commands', body('before-failure', 'START'))).status, 'COMPLETED');
@@ -370,4 +372,46 @@ test('explicit STOP crosses receipt disk failure without claiming a durable resu
     await account.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('worker durable CAS rejects a delayed older START after STOP, across restart and replay', async () => {
+  const { createServer } = await import('node:http');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-strategy-cas-'));
+  const native = new ControlledProtocol();
+  let account = await createCapitalAccount(paperOptions, directory, '/unused-controlled-protocol', native);
+  let release!: () => void, received!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { received = resolve; });
+  let hold = true;
+  const server = createServer(async (request_, response) => {
+    let bytes = ''; for await (const chunk of request_) bytes += chunk;
+    const body = bytes ? JSON.parse(bytes) as Json : null;
+    if (hold && body?.requestId === 'delayed-start') { hold = false; received(); await held; }
+    try { const result = await account.handle(request_.url!, request_, async () => body); response.writeHead(result.status, { 'content-type': 'application/json' }); response.end(JSON.stringify(result.value)); }
+    catch (error) { response.writeHead(409, { 'content-type': 'application/json' }); response.end(JSON.stringify({error:String(error)})); }
+  });
+  server.listen(0,'127.0.0.1'); await once(server,'listening');
+  const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+  const get = async (path: string) => (await (await fetch(base+path,{headers:{'x-qz-client-id':paperOptions.clientId}})).json()) as Json;
+  const post = async (body: Json) => (await (await fetch(base+'/strategy/commands',{method:'POST',headers:{'content-type':'application/json','x-qz-client-id':paperOptions.clientId},body:JSON.stringify(body)})).json()) as Json;
+  const command = (requestId:string,action:string) => ({requestId,action,clientId:paperOptions.clientId,accountId:paperOptions.accountId});
+  try {
+    const first = await get('/strategy/fence');
+    const original = {...command('delayed-start','START'),expectedAccountSourceId:first.accountSourceId,expectedStrategyRevision:first.strategyRevision};
+    const pending = post(original); await entered;
+    const stopped = await post(command('later-stop','STOP')); assert.equal(stopped.status,'COMPLETED');
+    release(); const stale = await pending;
+    assert.equal(stale.status,'REJECTED'); assert.equal(stale.error,'strategy_start_fence_changed');
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_START').length,0);
+    await account.close(); account = await createCapitalAccount(paperOptions,directory,'/unused-controlled-protocol',native);
+    assert.deepEqual(await post(original),stale);
+    assert.deepEqual(await post(command('later-stop','STOP')),stopped);
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_STOP').length,1);
+    const current=await get('/strategy/fence');assert.equal(current.accountSourceId,first.accountSourceId);assert.notEqual(current.strategyRevision,first.strategyRevision);
+    const newStart={...command('fresh-start','START'),expectedAccountSourceId:current.accountSourceId,expectedStrategyRevision:current.strategyRevision};
+    assert.equal((await post(newStart)).status,'COMPLETED');assert.equal((await post(newStart)).status,'COMPLETED');
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_START').length,1);
+    const replaced=await post({...command('other-worker','START'),expectedAccountSourceId:'wrong-source',expectedStrategyRevision:(await get('/strategy/fence')).strategyRevision});
+    assert.equal(replaced.status,'REJECTED');
+  } finally {release();server.close();await once(server,'close');await account.close();await rm(directory,{recursive:true,force:true});}
 });
