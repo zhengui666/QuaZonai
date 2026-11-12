@@ -28,6 +28,13 @@ fn require_completed_training(outcome: Option<&str>) -> Result<()> {
     );
     Ok(())
 }
+fn test_status(outcome: Option<&str>) -> (&'static str, Option<String>) {
+    match outcome {
+        Some("completed") => ("COMPLETED", None),
+        Some("stopped") => ("TEST_STOPPED", Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into())),
+        _ => ("TEST_FAILED", Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into())),
+    }
+}
 fn metric(
     result: &contracts::native_strategy::NativeStrategyBacktestResultV1,
     objective: &NativeWalkForwardObjectiveV1,
@@ -208,7 +215,10 @@ pub fn run(
         let (test_result, status, reason) = if let Some((selected, _)) = winner {
             let test_request = window(&request.candidates[selected], test_start, test_end)?;
             match crate::native_strategy::run(root, test_request) {
-                Ok(result) => (Some(result), "COMPLETED", None),
+                Ok(result) => {
+                    let (status, reason) = test_status(result.canonical_result["run"]["outcome"].as_str());
+                    (Some(result), status, reason)
+                },
                 Err(error) => (None, "TEST_FAILED", Some(format!("{error:#}"))),
             }
         } else {
@@ -245,6 +255,15 @@ pub fn run(
 #[cfg(test)]
 mod equity_objective_tests {
     use super::*;
+    #[test]
+    fn only_completed_test_outcomes_are_complete() {
+        assert_eq!(test_status(Some("completed")), ("COMPLETED", None));
+        assert_eq!(test_status(Some("stopped")), ("TEST_STOPPED", Some("WALK_FORWARD_TEST_WINDOW_STOPPED".into())));
+        for outcome in [None, Some("unknown"), Some("failed")] {
+            assert_eq!(test_status(outcome), ("TEST_FAILED", Some("WALK_FORWARD_TEST_WINDOW_OUTCOME_INVALID".into())));
+        }
+    }
+
     #[test]
     fn stopped_or_missing_training_outcomes_are_not_selection_candidates() {
         assert!(require_completed_training(Some("completed")).is_ok());

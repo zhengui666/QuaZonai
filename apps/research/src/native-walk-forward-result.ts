@@ -53,12 +53,14 @@ export function nativeWalkForwardResult(value: JsonValue, request: JsonObject): 
     }
     const selected = fold.selected_candidate_index;
     if (selected !== null && (typeof selected !== 'number' || !Number.isInteger(selected) || selected < 0 || selected >= candidates.length)) throw new Error('walk_forward_selected_candidate_invalid');
-    if (fold.status === 'COMPLETED') {
-      if (typeof selected !== 'number' || fold.reason !== null || fold.test_result === null) throw new Error('walk_forward_test_evidence_missing');
+    if (fold.status === 'COMPLETED' || fold.status === 'TEST_STOPPED') {
+      if (typeof selected !== 'number' || (fold.status === 'COMPLETED' ? fold.reason !== null : fold.reason !== 'WALK_FORWARD_TEST_WINDOW_STOPPED') || fold.test_result === null) throw new Error('walk_forward_test_evidence_missing');
       const trial = object(fold.trials[selected], 'walk_forward_selected_trial');
       if (typeof trial.metric_value !== 'number') throw new Error('walk_forward_selected_metric_missing');
       const native = nativeStrategyResult(fold.test_result!, window(object(candidates[selected], 'walk_forward_candidate'), fold.test_start_ns, fold.test_end_ns));
       if (native.native_version !== result.native_version) throw new Error('walk_forward_version_mismatch');
+      const outcome = object(object(native.canonical_result, 'walk_forward_canonical').run, 'walk_forward_run').outcome;
+      if (outcome !== (fold.status === 'COMPLETED' ? 'completed' : 'stopped')) throw new Error('walk_forward_test_outcome_mismatch');
     } else if (!['TEST_FAILED', 'NOT_EVALUATED'].includes(String(fold.status)) || fold.test_result !== null || typeof fold.reason !== 'string') throw new Error('walk_forward_status_invalid');
   }
   return result;

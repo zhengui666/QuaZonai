@@ -36,7 +36,7 @@ function wire(walkRequest: JsonObject = request, outcome = 'completed', selected
   const native = (start: string, end: string, candidate: JsonObject = source, runOutcome = outcome) => ({ schema_version: 1, native_version: '0.69.0', request: { ...candidate, available_start_ns: start, available_end_ns: end },
     instrument_definition: instrumentBasis(candidate), equity_performance: equityWire((walkRequest.objective as JsonObject).metric_source === 'EQUITY_PERFORMANCE'), canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: runOutcome }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: { returns: { 'Sharpe Ratio': '3ff0000000000000' } }, components: {} }, data_rows_by_type: { QuoteTick: '2' }, notes: [] });
   return { schema_version: 1, request: walkRequest, native_version: '0.69.0', splitter_version: 'solow-cv 0.7.3 TimeSeriesSplit', performance_scope: walkForwardScope, notes: ['Independent cold-start windows; not a comprehensive overfitting score.'], folds: [{ index: 0, train_start_ns: '1790000000000000001', train_end_ns: '1790000000000000002', test_start_ns: '1790000000000000003', test_end_ns: '1790000000000000004',
-    trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: selected === 1 ? candidate_index + 1 : 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate, trainOutcome) })), selected_candidate_index: selected, test_result: native('1790000000000000003', '1790000000000000004', (walkRequest.candidates as JsonObject[])[selected]), status: 'COMPLETED', reason: null }] };
+    trials: (walkRequest.candidates as JsonObject[]).map((candidate, candidate_index) => ({ candidate_index, metric_value: selected === 1 ? candidate_index + 1 : 1, error: null, result: native('1790000000000000001', '1790000000000000002', candidate, trainOutcome) })), selected_candidate_index: selected, test_result: native('1790000000000000003', '1790000000000000004', (walkRequest.candidates as JsonObject[])[selected]), status: outcome === 'stopped' ? 'TEST_STOPPED' : 'COMPLETED', reason: outcome === 'stopped' ? 'WALK_FORWARD_TEST_WINDOW_STOPPED' : null }] };
 }
 
 test('walk-forward evidence binds original strategies, chronology, availability and untouched native statistics', () => {
@@ -50,6 +50,19 @@ test('walk-forward evidence binds original strategies, chronology, availability 
     (r: any) => r.folds[0].test_result.instrument_definition.mode = 'STATIC_SCENARIO', (r: any) => r.performance_scope = 'FULL_SELECTION_INCLUDING_PRE_DECISION_CASH']) {
     const changed = structuredClone(wire()); mutate(changed); assert.throws(() => nativeWalkForwardResult(changed, request));
   }
+});
+
+test('stopped native test windows retain the original evidence but cannot claim completed OOS', () => {
+  const stopped = wire(request, 'stopped', 0, 'completed');
+  const original = structuredClone(stopped);
+  assert.deepEqual(nativeWalkForwardResult(stopped, request), original);
+  assert.equal(stopped.folds[0]!.status, 'TEST_STOPPED');
+  const mislabeled = structuredClone(stopped);
+  Object.assign(mislabeled.folds[0]!, { status: 'COMPLETED', reason: null });
+  assert.throws(() => nativeWalkForwardResult(mislabeled, request), /walk_forward_test_outcome_mismatch/);
+  const missing = structuredClone(wire());
+  delete (missing.folds[0]!.test_result!.canonical_result.run as any).outcome;
+  assert.throws(() => nativeWalkForwardResult(missing, request), /native_strategy_report_invalid/);
 });
 
 for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'changed', 'repeat', 'rated', 'insufficient', 'failed-cost', 'same-cost', 'changed-method', 'stopped', 'wf-stopped', 'full-chain', 'winner-covered', 'winner-uncovered', 'train-stopped', 'scenario', 'equity'] as const) test(`native walk-forward ${behavior} uses original Durable receipt and actual evidence Tasks`, { timeout: 20_000 }, async () => {
@@ -95,7 +108,7 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
         fauxAssistantMessage(fauxToolCall('native_strategy_walk_forward', { strategies, split: request.split, objective }), { stopReason: 'toolUse' }),
         ...(withSensitivity ? [fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies, costs, ...(behavior === 'winner-covered' ? { strategies } : {}) }), { stopReason: 'toolUse' })] : []),
         fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
-        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes('PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
+        (input) => { const prompt = JSON.stringify(input); assert.ok(prompt.includes(behavior === 'wf-stopped' ? 'WALK_FORWARD_NO_COMPLETED_TESTS' : 'PARTIAL_WALK_FORWARD_EVIDENCE')); assert.ok(prompt.includes('3ff0000000000000')); return fauxAssistantMessage(JSON.stringify({ evidenceSufficient: behavior !== 'insufficient', dataJudgment: { stars: 2, rationale: 'Protocol-only test model judgment', risks: ['Limited scope'], uncertainties: ['Cross conversation history'] }, stars: 4, rationale: 'Chronological tests exist, other checks remain missing.', risks: ['Search selection'], uncertainties: ['Costs and neighbourhood untested'] })); },
         fauxAssistantMessage('Walk-forward done; comprehensive rating remains unavailable.'),
       ]);
       if (receipt) {
@@ -114,6 +127,13 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       assert.equal(task.state.outcome.result.ratingStatus, behavior === 'scenario' ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : behavior === 'rated' || behavior === 'full-chain' || behavior === 'winner-covered' || behavior === 'equity' ? 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE');
       assert.equal((task.state.outcome.result.evidence as any).dataValidation.taskId, validation!.taskIds.at(-1));
       const evidence = task.state.outcome.result.evidence as any;
+      if (behavior === 'wf-stopped') {
+        assert.equal(evidence.dataValidation.completedTests, 0);
+        assert.equal(evidence.dataValidation.status, 'WALK_FORWARD_NO_COMPLETED_TESTS');
+        assert.equal(evidence.dataValidation.folds[0].status, 'TEST_STOPPED');
+        assert.equal(evidence.dataValidation.folds[0].nativeOutcome, 'stopped');
+        assert.equal(evidence.dataValidation.folds[0].nativeTestStatistics.returns['Sharpe Ratio'], '3ff0000000000000');
+      }
       assert.equal(evidence.trialHistory.scope, 'THIS_CONVERSATION_ONLY'); assert.equal(evidence.trialHistory.crossConversationCoverage, 'NOT_CHECKED');
       assert.equal(evidence.trialHistory.runCount, behavior === 'repeat' ? 2 : 1);
       if (behavior === 'repeat') { assert.deepEqual(evidence.trialHistory.runs.map((run: any) => run.status), ['failed', 'completed']); assert.equal(evidence.trialHistory.runs[0].error, 'recorded_first_attempt_failure'); }
