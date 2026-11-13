@@ -1,41 +1,10 @@
 //! Validate downstream observation structure, not issuer authority or portfolio eligibility.
-use crate::{control::text, DomainError};
-use contracts::forward::DownstreamWeightsSubmitV1;
+use crate::{DomainError, control::text};
 use std::collections::BTreeSet;
 
 pub mod evaluation;
 mod window;
-pub use window::{window, ForwardWindow, ForwardWindowSource};
-
-pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
-    if let Some(root) = &request.paper_initialization {
-        crate::portfolio::paper_account_scope(&root.trader_id, &root.account_id)?;
-        if request.environment != contracts::forward::ForwardEnvironmentV1::Paper {
-            return Err(DomainError::Invalid("paper_initialization_environment"));
-        }
-    }
-    text(&request.external_message_id, 1, 200, false)?;
-    if request.asof_ns > request.available_ns
-        || request.available_ns >= request.valid_until_ns
-        || !contracts::research_currency::supported(&request.base_currency)
-        || request.weights.is_empty()
-    {
-        return Err(DomainError::Invalid("forward_weights"));
-    }
-    let mut ids = BTreeSet::new();
-    let mut total = request.cash_weight.as_decimal().clone();
-    for weight in &request.weights {
-        text(&weight.instrument_id, 1, 200, false)?;
-        if !ids.insert(&weight.instrument_id) || weight.currency != request.base_currency {
-            return Err(DomainError::Invalid("forward_weights"));
-        }
-        total += weight.weight.as_decimal();
-    }
-    if total != bigdecimal::BigDecimal::from(1) {
-        return Err(DomainError::Invalid("forward_weights_total"));
-    }
-    Ok(())
-}
+pub use window::{ForwardWindow, ForwardWindowSource, window};
 
 /// Structural observations only; a complete report is not a qualification.
 pub fn message(request: &contracts::forward::ForwardMessageSubmitV1) -> Result<(), DomainError> {
@@ -101,7 +70,7 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use contracts::{forward::*, science::NativeReturnV1, DbCounter, Id, SchemaV1};
+    use contracts::{DbCounter, Id, SchemaV1, forward::*, science::NativeReturnV1};
     #[test]
     fn report_requires_bounded_ordered_observations_and_explicit_missing_data() {
         let start = chrono::DateTime::from_timestamp(1800000000, 0).unwrap();
