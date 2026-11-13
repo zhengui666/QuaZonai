@@ -362,7 +362,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
+                json!({"strategy_lifecycle":self.strategy_lifecycle(),"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
             ),
         );
         Ok(())
@@ -983,6 +983,17 @@ impl AccountController {
             }
             _ => bail!("account_native_operation_unsupported"),
         }
+    }
+    // Reports installed dispatch paths only; never invokes or certifies owner code.
+    fn strategy_lifecycle(&self) -> Value {
+        let (kind, supported) = match &self.config.native_strategy.strategy {
+            NativeCompiledStrategyV1::EmaCross { .. } => ("EMA_CROSS", true),
+            NativeCompiledStrategyV1::Registered { .. } => ("REGISTERED", self.user_registration.is_some()),
+            _ => ("UNSUPPORTED", false),
+        };
+        json!({"configuredKind":kind,"supported":supported,
+            "reason":if supported {None}else{Some("account_native_strategy_registration_unavailable")},
+            "scope":"INSTALLED_DISPATCH_ONLY","strategyVerified":false})
     }
     fn strategy_status(&self) -> Result<Value> {
         let Some(id) = self.signal_strategy_id else {

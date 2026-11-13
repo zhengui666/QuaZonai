@@ -485,9 +485,9 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
           capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_original_control_evidence_unavailable', policies: [], actions: [] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
           nativeBrackets: { supported: false, reason: options.mode === 'paper' ? 'account_native_paper_bracket_recovery_unverified' : 'account_native_live_brackets_not_supported', defaultEnabled: false, scope: 'NEW_LONG_POSITION', cancellationPath: '/targets/<id>/cancel-protection', atomicOco: false },
-          nativeStrategy: { version: 1, supported: options.nativeStrategy.strategy.kind === 'EMA_CROSS' && (!failure || failure === 'account_runtime_not_started'),
-            configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
-            reason: options.nativeStrategy.strategy.kind === 'REGISTERED' ? 'account_registered_runner_support_unverified' : options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure === 'account_runtime_not_started' ? null : failure, defaultStart: 'NOT_STARTED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
+          nativeStrategy: { version: 1, configuredKind: options.nativeStrategy.strategy.kind,
+            ...(runtime.strategyLifecycleCapability?.()??{supported:null,reason:'account_native_strategy_capability_unobserved',scope:null,strategyVerified:null,nativeSessionId:null}),
+            defaultStart:'NOT_STARTED',stopSemantics:'UPSTREAM_STRATEGY_CONFIG' },
           automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
         if (method === 'GET' && path === '/strategy/config') return { status: 200, value: strategyConfiguration() };
         const verifyConfig = /^\/strategy\/config\/commands\/([^/]+)\/verify$/.exec(path);

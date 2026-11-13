@@ -26,6 +26,7 @@ else if(v.operation==='SHUTDOWN'){send({stopping:true});setTimeout(()=>process.e
     await assert.rejects(runtime.request('SNAPSHOT'), /account_runtime_not_started/);
     assert.equal(await readFile(counter, 'utf8'), '1', 'read after failure cannot restart the account');
     await runtime.start();
+    assert.equal(runtime.strategyLifecycleCapability().supported,null, 'legacy BOOT must not infer support from selected EMA config');
     const snapshot = await runtime.request('SNAPSHOT');
     assert.equal(snapshot.generation, 2); assert.equal(snapshot.proxy, process.env.HTTPS_PROXY);
     assert.equal(await readFile(counter, 'utf8'), '2');
@@ -131,4 +132,37 @@ else reply({operation:v.operation,expected_native_session_id:v.expected_native_s
     assert.equal(await readFile(counter,'utf8'),'2');
     assert.equal((await runtime.bindPaperCancellationSession('session-2').request('ORDER_OBSERVE',{})).expected_native_session_id,'session-2');
   } finally {await runtime.close();await rm(directory,{recursive:true,force:true});}
+});
+
+ test('strategy lifecycle is observed from current BOOT only, not config or cancellation declaration',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-lifecycle-'));
+ const script=join(directory,'protocol.mjs'),binary=join(directory,'runner');
+ const facts={configuredKind:'REGISTERED',supported:true,reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false};
+ await writeFile(script,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);if(v.operation==='EXIT')process.exit(0);console.log(JSON.stringify({requestId:v.requestId,result:v.operation==='BOOT'?{native_session_id:'original',strategy_lifecycle:${JSON.stringify(facts)}}:{}}));if(v.operation==='SHUTDOWN')process.exit(0);});`);
+ await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+ const runtime=new AccountRuntime(binary,{id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:{}}},instruments:[]},'source',directory);
+ try{
+ assert.equal(runtime.strategyLifecycleCapability().supported,null);
+ await runtime.start();assert.deepEqual(runtime.strategyLifecycleCapability(),{...facts,nativeSessionId:'original'});
+ assert.equal(runtime.paperCancellationCapability().supported,false);
+ await assert.rejects(runtime.request('EXIT'),/outcome_uncertain/);
+ assert.equal(runtime.strategyLifecycleCapability().supported,null);
+ }finally{await runtime.close();await rm(directory,{recursive:true,force:true});}
+ });
+
+test('mismatched, unbound or certified lifecycle claims remain unknown',async()=>{
+ const facts={configuredKind:'REGISTERED',supported:true,reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false};
+ for(const boot of [
+  {native_session_id:'original',strategy_lifecycle:{...facts,configuredKind:'EMA_CROSS'}},
+  {strategy_lifecycle:facts},
+  {native_session_id:'original',strategy_lifecycle:{...facts,strategyVerified:true}},
+ ]){
+ const directory=await mkdtemp(join(tmpdir(),'qz-lifecycle-invalid-'));
+ const script=join(directory,'protocol.mjs'),binary=join(directory,'runner');
+ await writeFile(script,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);console.log(JSON.stringify({requestId:v.requestId,result:v.operation==='BOOT'?${JSON.stringify(boot)}:{}}));if(v.operation==='SHUTDOWN')process.exit(0);});`);
+ await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+ const runtime=new AccountRuntime(binary,{id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:{}}},instruments:[]},'source',directory);
+ try{await runtime.start();assert.equal(runtime.strategyLifecycleCapability().supported,null);assert.equal(runtime.strategyLifecycleCapability().strategyVerified,null);}
+ finally{await runtime.close();await rm(directory,{recursive:true,force:true});}
+ }
 });

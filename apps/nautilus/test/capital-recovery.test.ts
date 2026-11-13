@@ -151,7 +151,7 @@ test('strategy admission rejection remains distinct from lost transport and is n
   } finally { await account.close(); }
 });
 
-test('native account capabilities do not advertise replay-only order-book strategy', async () => {
+test('unobserved native lifecycle remains unknown without advertising replay-only strategy', async () => {
   const native = new ControlledProtocol();
   const account = await openAccount(native, { ...paperOptions, nativeStrategy: { instrument_id: instrumentId, strategy: {
     kind: 'ORDER_BOOK_IMBALANCE', max_trade_size: '1', trigger_min_size: '1', trigger_imbalance_ratio: '0.2',
@@ -159,9 +159,9 @@ test('native account capabilities do not advertise replay-only order-book strate
   } } });
   try {
     const capabilities = await account.call('GET', '/capabilities');
-    assert.equal((capabilities.nativeStrategy as Json).supported, false);
-    assert.deepEqual((capabilities.nativeStrategy as Json).supportedKinds, ['EMA_CROSS']);
-    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance');
+    assert.equal((capabilities.nativeStrategy as Json).supported, null);
+    assert.equal((capabilities.nativeStrategy as Json).strategyVerified, null);
+    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_capability_unobserved');
   } finally { await account.close(); }
 });
 
@@ -296,3 +296,14 @@ test('unpersisted legacy cancellation refusal stays uncertain without changing i
   assert.ok(native.requests.every(row=>row.operation==='SNAPSHOT'), 'Only existing read refreshes are allowed; no CONTROL, cancellation or strategy command.');const after=JSON.parse(await readFile(path,'utf8'));assert.equal(after.epoch,'13');assert.deepEqual(after.exits,disk.exits);
  }finally{await account.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
 });
+
+ test('account capabilities preserve actual registered BOOT dispatch facts without certifying strategy',async()=>{
+ const native=new ControlledProtocol();
+ const facts={supported:true,configuredKind:'REGISTERED',reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false,nativeSessionId:'original-session'};
+ Object.assign(native,{strategyLifecycleCapability:()=>structuredClone(facts)});
+ const account=await openAccount(native,{...paperOptions,nativeStrategy:{instrument_id:instrumentId,strategy:{kind:'REGISTERED',name:'owner',config:{}}}});
+ try{const value=(await account.call('GET','/capabilities')).nativeStrategy as Json;
+ for(const [key,original]of Object.entries(facts))assert.equal(value[key],original);
+ assert.equal(native.requests.filter(r=>r.operation==='STRATEGY_START'||r.operation==='CONTROL').length,0);
+ }finally{await account.close();}
+ });
