@@ -18,5 +18,5 @@ export default defineConfig({
       if (id.includes('/node_modules/')) return 'vendor';
     } } },
   },
-  test: { include: ['src/*.test.ts'], environment: 'node' },
+  test: { include: ['src/*.test.ts'], environment: 'node', server: { deps: { inline: ['@ant-design/x-markdown'] } } },
 });

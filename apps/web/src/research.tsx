@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Dropdown, Form, Input, Select, Table, Tabs } from 'antd';
+import Bubble from '@ant-design/x/es/bubble';
+import XMarkdown, { type ComponentProps } from '@ant-design/x-markdown/es';
+import { NativeStrategyResultView } from './research-results';
+export { NativeStrategyResultView } from './research-results';
+import './research-experience.css';
+import { Alert, Button, Dropdown, Form, Input, Rate, Select, Table, Tabs } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, CaretRightIcon, DatabaseIcon, DotsThreeIcon, FlaskIcon, PlusIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, DatabaseIcon, DotsThreeIcon, FlaskIcon, PlusIcon } from '@phosphor-icons/react';
 import type { ResearchListItem } from '../../../packages/contracts/src/lists.ts';
 import type { DatasetView, ModelCatalog, ModelRef, ResearchDetail, ResearchReceipt, ServiceTier, SettingsView, TaskView } from '../../../packages/contracts/src/index.ts';
 import { ApiError, api } from './api';
@@ -28,8 +33,8 @@ export function nativeResearchInput(values: Record<string, string>) {
 const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
 export default function Research({ route }: { route: Route }) {
-  if (route.creating) return <NewStudy route={route} />;
-  return route.id ? <StudyDocument route={route} back={listPathFor(route)} /> : <ResearchWorkspace route={route} />;
+  if (route.creating) return <NewStudy key={route.params.get('dataset') ?? 'new'} route={route} />;
+  return route.id ? <StudyDocument key={route.id} route={route} back={listPathFor(route)} /> : <ResearchWorkspace route={route} />;
 }
 function ResearchWorkspace({ route }: { route: Route }) {
   const list = useListWorkspace<ResearchListItem>(route, '/research');
@@ -43,18 +48,24 @@ function ResearchWorkspace({ route }: { route: Route }) {
     {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<ResearchListItem> {...list.tableProps} rowKey="id" size="small" scroll={{ x: 1120 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的研究' : '尚无研究'} /> }} columns={[
       { title: '研究名称', key: 'title', width: 240, ellipsis: { showTitle: false }, ...list.sortColumn('title'), render: (_value, row) => <a className="list-record-name" {...list.linkProps(row.id)}>{shortTitle(row.title, undefined, '未命名研究')}</a> },
       { title: '数据集', key: 'datasetName', width: 190, ellipsis: { showTitle: false }, ...list.sortColumn('datasetName'), render: (_value, row) => <span className="list-cell-text">{row.datasetName ? shortTitle(row.datasetName) : '未记录'}</span> },
-      { title: '执行状态', key: 'status', width: 130, render: (_value, row) => <Status plain value={row.status} label={row.status === 'STARTED' ? '原生执行中' : undefined} /> },
+      { title: '执行状态', key: 'status', width: 130, render: (_value, row) => <Status plain value={row.status} label={row.status === 'UNKNOWN' ? '执行结果未确认' : row.status === 'STARTED' ? '原生执行中' : undefined} /> },
     ]} />}
   </section>;
 }
 export function hasActiveResearchExecution(detail: Pick<ResearchDetail, 'tasks' | 'submission'>): boolean {
   return detail.tasks.some(task => task.status !== 'terminal') || ['queued', 'placed'].includes(detail.submission?.status ?? '');
 }
+export function ResearchUncertainty({ detail }: { detail: Pick<ResearchDetail, 'executionUncertain' | 'executionUncertainty'> }) {
+  if (!detail.executionUncertain) return null;
+  return <Alert className="research-uncertainty" type="warning" showIcon title="执行结果尚未确认" description={detail.executionUncertainty?.reason === 'nautilus_cancellation_unknown'
+    ? '停止请求的结果尚未确认。保留原任务，等待原始执行证据，不自动重发。此前结果不代表本次已结束。'
+    : '正在等待原始执行证据，不会自动重复运行。此前已完成的结果仍被保留，但不能代表本次执行已成功或已停止。'} />;
+}
 function StudyDocument({ route, back }: { route: Route; back: string }) {
   const cache = useQueryClient(); const query = useResearchDetail(route.id!);
   const [stopError, setStopError] = useState<unknown>(); const [stopping, setStopping] = useState(false);
   const confirm = useConfirm(); const detail = query.data;
-  const tab = route.params.get('tab') ?? 'evidence';
+  const tab = route.params.get('tab') ?? 'conversation';
   const selectTab = (value: string) => { const params = new URLSearchParams(route.params); params.set('tab', value); navigate(`/research/${route.id}?${params}`, true); };
   if (!detail) return <article className="study-document"><header className="study-heading"><h1>研究</h1></header>{query.isPending ? <Loading /> : <ErrorNotice error={query.error ?? new Error('未找到研究')} retry={() => { void query.refetch(); }} />}<a className="text-link" href={href(back)}>返回研究列表</a></article>;
   const active = hasActiveResearchExecution(detail);
@@ -62,75 +73,158 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
   const stoppedLabel = detail.status === 'STOPPED' && active ? '停止中' : detail.status === 'STARTED' ? '原生执行中' : undefined;
   const originalSubmission = detail.originalSubmission ?? detail.submission;
   const nativeSettings = datasetResearchSettings(detail.input.data);
-  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
+  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><Status value={detail.executionUncertain ? 'UNKNOWN' : detail.status} label={detail.executionUncertain ? '执行结果未确认' : stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看运行详情', onClick: () => selectTab('inputs') }, ...(active ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
       <RecordTitle text={detail.title} fallback="研究" />
       <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span></div></header>
-      <ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
-      <ResearchConversation messages={detail.messages} />
-      <ResearchAssessments assessments={detail.assessments} />
-      {detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}
+      <ResearchUncertainty detail={detail} /><ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
       <Tabs className="document-tabs" activeKey={tab} onChange={value => selectTab(value)} items={[
-        { key: 'evidence', label: '证据', children: <div className="evidence-content">
+        { key: 'conversation', label: '对话', children: <div className="research-chat"><ResearchConversation key={detail.id} messages={detail.messages} researchId={detail.id} nextCursor={detail.messagesNextCursor} />{active && !detail.executionUncertain && <Alert type="info" title="研究正在进行" description="可以离开页面，研究状态仍会保留。" />}{detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}</div> },
+        { key: 'evidence', label: '结果与评价', children: <div className="evidence-content"><ResearchAssessments assessments={detail.assessments} researchId={detail.id} />
           {nativeSettings.modality === 'TRADE_TICK' && <section className="result-section"><h3>逐笔输入与证据范围</h3><NativeInputFacts settings={nativeSettings} preparation={detail.dataset?.preparation} coverage={detail.final?.inputCoverage ?? detail.dataset?.inputCoverage} /></section>}
-          {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? 'Nautilus 官方策略历史回测' : '执行结果'}</h3></div>
-            {detail.final.nativeStrategyResult && <NativeStrategyResultView value={detail.final.nativeStrategyResult} />}
+          {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? detail.executionUncertain ? '此前完成的回测结果' : 'Nautilus 官方策略历史回测' : '执行结果'}</h3></div>
+            {detail.final.nativeStrategyResult && <NativeStrategyResultView key={String(detail.final.nativeStrategyResult.resultTaskId ?? detail.submission?.id)} value={detail.final.nativeStrategyResult} researchId={detail.id} />}
             {detail.final.status !== 'COMPUTED' && <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? '原生执行中' : detail.final.status === 'FAILED' ? '原生执行失败' : undefined} />}
             <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={`研究 #${detail.id}${detail.final.trialId !== null ? ` / 试验 #${detail.final.trialId}` : ''}`} title="原生执行失败" />
             {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>研究结论</summary><p>{detail.final.reason}</p></details>}
           </section>}
         </div> },
         { key: 'literature', label: '文献', children: <Literature value={detail.literature} publicQueries={detail.input.publicLiteratureQueries} /> },
-        { key: 'inputs', label: '输入与执行', children: <div className="input-content"><section><h3>研究输入</h3><TextDisclosure label="原始研究目标" value={detail.input.goal} collapsed /><Facts items={[["数据集", detail.dataset?.name ?? detail.datasetId ?? '未记录'], ["来源", detail.dataset?.source ?? '未记录'], ["模型", detail.model], ["推理强度", detail.input.thinkingLevel ?? '未记录'], ["推理速度", detail.input.serviceTier === 'priority' ? 'Fast' : detail.input.serviceTier === 'default' ? '标准' : '默认速度'], ["覆盖区间", detail.dataset ? <><Timestamp value={detail.dataset.start} /><span> 至 </span><Timestamp value={detail.dataset.end} /></> : '未记录'], ["创建时间", <Timestamp value={detail.createdAt} />]]} /></section><section><h3>原始身份</h3><Facts items={[["研究", <><code>{detail.id}</code><Copy value={String(detail.id)} label="复制研究身份" /></>], ["请求", originalSubmission?.requestId ? <><code>{originalSubmission.requestId}</code><Copy value={originalSubmission.requestId} label="复制请求身份" /></> : '未记录'], ["提交", originalSubmission ? <code>{originalSubmission.id}</code> : '未记录'], ["提交状态", originalSubmission ? <Status value={originalSubmission.status} /> : '未记录'], ["终态原因", originalSubmission?.reason ? <Reason value={originalSubmission.reason} /> : '未提供']]} /></section>{detail.submission && detail.submission.id !== originalSubmission?.id && <section><h3>当前执行</h3><Facts items={[["请求", <code>{detail.submission.requestId ?? '未记录'}</code>], ["提交", <code>{detail.submission.id}</code>], ["提交状态", <Status value={detail.submission.status} />], ["终态原因", detail.submission.reason ? <Reason value={detail.submission.reason} /> : '未提供']]} /></section>}
+        { key: 'inputs', label: '运行详情', children: <div className="input-content"><section><h3>研究输入</h3><TextDisclosure label="原始研究目标" value={detail.input.goal} collapsed /><Facts items={[["数据集", detail.dataset?.name ?? detail.datasetId ?? '未记录'], ["来源", detail.dataset?.source ?? '未记录'], ["模型", detail.model], ["推理强度", detail.input.thinkingLevel ?? '未记录'], ["推理速度", detail.input.serviceTier === 'priority' ? 'Fast' : detail.input.serviceTier === 'default' ? '标准' : '默认速度'], ["覆盖区间", detail.dataset ? <><Timestamp value={detail.dataset.start} /><span> 至 </span><Timestamp value={detail.dataset.end} /></> : '未记录'], ["创建时间", <Timestamp value={detail.createdAt} />]]} /></section><section><h3>原始身份</h3><Facts items={[["研究", <><code>{detail.id}</code><Copy value={String(detail.id)} label="复制研究身份" /></>], ["请求", originalSubmission?.requestId ? <><code>{originalSubmission.requestId}</code><Copy value={originalSubmission.requestId} label="复制请求身份" /></> : '未记录'], ["提交", originalSubmission ? <code>{originalSubmission.id}</code> : '未记录'], ["提交状态", originalSubmission ? <Status value={originalSubmission.status} /> : '未记录'], ["终态原因", originalSubmission?.reason ? <Reason value={originalSubmission.reason} /> : '未提供']]} /></section>{detail.submission && detail.submission.id !== originalSubmission?.id && <section><h3>当前执行</h3><Facts items={[["请求", <code>{detail.submission.requestId ?? '未记录'}</code>], ["提交", <code>{detail.submission.id}</code>], ["提交状态", <Status value={detail.submission.status} />], ["终态原因", detail.submission.reason ? <Reason value={detail.submission.reason} /> : '未提供']]} /></section>}
           {!!detail.previousStops?.length && <section><h3>历史停止记录</h3>{detail.previousStops.map(stop => <Facts key={stop.previousSubmissionId} items={[["原提交", <code>{stop.previousSubmissionId}</code>], ["停止任务", <code>{String(stop.final.taskId ?? '未记录')}</code>], ["状态", <Status value={String(stop.final.status)} />], ["停止原因", typeof stop.final.reason === 'string' ? stop.final.reason : '未记录']]} />)}</section>}
-          {!!detail.previousNativeResults?.length && <section><h3>历史原生研究结果</h3>{detail.previousNativeResults.map(run => <div key={run.previousSubmissionId}><p>原提交 #{run.previousSubmissionId} · 任务 #{String(run.final.taskId ?? '未记录')}</p><TextDisclosure label="原始结果" value={JSON.stringify(run.final, null, 2)} collapsed /></div>)}</section>}
+          {!!detail.previousNativeResults?.length && <section><h3>历史原生研究结果</h3>{detail.previousNativeResults.map(run => <div key={run.previousSubmissionId}><p>原提交 #{run.previousSubmissionId} · 任务 #{String(run.final.taskId ?? '未记录')}</p><Status value={String(run.final.status ?? 'UNKNOWN')} /><p className="quiet">历史结果保留在原研究记录中，不代表当前配置的结论。</p></div>)}</section>}
           <section><h3>最近执行记录</h3><Table<TaskView> rowKey="id" size="small" dataSource={detail.tasks} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 500 }} columns={[{ title: '任务', render: (_value, task) => <div className="trial-name">{task.name}<code>#{task.id}</code></div> }, { title: '状态', render: (_value, task) => <Status value={task.outcome ?? task.status} /> }, { title: '错误', render: (_value, task) => task.error ? <Reason value={task.error} /> : <span className="quiet">未提供</span> }]} /></section></div> },
       ]} />
   </article>;
 }
-export function NativeStrategyResultView({ value }: { value: NonNullable<ResearchDetail['final']>['nativeStrategyResult'] }) {
-  if (!value) return null;
-  return <section aria-label="Nautilus 原始策略结果">
-    {value.instrumentDefinition && typeof value.instrumentDefinition === 'object' && !Array.isArray(value.instrumentDefinition) && value.instrumentDefinition.mode === 'STATIC_SCENARIO' && <p role="note">静态规格情景：假设所选目录合约规格在整个窗口不变，未验证当时真实规格；这不是实际历史可交易性或实盘证据。</p>}
-    <p>这是 Nautilus 官方策略的回测执行报告，不代表独立样本验证通过、综合星级或模拟盘与实盘准入。原始配置、数据选择、费用假设和报告保持原生含义；不在浏览器重算绩效。</p>
-    <Facts items={[["Nautilus 版本", typeof value.nativeVersion === 'string' ? value.nativeVersion : '未记录'], ["证据范围", typeof value.scientificClaim === 'string' ? value.scientificClaim : '未记录']]} />
-    <details><summary>原始策略配置与数据选择</summary><Copy value={JSON.stringify(value.request ?? null, null, 2)} label="复制原始请求" /><pre>{JSON.stringify(value.request ?? null, null, 2)}</pre></details>
-    <details><summary>上游原始执行报告</summary><p className="quiet">保留官方统计键和原始编码；未把持仓收益统计转换成日权益收益。大型表可能是 qz.native-table/v1 分页索引，复制内容不包含这些表的全部行；原始行保存在任务证据中，可由研究工具按页读取。</p><Copy value={JSON.stringify(value.canonicalResult ?? null, null, 2)} label="复制报告及分页索引" /><pre>{JSON.stringify(value.canonicalResult ?? null, null, 2)}</pre></details>
-    <details><summary>官方日权益收益与年化口径</summary><p>只读 Nautilus 原生快照权益统计，与原始报告可能回退到持仓收益的统计分开。252/365 是年化频率，不是实际观测天数；短样本 CAGR 是外推，不是已实现一年回报。不可用时不替换为持仓收益。</p><pre>{JSON.stringify(value.equityPerformance ?? null, null, 2)}</pre></details>
-    <details><summary>数据计数口径与运行说明</summary><pre>{JSON.stringify({ dataRowsByType: value.dataRowsByType ?? null, notes: value.notes ?? null, instrumentDefinition: value.instrumentDefinition ?? null }, null, 2)}</pre></details>
-  </section>;
+export function ResearchRating({ value }: { value: unknown }) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5) return <span className="quiet">未评级</span>;
+  return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value} / 5 星</span></span>;
+}
+function AssessmentLimitations({ value }: { value: Record<string, unknown> }) {
+  const labels: Record<string, string> = {
+    CPCV_NOT_RUN: '尚未完成组合净化交叉验证。',
+    NO_AUTOMATIC_SPLITTING_OR_SELECTION: '本次未执行自动样本切分或策略择优。',
+    CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED: '尚未审查其他研究会话中的试验历史。',
+    INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN: '尚未完成独立的数据来源审查。',
+    PRE_EXECUTION_METHOD_MISSING: '缺少执行前明确记录的研究方法。',
+    LOGIC_EVIDENCE_INSUFFICIENT: '当前逻辑证据不足。',
+    ORIGINAL_NATIVE_DATA_EVIDENCE_MISSING: '缺少匹配原配置的已完成原生回测证据。',
+  };
+  const items = [...(Array.isArray(value.reasons) ? value.reasons : []), ...(Array.isArray(value.limitations) ? value.limitations : [])];
+  if (!items.length) return null;
+  return <div className="assessment-limitations"><h4>证据局限</h4><ul>{items.slice(0, 20).map((item, index) => <li key={index}>{typeof item === 'string' && labels[item] ? labels[item] : '另有尚未展开的证据范围限制，请在对话中要求说明。'}</li>)}</ul></div>;
 }
 
-export function ResearchAssessments({ assessments }: { assessments: ResearchDetail['assessments'] }) {
+export function ResearchAssessments({ assessments, researchId }: { assessments: ResearchDetail['assessments']; researchId?: number }) {
   if (!assessments?.length) return null;
   const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  const stars = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5 ? `${value} / 5 星` : '未评级';
+  const stars = (value: unknown) => <ResearchRating value={value} />;
   return <section aria-label="双路研究原始评级"><h2>双路研究评级</h2><p>来自原始 Pi 任务，不从 Agent 对话重新推断。评级仅评价已记录方法和证据，不代表收益承诺或交易许可。</p>
     {assessments.map(row => {
       const result = row.result ?? {}; const judgment = record(result.judgment); const data = record(result.dataJudgment);
       const evidence = record(result.evidence); const logic = record(record(record(evidence.logic).result).judgment);
       return <article key={row.taskId} id={`assessment-${row.taskId}`}>
-        <h3>{row.mode === 'LOGIC' ? '事前逻辑审阅' : '综合研究报告'} #{row.taskId}</h3>
-        <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'} · {row.status}</p>
-        <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', typeof result.ratingStatus === 'string' ? result.ratingStatus : '未完成']]} />
+        <h3>{row.mode === 'LOGIC' ? '事前逻辑审阅' : '综合研究报告'}</h3>
+        <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'}</p><Status value={row.status} />
+        <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', result.ratingStatus === 'RATED_CONDITIONAL_STATIC_SCENARIO' ? '条件性情景评价' : result.ratingStatus === 'NOT_RATED_INSUFFICIENT_EVIDENCE' ? '证据不足，未评级' : typeof judgment.stars === 'number' ? '已记录评价，需结合局限' : '未评级']]} />
         {record(result.instrumentDefinitionAssumption).mode === 'STATIC_SCENARIO' && <p role="note">条件性情景评级：历史合约规格未核实，不是实际历史验证或交易许可。</p>}
-        {typeof judgment.rationale === 'string' && <p>{judgment.rationale}</p>}
-        {row.error && <p>{row.error}</p>}
-        <TextDisclosure label="原始报告、证据范围与未完成事项" value={JSON.stringify(row.result, null, 2)} collapsed />
-        <nav aria-label={`报告 ${row.taskId} 原始证据`}>{row.evidenceLinks.map(link => <a key={link.taskId} href={link.href} target="_blank" rel="noreferrer">原任务 #{link.taskId} </a>)}</nav>
+        {typeof judgment.rationale === 'string' && <p><strong>{row.mode === 'LOGIC' ? '逻辑依据：' : '综合理由：'}</strong>{readableResearchText(judgment.rationale)}</p>}{typeof data.rationale === 'string' && <p><strong>数据证据：</strong>{readableResearchText(data.rationale)}</p>}{typeof logic.rationale === 'string' && <p><strong>逻辑依据：</strong>{readableResearchText(logic.rationale)}</p>}
+        {row.error && <Alert type="warning" title="本次评价未完成" description="执行遇到问题。请查看运行详情；未完成不等于零星评价。" />}
+        {[['风险', judgment.risks], ['不确定性', judgment.uncertainties], ['数据风险', data.risks], ['数据不足', data.uncertainties]].map(([label, values]) => Array.isArray(values) && values.length > 0 ? <div key={String(label)}><h4>{String(label)}</h4><ul>{values.filter(value => typeof value === 'string').slice(0, 20).map((value, index) => <li key={index}>{readableResearchText(value)}</li>)}</ul></div> : null)}<AssessmentLimitations value={record(evidence.ratingReadiness)} /><p className="quiet">评价范围以本次原始研究证据为准，历史评价不自动适用于新配置。</p>{researchId && <a className="text-link" href={href(`/research/${researchId}?tab=inputs`)}>查看原始执行记录</a>}
+
       </article>;
     })}
   </section>;
 }
 
-export function ResearchConversation({ messages }: { messages: ResearchDetail['messages'] }) {
-  if (!messages?.length) return null;
-  return <section className="research-conversation" aria-label="Agent 对话"><h2>Agent 对话</h2>
-    {messages.map(message => <div key={message.entryId} className="research-message"><span className="quiet">Agent</span><p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</p></div>)}
-  </section>;
+const structuredPlaceholder = '结构化数据已省略，请在对话中索取可读说明。';
+export function readableResearchText(text: string): string {
+  const structured = (value: string) => {
+    try { const parsed: unknown = JSON.parse(value.trim()); return parsed !== null && typeof parsed === 'object'; } catch { return false; }
+  };
+  if (structured(text)) return structuredPlaceholder;
+  const fenced = text.replace(/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g, (original, language: string, body: string) =>
+    /^(json|jsonc)\b/i.test(language.trim()) || structured(body) ? structuredPlaceholder : original);
+  // Presentation policy: withhold JSON-shaped fragments, including unfinished streams.
+  // This does not validate or modify the stored message or infer any business fields.
+  const startsStructure = (index: number) => {
+    // A single bracketed integer in prose is a citation, not a report array.
+    // Standalone arrays were handled above; fenced JSON is also always withheld.
+    if (fenced[index] === '[' && /^\[\d+\]/.test(fenced.slice(index)) && fenced[index - 1] !== '`') return false;
+    let next = index + 1;
+    while (next < fenced.length && /\s/.test(fenced[next]!)) next++;
+    if (next === fenced.length) return true;
+    if (fenced[index] === '{') return fenced[next] === '"' || fenced[next] === '}';
+    return /[\[\]{"\d-]/.test(fenced[next]!) || ['true', 'false', 'null'].some(literal => fenced.startsWith(literal, next));
+  };
+  let output = ''; let copied = 0; let candidate = -1;
+  const stack: string[] = []; let quoted = false; let escaped = false;
+  for (let index = 0; index < fenced.length; index++) {
+    const char = fenced[index];
+    if (candidate < 0) { if ((char !== '{' && char !== '[') || !startsStructure(index)) continue; candidate = index; }
+    if (quoted) { if (escaped) escaped = false; else if (char === '\\') escaped = true; else if (char === '"') quoted = false; continue; }
+    if (char === '"') { quoted = true; continue; }
+    if (char === '{' || char === '[') stack.push(char);
+    else if (char === '}' || char === ']') {
+      if (stack.pop() !== (char === '}' ? '{' : '[')) { output += fenced.slice(copied, candidate) + structuredPlaceholder; copied = index + 1; stack.length = 0; candidate = -1; continue; }
+      if (stack.length === 0) {
+        output += fenced.slice(copied, candidate) + structuredPlaceholder; copied = index + 1;
+        candidate = -1;
+      }
+    }
+  }
+  return candidate >= 0 ? output + fenced.slice(copied, candidate) + structuredPlaceholder : output + fenced.slice(copied);
+}
+export const safeMarkdownComponents = {
+  a: ({ href, children }: Partial<ComponentProps>) => {
+    let safe: string | undefined;
+    try { const url = new URL(String(href)); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) safe = url.href; } catch { /* Unsupported links remain text. */ }
+    return safe ? <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>;
+  },
+  img: ({ alt }: Partial<ComponentProps>) => <span className="quiet">{typeof alt === 'string' && alt ? `图片：${alt}` : '图片未自动加载'}</span>,
+  code: ({ children, lang }: Partial<ComponentProps>) => /^(json|jsonc)$/i.test(lang ?? '') ? <span className="quiet">结构化数据已省略，请在对话中索取可读说明。</span> : <code>{children}</code>,
+};
+export function ResearchMarkdown({ content }: { content: string }) { return <XMarkdown content={readableResearchText(content)} escapeRawHtml components={safeMarkdownComponents} />; }
+export function mergeResearchMessages(older: NonNullable<ResearchDetail['messages']>, newer: NonNullable<ResearchDetail['messages']>) {
+  return [...new Map([...older, ...newer].map(message => [message.entryId, message])).values()].sort((a, b) => a.entryId - b.entryId);
+}
+export type ResearchHistoryState = { messages: NonNullable<ResearchDetail['messages']>; cursor?: string | null; serverCursor?: string | null; generation: number };
+export function syncResearchWindow(state: ResearchHistoryState, incoming: NonNullable<ResearchDetail['messages']>, nextCursor?: string | null): ResearchHistoryState {
+  const lastSeen = state.messages.at(-1)?.entryId;
+  const jumped = lastSeen !== undefined && incoming.length > 0 && incoming[0]!.entryId > lastSeen
+    || (incoming.length === 0 || lastSeen === undefined) && nextCursor != null && nextCursor !== state.serverCursor;
+  return { messages: mergeResearchMessages(state.messages, incoming), cursor: jumped ? nextCursor : state.cursor, serverCursor: nextCursor, generation: state.generation + (jumped ? 1 : 0) };
+}
+export function acceptResearchHistoryPage(state: ResearchHistoryState, page: { messages: NonNullable<ResearchDetail['messages']>; nextCursor: string | null }, requestedGeneration: number): ResearchHistoryState {
+  return { ...state, messages: mergeResearchMessages(page.messages, state.messages), cursor: requestedGeneration === state.generation ? page.nextCursor : state.cursor };
+}
+export function ResearchConversation(props: { messages: ResearchDetail['messages']; researchId?: number; nextCursor?: string | null }) {
+  return <ConversationSession key={props.researchId ?? 'standalone'} {...props} />;
+}
+function ConversationSession({ messages, researchId, nextCursor }: { messages: ResearchDetail['messages']; researchId?: number; nextCursor?: string | null }) {
+  const [history, setHistory] = useState<ResearchHistoryState>({ messages: messages ?? [], serverCursor: nextCursor, generation: 0 });
+  useEffect(() => { setHistory(previous => syncResearchWindow(previous, messages ?? [], nextCursor)); }, [messages, nextCursor]);
+  const [loading, setLoading] = useState(false); const [error, setError] = useState<unknown>(); const inFlight = useRef(false);
+  const next = history.cursor === undefined ? nextCursor : history.cursor;
+  const loadOlder = async () => {
+    if (!researchId || !next || inFlight.current) return;
+    const requestedGeneration = history.generation;
+    inFlight.current = true; setLoading(true); setError(undefined);
+    try { const page = await api<{ messages: NonNullable<ResearchDetail['messages']>; nextCursor: string | null }>(`/research/${researchId}/messages?cursor=${encodeURIComponent(next)}`); setHistory(previous => acceptResearchHistoryPage(previous, page, requestedGeneration)); }
+    catch (failure) { setError(failure); } finally { inFlight.current = false; setLoading(false); }
+  };
+  const allMessages = mergeResearchMessages(history.messages, messages ?? []);
+  if (!allMessages.length && !next) return <section className="research-conversation" aria-label="研究对话"><Empty title="从一个研究问题开始" /><p className="quiet">研究回复会显示在这里。尚未收到回复时，不代表回测已经完成。</p></section>;
+  return <section className="research-conversation" aria-label="研究对话">{next && <Button className="history-button" loading={loading} onClick={() => { void loadOlder(); }}>加载更早的对话</Button>}<ErrorNotice error={error} /><Bubble.List autoScroll={false} items={allMessages.map(message => {
+    const user = 'role' in message && message.role === 'user';
+    return { key: message.entryId, role: user ? 'user' : 'ai', placement: user ? 'end' as const : 'start' as const,
+      header: user ? '你' : '研究助手', content: message.text, variant: user ? 'filled' as const : 'borderless' as const,
+      contentRender: (content: string) => user ? <p className="user-message-text">{readableResearchText(content)}</p> : <ResearchMarkdown content={content} /> };
+  })} /></section>;
 }
 
 export function canContinueResearch(detail: ResearchDetail, active: boolean): boolean {
-  if (detail.toolPolicy !== 'NAUTILUS_ONLY' || active || !detail.submission) return false;
+  if (detail.toolPolicy !== 'NAUTILUS_ONLY' || detail.executionUncertain || active || !detail.submission) return false;
   const stopped = detail.final?.status === 'STOPPED' && detail.final.trialId === null;
   const ownerStopped = detail.submission.status === 'unanswered' && detail.submission.reason === 'aborted'
     && (stopped && detail.final?.reason === 'owner_stop' || !!detail.final?.nativeStrategyResult);
@@ -160,9 +254,9 @@ export function NativeResearchContinuation({ detail, active, changed }: { detail
     } finally { inFlight.current = false; setBusy(false); }
   };
   if (!available && !pending && !error) return null;
-  return <section aria-label="继续原生研究"><p>在同一会话补充要求或调整参数。保留原任务与结果，远端执行未决时不会重复提交。</p>
-    <Input.TextArea aria-label="后续研究要求" placeholder="回答 Agent 的问题，或补充后续研究要求" value={instruction} disabled={!!pending || busy} onChange={event => setInstruction(event.target.value)} />
-    <Button onClick={() => { void send(); }} loading={busy} disabled={busy || !pending && (!available || !instruction.trim())}>{pending ? '核对原继续请求' : '继续研究'}</Button>
+  return <section className="research-composer" aria-label="继续原生研究"><p>在同一会话补充要求或调整参数。保留原任务与结果，远端执行未决时不会重复提交。</p>
+    <Input.TextArea aria-label="后续研究要求" placeholder="回答研究助手的问题，或补充你的想法" value={instruction} disabled={!!pending || busy} onChange={event => setInstruction(event.target.value)} />
+    <Button onClick={() => { void send(); }} loading={busy} disabled={busy || !pending && (!available || !instruction.trim())}>{pending ? '核对原继续请求' : '发送 · 继续研究'}</Button>
     {pending && <DraftNotice saved={draftIsPersisted(key)} />}<ErrorNotice error={error} />
   </section>;
 }

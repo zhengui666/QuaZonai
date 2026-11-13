@@ -45,7 +45,7 @@ test('list and usage do not load historical task results; list retains its exist
     const { receipt } = await studied(state);
     const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
     const detail = (await get(`research/${receipt.conversationId}`)).json();
-    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
+    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, messagesNextCursor: _messagesNextCursor, executionUncertain: _uncertain, executionUncertainty: _uncertainty, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
     const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
     const list = await get('research'); const usage = await get('usage');
@@ -262,4 +262,41 @@ test('native result and prior submissions retain separate original reports and u
     assert.deepEqual(detail.previousNativeResults, history);
     assert.equal(detail.final.nativeStrategyResult.canonicalResult.statistics.returns.missing, null);
   } finally { await state.cleanup(); }
+});
+
+for (const retained of [false, true]) test(`typed official results remain visible without fabricated metrics (canonical=${retained})`, async () => {
+ const state = await setup();
+ try {
+  const {receipt}=await studied(state);
+  const original={schema_version:1,native_version:'0.69.0',request:{schema_version:1,name:'owner::factory',config:{}},
+   native_results:[{run_id:'original-run',total_orders:7,elapsed_time:3.5,stats_pnls:{USDC:{PnL:'0.000000000000000019'}}}],
+   canonical_result:retained?{schema:'nautilus-backtest-result/v1',orders:[],statistics:{}}:null,
+   canonical_unavailable_reason:retained?null:'OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG',
+   equity_performance:null,equity_performance_unavailable_reason:'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE'};
+  await state.service.research.harness.commit(async tx=>{(await tx.doc(Study,receipt.conversationId)).final={status:'COMPUTED',taskId:123,trialId:null,comparedTrials:[],scientificClaim:'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION',result:original};},context);
+  const response=await state.service.app.inject({url:`/api/v3/research/${receipt.conversationId}`,headers:state.headers});
+  assert.equal(response.statusCode,200,response.body);
+  const detail=response.json();assert.deepEqual(detail.final.metrics,[]);
+  assert.deepEqual(detail.final.nativeStrategyResult.nativeResults,original.native_results);
+  assert.deepEqual(detail.final.nativeStrategyResult.canonicalResult,original.canonical_result);
+  assert.equal(detail.final.nativeStrategyResult.canonicalUnavailableReason,original.canonical_unavailable_reason);
+  assert.equal(detail.final.nativeStrategyResult.equityPerformance,null);
+  assert.equal(detail.final.nativeStrategyResult.equityUnavailableReason,original.equity_performance_unavailable_reason);
+ }finally{await state.cleanup();}
+});
+
+test('typed run metadata has bounded pages and cannot mix a replaced result',async()=>{
+ const state=await setup();
+ try{
+  const {receipt}=await studied(state);const rows=Array.from({length:45},(_,i)=>({run_id:`original-${i}`,value:'0.000000000000000019'}));
+  await state.service.research.harness.commit(async tx=>{(await tx.doc(Study,receipt.conversationId)).final={status:'COMPUTED',taskId:123,trialId:null,comparedTrials:[],scientificClaim:'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION',result:{schema_version:1,native_results:rows,canonical_result:null,canonical_unavailable_reason:'DISPOSED'}};},context);
+  const base=`/api/v3/research/${receipt.conversationId}`;
+  const detail=(await state.service.app.inject({url:base,headers:state.headers})).json();
+  assert.deepEqual(detail.final.nativeStrategyResult.nativeResults,rows.slice(0,20));assert.equal(detail.final.nativeStrategyResult.nativeResultsNextOffset,20);
+  const loaded=[...detail.final.nativeStrategyResult.nativeResults];let offset=20;
+  for(;;){const response=await state.service.app.inject({url:`${base}/native-runs?resultTaskId=123&offset=${offset}`,headers:state.headers});assert.equal(response.statusCode,200,response.body);const page=response.json();assert.ok(page.items.length<=20);assert.equal(page.total,45);loaded.push(...page.items);if(page.nextOffset===null)break;offset=page.nextOffset;}
+  assert.deepEqual(loaded,rows);await state.restart();
+  const replay=await state.service.app.inject({url:`${base}/native-runs?resultTaskId=123&offset=20`,headers:state.headers});assert.deepEqual(replay.json().items,rows.slice(20,40));
+  const wrong=await state.service.app.inject({url:`${base}/native-runs?resultTaskId=124&offset=20`,headers:state.headers});assert.equal(wrong.statusCode,409);
+ }finally{await state.cleanup();}
 });

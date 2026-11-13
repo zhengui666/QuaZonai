@@ -26,7 +26,7 @@ import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
 import { DataSourceState, dataSources, registerDataSources } from './data-sources.ts';
-import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
+import { observationView, portfolioView, researchDetail, researchMessagePage, researchNativeRuns, researchSummary, researchExecutionUncertainty, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { eventStream } from './event-stream.ts';
 import { readResearchAdmissions } from './admissions.ts';
@@ -215,11 +215,13 @@ export async function createService(options: ServiceOptions) {
     const items: ResearchSummary[] = []; const active = new Set(inspection.tasks.map(task => task.record.conversationId));
     for (const row of page.items) {
       const state = await research.state(row.id);
-      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts, active.has(row.id)));
+      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts, active.has(row.id), (await researchExecutionUncertainty(research, row.id)) !== null));
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/messages`, request => researchMessagePage(research, Number(request.params.id), request.query.cursor));
+  app.get<{ Params: { id: string }; Querystring: { resultTaskId: string; offset?: string } }>(`${API}/research/:id/native-runs`, request => researchNativeRuns(research,Number(request.params.id),Number(request.query.resultTaskId),Number(request.query.offset??'0')));
   app.get<{ Params: { id: string; taskId: string } }>(`${API}/research/:id/evidence/:taskId`, request => researchTaskEvidence(research, Number(request.params.id), Number(request.params.taskId)));
   app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
     const id = Number(request.params.id);

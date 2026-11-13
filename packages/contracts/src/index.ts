@@ -82,17 +82,22 @@ export interface DatasetPreparation {
   scientificQualification: 'UNVERIFIED' | 'NOT_ASSESSED';
 }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
-export interface ResearchMessage { entryId: number; text: string }
+export interface ResearchMessage { entryId: number; text: string; role?: 'user' | 'assistant'; submissionId?: number; requestId?: string }
+export interface ResearchMessagePage { messages: ResearchMessage[]; nextCursor: string | null }
 export interface ResearchAssessmentView {
   taskId: number; mode: 'LOGIC' | 'SYNTHESIS'; status: string;
   configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
   evidenceLinks: { taskId: number; href: string }[];
 }
 export interface ResearchDetail extends ResearchSummary {
+  /** Explicit unresolved original current evaluation receipts, not inferred from task activity. */
+  executionUncertain?: boolean;
+  executionUncertainty?: { taskId: number; reason: 'nautilus_execution_unknown' | 'nautilus_cancellation_unknown' } | null;
   /** Original official Pi assessment outcomes, never reconstructed from assistant prose. */
   assessments?: ResearchAssessmentView[];
-  /** Visible assistant text from the original Pi conversation, not model reasoning or tool payloads. */
+  /** Ordinary assistant text and verified original owner intents; never internal prompt or tool payloads. */
   messages?: ResearchMessage[];
+  messagesNextCursor?: string | null;
   reviews?: ReviewReport[];
   toolPolicy?: 'NAUTILUS_ONLY';
   previousNativeResults?: { previousSubmissionId: number; final: JsonObject }[];

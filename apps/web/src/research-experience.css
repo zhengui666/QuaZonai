@@ -1,0 +1,35 @@
+.research-chat { max-width: 920px; margin: 0 auto; padding: 12px 28px 28px; }
+.research-conversation { min-height: 220px; padding: 16px 0 24px; }
+.research-conversation .ant-bubble-list { max-height: none; height: auto; gap: 28px; }
+.research-conversation .ant-bubble-header { font-size: 12px; color: var(--secondary); margin-bottom: 8px; }
+.research-conversation .ant-bubble-content { line-height: 1.85; overflow-wrap: anywhere; }
+.research-conversation .ant-bubble { max-width: 100%; }
+.user-message-text { white-space: pre-wrap; margin: 0; }
+.research-conversation pre, .research-conversation table { max-width: 100%; overflow-x: auto; }
+.research-composer { border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 24px; background: var(--surface); }
+.research-composer > p { font-size: 12px; color: var(--secondary); margin-bottom: 12px; }
+.research-composer textarea { min-height: 88px; resize: vertical; }
+.research-composer > button { display: block; margin: 12px 0 0 auto; }
+.research-result { display: grid; gap: 20px; min-width: 0; }
+.result-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.result-title h3 { margin-top: 8px; font-size: 22px; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; color: var(--secondary); }
+.result-card { padding: 20px; border: 1px solid var(--line); border-radius: 14px; min-width: 0; }
+.result-card h4 { font-size: 15px; margin-bottom: 16px; }
+.result-footnote { color: var(--secondary); font-size: 12px; line-height: 1.8; margin: 14px 0; }
+.research-result .ant-table-wrapper { overflow-x: auto; }
+[aria-label="双路研究原始评级"] { margin-bottom: 28px; }
+[aria-label="双路研究原始评级"] > article { border-bottom: 1px solid var(--line); padding: 18px 0; }
+@media (max-width: 640px) {
+  .research-chat { padding: 8px 16px 20px; }
+  .research-composer { padding: 12px; border-radius: 12px; }
+  .research-composer > button { min-height: 44px; width: 100%; }
+  .result-card { padding: 14px; }
+  .research-conversation .ant-bubble-content { padding-inline: 12px; }
+}
+
+.research-rating { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.research-rating > span:last-child { font-size: 12px; color: var(--secondary); }
+
+.research-uncertainty { margin: 0 24px 18px; }
+@media (max-width: 640px) { .research-uncertainty { margin-inline: 16px; } }
