@@ -1,6 +1,23 @@
 use std::{env, fs, path::PathBuf};
+mod build_identity;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=QZ_NATIVE_BUILD_METADATA");
+    if let Some(path) = env::var_os("QZ_NATIVE_BUILD_METADATA") {
+        let path = PathBuf::from(path);
+        assert!(path.is_absolute(), "native metadata path must be absolute");
+        println!("cargo:rerun-if-changed={}", path.display());
+        let metadata: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).expect("native metadata unreadable"))
+                .expect("invalid Cargo metadata");
+        let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("Cargo.toml");
+        let (version, revision, source) = build_identity::from_metadata(&metadata, &manifest)
+            .expect("invalid selected native dependency graph");
+        emit(version, revision, source);
+        return;
+    }
+    // Repository builds retain the pinned-lock fallback. User-environment builds
+    // must supply the complete resolved metadata for their actual copied job.
     println!("cargo:rerun-if-env-changed=QZ_NATIVE_BUILD_LOCK");
     let lock = env::var_os("QZ_NATIVE_BUILD_LOCK")
         .map(PathBuf::from)
@@ -32,7 +49,9 @@ fn main() {
         {
             ""
         } else {
-            panic!("unsupported Nautilus source; preserve the user environment and report it instead of substituting dependencies");
+            panic!(
+                "unsupported Nautilus source; preserve the user environment and report it instead of substituting dependencies"
+            );
         };
         let value = (
             package["version"].as_str().unwrap().to_owned(),
@@ -45,6 +64,10 @@ fn main() {
         identity = Some(value);
     }
     let (version, revision, source) = identity.expect("missing Nautilus packages");
+    emit(version, revision, source);
+}
+
+fn emit(version: String, revision: String, source: String) {
     println!("cargo:rustc-env=QZ_NAUTILUS_SOURCE={source}");
     println!("cargo:rustc-env=QZ_NAUTILUS_VERSION={version}");
     println!("cargo:rustc-env=QZ_NAUTILUS_REVISION={revision}");

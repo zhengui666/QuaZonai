@@ -1,19 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, copyFile, mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { cp, copyFile, mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, sep, join, delimiter } from 'node:path';
 import { discoverRustEnvironment, materializeRustLauncher, renderRustLauncher, type RustEnvironmentSource, type RustFactoryModules } from './rust-environment.ts';
 
+import { pathToFileURL } from 'node:url';
+import { selectedCargoGraph, alignCopiedNativeManifest, type CargoResolvedMetadata } from './rust-native-dependencies.ts';
 const execute = promisify(execFile);
 type ResolvedMetadata = {
-  packages: { id: string; name: string; version: string; source: string | null }[];
+  packages: { id: string; name: string; version: string; source: string | null; manifest_path?: string }[];
   resolve: { nodes: { id: string; features: string[] }[] } | null;
 };
 function nativeResolution(metadata: ResolvedMetadata) {
   if (!metadata.resolve) throw new Error('rust_build_dependency_resolution_missing');
   return metadata.packages.filter(p => p.name.startsWith('nautilus-')).map(p => ({
-    name: p.name, version: p.version, source: p.source,
+    name: p.name, version: p.version, source: p.source ?? (p.manifest_path ? `path+${pathToFileURL(dirname(p.manifest_path)).href}` : null),
     precision: metadata.resolve!.nodes.find(n => n.id === p.id)?.features.filter(f => f === 'high-precision').sort() ?? [],
   }));
 }
@@ -22,8 +24,7 @@ export function verifyOwnerNativeResolution(owner: ResolvedMetadata, generated: 
   if (!prior.length || !current.length) throw new Error('rust_build_native_dependencies_missing');
   // A source-only lock entry cannot establish provenance. Do not call a local fork official.
   if (prior.some(p => !p.source)) throw new Error('rust_build_path_native_provenance_unverified');
-  const sources = new Set(current.map(p => `${p.source}\n${p.version}`));
-  if (sources.size !== 1) throw new Error('rust_build_mixed_native_sources');
+  if (new Set(current.map(p => p.name)).size !== current.length) throw new Error('rust_build_mixed_native_sources');
   for (const expected of prior) {
     const actual = current.filter(p => p.name === expected.name);
     if (actual.length !== 1 || JSON.stringify(actual[0]) !== JSON.stringify(expected)) throw new Error(`rust_build_owner_dependency_changed:${expected.name}`);
@@ -31,7 +32,7 @@ export function verifyOwnerNativeResolution(owner: ResolvedMetadata, generated: 
 }
 
 export const nativeGlueFiles = [
-  'Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/src', 'apps/job/examples', 'apps/job/tests',
+  'Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/build_identity.rs', 'apps/job/src', 'apps/job/examples', 'apps/job/tests',
   'crates/contracts/Cargo.toml', 'crates/contracts/src', 'crates/domain/Cargo.toml', 'crates/domain/src',
 ] as const;
 
@@ -80,16 +81,30 @@ export async function buildRustLauncher(options: {
   const metadata = async (manifest: string, locked: boolean, selectedFeatures: string[] = []) => {
     const args = ['metadata', '--offline', '--filter-platform', host, ...(locked ? ['--locked'] : []), '--format-version', '1', '--manifest-path', manifest, ...(selectedFeatures.length ? ['--features', selectedFeatures.join(',')] : [])];
     const { stdout } = await execute(discovery.source.cargoBinary, args, { cwd: dirname(manifest), env, signal: options.signal, maxBuffer: 32 * 1024 * 1024 });
-    return JSON.parse(stdout) as ResolvedMetadata;
+    const parsed = JSON.parse(stdout) as CargoResolvedMetadata;
+    // Match Rust's canonical local-source identity; no user file is changed.
+    for (const pkg of parsed.packages) if (pkg.name.startsWith('nautilus-') && pkg.source === null) pkg.manifest_path = await realpath(pkg.manifest_path);
+    return parsed;
   };
   const originalLock = await readFile(join(discovery.workspaceRoot, 'Cargo.lock'));
-  const owner = await metadata(discovery.source.manifestPath, true, discovery.source.features);
+  const ownerMetadata = await metadata(discovery.source.manifestPath, true, discovery.source.features);
+  const ownerPackage = ownerMetadata.packages.find(p => p.manifest_path === discovery.source.manifestPath);
+  if (!ownerPackage) throw new Error('rust_build_owner_package_missing');
+  const owner = selectedCargoGraph(ownerMetadata, ownerPackage.id);
+  const copiedManifest = join(glue, 'apps/job/Cargo.toml');
+  await writeFile(copiedManifest, alignCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), owner));
   const features = options.factories.accountFactory ? ['account-runtime'] : [];
   if (nativeResolution(owner).find(p => p.name === 'nautilus-model')?.precision.includes('high-precision')) features.push('high-precision');
   const dependencies = `job = { path = ${JSON.stringify(join(glue, 'apps/job'))}, default-features = false, features = ${JSON.stringify(features)} }\nanyhow = "1"\nserde_json = "1"`;
   const materialized = await materializeRustLauncher(discovery, join(directory, 'launcher'), main, dependencies, binaryName);
-  const generated = await metadata(materialized.manifestPath, false);
+  const generatedMetadata = await metadata(materialized.manifestPath, false);
+  const launcher = generatedMetadata.packages.find(p => p.manifest_path === materialized.manifestPath);
+  if (!launcher) throw new Error('rust_build_launcher_package_missing');
+  const generated = selectedCargoGraph(generatedMetadata, launcher.id);
   verifyOwnerNativeResolution(owner, generated);
+  const metadataPath = join(directory, 'resolved-cargo-metadata.json');
+  await writeFile(metadataPath, JSON.stringify(generatedMetadata), { flag: 'wx' });
+  Object.assign(env, { QZ_NATIVE_BUILD_METADATA: metadataPath });
   const buildLog = join(directory, 'build.log');
   const log = await open(buildLog, 'wx');
   try {

@@ -40,7 +40,7 @@ COPY --chmod=755 runtimes/data/acquire.py runtimes/data/providers.py runtimes/da
 # QZ-owned source glue only: no Cargo toolchain, upstream checkout, vendored
 # dependencies or native executable. Building is a separate explicit owner action.
 COPY --chmod=644 Cargo.toml Cargo.lock /opt/quazonai/native-glue/
-COPY --chmod=644 apps/job/Cargo.toml apps/job/build.rs /opt/quazonai/native-glue/apps/job/
+COPY --chmod=644 apps/job/Cargo.toml apps/job/build.rs apps/job/build_identity.rs /opt/quazonai/native-glue/apps/job/
 COPY --chmod=755 apps/job/src /opt/quazonai/native-glue/apps/job/src
 COPY --chmod=755 apps/job/examples /opt/quazonai/native-glue/apps/job/examples
 COPY --chmod=755 apps/job/tests /opt/quazonai/native-glue/apps/job/tests

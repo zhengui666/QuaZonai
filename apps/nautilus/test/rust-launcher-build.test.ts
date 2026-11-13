@@ -33,6 +33,7 @@ test('explicit build command pipeline is offline, keeps original lock and inspec
       if (['/src', '/tests', '/examples'].some(suffix => path.endsWith(suffix))) { await mkdir(join(glue, path), { recursive: true }); await writeFile(join(glue, path, 'lib.rs'), ''); }
       else { await mkdir(dirname(join(glue, path)), { recursive: true }); await writeFile(join(glue, path), 'fixture'); }
     }
+    await writeFile(join(glue, 'apps/job/Cargo.toml'), '[dependencies]\nnautilus-model = { git = \"https://old\", rev = \"old\", default-features = false }\n');
     await writeFile(join(glue, 'apps/job/src/native_runner.rs'), '// fixture, never executed');
     const caps = { identity: { nautilusSource: resolved().packages[0]!.source, nautilusVersion: '0.69.0', precision: 'standard' }, protocol: 'quazonai-native-process-v1', running: false, research: { configuredRunFactory: true }, account: { registration: false } };
     const discovery = { workspace_root: owner, packages: [{ name: 'owner', manifest_path: manifestPath, targets: [{ name: 'owner', kind: ['lib'] }], dependencies: [], features: {}, rust_version: null }] };
@@ -42,7 +43,7 @@ test('explicit build command pipeline is offline, keeps original lock and inspec
     await writeFile(cargo, `#!/usr/bin/env node
 const fs=require('node:fs'),p=require('node:path');
 const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(root, 'calls'))},JSON.stringify(args)+'\\n');
-if(args[0]==='metadata') console.log(JSON.stringify(args.includes('--no-deps')?${JSON.stringify(discovery)}:${JSON.stringify(resolved())}));
+if(args[0]==='metadata') { const m=args[args.indexOf('--manifest-path')+1]; const full=${JSON.stringify(resolved())}; full.packages.push({id:'root',name:'root',version:'0',source:null,manifest_path:m});full.resolve.nodes[0].deps=[];full.resolve.nodes.push({id:'root',features:[],deps:[{pkg:'model',dep_kinds:[{kind:null}]}]}); console.log(JSON.stringify(args.includes('--no-deps')?${JSON.stringify(discovery)}:full)); }
 else if(args[0]==='build' && process.env.CARGO_TARGET_DIR.includes('interrupt-build')) { console.error('build-in-progress');setInterval(()=>{},1000); }
 else if(args[0]==='build') { const dest=p.join(process.env.CARGO_TARGET_DIR,args[args.indexOf('--target')+1],'debug');fs.mkdirSync(dest,{recursive:true});const cap={...${JSON.stringify(caps)},compiledFrom:process.cwd()}; const text='#!/usr/bin/env node\\nif(process.argv[2]!=="capabilities")process.exit(22);console.log('+JSON.stringify(JSON.stringify(cap))+');'; fs.writeFileSync(p.join(dest,args[args.indexOf('--bin')+1]),text,{mode:0o755}); }
 else process.exit(23);
