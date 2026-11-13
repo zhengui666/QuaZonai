@@ -19,14 +19,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "preparation/ticks.rs"]
-mod ticks;
-
 #[derive(Parser)]
 #[command(
     version,
-    about = "Prepare an isolated native BAR catalog without certifying its source",
-    after_help = "Native source imports: catalog-prepare prepare-ticks --help"
+    about = "Prepare an isolated native BAR catalog without certifying its source"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -306,39 +302,23 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 }
 
 pub fn run(argv: Vec<std::ffi::OsString>) {
-    let is_tick =
-        argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks"));
-    // Preserve the original root invocation; the explicit source-import mode has
-    // its own argument contract and never manufactures a registration declaration.
-    let result =
-        if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks")) {
-            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-ticks"))
-                .chain(argv.into_iter().skip(2));
-            ticks::run(&ticks::Arguments::parse_from(argv))
-        } else {
-            prepare(&Arguments::parse_from(argv))
-                .and_then(|metadata| Ok(serde_json::to_value(metadata)?))
-        };
+    if argv
+        .get(1)
+        .is_some_and(|arg| arg == std::ffi::OsStr::new("prepare-ticks"))
+    {
+        eprintln!("QZ_TICK_FACTOR_PREPARATION_RETIRED: preserve original data; use market-history import --trade-ticks for original Nautilus TradeTick records. Existing prepared data is not migrated or recomputed.");
+        std::process::exit(2);
+    }
+    let result = prepare(&Arguments::parse_from(argv))
+        .and_then(|metadata| Ok(serde_json::to_value(metadata)?));
     match result {
         Ok(metadata) => println!(
             "{}",
             serde_json::to_string(&metadata).expect("typed metadata")
         ),
         Err(error) => {
-            if is_tick {
-                let reason = error
-                    .chain()
-                    .map(ToString::to_string)
-                    .find(|message| {
-                        message.starts_with("TICK_")
-                            || message == "OUTPUT_MUST_BE_NEW"
-                            || message == "OUTPUT_MUST_NOT_OVERLAP_SOURCE"
-                    })
-                    .unwrap_or_else(|| "TICK_CATALOG_PREPARATION_FAILED".into());
-                eprintln!("{reason}");
-            } else {
-                eprintln!("QZ_CATALOG_PREPARATION_FAILED");
-            }
+            let _ = error;
+            eprintln!("QZ_CATALOG_PREPARATION_FAILED");
             std::process::exit(1);
         }
     }

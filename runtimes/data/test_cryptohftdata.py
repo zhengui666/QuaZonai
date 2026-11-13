@@ -35,6 +35,13 @@ class CryptoHFTDataTests(unittest.TestCase):
         return cryptohftdata.selection(self.archive, "perpetual", ["BTC"],
                                        "2026-10-13", "2026-10-14", **options)
 
+    def test_derived_cohort_modes_are_explicitly_retired_without_execution(self):
+        for flag in ("--cohort-cache", "--cohort-flow-cache"):
+            with patch.object(source_plugins, "run_native") as native, contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(source_plugins.main(["convert", cryptohftdata.PLUGIN, flag]), 2)
+                self.assertIn("QZ_DERIVED_TICK_COHORT_RETIRED", stderr.getvalue())
+                native.assert_not_called()
+
     def test_inspection_reads_summary_without_walking_archive(self):
         with patch.object(Path, "iterdir", side_effect=AssertionError("must not scan archive")), \
                 patch.object(Path, "rglob", side_effect=AssertionError("must not scan archive")):
@@ -256,7 +263,7 @@ class CryptoHFTDataTests(unittest.TestCase):
 
     def test_received_trade_modes_use_existing_native_flags(self):
         self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
-        for mode in ("--trade-ticks", "--cohort-cache", "--cohort-flow-cache"):
+        for mode in ("--trade-ticks",):
             with self.subTest(mode=mode):
                 output = self.root / mode[2:]
                 def run(args, argv, binary):
