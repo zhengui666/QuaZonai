@@ -261,7 +261,7 @@ test('zero-obligation admission checks every retained exit rather than trusting 
   assert.throws(()=>toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110'}),/capital_reserved_or_unknown/);
  }
  control!.status.exits=structuredClone(baseline);
- delete (control!.status.exits[0]!.funds as unknown as JsonObject).staged_for_withdrawal_amount;
+ delete ((control!.status.exits[0] as unknown as JsonObject).funds as JsonObject).staged_for_withdrawal_amount;
  assert.throws(()=>toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110'}),/capital_reserved_or_unknown/);
 
 });
