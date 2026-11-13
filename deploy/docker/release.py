@@ -20,8 +20,8 @@ import time
 
 from release_support import BUNDLE, BUNDLE_FILES, REPOSITORY, run, validate_manifest, version, version_precedence
 
-# Exact-push CI builds revision-bound native release artifacts. Publication does
-# not rerun Rust regression for dev or rebuild those binaries.
+# Exact-push CI validates the application source. Default publication packages
+# only the application and Node CLI; native environments are owner-managed.
 CI_PATHS = {".github/workflows/ci.yml"}
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
 
@@ -187,11 +187,10 @@ def verify(tag: str, revision: str) -> None:
 
 
 def bundle(tag: str, revision: str, image: str, destination: Path, *,
-           runtime_image: str, published: bool = False) -> dict:
+           published: bool = False) -> dict:
     release = validate_manifest({
         "schema_version": 5, "version": tag, "revision": revision,
         "image": image,
-        "runtime_image": runtime_image,
     }, published=published)
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "release.json").write_text(json.dumps(release, indent=2) + "\n")
@@ -251,7 +250,7 @@ def publish(assets: Path) -> None:
 
 def archive_images(assets: Path) -> None:
     release = validate_manifest(json.loads((assets / "release.json").read_text()), published=True)
-    for component, field in (("application", "image"), ("runtime", "runtime_image")):
+    for component, field in (("application", "image"),):
         reference = release[field]
         run(["docker", "pull", "--platform", "linux/amd64", reference])
         identity = run(["docker", "image", "inspect", "--format", "{{.Id}}", reference], capture=True)
@@ -297,7 +296,6 @@ def main() -> None:
     parser.add_argument("--version")
     parser.add_argument("--revision")
     parser.add_argument("--image")
-    parser.add_argument("--runtime-image")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-id")
     args = parser.parse_args()
@@ -332,8 +330,7 @@ def main() -> None:
         verify(args.version, args.revision)
     elif args.command == "push-images":
         verify(args.version, args.revision)
-        images = (("image", args.image, "quazonai"),
-                  ("runtime_image", args.runtime_image, "quazonai-runtime"))
+        images = (("image", args.image, "quazonai"),)
         # Complete all candidate checks before mutating any registry reference.
         for _, image, _ in images:
             labels = json.loads(run(["docker", "image", "inspect", "--format",
@@ -344,10 +341,10 @@ def main() -> None:
         references = {field: push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
                       for field, image, repository in images}
         bundle(args.version, args.revision, references["image"], args.output,
-               runtime_image=references["runtime_image"], published=True)
+               published=True)
     elif args.command == "bundle":
         bundle(args.version, args.revision, args.image, args.output,
-               runtime_image=args.runtime_image, published=True)
+               published=True)
     else:
         publish(args.output)
 

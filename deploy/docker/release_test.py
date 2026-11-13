@@ -87,9 +87,10 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'dev publisher'): release.verify('v2.0.0-dev.20260930123456.123', REVISION)
         with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as temporary:
             root = Path(temporary)
-            manifest = release.bundle('v2.0.0', REVISION, 'sha256:' + 'b' * 64, root, runtime_image='sha256:' + 'c' * 64)
+            manifest = release.bundle('v2.0.0', REVISION, 'sha256:' + 'b' * 64, root)
             self.assertEqual(manifest['schema_version'], 5)
             self.assertNotIn('database_image', manifest)
+            self.assertNotIn('runtime_image', manifest)
             with tarfile.open(root / 'quazonai-deploy.tar.gz') as archive:
                 self.assertEqual(set(archive.getnames()), release.BUNDLE_FILES)
                 self.assertEqual(json.load(archive.extractfile('release.json')), manifest)

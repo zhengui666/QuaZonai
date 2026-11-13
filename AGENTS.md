@@ -221,3 +221,21 @@ STATIC_SCENARIO 原样贯穿配置、各显式回测与成本/邻域候选；原
 返回 `native_results` 为官方 `BacktestResult` 原序列化值，不重新年化、打分、择优或聚合；当官方配置 `dispose_on_completion=false` 时附原 `canonical_result`，启用官方释放则明确 `OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG`，不修改该选择。官方 `raise_exception=false` 可能产生空 results；空数组不是已完成完整窗口或策略有效性证明。此入口不自动生成现单标的 `equity_performance` 包装，不把两种报告形状混用。现Pi任务与远端回执仍拥有执行状态，不能把重新构建node称为从中途checkpoint恢复。
 
 多标的/多 venue 配置接口与实际策略、数据源覆盖须分别验收；它不是LiveNode账户策略注册接口，不解除现账户策略生命周期限制，也不启动模拟盘/实盘。用户策略的官方save/load、订单归属和账户恢复仍需另行接线与验证。
+
+## 应用部署与用户原生环境分离
+
+默认 dev/release 仅发布、安装和更新 QuaZonai 应用及 CLI，不携带或自动管理 Nautilus 运行环境。安装器仅操作 Compose 的 `app --no-deps`，不更新、启动、停止或删除用户已有 Nautilus 容器及账户/目录数据；旧 `--local-runtime` 已退役。已有外部服务必须由所有者单独维护。
+
+上游 NautilusTrader 是库，并不自带本项目 HTTP API。当前连接要求兼容 QuaZonai worker 协议：研究 `/v1/capabilities`、`/v1/execute`、原请求回执；账户使用独立 `/accounts/<id>`。仅安装上游包或任意填写 URL 不代表接线可用。用户可以自行实现兼容适配，或显式从源码构建本仓库可选适配器（不是默认发布附件）：
+
+```bash
+# 在可信源码 checkout 中，用户自行准备官方 Rust 工具链和 Docker。
+bash deploy/docker/native-build.sh release /absolute/new-native-artifacts
+docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
+  --build-context native=/absolute/new-native-artifacts \
+  --tag owner-quazonai-native:local .
+```
+
+这只构建用户自管的协议适配器镜像，不部署、不连接交易所、不交易。自行运行时显式配置持久目录、catalog 根目录、worker token 和网络；应用中分别填写回测实例与账户实例，不能借用回测凭据作实盘。需要自定义策略时使用前述用户 Rust crate runner 接口，默认 runner 不包含用户策略。账户凭据由用户在其原生环境配置，勿写入策略 JSON 或聊天。账户连接、恢复与真实交易启动是独立显式步骤，不因应用更新或保存配置而执行。
+
+本部署调整不代表任意已有 Nautilus 环境已接入；Rust 原生环境直接接入仍须独立实现，不要求用户把预部署 QZ worker 当作最终通用接入的前提。上述源码适配器只是当前可用的一条显式路径，不引入 Python 策略执行环境。自动 `restore` 会替换应用专属 `data/`，保持当前 Compose override 不变；发现其他 Compose 服务、已知原生账户目录或检查失败时拒绝执行。原生环境数据应位于应用目录外；无法从 Compose 证明其他独立进程未共享该目录，混用数据目录必须单独制定有范围的恢复，不能把本工具称为所有原生数据的安全恢复器。

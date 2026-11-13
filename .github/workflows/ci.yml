@@ -75,45 +75,6 @@ jobs:
           npm ci --prefix apps/service --no-audit --no-fund
           npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
       - run: make check-web
-  native-artifacts:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 180
-    env:
-      RUSTUP_TOOLCHAIN: '1.99.1'
-      CARGO_BUILD_JOBS: '2'
-      CARGO_INCREMENTAL: '0'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      PROFILE: release
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ env.TEST_REVISION }}
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22.19.0'
-      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-        with:
-          prefix-key: quazonai-science-v2
-          key: ubuntu-22-${{ env.PROFILE }}
-          cache-bin: false
-          cache-workspace-crates: false
-      - name: Build native artifacts for this revision
-        run: bash deploy/docker/native-build.sh "$PROFILE" "$RUNNER_TEMP/native-artifacts"
-      - name: Package native artifacts
-        run: |
-          git rev-parse HEAD > "$RUNNER_TEMP/native-artifacts/tested-revision"
-          tar -czf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts" job source-tools catalog-prepare job-high-precision catalog-prepare-high-precision market-history account-runtime native-manifest.json tested-revision
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: native-${{ env.TEST_REVISION }}
-          path: ${{ runner.temp }}/native.tar.gz
-          compression-level: 0
-          retention-days: 14
-          if-no-files-found: error
   science-core:
     needs: scope
     if: github.event_name == 'workflow_dispatch' && needs.scope.outputs.science == 'true'

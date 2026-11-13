@@ -11,8 +11,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - uses: ./.github/actions/container
-        with:
-          image: quazonai-native-check:${{ github.sha }}
-          revision: ${{ github.sha }}
-          version: native-check
+      - name: Build optional owner-managed native adapter explicitly
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          bash deploy/docker/native-build.sh release "$RUNNER_TEMP/native-artifacts"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Assemble optional adapter, never publish or install it with QuaZonai
+        run: |
+          docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
+            --build-context "native=$RUNNER_TEMP/native-artifacts" \
+            --tag "quazonai-owner-native:${{ github.sha }}" .

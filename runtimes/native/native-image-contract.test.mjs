@@ -20,5 +20,7 @@ test('release handoff has no retired compiler image or Wasm target dependency', 
   for (const file of ['.github/actions/container/action.yml', '.github/workflows/ci.yml', '.github/workflows/rust-regression.yml']) {
     assert.doesNotMatch(read(file), /wasm32-unknown-unknown|outputs\.compiler|smoke\.py/);
   }
-  assert.match(read('.github/actions/container/action.yml'), /native=\$\{\{ steps\.artifacts\.outputs\.directory \}\}/);
+  assert.doesNotMatch(read('.github/actions/container/action.yml'), /target: nautilus|native-artifact-directory|from=native/);
+  assert.match(read('.github/workflows/native-runtime.yml'), /--target nautilus/);
+  assert.match(read('.github/workflows/native-runtime.yml'), /workflow_dispatch/);
 });

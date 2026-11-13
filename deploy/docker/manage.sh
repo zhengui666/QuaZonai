@@ -21,7 +21,7 @@ qz_manifest() {
     qz_version "$(qz_get "$1" version)"
     [[ $(qz_get "$1" revision) =~ ^[0-9a-f]{40}$ ]] || qz_fail 'Invalid release revision.'
     local field reference
-    for field in image runtime_image; do
+    for field in image; do
         reference=$(qz_get "$1" "$field")
         [[ "$reference" =~ ^(ghcr\.io/[a-zA-Z0-9/._-]+@)?sha256:[0-9a-f]{64}$ ]] || qz_fail "$field must identify a prebuilt image."
     done
@@ -48,38 +48,10 @@ qz_compose() (
     export HOST_UID=$(qz_get "$file" uid) HOST_GID=$(qz_get "$file" gid)
     local args=(docker compose --project-name "$(qz_get "$file" project)" --env-file /dev/null -f "$(qz_get "$file" bundle)/compose.yaml")
     if [[ -f "$INSTALL_DIR/compose.override.yaml" ]]; then args+=(-f "$INSTALL_DIR/compose.override.yaml"); fi
-    if [[ $(qz_get "$file" local_runtime_service 2>/dev/null || true) == nautilus ]]; then
-        "${args[@]}" config --services | grep -qx nautilus || qz_fail 'The managed local nautilus service is missing from the owner Compose configuration.'
-        local overlay="$QZ_WORK/runtime-image.yaml"
-        printf 'services:\n  nautilus:\n    image: "%s"\n' "$(qz_get "$file" runtime_image)" > "$overlay"
-        args+=(-f "$overlay")
-    fi
     "${args[@]}" "$@"
 )
 # Opt-in only: existing local service settings remain in the owner's override.
 # Old workers have no atomic drain API; never turn Docker stop into cancellation.
-qz_runtime_stopped() {
-    local file=$1 id
-    qz_compose "$file" config --services | grep -qx nautilus || qz_fail 'Local runtime requires the existing nautilus Compose service.'
-    id=$(qz_compose "$file" ps --all --quiet nautilus)
-    [[ -n "$id" && "$id" != *$'\n'* ]] || qz_fail 'Inspect the original single nautilus container before enrolling/updating its runtime.'
-    [[ $(docker inspect --format '{{.State.Running}}' "$id") == false ]] || qz_fail 'Local nautilus is running. Finish and reconcile its work, then safely stop it before updating; this command never cancels remote work.'
-    # Stopped is not evidence that an account's native orders/strategy are safe to restart.
-    # This automated path supports only the standard science-only worker, both before and after.
-    local previous effective="$QZ_WORK/runtime-effective.json" candidate entrypoint
-    entrypoint=$(docker inspect --format '{{json .Config.Entrypoint}}' "$id") || qz_fail 'Cannot inspect the original runtime entrypoint.'
-    [[ "$entrypoint" == '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]' ]] || qz_fail 'Nonstandard runtime entrypoint requires an explicit account and task recovery plan.'
-    previous=$(docker inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "QZ_NAUTILUS_ACCOUNTS"}}{{println .}}{{end}}{{end}}' "$id") || qz_fail 'Cannot inspect the original runtime account configuration.'
-    previous=${previous#QZ_NAUTILUS_ACCOUNTS=}
-    [[ -z "$previous" || "$previous" =~ ^[[:space:]]*\[[[:space:]]*\][[:space:]]*$ ]] || qz_fail 'Account-enabled runtime requires explicit original strategy/order/exit reconciliation; this updater never stops or restarts account hosts.'
-    qz_compose "$file" config --format json > "$effective" || qz_fail 'Cannot resolve candidate runtime configuration.'
-    qz_raw "$effective" >/dev/null || qz_fail 'Invalid candidate runtime configuration.'
-    candidate=$(qz_get "$effective" services.nautilus.environment.QZ_NAUTILUS_ACCOUNTS 2>/dev/null || true)
-    [[ -z "$candidate" || "$candidate" =~ ^[[:space:]]*\[[[:space:]]*\][[:space:]]*$ ]] || qz_fail 'Candidate runtime enables accounts; use a separate explicitly authorized account deployment.'
-    entrypoint=$(qz_raw "$effective" services.nautilus.entrypoint 2>/dev/null || true)
-    [[ -z "$entrypoint" || "$entrypoint" == null || "$entrypoint" == '["/usr/bin/tini","--","node","--experimental-strip-types","/opt/quazonai/apps/nautilus/src/main.ts"]' ]] || qz_fail 'Candidate runtime overrides its standard worker entrypoint; account safety is not established.'
-
-}
 qz_app_verify() {
     local file=$1 id expected
     id=$(qz_compose "$file" ps --quiet app)
@@ -88,20 +60,11 @@ qz_app_verify() {
     [[ $(docker inspect --format '{{.Image}}' "$id") == "$expected" ]] || qz_fail 'Running application differs from the release image; inspect the owner Compose override.'
     [[ $(docker inspect --format '{{.State.Running}}' "$id") == true ]] || qz_fail 'Application did not remain running.'
 }
-qz_runtime_verify() {
-    local file=$1 id expected
-    [[ $(qz_get "$file" local_runtime_service 2>/dev/null || true) == nautilus ]] || return 0
-    id=$(qz_compose "$file" ps --quiet nautilus)
-    [[ -n "$id" && "$id" != *$'\n'* ]] || qz_fail 'Expected one running local nautilus container.'
-    expected=$(docker image inspect --format '{{.Id}}' "$(qz_get "$file" runtime_image)")
-    [[ $(docker inspect --format '{{.Image}}' "$id") == "$expected" ]] || qz_fail 'Running local runtime differs from the release image.'
-    [[ $(docker inspect --format '{{.State.Running}}' "$id") == true ]] || qz_fail 'Local runtime did not remain running.'
-}
 qz_prepare() {
     local root=$1 release="$QZ_BUNDLE/release.json" file=$2 directory field image name
     qz_manifest "$release"
     # A remote Nautilus instance is configured separately. Updating the local
-    # application only pulls its optional runtime image after explicit local enrollment.
+    # application only pulls its own image; native environments remain owner-managed.
     for field in image; do
         image=$(qz_get "$release" "$field")
         if [[ "$image" != sha256:* ]]; then docker pull "$image"; fi
@@ -119,17 +82,7 @@ qz_prepare() {
     LC_ALL=C awk -v mode=merge -v path='' -f "$QZ_BUNDLE/json.awk" "$file" "$release" > "$QZ_WORK/release-config.json"
     LC_ALL=C awk -v mode=merge -v path='' -f "$QZ_BUNDLE/json.awk" "$QZ_WORK/release-config.json" "$QZ_WORK/bundle.json" > "$QZ_WORK/candidate.json"
     QZ_PREPARED="$QZ_WORK/candidate.json"
-    if [[ ${QZ_LOCAL_RUNTIME:-false} == true ]]; then
-        printf '{"local_runtime_service":"nautilus"}\n' > "$QZ_WORK/runtime-config.json"
-        LC_ALL=C awk -v mode=merge -v path='' -f "$QZ_BUNDLE/json.awk" "$QZ_PREPARED" "$QZ_WORK/runtime-config.json" > "$QZ_WORK/runtime-candidate.json"
-        QZ_PREPARED="$QZ_WORK/runtime-candidate.json"
-    fi
-    if [[ $(qz_get "$QZ_PREPARED" local_runtime_service 2>/dev/null || true) == nautilus ]]; then
-        image=$(qz_get "$release" runtime_image)
-        if [[ "$image" != sha256:* ]]; then docker pull "$image"; fi
-        [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$(qz_get "$release" revision)" ]] || qz_fail 'Runtime revision differs from the release.'
-        [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image") == "$(qz_get "$release" version)" ]] || qz_fail 'Runtime version differs from the release.'
-    fi
+
 }
 qz_verify() {
     qz_app_verify "$1"
@@ -138,7 +91,6 @@ qz_verify() {
     [[ "$code" == 204 ]] || qz_fail 'Node API liveness failed.'
     curl --fail --silent --show-error --noproxy '*' --max-time 10 "$origin/" > "$QZ_WORK/frontend.html"
     grep -qi '<!doctype html>' "$QZ_WORK/frontend.html" || qz_fail 'Production Web assets were not served.'
-    qz_runtime_verify "$1"
 }
 qz_start() {
     local file=$1 root pending; shift
@@ -146,7 +98,7 @@ qz_start() {
     if [[ ! -f "$pending" || $(qz_get "$pending" operation) != install ]]; then
         qz_compose "$file" run --rm --no-deps app maintenance exists
     fi
-    qz_compose "$file" up "$@" -d --wait --wait-timeout 120; qz_verify "$file"
+    qz_compose "$file" up "$@" -d --no-deps --wait --wait-timeout 120 app; qz_verify "$file"
 }
 qz_stop() {
     local file=$1 id observation
@@ -225,13 +177,9 @@ qz_apply_update() {
         [[ "$saved_policy" == "$backup_policy" ]] || qz_fail 'Retry with the original backup policy; --no-backup cannot change a pending update.'
     fi
     qz_prepare "$root" "$old"; candidate=$QZ_PREPARED
-    if [[ ! -e "$root/pending.json" && $(qz_get "$old" version) == "$(qz_get "$candidate" version)" && $(qz_get "$old" local_runtime_service 2>/dev/null || true) == "$(qz_get "$candidate" local_runtime_service 2>/dev/null || true)" ]]; then qz_verify "$old"; return; fi
+    if [[ ! -e "$root/pending.json" && $(qz_get "$old" version) == "$(qz_get "$candidate" version)" ]]; then qz_verify "$old"; return; fi
     [[ $(printf '%s\n%s\n' "$(qz_get "$old" version)" "$(qz_get "$candidate" version)" | sort -V | tail -n1) == "$(qz_get "$candidate" version)" ]] || qz_fail 'Use an explicit matching restore for a downgrade.'
-    if [[ -e "$root/pending.json" ]]; then
-        [[ $(qz_get "$root/pending.json" target.local_runtime_service 2>/dev/null || true) == "$(qz_get "$candidate" local_runtime_service 2>/dev/null || true)" ]] || qz_fail 'Retry with the original --local-runtime selection.'
-    fi
     if [[ "$phase" == preparing ]]; then
-        if [[ $(qz_get "$candidate" local_runtime_service 2>/dev/null || true) == nautilus ]]; then qz_runtime_stopped "$old"; fi
         printf '{"operation":"update","phase":"preparing","backup_policy":%s,"previous":%s,"target":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" | qz_save "$root/pending.json"
         qz_stop "$old"
         # Refusal leaves the original app stopped, original DB untouched and the
@@ -249,9 +197,12 @@ qz_apply_update() {
 qz_restore() {
     local root=$1 backup=$2 file="$2/installation.json" name destination
     qz_configuration "$root"; qz_manifest "$file"
-    if [[ $(qz_get "$QZ_CONFIG" local_runtime_service 2>/dev/null || true) == nautilus || $(qz_get "$file" local_runtime_service 2>/dev/null || true) == nautilus ]]; then
-        qz_runtime_stopped "$QZ_CONFIG"
-    fi
+    # Whole-directory restore is only defined for this app's dedicated data.
+    # Never guess whether an additional owner service shares those files.
+    local services
+    services=$(qz_compose "$QZ_CONFIG" config --services) || qz_fail 'Cannot verify app-only restore scope; no files were replaced.'
+    [[ "$services" == app ]] || qz_fail 'Automatic restore is unavailable with external Compose services; preserve their configuration/data and restore app-only files manually.'
+    [[ ! -e "$root/data/nautilus" && ! -e "$root/data/accounts" ]] || qz_fail 'Native account data is inside the app restore directory; use a separately scoped recovery without replacing worker data.'
     for name in root uid project; do [[ $(qz_get "$file" "$name") == "$(qz_get "$QZ_CONFIG" "$name")" ]] || qz_fail 'Restore only a matching recovery point at its original path.'; done
     [[ -f "$(qz_get "$file" bundle)/release.json" ]] || qz_fail 'Original release bundle must be retained for restore.'
     if [[ -f "$root/pending.json" ]]; then
@@ -272,11 +223,8 @@ qz_restore() {
     fi
     printf '{"operation":"restore","phase":"restoring","source":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup")" "$(qz_raw "$file")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
     mv "$root/data" "$destination"; mv "$root/data.restore/data" "$root/data"; rmdir "$root/data.restore"
-    if [[ -e "$backup/compose.override.yaml" ]]; then
-        cp "$backup/compose.override.yaml" "$root/compose.override.yaml"
-    else
-        rm -f -- "$root/compose.override.yaml"
-    fi
+    # The owner's current Compose overrides may describe external services.
+    # Restoring application state never rewrites or removes those overrides.
     qz_save "$root/installation.json" < "$file"
     printf '{"operation":"restore","phase":"starting","source":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup")" "$(qz_raw "$file")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
     qz_activate "$root" "$file" --force-recreate
@@ -289,30 +237,29 @@ qz_unpack() {
     qz_manifest "$destination/release.json"
 }
 qz_help() {
-    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH [--directory PATH] [--port PORT] [--no-backup] [--local-runtime]' \
+    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
       '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
-      '--local-runtime enrolls the existing stopped nautilus service for same-release image updates; its settings and data are preserved.' \
+      'Native environments are owner-managed; deployment only starts/updates app and preserves external services and data.' \
       'Only schema-5 installations are supported; prior formats are not migrated.'
 }
 qz_main() {
     local command=${1:---help} root="$HOME/.local/share/quazonai" argument= name
     shift || true
     if [[ "$command" == --help || "$command" == -h ]]; then qz_help; return; fi
-    QZ_PORT=8081; QZ_BACKUP_POLICY=required; QZ_LOCAL_RUNTIME=false
+    QZ_PORT=8081; QZ_BACKUP_POLICY=required
     while (($#)); do
         case "$1" in
           --directory|--port) (($#>=2)) || qz_fail 'Missing option value.'; name=$1
             case "$name" in --directory) root=$2;; --port) QZ_PORT=$2;; esac; shift 2;;
           --no-backup) QZ_BACKUP_POLICY=skip; shift;;
-          --local-runtime) QZ_LOCAL_RUNTIME=true; shift;;
+          --local-runtime) qz_fail 'Nautilus runtime management has been removed. Configure and manage your external native environment separately.';;
           --help|-h) qz_help; return;;
           -*) qz_fail "Unknown option: $1";;
           *) [[ -z "$argument" ]] || qz_fail 'Unexpected argument.'; argument=$1; shift;;
         esac
     done
     [[ "$QZ_BACKUP_POLICY" == required || "$command" == update || "$command" == apply-update ]] || qz_fail '--no-backup is only valid for update/apply-update.'
-    [[ "$QZ_LOCAL_RUNTIME" == false || "$command" == update || "$command" == apply-update ]] || qz_fail '--local-runtime is only valid for update/apply-update.'
     root=${root/#\~/$HOME}; root=$(realpath -m "$root")
     [[ "$root" != / && "$root" != "$HOME" ]] || qz_fail 'Select a dedicated installation directory.'
     [[ "$QZ_PORT" =~ ^[0-9]{1,5}$ ]] || qz_fail 'Select numeric ports.'
@@ -333,7 +280,6 @@ qz_main() {
         exec 9>&-
         local update_options=()
         if [[ "$QZ_BACKUP_POLICY" == skip ]]; then update_options+=(--no-backup); fi
-        if [[ "$QZ_LOCAL_RUNTIME" == true ]]; then update_options+=(--local-runtime); fi
         bash "$QZ_WORK/deployment/manage.sh" apply-update --directory "$root" "${update_options[@]}";;
       start|restart) qz_configuration "$root"
         if [[ -e "$root/pending.json" ]]; then [[ $(qz_get "$root/pending.json" phase) == preparing ]] || qz_fail 'Retry the recorded installation/update target.'; fi

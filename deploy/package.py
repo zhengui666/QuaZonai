@@ -18,7 +18,7 @@ NODE_VERSION = '22.19.0'
 CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suffix in (
     ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
     ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
-IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime')}
+IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application',)}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
 REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
 MARKER = '@QUAZONAI_VERSION@'
@@ -160,18 +160,29 @@ If you explicitly do not want a new backup, use this target release's installer:
 bash install.sh --version {version} --directory "$HOME/.local/share/quazonai" --no-backup --skill-dir "$HOME/.agents/skills/quazonai"
 ```
 
-For an existing local `nautilus` service in `compose.override.yaml`, add
-`--local-runtime` to enroll it for same-release runtime image updates. First
-finish and reconcile its tasks and safely stop that container. This automatic
-path is limited to standard science-only workers: both original and candidate
-account configurations must be empty. Account hosts require a separate explicit
-strategy/order/exit reconciliation plan; stopped does not prove financial safety.
-The installer refuses a running runtime rather than cancelling work, and cannot
-certify remote task settlement from an empty account configuration. It retains the owner's
-Compose environment, mounts, CPU settings and credentials, overriding only the
-image from the same release manifest. Enrollment persists for later updates.
-Independent remote servers are not changed. Runtime image revision/version and
-the running container image ID are verified; this is not a trading-readiness test.
+Nautilus is not bundled with this release and is never installed, upgraded,
+started or stopped by this installer. Existing external containers, configuration
+and account data remain untouched during install/update/start/stop, including owner Compose overrides. The retired
+`--local-runtime` option is rejected. Configure an explicitly chosen external
+backtest/account environment before research or trading.
+
+Upstream NautilusTrader is a library, not a built-in HTTP server. QuaZonai expects
+its compatible remote worker protocol (`/v1/capabilities`, `/v1/execute`, retained
+execution receipts, and separate `/accounts/<id>` APIs). Installing Nautilus alone
+or entering an arbitrary server URL is insufficient. The current HTTP transport is one supported integration boundary, not a claim
+that every existing Nautilus environment already exposes it. Direct Rust environment
+attachment is not implemented by this deployment change. Owners can build the optional
+adapter from this repository using `deploy/docker/native-build.sh` and the explicit
+`nautilus` Dockerfile target; this is a separate, user-managed deployment. See the
+repository AGENTS.md deployment section for exact commands and protocol boundaries.
+
+Automatic `restore` replaces the dedicated QuaZonai installation `data/` directory,
+not external native state. It keeps the current owner Compose override, refuses
+additional Compose services or known native account directories inside `data/`,
+and stops before changing files when its scope cannot be inspected. Keep all
+owner native data outside that application directory. Other external processes'
+private file usage cannot be inferred; such shared directories require separately
+scoped manual recovery, not a whole-directory app restore.
 
 `--no-backup` skips only the recovery-point copy. The existing database, keys,
 configuration and account data remain in place; graceful stop and unresolved-task

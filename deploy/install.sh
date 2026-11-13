@@ -8,7 +8,6 @@ directory="$HOME/.local/share/quazonai"
 bin_directory="$HOME/.local/bin"
 cli_only=false
 no_backup=false
-local_runtime=false
 skill_directory=''
 deployment_args=()
 fail() { printf 'Installation failed: %s\n' "$*" >&2; exit 1; }
@@ -17,13 +16,13 @@ while [ "$#" -gt 0 ]; do
     --help|-h)
       cat <<'HELP'
 Usage: bash install.sh [--cli-only] [--version TAG|latest] [--bin-dir PATH] [--directory PATH]
-                       [--port PORT] [--no-backup] [--local-runtime] [--skill-dir PATH]
+                       [--port PORT] [--no-backup] [--skill-dir PATH]
 Installs the prebuilt CLI into ~/.local/bin. Linux x86_64 also installs or
 updates the Docker stack; macOS installs only the CLI. The source bootstrap
 selects the newest complete published dev release; release installers are pinned.
 --version latest selects the newest complete dev release explicitly.
 --no-backup skips only an update recovery point, never task-idle checks.
---local-runtime updates an existing, safely stopped science-only nautilus service; account hosts require separate reconciliation.
+Nautilus environments are configured and managed separately; this installer updates only QuaZonai.
 --skill-dir PATH links the same-release bundled skill; unmanaged paths are refused; a matching QuaZonai skills-lock directory is updated in place.
 --cli-only skips the Linux stack. Existing installations retain their settings.
 Requires Bash 4.4+ for the Linux stack, Bash 3.2+ for CLI-only, curl, tar
@@ -33,7 +32,7 @@ HELP
       exit 0 ;;
     --cli-only) cli_only=true; shift ;;
     --no-backup) no_backup=true; shift ;;
-    --local-runtime) local_runtime=true; shift ;;
+    --local-runtime) fail 'Nautilus runtime management has been removed. Manage the external environment separately.' ;;
     --version|--directory|--bin-dir|--skill-dir|--port|--database-port)
       [ "$#" -ge 2 ] && [ -n "$2" ] || fail "Missing value for $1"
       case "$1" in
@@ -70,7 +69,6 @@ case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) platform=macos-aarch64; cli_only=true ;;
   *) fail 'Supported hosts: Linux x86_64, macOS x86_64 or Apple Silicon. Use install.ps1 on Windows x86_64.' ;;
 esac
-if "$cli_only" && "$local_runtime"; then fail '--local-runtime requires a Docker stack update.'; fi
 if "$cli_only" && "$no_backup"; then fail '--no-backup applies only to a Docker stack update, not --cli-only.'; fi
 if ! "$cli_only"; then
   [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; } || fail 'The Linux Docker stack requires Bash 4.4 or newer. Upgrade Bash explicitly or use --cli-only.'
@@ -200,7 +198,7 @@ json_read() {
     }
     if(mode!="latest" || kind[root]!="array") bad()
     latest=field
-    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz",required," ")
+    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz",required," ")
     for(i=1;i<=count[root];i++) {
       release=prop(root,i); tag=value[prop(release,"tag_name")]; assets=prop(release,"assets")
       if(kind[release]!="object" || kind[prop(release,"tag_name")]!="string" || !dev(tag) || kind[prop(release,"draft")]!="false" || kind[assets]!="array") continue
@@ -347,10 +345,6 @@ if ! "$cli_only"; then
   if "$no_backup"; then
     [ "$command" = apply-update ] || fail '--no-backup requires an existing installation update.'
     deployment_args+=(--no-backup)
-  fi
-  if "$local_runtime"; then
-    [ "$command" = apply-update ] || fail '--local-runtime requires an existing installation update.'
-    deployment_args+=(--local-runtime)
   fi
   bash "$work/deployment/manage.sh" "$command" --directory "$directory" ${deployment_args[@]+"${deployment_args[@]}"}
 fi
