@@ -1,4 +1,4 @@
-//! Explicit configuration for compiled upstream strategies, not a strategy language.
+//! Configuration for compiled Nautilus strategies, including user crates; not a strategy language.
 use crate::{catalog_coverage::NativeCatalogSelectorV1, DbCounter, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -61,6 +61,11 @@ pub struct NativeInstrumentDefinitionBasisV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum NativeCompiledStrategyV1 {
+    /// User crate statically linked into the runner; configuration is decoded by that crate.
+    Registered {
+        name: String,
+        config: serde_json::Value,
+    },
     EmaCross {
         /// Original official StrategyConfig JSON, decoded directly upstream.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,4 +152,25 @@ pub struct NativeEquityStatisticV1 {
     pub native_key: String,
     pub annualization_days: usize,
     pub value: Option<f64>,
+}
+
+/// Configuration owned by a statically linked user crate; not a QZ mirror of Nautilus builders.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeConfiguredBacktestRequestV1 {
+    pub schema_version: SchemaV1,
+    pub name: String,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NativeConfiguredBacktestResultV1 {
+    pub schema_version: SchemaV1,
+    pub request: NativeConfiguredBacktestRequestV1,
+    pub native_version: String,
+    /// Original upstream BacktestResult serialization; no QZ ranking or aggregation.
+    pub native_results: serde_json::Value,
+    /// Present only if the user's official node configuration retains the engine.
+    pub canonical_result: Option<serde_json::Value>,
+    pub canonical_unavailable_reason: Option<String>,
 }

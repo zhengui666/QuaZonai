@@ -1,6 +1,7 @@
-//! Shared compiled upstream constructors for backtest and explicitly configured account hosts.
+//! Compiled upstream constructors and the static user-crate registration boundary.
 use anyhow::{ensure, Result};
 use contracts::native_strategy::NativeCompiledStrategyV1;
+use nautilus_backtest::engine::BacktestEngine;
 use nautilus_model::{enums::BookType, identifiers::InstrumentId};
 use nautilus_trading::examples::strategies::{
     ema_cross::{EmaCross, EmaCrossConfig},
@@ -22,6 +23,9 @@ pub fn build_strategy(
     config: &NativeCompiledStrategyV1,
 ) -> Result<CompiledNativeStrategy> {
     Ok(match config {
+        NativeCompiledStrategyV1::Registered { .. } => {
+            anyhow::bail!("NATIVE_REGISTERED_STRATEGY_REQUIRES_USER_RUNNER")
+        }
         NativeCompiledStrategyV1::EmaCross {
             base,
             trade_size,
@@ -132,4 +136,99 @@ pub fn build_strategy(
             CompiledNativeStrategy::OrderBookImbalance(OrderBookImbalance::from_config(config)?)
         }
     })
+}
+
+/// Static user-crate registration. Implementations construct their own official Nautilus
+/// Strategy type and call engine.add_strategy; QZ does not implement strategy behavior.
+/// The callback runs once for every fresh backtest/WF engine, with original configuration.
+pub type StrategyRegistration = fn(
+    engine: &mut BacktestEngine,
+    instrument_id: InstrumentId,
+    name: &str,
+    config: &serde_json::Value,
+) -> Result<()>;
+
+pub fn add_strategy(
+    engine: &mut BacktestEngine,
+    id: InstrumentId,
+    config: &NativeCompiledStrategyV1,
+    registration: Option<StrategyRegistration>,
+) -> Result<()> {
+    if let NativeCompiledStrategyV1::Registered { name, config } = config {
+        let register = registration
+            .ok_or_else(|| anyhow::anyhow!("NATIVE_REGISTERED_STRATEGY_REQUIRES_USER_RUNNER"))?;
+        register(engine, id, name, config)?;
+        ensure!(
+            !engine.kernel().trader.borrow().strategy_ids().is_empty(),
+            "NATIVE_REGISTERED_STRATEGY_NOT_INSTALLED"
+        );
+        return Ok(());
+    }
+    match build_strategy(id, config)? {
+        CompiledNativeStrategy::EmaCross(strategy) => engine.add_strategy(strategy),
+        CompiledNativeStrategy::HurstVpinDirectional(strategy) => engine.add_strategy(*strategy),
+        CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(*strategy),
+        CompiledNativeStrategy::OrderBookImbalance(strategy) => engine.add_strategy(strategy),
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+
+    #[test]
+    fn registration_receives_original_parameters_and_adds_an_official_strategy() {
+        fn register(
+            engine: &mut BacktestEngine,
+            id: InstrumentId,
+            name: &str,
+            config: &serde_json::Value,
+        ) -> Result<()> {
+            assert_eq!(name, "user::ema");
+            assert_eq!(config["trade_size"], "1.00000000");
+            let native = EmaCrossConfig::builder()
+                .instrument_id(id)
+                .trade_size(
+                    config["trade_size"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .map_err(anyhow::Error::msg)?,
+                )
+                .fast_period(2)
+                .slow_period(3)
+                .build();
+            engine.add_strategy(EmaCross::from_config(native))
+        }
+        let mut engine = BacktestEngine::new(Default::default()).unwrap();
+        let config = NativeCompiledStrategyV1::Registered {
+            name: "user::ema".into(),
+            config: serde_json::json!({"trade_size": "1.00000000"}),
+        };
+        add_strategy(
+            &mut engine,
+            "BTC.SIM".parse().unwrap(),
+            &config,
+            Some(register),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unregistered_user_strategy_never_falls_back_to_a_builtin() {
+        let request = NativeCompiledStrategyV1::Registered {
+            name: "user::strategy".into(),
+            config: serde_json::json!({"quantity": "0.000000000000000001"}),
+        };
+        let error = build_strategy("BTC.SIM".parse().unwrap(), &request)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "NATIVE_REGISTERED_STRATEGY_REQUIRES_USER_RUNNER"
+        );
+        let encoded = serde_json::to_value(&request).unwrap();
+        let decoded: NativeCompiledStrategyV1 = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), encoded);
+    }
 }

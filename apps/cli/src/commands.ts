@@ -48,6 +48,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
 Delete hides an inactive object; original evidence and receipts remain. It never cancels remote work or liquidates positions.
+For a user-compiled Rust backtest factory, research start may request the native_configured_backtest tool with its installed name and unchanged config. The factory owns official Nautilus run/node configuration, without a single-instrument template restriction. This runs historical research only, not account trading.
 Observation start only binds an account. Account-strategy start explicitly starts trading under the configured native strategy. 'client' is a thin alias.
 `;
 const options = {

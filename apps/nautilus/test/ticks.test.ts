@@ -215,24 +215,24 @@ test('explicit precision companions route tick-only and bind both native files a
 });
 
 
-test('upstream strategy replay shares tick precision, mounted catalogs and admission slots', async () => {
+for (const command of ['native-strategy-backtest', 'native-configured-backtest']) test(`${command} shares tick precision, mounted catalogs and admission slots`, async () => {
   const f = await fixture({}, true);
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
-    assert.ok(caps.commands.includes('native-strategy-backtest'));
+    assert.ok(caps.commands.includes(command));
     const mounted = ['--catalog', f.options.catalogRoots[0]!];
     const files = {};
-    const result = await (await f.post(f.request({}, 'native-strategy-backtest', mounted, files))).json();
+    const result = await (await f.post(f.request({}, command, mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
     const bar = await (await f.post(f.request({}, 'catalog-inspect'))).json();
     assert.deepEqual(result.result.limits, bar.result.limits);
-    const outside = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.directory]))).json();
+    const outside = await (await f.post(f.request({}, command, ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
-    const outsideFunding = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
+    const outsideFunding = await (await f.post(f.request({}, command, ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
     assert.equal(outsideFunding.error, 'nautilus_argument_unsupported');
-    const waiting = f.request({ wait: true }, 'native-strategy-backtest', mounted, files);
+    const waiting = f.request({ wait: true }, command, mounted, files);
     const active = f.post(waiting); await f.started(3);
-    const refused = await f.post(f.request({}, 'native-strategy-backtest'));
+    const refused = await f.post(f.request({}, command));
     assert.equal(refused.status, 429); assert.equal((await refused.json()).admission, 'REJECTED');
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
     assert.equal((await (await active).json()).status, 'RUNNING');

@@ -44,3 +44,8 @@ pub mod native_strategy;
 #[cfg(test)]
 #[path = "../tests/support/native_portfolio.rs"]
 mod native_test_portfolio;
+
+pub mod cli;
+mod native_stdout;
+
+pub mod native_configured;
