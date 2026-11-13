@@ -23,3 +23,14 @@ export function registeredNativeStrategyRequest(input: ResearchInput): JsonObjec
   if (input.campaign || ['sealed', 'indicator_strategy_request', 'indicator_strategy_batch_request', 'request', 'catalog_scan_request', 'nativeInput'].some(key => input.data[key] !== undefined)) throw new Error('native_strategy_requires_explicit_historical_binding');
   return object(input.data.native_strategy_backtest_request, 'native_strategy_backtest_request');
 }
+
+/** Research review can bind either an explicit single-strategy request or a typed Rust factory. */
+export function registeredNativeResearchRequest(input: ResearchInput): JsonObject {
+  if (input.data.native_configured_backtest_request !== undefined) {
+    // Reuse historical binding exclusions, without imposing single-instrument semantics.
+    const request = object(input.data.native_configured_backtest_request, 'native_configured_backtest_request');
+    const binding = { ...input, data: { ...input.data, native_strategy_backtest_request: request } } as unknown as ResearchInput;
+    return registeredNativeStrategyRequest(binding);
+  }
+  return registeredNativeStrategyRequest(input);
+}

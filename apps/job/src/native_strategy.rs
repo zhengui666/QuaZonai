@@ -24,7 +24,7 @@ mod performance;
 #[cfg(test)]
 mod preloaded_reference;
 pub mod registry;
-use registry::{build_strategy, CompiledNativeStrategy};
+use registry::StrategyRegistration;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -57,6 +57,15 @@ fn configure_book_quotes(
 pub fn run(
     root: &Path,
     request: NativeStrategyBacktestRequestV1,
+) -> Result<NativeStrategyBacktestResultV1> {
+    run_with_registration(root, request, None)
+}
+
+/// Run a statically linked user strategy on the same official node and data path.
+pub fn run_with_registration(
+    root: &Path,
+    request: NativeStrategyBacktestRequestV1,
+    registration: Option<StrategyRegistration>,
 ) -> Result<NativeStrategyBacktestResultV1> {
     ensure!(
         request.event_start_ns < request.event_end_ns,
@@ -156,7 +165,8 @@ pub fn run(
             "NATIVE_GRID_QUOTE_DATA_REQUIRED"
         ),
         // Subscriptions and internal BAR aggregation belong to the official strategy/data engine.
-        NativeCompiledStrategyV1::HurstVpinDirectional { .. } => {}
+        NativeCompiledStrategyV1::HurstVpinDirectional { .. }
+        | NativeCompiledStrategyV1::Registered { .. } => {}
         NativeCompiledStrategyV1::OrderBookImbalance { .. } => {
             ensure!(book == BookType::L2_MBP, "NATIVE_IMBALANCE_L2_REQUIRED");
             ensure!(
@@ -331,21 +341,12 @@ pub fn run(
         let engine = node
             .get_engine_mut("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
-        match build_strategy(id, &request.strategy)? {
-            CompiledNativeStrategy::EmaCross(strategy) => engine.add_strategy(strategy)?,
-            CompiledNativeStrategy::HurstVpinDirectional(strategy) => {
-                engine.add_strategy(*strategy)?
-            }
-            CompiledNativeStrategy::GridMarketMaker(strategy) => engine.add_strategy(*strategy)?,
-            CompiledNativeStrategy::OrderBookImbalance(strategy) => {
-                engine.add_strategy(strategy)?
-            }
-        }
+        registry::add_strategy(engine, id, &request.strategy, registration)?;
         node.run()?;
         let engine = node
             .get_engine("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
-        let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
+        let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Statically compiled Nautilus Strategy; not Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
         if book_quotes {
             notes.push("OFFICIAL_BOOK_DERIVED_QUOTES: Nautilus DataEngine emit_quotes_from_book uses original L2 best bid/ask and size for quote cache/publication; these are not additional exchange observations or catalog QuoteTick rows. Original book events still drive matching. Native risk checks and stop-time market exits can change now that quotes exist; old unpriced results and new returns are not directly comparable.".into());
         }

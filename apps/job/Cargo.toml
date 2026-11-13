@@ -91,6 +91,7 @@ rustix = { version = "=1.1.4", features = ["fs", "process", "stdio"] }
 toml = "=1.1.8"
 
 [dev-dependencies]
+nautilus-system = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }
 async-trait = "=0.1.92"
 arrow-array = "=56.2.0"
 nautilus-model = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["test-support"] }
