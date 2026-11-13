@@ -12,14 +12,14 @@ import {Application} from '../src/facts.ts';
 import {downstreamRequest} from '../src/downstream.ts';
 import {AccountRuntime} from '../../nautilus/src/account-runtime.ts';
 
-test('production ORDER_PAGE supplies original IDs for one explicit paper cancellation', {skip:!process.env.QZ_DECLARED_OWNER_BUILD_RESULT,timeout:120000},async()=>{
+test('production ORDER_PAGE cancellation preserves official event JSON through SQLite reopen', {skip:!process.env.QZ_DECLARED_OWNER_BUILD_RESULT,timeout:120000},async()=>{
  const allowed=new Set(['PATH','TMPDIR','PI_SCRATCH_DIR','QZ_DECLARED_OWNER_BUILD_RESULT','NODE_TEST_CONTEXT','NODE_TEST_WORKER_ID']);
  for(const key of Object.keys(process.env))assert(allowed.has(key),'unexpected inherited environment key: '+key);
  if(process.env.NODE_TEST_CONTEXT!==undefined)assert.equal(process.env.NODE_TEST_CONTEXT,'child-v8');
  if(process.env.NODE_TEST_WORKER_ID!==undefined)assert.equal(process.env.NODE_TEST_WORKER_ID,'1');
  const built=JSON.parse(await readFile(process.env.QZ_DECLARED_OWNER_BUILD_RESULT!,'utf8'));
  assert.equal(built.capabilities.account.compatibilityDeclaration,'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1');assert.equal(built.capabilities.account.compatibilityVerified,false);
- const state=await setup();const evidence:Record<string,any>={sourceCommit:'4c79d9d7bba5f099a85a92410bc897cd404ede1f',directory:state.directory,builtExecutable:built.executable};
+ const state=await setup();const evidence:Record<string,any>={sourceCommit:'8b25a2fcdd0d99efaaaba51b73ff818f1700089f',directory:state.directory,builtExecutable:built.executable};
  let observed:any=null,cancelSends=0;const originalRequest=AccountRuntime.prototype.request;
  const observe=mock.method(AccountRuntime.prototype,'request',async function(this:AccountRuntime,op:string,payload:Record<string,unknown>={}){const result=await originalRequest.call(this,op,payload);if(op==='SNAPSHOT')observed=structuredClone(result);return result;});
  const originalBind=AccountRuntime.prototype.bindPaperCancellationSession;
@@ -59,9 +59,17 @@ test('production ORDER_PAGE supplies original IDs for one explicit paper cancell
   assert.equal(original.binding.buildId,evidence.runner.binary);assert.equal(original.binding.nativeSessionId,evidence.recovery.receipt.result.native_session_id);evidence.original=original;
   for(const key of ['sourceId','buildId','nativeSessionId'])assert.equal((await post(base+'/commands',{...original,requestId:'wrong-'+key,binding:{...original.binding,[key]:'wrong'}})).statusCode,409);assert.equal(cancelSends,0);
   let receipt=await command(original);for(let i=0;i<100;i++){if(receipt.receipt.orderObservation?.status==='CANCELED')break;await delay(20);receipt=await get(base+'/commands/cancel-once');}
+  const rawEvent=receipt.receipt.orderObservation?.lastEventJson;
+  assert.equal(typeof rawEvent,'string','Updated formal runner must preserve official serde text');
+  const serialized=JSON.parse(rawEvent);assert.deepEqual(Object.keys(serialized),['Canceled']);const event=serialized.Canceled;
+  assert.equal(event.client_order_id,original.order.clientOrderId);assert.equal(event.strategy_id,original.strategyId);
+  assert.equal(event.trader_id,original.order.traderId);assert.equal(event.instrument_id,original.order.instrumentId);
+  // Never convert these original decimal tokens to JavaScript Number.
+  for(const field of ['ts_event','ts_init']){const token=rawEvent.match(new RegExp('"'+field+'"\\s*:\\s*(\\d+)'));assert(token,field);assert.ok(token[1]!.length>15);}
+  evidence.preciseOfficialSerdeText=rawEvent;
   evidence.receipt=receipt;evidence.cancelDispatchCalls=cancelSends;assert.equal(receipt.status,'UNCERTAIN');assert.equal(receipt.receipt.orderObservation.status,'CANCELED');assert.equal(receipt.receipt.orderObservation.filledQuantity,order.filled_quantity);assert.equal(cancelSends,1);evidence.receipt=receipt;
-  await state.restart();assert.equal((await post(base+'/commands',original)).statusCode,202);const reopened=await get(base+'/commands/cancel-once');assert.equal(reopened.status,'UNCERTAIN');assert.deepEqual(reopened.receipt.orderObservation,receipt.receipt.orderObservation);assert.equal(reopened.receipt.error,'native_cancel_original_session_unavailable');assert.equal(cancelSends,1);evidence.reopened=reopened;const history=await get(base+'/commands');assert.equal(history.items.length,1);assert.equal(history.items[0].requestId,original.requestId);assert.equal(history.items[0].status,'UNCERTAIN');assert.deepEqual(history.items[0].order,original.order);assert.equal((await get(base+'/orders?offset=0')).available,false);evidence.reopenedHistory=history;
-  console.log('production_order_page_original_cancel_once_unknown_confirmed');
+  await state.restart();assert.equal((await post(base+'/commands',original)).statusCode,202);const reopened=await get(base+'/commands/cancel-once');assert.equal(reopened.status,'UNCERTAIN');assert.deepEqual(reopened.receipt.orderObservation,receipt.receipt.orderObservation);assert.equal(reopened.receipt.orderObservation.lastEventJson,rawEvent);assert.equal(reopened.receipt.error,'native_cancel_original_session_unavailable');assert.equal(cancelSends,1);evidence.reopened=reopened;const history=await get(base+'/commands');assert.equal(history.items.length,1);assert.equal(history.items[0].requestId,original.requestId);assert.equal(history.items[0].status,'UNCERTAIN');assert.deepEqual(history.items[0].order,original.order);assert.equal((await get(base+'/orders?offset=0')).available,false);evidence.reopenedHistory=history;
+  console.log('production_order_page_exact_event_cancel_once_unknown_confirmed');
  }catch(error){evidence.error=String(error);throw error;}
  finally{try{await state.service.close();}finally{observe.mock.restore();observeCancel.mock.restore();await writeFile(join(state.directory,'order-page-cancel-evidence.json'),JSON.stringify(evidence,null,2));console.log('preserved_evidence_directory='+state.directory);}}
 });
