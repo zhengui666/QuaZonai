@@ -1,3 +1,4 @@
+import {downstreamRequest} from '../src/downstream.ts';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {writeFile,readFile} from 'node:fs/promises';
@@ -37,7 +38,7 @@ test('saved account routes use original Pi intent for explicit RECOVER without a
 test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT or resend after Service reopen',async()=>{
  const state=await setup();const binary=join(state.directory,'cancel-peer.mjs'),marker=join(state.directory,'cancel-calls');
  await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';import{createInterface}from'node:readline';let canceled=false;createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);appendFileSync(${JSON.stringify(marker)},v.operation+'\\n');const reply=result=>console.log(JSON.stringify({requestId:v.requestId,result}));
- if(v.operation==='BOOT')return reply({ready:true,native_session_id:'original-session',ordinary_venue_cancel:true});
+ if(v.operation==='BOOT')return reply({ready:true,native_session_id:'original-session',ordinary_venue_cancel:true,ordinary_venue_cancel_scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',account_compatibility_declaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',account_compatibility_verified:false});
  if(v.operation==='SNAPSHOT')return reply({ready:true,recovery_required:true,sequence:'1',observation_id:'original',observed_at_ns:'1',native_version:'controlled-peer',orders:[],positions:[],instruments:[],fills:[],cash:null,equity:null});
  if(v.operation==='RECOVERY_STATUS')return reply({ready:true,recovery_required:true,recovery_only:true,native_session_id:'original-session',native_version:'controlled-peer'});
  if(v.operation==='ORDER_CANCEL_ATTEMPT'){canceled=true;return console.log(JSON.stringify({requestId:v.requestId,error:'test_reply_lost_after_controlled_consumption'}));}
@@ -56,6 +57,9 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
   let app=(await state.service.research.harness.snapshot(Application,context))!;
   await state.service.research.harness.waitForTask(Object.values(app.strategyCommands!)[0]!.taskId as never,context);
   fence=(await state.service.app.inject({url:strategy+'/fence',headers:state.headers})).json();
+  const actualConnection=state.service.config.connections.find(c=>c.id==='paper')!;
+  const caps=await downstreamRequest(actualConnection,'capabilities','GET');
+  assert.deepEqual(caps.ordinaryVenueCancel,{supported:true,reason:null,scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false});
   const original={schemaVersion:1,requestId:'cancel-original',action:'CANCEL',strategyId:'ORIGINAL-001',order:{traderId:'TRADER-001',accountId:'PAPER-001',instrumentId:'TEST.SIM',clientOrderId:'original-order'},binding:fence.ordinaryVenueCancel};
   const send=()=>state.service.app.inject({method:'POST',url:strategy+'/commands',headers:state.headers,payload:original});
   const post=(payload:Record<string,unknown>)=>state.service.app.inject({method:'POST',url:strategy+'/commands',headers:state.headers,payload});

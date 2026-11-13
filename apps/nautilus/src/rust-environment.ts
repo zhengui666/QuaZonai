@@ -84,13 +84,14 @@ export async function materializeRustLauncher(discovery: RustEnvironmentDiscover
   return { manifestPath: join(destination, 'Cargo.toml'), qualification: 'SOURCE_ONLY_NOT_BUILT' };
 }
 
-export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string };
+export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' };
 /** Module paths name explicit public entry contracts, not arbitrary functions or dynamic plugins.
  * owner module backtest: config(Path,name,Value) and install(BacktestEngine,name,Value).
  * owner module account: strategy(name,Value) returning its concrete official Strategy type.
  */
 export function renderRustLauncher(factories: RustFactoryModules): string {
   if (!factories.backtestFactory && !factories.accountFactory) throw new Error('rust_environment_factory_required');
+  if(factories.accountCompatibility!==undefined && (factories.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!factories.accountFactory))throw new Error('rust_account_compatibility_declaration_invalid');
   const backtest = factories.backtestFactory ? publicRustPath(factories.backtestFactory) : null;
   const account = factories.accountFactory ? publicRustPath(factories.accountFactory) : null;
   return `${backtest ? `fn configured(catalog: &std::path::Path, name: &str, config: &serde_json::Value) -> anyhow::Result<job::native_configured::ConfiguredNativeRun> {
@@ -106,7 +107,7 @@ export function renderRustLauncher(factories: RustFactoryModules): string {
     registrar.add(owner_strategy::${account}::strategy(name, config)?)
 }
 ` : ''}fn main() {
-    job::native_runner::main_with_hooks(None, ${backtest ? 'Some(configured)' : 'None'}, ${account ? 'Some(account)' : 'None'});
+    job::native_runner::${factories.accountCompatibility ? 'main_with_hooks_and_account_compatibility' : 'main_with_hooks'}(None, ${backtest ? 'Some(configured)' : 'None'}, ${account ? 'Some(account)' : 'None'}${factories.accountCompatibility ? ', job::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode' : ''});
 }
 `;
 }

@@ -19,6 +19,20 @@ pub fn capabilities(
     })
 }
 
+/// Caller-declared compatibility, NOT verification or isolation of trusted Rust.
+/// Covers construction, on_load/on_start and every subsequent callback: only
+/// register Strategy values on this node; never create a second node or replace
+/// thread-global senders/message-bus endpoints for the entire thread lifetime.
+#[cfg(feature = "account-runtime")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccountCompatibility { Unspecified, TrustedStrategyOnlySingleNode }
+#[cfg(feature = "account-runtime")]
+impl AccountCompatibility {
+    pub fn declaration(self) -> Option<&'static str> {
+        match self { Self::Unspecified => None, Self::TrustedStrategyOnlySingleNode => Some("TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1") }
+    }
+}
+
 /// Generated QZ-side main calls this with statically linked official user factories.
 /// Constructed only inside this entry's fresh dedicated OS thread and runtime.
 /// Not a caller-supplied flag, and never handed to user registration callbacks.
@@ -45,22 +59,31 @@ pub fn main_with_hooks(
     configured: Option<ConfiguredRunFactory>,
     account: Option<AccountStrategyRegistration>,
 ) {
+    main_with_hooks_and_account_compatibility(registration, configured, account, AccountCompatibility::Unspecified)
+}
+
+/// Explicit generated-entry choice. Existing entry points retain unspecified behavior.
+#[cfg(feature = "account-runtime")]
+pub fn main_with_hooks_and_account_compatibility(
+    registration: Option<StrategyRegistration>,
+    configured: Option<ConfiguredRunFactory>,
+    account: Option<AccountStrategyRegistration>,
+    compatibility: AccountCompatibility,
+) {
     match std::env::args().nth(1).as_deref() {
-        Some("capabilities") => println!(
-            "{}",
-            capabilities(
-                registration.is_some(),
-                configured.is_some(),
-                account.is_some()
-            )
-        ),
+        Some("capabilities") => {
+            let mut value=capabilities(registration.is_some(),configured.is_some(),account.is_some());
+            value["account"]["compatibilityDeclaration"]=serde_json::json!(compatibility.declaration());
+            value["account"]["compatibilityVerified"]=serde_json::json!(false);
+            println!("{value}");
+        },
         Some("account-runtime") => {
             let result = on_account_thread(move |owner| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?;
                 runtime.block_on(crate::account_runtime::run_owned_registration(
-                    account, &owner,
+                    account, &owner, compatibility,
                 ))
             });
             if let Err(error) = result {

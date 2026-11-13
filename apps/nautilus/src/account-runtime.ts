@@ -49,6 +49,7 @@ export interface NativeAccountSnapshot {
 export interface NativeAccountRuntime {
   start?(): Promise<void>;
   paperCancellationBinding?(): NativeSessionBinding | null;
+  paperCancellationCapability?(): Record<string,unknown>;
   bindPaperCancellationSession?(expectedSessionId: string): {request(operation: 'ORDER_CANCEL_ATTEMPT'|'ORDER_OBSERVE', payload: Record<string, unknown>): Promise<Record<string, unknown>>};
   isConnected?(): boolean;
   request(operation: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -63,6 +64,7 @@ export class AccountRuntime implements NativeAccountRuntime {
   private stopped = false;
   private nativeSessionId: string | null = null;
   private ordinaryVenueCancel = false;
+  private cancellationFacts:Record<string,unknown> = {};
   private ticks = new Set<() => void>();
   private binary: string;
   private options: AccountOptions;
@@ -96,7 +98,7 @@ export class AccountRuntime implements NativeAccountRuntime {
         // A superseded process can emit error and then exit after its successor
         // has started. It has no authority over that generation's requests.
         if (this.child !== child) return;
-        this.child = null; this.nativeSessionId = null; this.ordinaryVenueCancel = false;
+        this.child = null; this.nativeSessionId = null; this.ordinaryVenueCancel = false; this.cancellationFacts = {};
         for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error('account_runtime_outcome_uncertain')); }
         this.pending.clear();
       };
@@ -131,6 +133,7 @@ export class AccountRuntime implements NativeAccountRuntime {
           source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
         this.nativeSessionId = typeof boot.native_session_id === 'string' ? boot.native_session_id : null;
         this.ordinaryVenueCancel = boot.ordinary_venue_cancel === true;
+        this.cancellationFacts = {scope:boot.ordinary_venue_cancel_scope??null,compatibilityDeclaration:boot.account_compatibility_declaration??null,compatibilityVerified:boot.account_compatibility_verified===false?false:null};
       } catch (error) {
         failed(); child.stdin.end(); child.kill('SIGTERM'); throw error;
       }
@@ -144,6 +147,10 @@ export class AccountRuntime implements NativeAccountRuntime {
    * ownership or permission to trade. Native operations must independently check
    * the same session and original order before any dispatch.
    */
+  paperCancellationCapability():Record<string,unknown> {
+    const supported=this.paperCancellationBinding()!=null;
+    return {supported,reason:supported?null:'native_cancel_original_session_unavailable',...(supported?this.cancellationFacts:{scope:null,compatibilityDeclaration:null,compatibilityVerified:null})};
+  }
   paperCancellationBinding(): NativeSessionBinding | null {
     if (!this.ordinaryVenueCancel || this.options.mode !== 'paper' || this.stopped || this.starting
       || !this.child || this.child.exitCode !== null || this.child.signalCode !== null || !this.nativeSessionId) return null;

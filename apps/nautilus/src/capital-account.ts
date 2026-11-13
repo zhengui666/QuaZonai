@@ -480,7 +480,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         || method === 'POST' && (path === '/strategy/commands' && body?.action === 'START')) await refresh();
       return serial(async () => {
         if (method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
-          ordinaryVenueCancel:{supported:runtime.paperCancellationBinding?.()!=null,reason:runtime.paperCancellationBinding?.()!=null?null:'native_cancel_original_session_unavailable',scope:'KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE'},
+          ordinaryVenueCancel:runtime.paperCancellationCapability?.()??{supported:false,reason:'native_cancel_original_session_unavailable',scope:null,compatibilityDeclaration:null,compatibilityVerified:null},
           recovery: { supported: true, action: 'RECOVER', automaticConnection: false, automaticStrategyStart: false },
           capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_original_control_evidence_unavailable', policies: [], actions: [] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },

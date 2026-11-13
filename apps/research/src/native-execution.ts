@@ -126,13 +126,16 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
   if (typeof item.id !== 'string' || !item.id.trim() || typeof item.binary !== 'string' || !isAbsolute(item.binary) || item.capabilities?.schemaVersion !== 1 || item.capabilities.protocol !== 'quazonai-native-process-v1' || item.capabilities.running !== false
     || !item.capabilities.identity || typeof item.capabilities.research?.configuredRunFactory !== 'boolean' || typeof item.capabilities.research?.singleStrategyRegistration !== 'boolean'
     || typeof item.capabilities.account?.compiled !== 'boolean' || typeof item.capabilities.account?.registration !== 'boolean' || item.capabilities.account.command !== 'account-runtime' || item.capabilities.account.requiresExplicitStart !== true) throw new Error('native_process_target_invalid');
+  const account=item.capabilities.account;
+  if ((account.compatibilityDeclaration!==undefined || account.compatibilityVerified!==undefined) &&
+    !((account.compatibilityDeclaration===null || account.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1') && account.compatibilityVerified===false)) throw new Error('native_process_target_invalid');
   // Durable Docs expose JSON proxies, which structuredClone cannot clone. Copy
   // the validated wire fields and materialize only the original JSON identity.
   return {kind:'RUST_PROCESS',id:item.id,binary:item.binary,capabilities:{
     schemaVersion:1,protocol:'quazonai-native-process-v1',running:false,
     identity:JSON.parse(canonical(item.capabilities.identity as never)),
     research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration},
-    account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true},
+    account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
   }};
 }
 function processCapabilities(target: ProcessNativeTarget): NativeCapabilities {

@@ -75,3 +75,12 @@ test('explicit hook modules render only selected capabilities and never boot nod
   assert.throws(() => renderRustLauncher({}), /factory_required/);
   assert.throws(() => renderRustLauncher({ accountFactory: 'bad();' }), /invalid_factory_path/);
 });
+
+test('account compatibility is an explicit declaration, never inferred from a factory',()=>{
+ const ordinary=renderRustLauncher({accountFactory:'account'});
+ assert.doesNotMatch(ordinary,/TrustedStrategyOnlySingleNode/);
+ const declared=renderRustLauncher({accountFactory:'account',accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'});
+ assert.match(declared,/main_with_hooks_and_account_compatibility/);
+ assert.match(declared,/AccountCompatibility::TrustedStrategyOnlySingleNode/);
+ assert.throws(()=>renderRustLauncher({backtestFactory:'backtest',accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'}),/declaration_invalid/);
+});

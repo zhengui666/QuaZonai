@@ -108,7 +108,7 @@ test('paper cancellation binding never follows a replacement process or boots on
   await writeFile(script, `import fs from 'node:fs';import readline from 'node:readline';
 let n=1;try{n=Number(fs.readFileSync(${JSON.stringify(counter)},'utf8'))+1}catch{}fs.writeFileSync(${JSON.stringify(counter)},String(n));
 readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);const reply=result=>console.log(JSON.stringify({requestId:v.requestId,result}));
-if(v.operation==='BOOT')reply({native_session_id:'session-'+n,ordinary_venue_cancel:true});
+if(v.operation==='BOOT')reply({native_session_id:'session-'+n,ordinary_venue_cancel:true,ordinary_venue_cancel_scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',account_compatibility_declaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',account_compatibility_verified:false});
 else if(v.operation==='EXIT')process.exit(0);
 else if(v.operation==='SHUTDOWN'){reply({});process.exit(0)}
 else reply({operation:v.operation,expected_native_session_id:v.expected_native_session_id});});`);
@@ -119,10 +119,12 @@ else reply({operation:v.operation,expected_native_session_id:v.expected_native_s
     await assert.rejects(readFile(counter), /ENOENT/);
     await runtime.start();
     assert.throws(()=>runtime.bindPaperCancellationSession('wrong'), /original_session_unavailable/);
+    assert.deepEqual(runtime.paperCancellationCapability(),{supported:true,reason:null,scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false});
     const bound=runtime.bindPaperCancellationSession('session-1');
     assert.deepEqual(await bound.request('ORDER_OBSERVE',{expected_native_session_id:'wrong'}), {operation:'ORDER_OBSERVE',expected_native_session_id:'session-1'});
     await assert.rejects(runtime.request('EXIT'), /outcome_uncertain/);
     await assert.rejects(bound.request('ORDER_CANCEL_ATTEMPT',{}), /original_session_unavailable/);
+    assert.equal(runtime.paperCancellationCapability().scope,null);
     assert.equal(await readFile(counter,'utf8'),'1');
     await runtime.start(); // New explicit connection, never done by bound requests.
     await assert.rejects(bound.request('ORDER_OBSERVE',{}), /original_session_unavailable/);

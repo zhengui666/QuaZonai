@@ -277,6 +277,7 @@ impl AccountStrategyRegistrar<'_> {
 struct AccountController {
     core: StrategyCore,
     cancel_node: Option<crate::account_queued_cancel::BoundCancelNode>,
+    compatibility: crate::native_runner::AccountCompatibility,
     signal_strategy_id: Option<StrategyId>,
     user_registration: Option<AccountStrategyRegistration>,
     signal_restore_error: Option<String>,
@@ -361,7 +362,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some()}),
+                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
             ),
         );
         Ok(())
@@ -1322,24 +1323,26 @@ pub async fn run_with_registration(
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
     // External callers may drive several nodes on one thread. No ownership claim.
-    run_input(registration, false).await
+    run_input(registration, false, crate::native_runner::AccountCompatibility::Unspecified).await
 }
 pub(crate) async fn run_owned_registration(
     registration: Option<AccountStrategyRegistration>,
     _owner: &crate::native_runner::OwnedAccountRuntime,
+    compatibility: crate::native_runner::AccountCompatibility,
 ) -> Result<()> {
-    run_input(registration, true).await
+    run_input(registration, true, compatibility).await
 }
 async fn run_input(
     registration: Option<AccountStrategyRegistration>,
     owned_runtime: bool,
+    compatibility: crate::native_runner::AccountCompatibility,
 ) -> Result<()> {
     let mut first = String::new();
     io::stdin().read_line(&mut first)?;
     let boot: Request = serde_json::from_str(&first)?;
     ensure!(boot.operation == "BOOT", "account_native_boot_required");
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
-    let result = run_config_owned(config, boot.id.clone(), registration, owned_runtime).await;
+    let result = run_config_owned(config, boot.id.clone(), registration, owned_runtime, compatibility).await;
     if let Err(e) = &result {
         // Full causal diagnostics stay on the private process stderr channel.
         // The public protocol keeps its existing stable top-level error.
@@ -1378,7 +1381,7 @@ async fn run_config_with_registration(
     boot_id: String,
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
-    run_config_owned(config, boot_id, registration, false).await
+    run_config_owned(config, boot_id, registration, false, crate::native_runner::AccountCompatibility::Unspecified).await
 }
 fn ordinary_cancel_supported(
     owned_runtime: bool,
@@ -1396,6 +1399,7 @@ async fn run_config_owned(
     boot_id: String,
     registration: Option<AccountStrategyRegistration>,
     owned_runtime: bool,
+    compatibility: crate::native_runner::AccountCompatibility,
 ) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
@@ -1695,12 +1699,15 @@ async fn run_config_owned(
         .borrow_mut()
         .set_trading_state(nautilus_model::enums::TradingState::Halted);
     node.add_strategy(AccountController {
-        cancel_node: ordinary_cancel_supported(
+        compatibility,
+        cancel_node: (ordinary_cancel_supported(
             owned_runtime,
             &config.mode,
             registration.is_some(),
             &config.native_strategy.strategy,
-        )
+        ) || (owned_runtime && config.mode == "paper" && registration.is_some()
+            && compatibility == crate::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode
+            && matches!(config.native_strategy.strategy,NativeCompiledStrategyV1::Registered { .. })))
         .then(|| crate::account_queued_cancel::BoundCancelNode::capture(&node)),
         signal_strategy_id: None,
         user_registration: registration,
@@ -2107,6 +2114,7 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
         node.add_strategy(AccountController {
+            compatibility: crate::native_runner::AccountCompatibility::Unspecified,
             cancel_node: Some(crate::account_queued_cancel::BoundCancelNode::capture(
                 &node,
             )),
