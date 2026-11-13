@@ -8,7 +8,7 @@ test('application ships an allowlisted QZ source subset, no native binaries/tool
   const copies = docker.split('\n').filter(line => line.startsWith('COPY ') && line.includes('/opt/quazonai/native-glue/'));
   assert.equal(copies.length, 10);
   const sources = copies.flatMap(line => line.split(/\s+/).slice(2, -1));
-  assert.deepEqual(sources, ['Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/src', 'apps/job/examples', 'apps/job/tests', 'crates/contracts/Cargo.toml', 'crates/contracts/src', 'crates/domain/Cargo.toml', 'crates/domain/src', 'AGENTS.md']);
+  assert.deepEqual(sources, ['Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/build_identity.rs', 'apps/job/src', 'apps/job/examples', 'apps/job/tests', 'crates/contracts/Cargo.toml', 'crates/contracts/src', 'crates/domain/Cargo.toml', 'crates/domain/src', 'AGENTS.md']);
   function check(path) {
     const stat = lstatSync(resolve(root, path)); assert.equal(stat.isSymbolicLink(), false, path);
     if (stat.isDirectory()) for (const child of readdirSync(resolve(root, path))) check(`${path}/${child}`);
@@ -17,4 +17,12 @@ test('application ships an allowlisted QZ source subset, no native binaries/tool
   sources.forEach(check);
   const application = docker.slice(docker.indexOf('FROM execution-base AS application'));
   assert.doesNotMatch(application, /COPY.*--from=nautilus|rustup|cargo install|\/native\/job/);
+});
+
+test('application process builder includes its selected dependency graph module', () => {
+  const docker = readFileSync(resolve(root, 'deploy/docker/Dockerfile'), 'utf8');
+  const applicationSources = docker.slice(docker.indexOf('FROM scratch AS application-source'), docker.indexOf('FROM execution-base AS application'));
+  const line = applicationSources.split('\n').find(line => line.startsWith('COPY ') && line.includes('apps/nautilus/src/rust-launcher-build.ts'));
+  assert.ok(line);
+  assert.ok(line.split(/\s+/).includes('apps/nautilus/src/rust-native-dependencies.ts'));
 });
