@@ -264,6 +264,7 @@ export const nativeStrategyBacktestTool = defineTool({
       const study = await tx.doc(Study, api.conversationId);
       if (study.trials.length || study.final && study.final.taskId !== api.taskId) throw new Error('research_already_final');
       const binding = await tx.doc(NativeStrategyChild, api.taskId);
+      if (!binding.taskId) await assertResearchRunSettled(tx, api.conversationId);
       if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
         request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
       }, { ownership: { kind: 'task', taskId: api.taskId } });
