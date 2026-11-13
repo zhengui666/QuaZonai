@@ -65,7 +65,7 @@ function StrategyPortfolios({ route }: { route: Route }) {
       { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 140, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
       { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
       { title: <Tooltip title="只展示上游原始 CAGR；未提供时不自行年化。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
-      { title: <Tooltip title="本次原生账户日收益的最大回撤，保留原始符号，不重新计算。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
+      { title: <Tooltip title="本次原生账户日收益的最大回撤，保留原始负值，越接近 0 回撤越小。首次点击按原值降序排列，不重新计算。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
       { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
     ]} />}
   </section>;
