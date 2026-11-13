@@ -74,6 +74,17 @@ fn fixture(parameters: NativeTaskParametersV1, mut inputs: Vec<RuntimeInputV1>) 
         spec,
     }
 }
+// Prove retirement precedes domain admission (and therefore its old formula paths).
+fn invalidate_retired_spec(f: &Fixture) {
+    let mut spec = f.spec.clone();
+    spec.external_job_id = "not-a-valid-native-job".into();
+    assert!(domain::runtime_jobs::spec_shape(&spec).is_err());
+    fs::write(
+        f.input.join("spec.json"),
+        serde_json::to_vec(&spec).unwrap(),
+    )
+    .unwrap();
+}
 fn dataset(id: Id) -> RuntimeInputV1 {
     RuntimeInputV1::Dataset {
         revision_id: id,
@@ -267,6 +278,7 @@ fn retired_managed_forecast_cannot_publish_or_execute() {
     );
     fs::write(f.input.join("objects").join(model.to_string()), wasm).unwrap();
     attach_catalog(&f, dataset_id, catalog.path());
+    invalidate_retired_spec(&f);
     assert_eq!(
         job::managed::execute(&f.input, &f.output)
             .unwrap_err()
@@ -285,9 +297,6 @@ fn retired_managed_study_cannot_publish_or_execute() {
         } else {
             market::study()
         };
-        if liquidity {
-            market::calendar_schedule(&mut request);
-        }
         if infeasible {
             request.mandate.constraints.max_asset_weight = "0.4".parse().unwrap();
         }
@@ -352,6 +361,7 @@ fn retired_managed_study_cannot_publish_or_execute() {
             fs::write(f.input.join("objects").join(id.to_string()), bytes).unwrap();
         }
         attach_catalog(&f, dataset, catalog.path());
+        invalidate_retired_spec(&f);
         assert_eq!(
             job::managed::execute(&f.input, &f.output)
                 .unwrap_err()
@@ -509,6 +519,7 @@ fn portfolio_fixture(
 #[test]
 fn retired_managed_build_cannot_publish_or_execute() {
     let f = portfolio_fixture(false, |_| {});
+    invalidate_retired_spec(&f);
     assert_eq!(
         job::managed::execute(&f.input, &f.output)
             .unwrap_err()

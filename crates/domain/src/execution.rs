@@ -10,23 +10,8 @@ use contracts::{
 use std::collections::BTreeSet;
 
 pub mod features;
-pub mod strategy;
-pub use strategy::{
-    request as strategy_composition_request, result as strategy_composition_result,
-};
 mod output;
-mod portfolio;
-pub use output::{
-    check_observed_spot_simulation, equity_curve_query, output_bindings, output_shape,
-    portfolio_equity_curve, portfolio_simulation_metrics, quality as native_quality,
-    strategy_portfolio_summary,
-};
-pub use portfolio::{
-    candidate_simulation, observed_spot_build_request, observed_spot_study_cutoffs,
-    portfolio_build_liquidity, portfolio_build_request, portfolio_costs, portfolio_execution_costs,
-    portfolio_rolling_liquidity_assets, portfolio_sequence, portfolio_study_cutoffs,
-    portfolio_study_liquidity_assets,
-};
+pub use output::{output_bindings, output_shape, quality as native_quality};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
@@ -218,165 +203,13 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             forecast_inputs(spec, *dataset_revision_id, *model_artifact_id, None)?;
         }
         NativeTaskParametersV1::EvaluateExperiment { .. } => return Err(bad("retired_task")),
-        NativeTaskParametersV1::StudyPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            portfolio_study_cutoffs(request)?;
-            let objects = request
-                .members
-                .iter()
-                .flat_map(|m| std::iter::once(m.model_artifact_id).chain(m.calibration_artifact_id))
-                .collect::<BTreeSet<_>>();
-            let costs = request.mandate.constraints.transaction_costs_ref;
-            let liquidity = request.mandate.constraints.liquidity_ref;
-            let calendar = request.calendar.as_ref().map(|c| c.artifact_id);
-            if !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Discovery | contracts::research::DataPartition::Validation, .. } if revision_id == dataset_revision_id))
-                || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
-                || !artifact(spec, costs, ArtifactInputRole::Parameters)
-                || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
-                || calendar.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
-                || spec.inputs.iter().any(|i| match i {
-                    RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || !matches!(role, contracts::research::DataPartition::Discovery | contracts::research::DataPartition::Validation),
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id)
-                        || *role == ArtifactInputRole::Parameters && (*artifact_id == costs || *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == liquidity || Some(*artifact_id) == calendar)),
-                }) { return Err(bad("portfolio_study.inputs")); }
-        }
-        NativeTaskParametersV1::ComposeStrategyTargets {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            strategy::task(spec, *dataset_revision_id, request)?;
-        }
-        NativeTaskParametersV1::BuildPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            portfolio_build_request(request)?;
-            let liquidity = request
-                .bar_liquidity
-                .as_ref()
-                .map(|b| b.assumption.report_artifact_id);
-            let rolling = request
-                .rolling_liquidity
-                .as_ref()
-                .and(request.mandate.constraints.liquidity_ref);
-            let objects = request
-                .members
-                .iter()
-                .flat_map(|m| std::iter::once(m.model_artifact_id).chain(m.calibration_artifact_id))
-                .collect::<BTreeSet<_>>();
-            if !spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, role: contracts::research::DataPartition::Forward, .. } if revision_id == dataset_revision_id))
-                || objects.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Model))
-                || !artifact(spec, request.current_weights_artifact_id, ArtifactInputRole::Report)
-                || !artifact(spec, request.mandate.constraints.transaction_costs_ref, ArtifactInputRole::Parameters)
-                || liquidity.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::DataQuality))
-                || rolling.is_some_and(|id| !artifact(spec, id, ArtifactInputRole::Parameters))
-                || spec.inputs.iter().any(|input| match input {
-                    RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Forward,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*role == ArtifactInputRole::Model && objects.contains(artifact_id) || (*artifact_id == spec.parameters_artifact_id || *artifact_id == request.mandate.constraints.transaction_costs_ref || Some(*artifact_id) == rolling) && *role == ArtifactInputRole::Parameters || *artifact_id == request.current_weights_artifact_id && *role == ArtifactInputRole::Report || Some(*artifact_id) == liquidity && *role == ArtifactInputRole::DataQuality),
-                }) {
-                return Err(bad("allocation_inputs"));
-            }
-        }
-        NativeTaskParametersV1::SimulatePortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulateCandidate {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulatePortfolioSequence {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            crate::portfolio::simulation_models(&request.settings)?;
-            selection(&request.selection)?;
-            if !dataset(spec, *dataset_revision_id)
-                || spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id != *dataset_revision_id))
-                || request.target_points.is_empty()
-            { return Err(bad("simulation_inputs")); }
-            let bound = match parameters {
-                NativeTaskParametersV1::SimulateCandidate {
-                    target_artifact_id,
-                    settings_artifact_id,
-                    source_selection,
-                    ..
-                } => {
-                    if request.target_points.len() != 1 {
-                        return Err(bad("candidate_simulation.inputs"));
-                    }
-                    Some((
-                        vec![*target_artifact_id],
-                        settings_artifact_id,
-                        source_selection,
-                    ))
-                }
-                NativeTaskParametersV1::SimulatePortfolioSequence {
-                    sources,
-                    settings_artifact_id,
-                    source_selection,
-                    ..
-                } => {
-                    let ids = sources
-                        .iter()
-                        .map(|s| s.target_artifact_id)
-                        .collect::<BTreeSet<_>>();
-                    let candidates = sources
-                        .iter()
-                        .map(|s| s.candidate_id)
-                        .collect::<BTreeSet<_>>();
-                    if !(2..=253).contains(&sources.len())
-                        || sources.len() != request.target_points.len()
-                        || ids.len() != sources.len()
-                        || candidates.len() != sources.len()
-                    {
-                        return Err(bad("portfolio_sequence.inputs"));
-                    }
-                    Some((
-                        ids.into_iter().collect(),
-                        settings_artifact_id,
-                        source_selection,
-                    ))
-                }
-                _ => None,
-            };
-            if let Some((target_artifact_ids, settings_artifact_id, source_selection)) = bound {
-                selection(source_selection)?;
-                if source_selection.bar_types != request.selection.bar_types
-                    || source_selection.maximum_rows != request.selection.maximum_rows
-                    || source_selection.event_start_ns > request.selection.event_start_ns
-                    || source_selection.event_end_ns < request.selection.event_end_ns
-                    || source_selection.decision_cutoff_ns < request.selection.decision_cutoff_ns
-                    || target_artifact_ids
-                        .iter()
-                        .any(|id| !artifact(spec, *id, ArtifactInputRole::Report))
-                    || !artifact(spec, *settings_artifact_id, ArtifactInputRole::Parameters)
-                    || spec.inputs.iter().any(|input| match input {
-                        RuntimeInputV1::Dataset { role, .. } => {
-                            *role != contracts::research::DataPartition::Forward
-                        }
-                        RuntimeInputV1::Artifact {
-                            artifact_id, role, ..
-                        } => {
-                            !(*role == ArtifactInputRole::Report
-                                && target_artifact_ids.contains(artifact_id)
-                                || *role == ArtifactInputRole::Parameters
-                                    && (*artifact_id == spec.parameters_artifact_id
-                                        || artifact_id == settings_artifact_id))
-                        }
-                    })
-                {
-                    return Err(bad("candidate_simulation.inputs"));
-                }
-            }
+        NativeTaskParametersV1::StudyPortfolio { .. }
+        | NativeTaskParametersV1::BuildPortfolio { .. }
+        | NativeTaskParametersV1::ComposeStrategyTargets { .. }
+        | NativeTaskParametersV1::SimulatePortfolio { .. }
+        | NativeTaskParametersV1::SimulateCandidate { .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { .. } => {
+            return Err(bad("retired_task"))
         }
     }
     Ok(())

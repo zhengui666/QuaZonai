@@ -52,7 +52,6 @@ fn example() -> NativePortfolioBuildRequestV1 {
 fn initial_model_condition_is_self_identified_and_preserves_real_source_rules() {
     let request = example();
     domain::portfolio::paper_weights_source(&request).unwrap();
-    domain::execution::portfolio_build_request(&request).unwrap();
     assert_eq!(
         request.current_weights.asof_ns,
         request.selection.decision_cutoff_ns

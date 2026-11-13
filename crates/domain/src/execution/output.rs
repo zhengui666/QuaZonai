@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
     runtime_jobs::{native_output_contract, RuntimeOutputV1},
-    science::{NativeBarSelectionV1, NativeForecastResultV1, NativeSimulationResultV1},
+    science::{NativeBarSelectionV1, NativeForecastResultV1},
 };
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,18 +19,7 @@ fn exact_native_versions(
     actual == expected
 }
 
-mod experiment_summary;
-mod strategy_summary;
-pub use strategy_summary::strategy_portfolio_summary;
-mod equity_curve;
 mod forecast;
-mod simulation;
-mod spot_cash_report;
-pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
-pub(crate) use simulation::binding as check_simulation;
-pub use simulation::metrics as portfolio_simulation_metrics;
-pub use simulation::observed_binding as check_observed_spot_simulation;
-pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_OUTPUT_CONTRACT_INVALID")
@@ -142,12 +131,6 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
-        "qz.strategy_portfolio" => {
-            let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
-                decode(bytes)?;
-            super::strategy_composition_result(&result.request, &result)
-        }
-        "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         "qz.forward_evaluation" => crate::forward::evaluation::shape(&decode(bytes)?),
         "qz.portfolio_history" => contracts::portfolio_history::read(bytes)
             .map(|_| ())
@@ -276,61 +259,14 @@ pub fn output_bindings(
         NativeTaskParametersV1::EvaluateExperiment { .. } => {
             return Err(bad("native_output.retired_task"))
         }
-        NativeTaskParametersV1::ComposeStrategyTargets {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.strategy_portfolio")?.1)?;
-            super::strategy_composition_result(request, &result)?;
-            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay {
-                simulation,
-                ..
-            } = &result.outcome
-            {
-                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
-            }
-        }
-        NativeTaskParametersV1::BuildPortfolio { .. }
-        | NativeTaskParametersV1::StudyPortfolio { .. } => {
-            return Err(bad("native_output.retired_task"))
-        }
-        NativeTaskParametersV1::SimulatePortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulateCandidate {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulatePortfolioSequence {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.native_simulation")?.1)?;
-            simulation::binding(request, &result)?;
-            spot_cash_report::dataset(&result, *dataset_revision_id)?;
+        NativeTaskParametersV1::ComposeStrategyTargets { .. }
+        | NativeTaskParametersV1::BuildPortfolio { .. }
+        | NativeTaskParametersV1::StudyPortfolio { .. }
+        | NativeTaskParametersV1::SimulatePortfolio { .. }
+        | NativeTaskParametersV1::SimulateCandidate { .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { .. } => {
+            return Err(bad("native_output.retired_task"));
         }
     }
     Ok(())
-}
-
-// Benchmark adapters return explicit unavailable causes, not zero statistics.
-fn benchmark_unavailable(reason: Option<&str>) -> bool {
-    matches!(
-        reason,
-        Some(
-            "BENCHMARK_CURRENCY_MISMATCH"
-                | "BENCHMARK_WINDOW_MISMATCH"
-                | "BENCHMARK_RETURNS_INCOMPLETE"
-                | "BENCHMARK_SINGLE_SERIES_REQUIRED"
-                | "BENCHMARK_CATALOG_UNAVAILABLE"
-                | "BENCHMARK_CLOSE_CONVENTION_UNAVAILABLE"
-                | "BENCHMARK_PRICE_INVALID"
-                | "BENCHMARK_DUPLICATE_BOUNDARY"
-        )
-    )
 }

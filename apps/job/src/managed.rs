@@ -208,6 +208,9 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             NativeTaskParametersV1::CompileModel { .. }
                 | NativeTaskParametersV1::CompileFeatureModel { .. }
                 | NativeTaskParametersV1::EvaluateExperiment { .. }
+                | NativeTaskParametersV1::EvaluateAlpha { .. }
+                | NativeTaskParametersV1::StudyPortfolio { .. }
+                | NativeTaskParametersV1::BuildPortfolio { .. }
                 | NativeTaskParametersV1::ComposeStrategyTargets { .. }
                 | NativeTaskParametersV1::SimulatePortfolio { .. }
                 | NativeTaskParametersV1::SimulateCandidate { .. }
