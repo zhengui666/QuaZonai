@@ -572,7 +572,7 @@ impl AccountController {
         let mut fills = vec![];
         let mut order_rows:Vec<_>=orders.iter().map(|o|{
             for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
-            json!({"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
+            json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),"is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string()),"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
                 "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
                 "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
                 "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
@@ -871,6 +871,26 @@ impl AccountController {
                 Ok(
                     json!({"amount":money.as_decimal().to_string(),"precision":money.currency.precision}),
                 )
+            }
+            "ORDER_PAGE" => {
+                ensure!(r.text("expected_native_session_id")? == self.session, "native_order_session_changed");
+                let offset = r.value("offset").as_u64().ok_or_else(|| anyhow!("native_order_offset_invalid"))?;
+                let offset = usize::try_from(offset)?;
+                let cache = self.native_cache.borrow();
+                // Official lazy ID iterator: at most offset + 51 matching IDs yielded, only
+                // 50 borrowed orders projected, never clone orders or event histories.
+                // Cache iteration is live, not a stable historical snapshot.
+                let mut ids = cache.iter_client_order_ids(None, None, None, Some(&self.account)).skip(offset);
+                let mut items = Vec::with_capacity(50);
+                for id in ids.by_ref().take(50) {
+                    let o = cache.order_ref(&id).ok_or_else(|| anyhow!("native_order_missing"))?;
+                    items.push(json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),
+                        "client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),
+                        "status":o.status().to_string(),"quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),
+                        "is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string())}));
+                }
+                let next = if ids.next().is_some() { Some(offset.checked_add(50).ok_or_else(|| anyhow!("native_order_offset_invalid"))?) } else { None };
+                Ok(json!({"native_session_id":self.session,"observed_at_ns":self.clock().timestamp_ns().as_u64().to_string(),"items":items,"offset":offset,"nextOffset":next,"total":Value::Null}))
             }
             "SNAPSHOT" => {
                 self.refresh_snapshot()?;

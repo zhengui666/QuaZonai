@@ -137,6 +137,14 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     if ((native.recovery_only === true && !unregistered) || (!unregistered && typeof native.strategy_id !== 'string') || typeof native.state !== 'string' || typeof native.native_version !== 'string') throw new Problem('native_strategy_status_invalid');
     return result;
   }
+  async function orders(id:string,offsetValue:unknown){
+    if(!configuredBinding)throw new Problem('native_control_transport_unsupported',409);
+    const offset=offsetValue===undefined?0:Number(offsetValue);
+    if(!Number.isSafeInteger(offset)||offset<0||typeof offsetValue==='object')throw new Problem('native_order_offset_invalid',422);
+    const binding=await fact(id);throwIfHistoricalHttp(binding.connection);
+    const result=await downstreamRequest(binding.connection,`strategy/orders/${offset}`,'GET');
+    assertEnvelope(binding.connection,result,binding.view.currency);return result;
+  }
   async function spotObservation(id: string) {
     const binding = await fact(id);
     throwIfHistoricalHttp(binding.connection);
@@ -198,6 +206,21 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     }, context);
     const app = await host.harness.snapshot(Application, context); return app!.strategyCommands![key]!;
   }
+  async function history(id:string,offsetValue:unknown){
+    const offset=offsetValue===undefined?0:Number(offsetValue);
+    if(!Number.isSafeInteger(offset)||offset<0)throw new Problem('native_order_offset_invalid',422);
+    const binding=await fact(id);const app=(await host.harness.snapshot(Application,context))!;
+    const prefix=`${accountKey(binding.connection,app.accountControls)}:`;
+    // Read original Pi facts only. No transport, BOOT, or cancellation attempt.
+    const items=[];let matched=0,more=false;
+    for(const [key,value] of Object.entries(app.strategyCommands??{})){
+      if(!key.startsWith(prefix)||object(value.original).action!=='CANCEL')continue;
+      if(matched++<offset)continue;
+      if(items.length===50){more=true;break;}
+      items.push(view(value));
+    }
+    return {items,nextOffset:more?offset+50:null};
+  }
   async function receipt(id: string, requestId: string) {
     const binding = await fact(id); const app = (await host.harness.snapshot(Application, context))!;
     const key = `${accountKey(binding.connection, app.accountControls)}:${requestId}`; const stored = app.strategyCommands?.[key];
@@ -240,5 +263,5 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     assertEnvelope(binding.connection, result, binding.view.currency);
     return result;
   }
-  return { status, fence, spotObservation, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
+  return { status, fence, orders, history, spotObservation, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
 }

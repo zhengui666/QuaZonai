@@ -25,6 +25,8 @@ export interface NativeInstrument {
   bid_depth: { price: string; quantity: string }[]; asof_ns: string | null;
 }
 export interface NativeOrder {
+  trader_id?: string; strategy_id?: string; account_id?: string | null;
+  is_active_local?: boolean; emulation_trigger?: string | null; exec_algorithm_id?: string | null;
   client_order_id: string; venue_order_id: string | null; instrument_id: string; side: string;
   quantity: string; filled_quantity: string; leaves_quantity: string; status: string;
   order_type?: string; trigger_price?: string | null; order_list_id?: string | null;

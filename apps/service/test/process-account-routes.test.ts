@@ -39,7 +39,8 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
  const state=await setup();const binary=join(state.directory,'cancel-peer.mjs'),marker=join(state.directory,'cancel-calls');
  await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';import{createInterface}from'node:readline';let canceled=false;createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);appendFileSync(${JSON.stringify(marker)},v.operation+'\\n');const reply=result=>console.log(JSON.stringify({requestId:v.requestId,result}));
  if(v.operation==='BOOT')return reply({ready:true,native_session_id:'original-session',ordinary_venue_cancel:true,ordinary_venue_cancel_scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',account_compatibility_declaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',account_compatibility_verified:false});
- if(v.operation==='SNAPSHOT')return reply({ready:true,recovery_required:true,sequence:'1',observation_id:'original',observed_at_ns:'1',native_version:'controlled-peer',orders:[],positions:[],instruments:[],fills:[],cash:null,equity:null});
+ if(v.operation==='SNAPSHOT')return reply({native_session_id:'original-session',ready:true,recovery_required:true,sequence:'1',observation_id:'original',observed_at_ns:'1',native_version:'controlled-peer',orders:[],positions:[],instruments:[],fills:[],cash:null,equity:null});
+ if(v.operation==='ORDER_PAGE')return reply({native_session_id:'original-session',items:[],offset:v.offset,nextOffset:null,total:null});
  if(v.operation==='RECOVERY_STATUS')return reply({ready:true,recovery_required:true,recovery_only:true,native_session_id:'original-session',native_version:'controlled-peer'});
  if(v.operation==='ORDER_CANCEL_ATTEMPT'){canceled=true;return console.log(JSON.stringify({requestId:v.requestId,error:'test_reply_lost_after_controlled_consumption'}));}
  if(v.operation==='ORDER_OBSERVE')return reply({command:v.command,status:'UNKNOWN',orderObservation:{status:canceled?'CANCELED':'PARTIALLY_FILLED',filledQuantity:'0.25',lastEvent:{kind:'controlled-test-only'}}});
@@ -52,6 +53,7 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
   assert.equal((await state.service.app.inject({method:'POST',url,headers:state.headers,payload:{requestId:'create-paper',configuration}})).statusCode,200);
   let fence=(await state.service.app.inject({url:strategy+'/fence',headers:state.headers})).json();
   assert.equal(fence.ordinaryVenueCancel,null);await assert.rejects(readFile(marker),/ENOENT/);
+  const disconnectedOrders=await state.service.app.inject({url:strategy+'/orders',headers:state.headers});assert.equal(disconnectedOrders.statusCode,200);assert.equal(disconnectedOrders.json().available,false);assert.equal(disconnectedOrders.json().total,null);await assert.rejects(readFile(marker),/ENOENT/);
   const recover={requestId:'recover-paper',action:'RECOVER',expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision};
   assert.equal((await state.service.app.inject({method:'POST',url:strategy+'/commands',headers:state.headers,payload:recover})).statusCode,202);
   let app=(await state.service.research.harness.snapshot(Application,context))!;
@@ -60,6 +62,8 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
   const actualConnection=state.service.config.connections.find(c=>c.id==='paper')!;
   const caps=await downstreamRequest(actualConnection,'capabilities','GET');
   assert.deepEqual(caps.ordinaryVenueCancel,{supported:true,reason:null,scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false});
+  const orderPage=await state.service.app.inject({url:strategy+'/orders?offset=0',headers:state.headers});assert.equal(orderPage.statusCode,200,orderPage.body);assert.equal(orderPage.json().available,true);assert.deepEqual(orderPage.json().binding,fence.ordinaryVenueCancel);assert.deepEqual(orderPage.json().items,[]);
+  assert.equal((await state.service.app.inject({url:strategy+'/orders?offset=-1',headers:state.headers})).statusCode,422);
   const original={schemaVersion:1,requestId:'cancel-original',action:'CANCEL',strategyId:'ORIGINAL-001',order:{traderId:'TRADER-001',accountId:'PAPER-001',instrumentId:'TEST.SIM',clientOrderId:'original-order'},binding:fence.ordinaryVenueCancel};
   const send=()=>state.service.app.inject({method:'POST',url:strategy+'/commands',headers:state.headers,payload:original});
   const post=(payload:Record<string,unknown>)=>state.service.app.inject({method:'POST',url:strategy+'/commands',headers:state.headers,payload});
@@ -82,6 +86,12 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
   assert.equal((await send()).statusCode,202);
   assert.equal((await post({...original,order:{...original.order,clientOrderId:'other-order'}})).statusCode,409);
   await state.restart();const before=await readFile(marker,'utf8');
+  const history=await state.service.app.inject({url:strategy+'/commands',headers:state.headers});
+  assert.equal(history.statusCode,200,history.body);assert.equal(history.json().items.length,1);
+  assert.equal(history.json().items[0].requestId,'cancel-original');assert.equal(history.json().items[0].status,'UNCERTAIN');
+  assert.deepEqual(history.json().items[0].binding,original.binding);assert.equal(history.json().items[0].receipt.orderObservation.status,'CANCELED');
+  assert.equal(await readFile(marker,'utf8'),before,'history must not contact a replacement or old process');
+  assert.equal((await state.service.app.inject({url:strategy+'/orders',headers:state.headers})).json().available,false);
   assert.equal((await send()).statusCode,202);
   receipt=await state.service.app.inject({url:strategy+'/commands/cancel-original',headers:state.headers});
   assert.equal(receipt.json().status,'UNCERTAIN');assert.equal(receipt.json().receipt.error,'native_cancel_original_session_unavailable');

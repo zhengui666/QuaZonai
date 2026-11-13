@@ -493,6 +493,19 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         const verifyConfig = /^\/strategy\/config\/commands\/([^/]+)\/verify$/.exec(path);
         if (method === 'POST' && verifyConfig) return { status: 200, value: await verifyConfiguration(decodeURIComponent(verifyConfig[1]!)) };
         if (method === 'POST' && path === '/strategy/config') return { status: 200, value: await configureStrategy(body!) };
+        const orderPage=/^\/strategy\/orders\/(\d+)$/.exec(path);
+        if(method==='GET'&&orderPage){
+          const offset=Number(orderPage[1]);if(!Number.isSafeInteger(offset)||offset<0)fail('native_order_offset_invalid',422);
+          const capability=runtime.paperCancellationCapability?.()??{supported:false,reason:'native_cancel_original_session_unavailable'};
+          const binding=runtime.paperCancellationBinding?.()??null;
+          if(!binding)return {status:200,value:{...envelope(),capability,binding:null,items:[],offset,total:null,nextOffset:null,available:false,reason:'native_cancel_original_session_unavailable'}};
+          const snapshot=await runtime.request('ORDER_PAGE',{offset,expected_native_session_id:binding.nativeSessionId});
+          const after=runtime.paperCancellationBinding?.();
+          if(!after||canonical(binding)!==canonical(after)||snapshot.native_session_id!==binding.nativeSessionId)fail('native_order_session_changed');
+          if(!Array.isArray(snapshot.items)||snapshot.items.length>50||snapshot.offset!==offset||(snapshot.nextOffset!==null&&snapshot.nextOffset!==offset+50))fail('native_order_observation_invalid');
+          return {status:200,value:{...envelope(),capability,binding,available:true,reason:null,observedAtNs:snapshot.observed_at_ns??null,
+            items:snapshot.items,offset,total:null,nextOffset:snapshot.nextOffset}};
+        }
         if (method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, ordinaryVenueCancel:runtime.paperCancellationBinding?.()??null } };
         if (method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);

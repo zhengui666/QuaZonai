@@ -293,10 +293,12 @@ export async function createService(options: ServiceOptions) {
   const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/orders`,r=>configuredStrategies.orders(r.params.id,r.query.offset));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id,r.body));
   app.post<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/config/commands/:requestId/verify`,r=>configuredStrategies.verifyConfiguration(r.params.id,r.params.requestId));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,r=>configuredStrategies.history(r.params.id,r.query.offset));
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,async(r,reply)=>reply.code(202).send(await configuredStrategies.command(r.params.id,r.body)));
   app.get<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/commands/:requestId`,r=>configuredStrategies.receipt(r.params.id,r.params.requestId));
   registerInstanceSettings(app, instances);

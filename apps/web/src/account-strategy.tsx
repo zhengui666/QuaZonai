@@ -1,3 +1,4 @@
+import AccountOrders from './account-orders';
 import { useState } from 'react';
 import { Button, Input } from 'antd';
 import type { ObservationView } from '../../../packages/contracts/src/index.ts';
@@ -76,5 +77,6 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
     <Button onClick={() => { void status.refetch(); void fence.refetch(); if (requestId) void receipt.refetch(); }}>核对状态与原回执</Button></div>
     <PendingCommand command={recover} /><PendingCommand command={start} /><PendingCommand command={stop} /><ErrorNotice error={recover.error ?? start.error ?? stop.error ?? receipt.error} />
     {receipt.data && <div><h4>最近策略命令回执</h4><Facts items={[["请求", receipt.data.requestId], ["操作", receipt.data.action], ["回执", <Status value={receipt.data.status} />]]} /><p>{strategyResultText(receipt.data)}</p>{receipt.data.error && <code>{receipt.data.error}</code>}</div>}
+    {configured&&<AccountOrders key={value.id} accountId={value.id}/>}
   </section>;
 }
