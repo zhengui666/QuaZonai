@@ -104,7 +104,6 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     if (reader && (!proof || Date.parse(proof.valid_until) <= Date.now())) return 'hyperliquid_spot_evidence_unavailable';
     return proof?.reason_codes[0] ?? null;
   }
-  function spotCash() { return reader ? proof?.spot_free ?? null : latest?.cash ?? null; }
   function equity(): string | null { return latest?.equity ?? null; }
   function event(exit: Exit, kind: string, message: string, reference: string | null = null) {
     exit.view.revision = String(BigInt(exit.view.revision) + 1n); exit.view.updated_at = now();
@@ -332,6 +331,19 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED', result: { admission: 'REJECTED', started: false, reason: 'strategy_start_fence_changed' }, error: 'strategy_start_fence_changed' };
         commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
       }
+    }
+    // The Info payload only provides total/hold, not an authoritative native
+    // spot-free value. Never synthesize it or substitute merged account cash.
+    // This known unsupported capability is rejected before any BOOT or trading.
+    if (command.action === 'START' && options.mode === 'live') {
+      const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
+        result: { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' }, error: 'hyperliquid_native_spot_free_required' };
+      commands[command.requestId] = { original: structuredClone(body), receipt };
+      try { await save(); } catch {
+        receipt.status = 'UNCERTAIN'; receipt.result = null; receipt.persisted = false;
+        receipt.error = 'account_receipts_write_failed';
+      }
+      return structuredClone(receipt);
     }
     // Worker-owned, persisted CAS fence; never infer order from Pi Task IDs.
     state.strategyRevision = String(BigInt(state.strategyRevision!) + 1n);

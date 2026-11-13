@@ -43,7 +43,7 @@ test('cash evidence is dated from request start and response latency does not ex
   assert.equal(Date.parse(proof.valid_until), Date.parse(started) + 10_000);
   assert.ok(Date.parse(proof.valid_until) < Date.now());
   assert.ok(Date.parse(proof.received_at) >= Date.parse(started) + 20_000);
-  assert.equal(proof.withdrawable, '0'); assert.equal(proof.spot_free, '100');
+  assert.equal(proof.withdrawable, '0'); assert.equal(proof.spot_free, null);
 });
 
 const ledgerRow = (time: number, hash = `ledger-${time}`): HyperliquidLedgerRow => ({ time, hash, delta: { type: 'accountClassTransfer', toPerp: false, usdc: '1' } });

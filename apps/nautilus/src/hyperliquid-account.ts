@@ -17,7 +17,7 @@ export const roundUp = (value: bigint, step: bigint) => { if (step <= 0n) throw 
 
 export interface HyperliquidAccountProof {
   account_address: string; asof: string; received_at: string; valid_until: string; abstraction: string;
-  spot_total: string; spot_hold: string; spot_free: string; withdrawable: string | null;
+  spot_total: string; spot_hold: string; spot_free: string | null; withdrawable: string | null;
   spot_taker_fee_rate: string | null;
   balances: { coin: string; total: string; hold: string }[];
   reason_codes: string[];
@@ -131,7 +131,7 @@ export function parseHyperliquidAccount(address: string, spotValue: unknown, cle
   const fees = record(feesValue, 'hyperliquid_user_fees_invalid');
   const feeRate = fees.userSpotCrossRate == null ? null : nonnegative(fees.userSpotCrossRate, 'hyperliquid_spot_taker_fee_invalid');
   return { account_address: address.toLowerCase(), asof, received_at: receivedAt, valid_until: new Date(Date.parse(asof) + 10_000).toISOString(), abstraction: abstractionValue,
-    spot_total: total, spot_hold: hold, spot_free: decimal(units(total) - units(hold)),
+    spot_total: total, spot_hold: hold, spot_free: null,
     withdrawable: clearing.withdrawable == null ? null : nonnegative(clearing.withdrawable, 'hyperliquid_withdrawable_invalid'),
     spot_taker_fee_rate: feeRate, balances, reason_codes: [...new Set(reasons)], original: { spot: spotValue, clearinghouse: clearingValue, abstraction: abstractionValue, fees: feesValue } };
 }

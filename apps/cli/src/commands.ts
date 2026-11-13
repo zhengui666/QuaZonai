@@ -40,7 +40,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
   account-strategy stop OBSERVATION_ID --request-id ORIGINAL_ID
     Read status first; copy its accountSourceId/strategyRevision unchanged. Stale START is rejected, never auto-refreshed.
-    Explicit commands operate the configured native strategy (EMA_CROSS account wiring only); live START can place real orders.
+    Explicit commands operate the configured native strategy. Live START is temporarily unavailable: hyperliquid_native_spot_free_required. Official spot balance and risk consistency validation is pending; rejected START does not connect or trade.
   observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
   capital status OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
   observation cancel-protection OBSERVATION_ID
