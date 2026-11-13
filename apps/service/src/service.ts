@@ -281,6 +281,7 @@ export async function createService(options: ServiceOptions) {
   registerInstanceSettings(app, instances);
   const builds=nativeBuild.workbench(research,instances);
   app.post(`${API}/settings/instances/build`,request=>builds.start(request.body));
+  app.post(`${API}/settings/instances/import`,request=>builds.startImport(request.body));
   app.get<{Params:{requestId:string}}>(`${API}/settings/instances/build/:requestId`,request=>builds.read(request.params.requestId));
   app.post(`${API}/settings/instances/select-runner`,request=>builds.select(request.body));
   registerDataSources(app, sources);

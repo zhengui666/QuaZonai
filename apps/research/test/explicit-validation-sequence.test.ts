@@ -1,8 +1,7 @@
 // Official Harness + transport regression only; controlled peer data is not scientific evidence.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -11,7 +10,7 @@ import { openResearch } from '../src/host.ts';
 import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 import { ResearchAssessment } from '../plugins/research-assessment.ts';
 import { nativeCommands } from '../src/native-execution.ts';
-import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
+import type { ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 
 const A = { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }],
   event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000100', available_end_ns: '1790000000000000100',
@@ -21,23 +20,15 @@ const B = { ...A, event_start_ns: '1790000000000000200', event_end_ns: '17900000
 const judgment = (stars: number | null) => ({ stars, rationale: 'Protocol-only model response, not a scientific claim.', risks: ['Independent source audit absent'], uncertainties: ['No measured trading evidence in this test'] });
 for (const declaredB of [true, false]) test(`explicit A/review/A/backtest/B/backtest/synthesis preserves declared request binding (${declaredB})`, { timeout: 20000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-explicit-validation-'));
-  const posts: NativeExecutionRequest[] = [];
-  const server = createServer(async (incoming, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    assert.equal(incoming.method, 'POST');
-    let body = ''; for await (const chunk of incoming) body += chunk;
-    const operation = JSON.parse(body) as NativeExecutionRequest; posts.push(operation);
-    assert.equal(operation.command, 'native-strategy-backtest');
-    const result = { schema_version: 1, native_version: '0.69.0', request: operation.input,
+  const binary=join(directory,'controlled-native.mjs'), marker=join(directory,'calls.jsonl');
+  await writeFile(binary, `#!${process.execPath}\nimport{appendFileSync}from'node:fs';let text='';for await(const part of process.stdin)text+=part;const input=JSON.parse(text);appendFileSync(${JSON.stringify(marker)},JSON.stringify({command:process.argv[2],args:process.argv.slice(3),input})+'\\n');
+const result = { schema_version: 1, native_version: '0.69.0', request: input,
       instrument_definition: { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' },
-      equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: null, returns: [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: '0', observed_utc_days: '0', unpriced_snapshot_count: '0', return_days: '0', notes: ['Protocol-only response; not market evidence.'] },
+      equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: null, returns: [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: name+' ('+annualization_days+' days)', annualization_days, value: null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: '0', observed_utc_days: '0', unpriced_snapshot_count: '0', return_days: '0', notes: ['Protocol-only response; not market evidence.'] },
       canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} },
       data_rows_by_type: { QuoteTick: '2' }, notes: ['Protocol-only response; not market evidence.'] };
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: operation.requestId, status: 'COMPLETED', result }));
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address(); assert.ok(address && typeof address !== 'string');
+process.stdout.write(JSON.stringify(result));`,{mode:0o755});
+  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled-process',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
   const models = createModels(); const faux = fauxProvider({ tokensPerSecond: 100000 }); models.setProvider(faux.provider);
   const call = (name: string, args = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
   let synthesisSeen = false;
@@ -66,7 +57,7 @@ for (const declaredB of [true, false]) test(`explicit A/review/A/backtest/B/back
   ];
   try {
     const receipt = await host.start(`explicit-${declaredB}`, { goal: 'Protocol-only workflow validation', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-      data: { catalog: directory, nautilusTarget: { id: 'explicit-peer', url: `http://127.0.0.1:${address.port}` }, native_strategy_backtest_request: A }, policy: {} });
+      data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: A }, policy: {} });
     const settled = await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     assert.equal(settled.status, 'done');
     const conversation = await host.harness.conversation(receipt.conversationId, context); assert.ok(conversation);
@@ -74,14 +65,19 @@ for (const declaredB of [true, false]) test(`explicit A/review/A/backtest/B/back
     // Its old request shape must remain history, never become an explicit pre-reviewed run.
     const historicalId = await conversation.commit(tx => tx.createTask(NativeStrategyBacktestTask, {
       request: { candidates: [A], split: { n_splits: 2 }, objective: 'SHARPE' }, catalog: directory,
-      target: { id: 'explicit-peer', url: `http://127.0.0.1:${address.port}` }, walkForward: true,
+      target, walkForward: true,
     }, { ownership: { kind: 'conversation' } }), context);
     assert.equal((await host.harness.waitForTask(historicalId, context)).state.outcome.status, 'failed');
     faux.setResponses(reportResponses);
     await (await conversation.submit({ type: 'input', content: 'Review explicit runs with historical records visible.', requestId: 'synthesize-history' }, context)).wait(context);
     assert.equal(synthesisSeen, true);
+    const posts=(await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
     assert.deepEqual(posts.map(post => post.input), [A, B]);
-    assert.notEqual(posts[0]!.requestId, posts[1]!.requestId, 'distinct backtests keep distinct invocation identities');
+    assert.ok(posts.every(post=>post.command==='native-strategy-backtest'));
+    assert.ok(posts.every(post=>JSON.stringify(post.args)===JSON.stringify(['--catalog',directory])));
+    const executions=(await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},10),context)).items;
+    assert.equal(executions.length,2);
+    assert.notEqual((executions[0]!.input as any).requestId,(executions[1]!.input as any).requestId,'distinct backtests keep distinct persisted invocation identities');
     const assessment = await host.harness.snapshot(ResearchAssessment, receipt.conversationId, context); assert.ok(assessment);
     const logic = await host.harness.getTask(assessment.logicTaskId!, context); const report = await host.harness.getTask(assessment.reportTaskIds[0]!, context);
     assert.equal(logic?.state.outcome?.status, 'completed'); assert.equal(report?.state.outcome?.status, 'completed');
@@ -97,5 +93,5 @@ for (const declaredB of [true, false]) test(`explicit A/review/A/backtest/B/back
     assert.equal(historical.preReviewedRequest, false);
     assert.deepEqual(historical.request, { candidates: [A], split: { n_splits: 2 }, objective: 'SHARPE' });
     assert.equal(result.tradingPermission, false);
-  } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });

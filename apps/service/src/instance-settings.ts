@@ -215,7 +215,7 @@ export async function instanceSettings(config: ServiceConfig) {
   }
   function selectRunner(revision:number,target:ProcessNativeTarget) {
     const pending=tail.then(async()=>{if(closing)throw new Problem('service_closing',503);if(current.runner&&canonical(current.runner as never)===canonical(target as never))return view();
-      if(current.revision!==revision||current.environment?.id!==target.id)throw new Problem('instance_settings_revision_conflict',409);
+      if(current.revision!==revision||(current.environment!=null&&current.environment.id!==target.id))throw new Problem('instance_settings_revision_conflict',409);
       if(current.revision===Number.MAX_SAFE_INTEGER)throw new Problem('instance_settings_revision_exhausted',409);
       const next={...current,revision:current.revision+1,runner:target};await persist(next,credentials);current=next;apply(next,credentials);return view();});tail=pending.catch(()=>undefined);return pending;
   }
