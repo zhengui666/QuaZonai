@@ -1,3 +1,4 @@
+import type {NativeSessionBinding} from '../../../packages/contracts/src/native-strategy-control.ts';
 import type { NativeAccountStrategyConfig } from '../../../packages/contracts/src/account-strategy.ts';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -47,6 +48,8 @@ export interface NativeAccountSnapshot {
 }
 export interface NativeAccountRuntime {
   start?(): Promise<void>;
+  paperCancellationBinding?(): NativeSessionBinding | null;
+  bindPaperCancellationSession?(expectedSessionId: string): {request(operation: 'ORDER_CANCEL_ATTEMPT'|'ORDER_OBSERVE', payload: Record<string, unknown>): Promise<Record<string, unknown>>};
   isConnected?(): boolean;
   request(operation: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
   subscribeTicks?(listener: () => void): () => void;
@@ -58,6 +61,8 @@ export class AccountRuntime implements NativeAccountRuntime {
   private child: ChildProcessWithoutNullStreams | null = null;
   private starting: Promise<void> | null = null;
   private stopped = false;
+  private nativeSessionId: string | null = null;
+  private ordinaryVenueCancel = false;
   private ticks = new Set<() => void>();
   private binary: string;
   private options: AccountOptions;
@@ -91,7 +96,7 @@ export class AccountRuntime implements NativeAccountRuntime {
         // A superseded process can emit error and then exit after its successor
         // has started. It has no authority over that generation's requests.
         if (this.child !== child) return;
-        this.child = null;
+        this.child = null; this.nativeSessionId = null; this.ordinaryVenueCancel = false;
         for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error('account_runtime_outcome_uncertain')); }
         this.pending.clear();
       };
@@ -117,18 +122,49 @@ export class AccountRuntime implements NativeAccountRuntime {
         else item.reject(new Error('account_runtime_response_invalid'));
       });
       try {
-        await this.send('BOOT', { config: { client_id: this.options.clientId, account_id: this.options.accountId,
+        const boot = await this.send('BOOT', { config: { client_id: this.options.clientId, account_id: this.options.accountId,
           mode: this.options.mode, account_address: this.options.accountAddress ?? null, testnet: this.options.network === 'testnet',
           execution_product_types: this.options.executionProductTypes ?? null,
           native_strategy: this.options.nativeStrategy,
           instruments: this.options.instruments, starting_balance: this.options.startingBalance ?? '0', paper_fee_rate: this.options.paperFeeRate ?? null,
           risk: this.options.risk ?? {}, paper_execution: this.options.paperExecution ?? null,
           source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
+        this.nativeSessionId = typeof boot.native_session_id === 'string' ? boot.native_session_id : null;
+        this.ordinaryVenueCancel = boot.ordinary_venue_cancel === true;
       } catch (error) {
         failed(); child.stdin.end(); child.kill('SIGTERM'); throw error;
       }
     })().finally(() => { this.starting = null; });
     return this.starting;
+  }
+  /** Uninstalled cancellation adapter prerequisite. Never starts/restarts a node.
+   * Captures the actual BOOT session and child generation, not an arbitrary caller
+   * claim. This is process identity only, NOT proof of exclusive Nautilus TLS/node
+   * ownership or permission to trade. Native operations must independently check
+   * the same session and original order before any dispatch.
+   */
+  paperCancellationBinding(): NativeSessionBinding | null {
+    if (!this.ordinaryVenueCancel || this.options.mode !== 'paper' || this.stopped || this.starting
+      || !this.child || this.child.exitCode !== null || this.child.signalCode !== null || !this.nativeSessionId) return null;
+    return {sourceId:this.sourceId, buildId:this.binary, environmentId:'Sandbox', nativeSessionId:this.nativeSessionId};
+  }
+  bindPaperCancellationSession(expectedSessionId: string) {
+    const child = this.child;
+    if (!this.ordinaryVenueCancel || this.options.mode !== 'paper' || this.stopped || this.starting || !child
+      || !expectedSessionId || this.nativeSessionId !== expectedSessionId) {
+      throw new Error('account_cancel_original_session_unavailable');
+    }
+    return {
+      request: (operation: 'ORDER_CANCEL_ATTEMPT' | 'ORDER_OBSERVE', payload: Record<string, unknown>) => {
+        if (this.stopped || this.starting || this.child !== child || child.exitCode !== null
+          || child.signalCode !== null || this.nativeSessionId !== expectedSessionId) {
+          return Promise.reject(new Error('account_cancel_original_session_unavailable'));
+        }
+        // No await between generation check and the existing send. The Rust
+        // session check is still required, and no failure authorizes a retry.
+        return this.send(operation, { ...payload, expected_native_session_id: expectedSessionId });
+      },
+    };
   }
   private send(operation: string, payload: Record<string, unknown>, timeout = 15_000): Promise<Record<string, unknown>> {
     const child = this.child; if (!child) return Promise.reject(new Error('account_runtime_unavailable'));

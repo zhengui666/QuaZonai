@@ -20,6 +20,24 @@ pub fn capabilities(
 }
 
 /// Generated QZ-side main calls this with statically linked official user factories.
+/// Constructed only inside this entry's fresh dedicated OS thread and runtime.
+/// Not a caller-supplied flag, and never handed to user registration callbacks.
+#[cfg(feature = "account-runtime")]
+pub(crate) struct OwnedAccountRuntime(());
+
+#[cfg(feature = "account-runtime")]
+fn on_account_thread(
+    run: impl FnOnce(OwnedAccountRuntime) -> anyhow::Result<()> + Send + 'static,
+) -> anyhow::Result<()> {
+    // A new tokio runtime alone would still inherit the calling OS thread's
+    // Nautilus TLS. No node/registry/cache references cross this boundary.
+    std::thread::Builder::new()
+        .name("qz-account-native-node".into())
+        .spawn(move || run(OwnedAccountRuntime(())))?
+        .join()
+        .map_err(|_| anyhow::anyhow!("account_native_owner_thread_failed"))?
+}
+
 /// Account commands are serviced on their original current-thread native actor loop.
 #[cfg(feature = "account-runtime")]
 pub fn main_with_hooks(
@@ -37,13 +55,14 @@ pub fn main_with_hooks(
             )
         ),
         Some("account-runtime") => {
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(anyhow::Error::from)
-                .and_then(|runtime| {
-                    runtime.block_on(crate::account_runtime::run_with_registration(account))
-                });
+            let result = on_account_thread(move |owner| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(crate::account_runtime::run_owned_registration(
+                    account, &owner,
+                ))
+            });
             if let Err(error) = result {
                 eprintln!("account native runtime stopped: {error}");
                 std::process::exit(1);
@@ -77,5 +96,29 @@ mod tests {
         assert_eq!(value["research"]["configuredRunFactory"], true);
         assert_eq!(value["account"]["registration"], false);
         assert_eq!(value["account"]["requiresExplicitStart"], true);
+    }
+}
+
+#[cfg(all(test, feature = "account-runtime"))]
+mod owner_thread_tests {
+    #[test]
+    fn fresh_owner_thread_does_not_inherit_callers_native_sender() {
+        std::thread::spawn(|| {
+            use nautilus_common::runner::{
+                set_exec_cmd_sender, try_get_trading_cmd_sender, SyncTradingCommandSender,
+            };
+            set_exec_cmd_sender(std::sync::Arc::new(SyncTradingCommandSender));
+            assert!(try_get_trading_cmd_sender().is_some());
+            let caller = std::thread::current().id();
+            super::on_account_thread(move |_owner| {
+                assert_ne!(std::thread::current().id(), caller);
+                assert!(try_get_trading_cmd_sender().is_none());
+                Ok(())
+            })
+            .unwrap();
+            assert!(try_get_trading_cmd_sender().is_some());
+        })
+        .join()
+        .unwrap();
     }
 }

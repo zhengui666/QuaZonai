@@ -1,3 +1,7 @@
+import {nativeStrategyControl,assertSameNativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
+import {admitNativeControlTask,assertNativeControlTask} from './native-strategy-control-phases.ts';
+import {acceptNativeStrategyControl} from './native-strategy-control-state.ts';
+import {nativeStrategyControlPhases,type NativeControlInput,type NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -16,6 +20,12 @@ interface CommandRecord {
   status: 'PENDING' | 'UNCERTAIN' | 'COMPLETED' | 'REJECTED'; receipt: JsonObject | null; error: string | null; taskId: number;
 }
 const context = BACKGROUND_CONTEXT;
+function assertStoredNativeTask(record:unknown,task:{id:number;conversationId:number;owner?:number;input:unknown;kind:string},key:string){
+  const input=object(task.input);
+  if(task.kind!=='qz.account-strategy-command'||input.key!==key)throw new Problem('native_control_task_identity_mismatch');
+  assertNativeControlTask(record,{...task,input:{key,original:nativeStrategyControl(input.original)}});
+}
+
 function throwIfHistoricalHttp(connection: ConnectionConfig) {
   if (!('kind' in connection) || connection.kind !== 'RUST_PROCESS') throw new Problem('native_http_control_retired_migrate_to_rust_process', 410);
 }
@@ -35,13 +45,23 @@ function accept(record: CommandRecord, value: JsonObject) {
   }
   record.receipt = value; record.status = value.status as CommandRecord['status']; record.error = typeof value.error === 'string' ? value.error : null;
 }
-export const AccountStrategyCommand = defineTask<{ key: string }, { phase: 'send' | 'read' }, null>({
+/** One original Task definition. The optional native transport is installed only
+ * by an owning host; absent transport means unsupported, never a fallback route.
+ * Historical key-only tasks retain the existing phases and records unchanged. */
+export function createAccountStrategyCommand(nativeTransport?: NativeStrategyControlTransport) {
+ const native = nativeTransport ? nativeStrategyControlPhases(nativeTransport) : null;
+ return defineTask<NativeControlInput, { phase: 'send' | 'read' }, null>({
   name: 'qz.account-strategy-command', version: 1, initial: () => ({ phase: 'send' }),
   phases: {
     async send(task, runtime, ctx) {
+      if (task.input.original !== undefined) {
+        if (!native) throw new Problem('native_control_transport_unsupported');
+        return native.send(task, runtime, ctx);
+      }
       let captured!: CommandRecord;
       await runtime.commit(async tx => {
         const app = await tx.doc(Application); const record = commandRecord(app.strategyCommands![task.input.key]);
+        if (object(record).kind === 'NATIVE_STRATEGY_CONTROL_V1') throw new Problem('native_control_task_identity_mismatch');
         if (record.original.action === 'START') assertBusinessAdmission(app);
         record.status = 'UNCERTAIN'; app.strategyCommands![task.input.key] = json(record); captured = json(record) as unknown as CommandRecord;
         return { status: 'running', checkpoint: { phase: 'read' } };
@@ -65,7 +85,12 @@ export const AccountStrategyCommand = defineTask<{ key: string }, { phase: 'send
       }
     },
     async read(task, runtime, ctx) {
+      if (task.input.original !== undefined) {
+        if (!native) throw new Problem('native_control_transport_unsupported');
+        return native.read(task, runtime, ctx);
+      }
       const app = await runtime.snapshot(Application, ctx); const original = commandRecord(app!.strategyCommands![task.input.key]);
+      if (object(original).kind === 'NATIVE_STRATEGY_CONTROL_V1') throw new Problem('native_control_task_identity_mismatch');
       try {
         const receipt = await downstreamRequest(original.connection, `strategy/commands/${encodeURIComponent(String(original.original.requestId))}`, 'GET', undefined, runtime.signal);
         await runtime.commit(async tx => {
@@ -88,8 +113,10 @@ export const AccountStrategyCommand = defineTask<{ key: string }, { phase: 'send
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx);
   },
 });
+}
+export const AccountStrategyCommand = createAccountStrategyCommand();
 
-export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(id:string)=>Promise<{connection:ConnectionConfig;view:{currency:string}}>) {
+export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(id:string)=>Promise<{connection:ConnectionConfig;view:{currency:string}}>, nativeTransport?:NativeStrategyControlTransport, commandTask=AccountStrategyCommand) {
   async function fact(id: string) {
     if(configuredBinding)return configuredBinding(id);
     const app = await host.harness.snapshot(Application, context); const value = app?.observations[id];
@@ -117,7 +144,35 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     assertEnvelope(binding.connection, result, binding.view.currency);
     return result; // Separate original observation; never merge into Portfolio sequence.
   }
+  async function cancel(id:string,value:unknown){
+    if(!configuredBinding||!nativeTransport)throw new Problem('native_control_transport_unsupported',409);
+    let original; try { original=nativeStrategyControl(value); } catch(error) { throw new Problem((error as Error).message,422); }
+    if(original.action!=='CANCEL')throw new Problem('native_cancel_action_invalid',422);
+    const binding=await fact(id);throwIfHistoricalHttp(binding.connection);
+    if(binding.connection.mode!=='paper'||binding.connection.accountId!==original.order!.accountId)throw new Problem('native_cancel_account_binding_mismatch',409);
+    const snapshot=(await host.harness.snapshot(Application,context))!;
+    const key=`${accountKey(binding.connection,snapshot.accountControls)}:${original.requestId}`;
+    const existing=snapshot.strategyCommands?.[key];
+    if(existing){
+      const task=await host.harness.commit(tx=>tx.task(existing.taskId as never),context);
+      if(!task)throw new Problem('native_control_task_identity_mismatch');
+      assertStoredNativeTask(existing,task,key);
+      try { assertSameNativeStrategyControl(nativeStrategyControl(existing.original),original); } catch { throw new Problem('request_id_conflict',409); }
+      return existing;
+    }
+    const current=await downstreamRequest(binding.connection,'strategy/fence','GET');
+    if(!current.ordinaryVenueCancel)throw new Problem('native_cancel_original_session_unavailable',409);
+    const currentBinding=object(current.ordinaryVenueCancel,'native_cancel_original_session_unavailable');
+    if(Object.entries(original.binding).some(([key,value])=>currentBinding[key]!==value))throw new Problem('native_cancel_original_session_unavailable',409);
+    await host.harness.commit(async tx=>{
+      const app=await tx.doc(Application);
+      const owner=await ensureCapitalWatch(tx,binding.connection,binding.view.currency);
+      await admitNativeControlTask(tx,commandTask,{key,original},{conversationId:owner.conversationId,ownership:{kind:'conversation'},background:true});
+    },context);
+    return (await host.harness.snapshot(Application,context))!.strategyCommands![key]!;
+  }
   async function command(id: string, value: unknown) {
+    if(object(value).action==='CANCEL')return cancel(id,value);
     let input; try { input = accountStrategyCommand(value); } catch (error) { throw new Problem((error as Error).message, 422); }
     const binding = await fact(id);
     const snapshot = (await host.harness.snapshot(Application, context))!;
@@ -135,7 +190,7 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
       if (old) { if (canonical(commandRecord(old).original) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return key; }
       if (input.action === 'START') assertBusinessAdmission(app);
       const owner = await ensureCapitalWatch(tx, binding.connection, binding.view.currency);
-      const taskId = await tx.createTask(AccountStrategyCommand, { key }, { conversationId: owner.conversationId, ownership: { kind: 'conversation' }, background: true });
+      const taskId = await tx.createTask(commandTask, { key }, { conversationId: owner.conversationId, ownership: { kind: 'conversation' }, background: true });
       app.strategyCommands ??= {};
       app.strategyCommands[key] = json({ original: input, connection: binding.connection, currency: binding.view.currency,
         observationId: id, status: 'PENDING', receipt: null, error: null, taskId });
@@ -148,6 +203,18 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     const key = `${accountKey(binding.connection, app.accountControls)}:${requestId}`; const stored = app.strategyCommands?.[key];
     if (!stored) throw new Problem('strategy_command_not_found', 404);
     const record = commandRecord(stored);
+    if(object(stored).kind==='NATIVE_STRATEGY_CONTROL_V1'){
+      if(!nativeTransport)return stored;
+      const original=nativeStrategyControl(stored.original);
+      const value=await nativeTransport.read(original,new AbortController().signal);
+      await host.harness.commit(async tx=>{
+        const app=await tx.doc(Application);const task=await tx.task(stored.taskId as never);
+        if(!task)throw new Problem('native_control_task_identity_mismatch');
+        assertStoredNativeTask(app.strategyCommands![key],task,key);
+        await acceptNativeStrategyControl(tx,key,value);
+      },context);
+      return (await host.harness.snapshot(Application,context))!.strategyCommands![key]!;
+    }
     if (record.status === 'UNCERTAIN') {
       const result = await downstreamRequest(record.connection, `strategy/commands/${encodeURIComponent(requestId)}`, 'GET');
       accept(record, result);

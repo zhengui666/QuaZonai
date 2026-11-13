@@ -1,3 +1,4 @@
+import {nativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import {mkdir,mkdtemp,open,readFile,readdir,rename,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createCapitalAccount} from '../../nautilus/src/capital-account.ts';
@@ -94,5 +95,20 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
   });lane=work.then(()=>undefined,()=>undefined);return work;
  }
  async function binding(id:string){const item=opened.get(id);if(!item)throw new Problem('native_process_original_account_unavailable',409);const saved=object((await item.account.request('/strategy/config','GET',item.connection.clientId)).value);return {connection:structuredClone(item.connection),view:{currency:text(saved.currency,'account_currency')}};}
- return {list,create,binding,async close(){closing=true;await lane;await closeOpened();}};
+ async function nativeControl(value:NativeStrategyControl,send:boolean){
+  const command=nativeStrategyControl(value);
+  if(command.action!=='CANCEL'||command.binding.environmentId!=='Sandbox')throw new Problem('native_cancel_scope_unsupported',409);
+  const candidates=[...opened.values()].filter(item=>item.binding.creation.configuration.mode==='paper'
+    &&item.binding.creation.configuration.accountId===command.order!.accountId
+    &&item.binding.runner.binary===command.binding.buildId);
+  const matches:OpenAccount[]=[];
+  for(const item of candidates){const saved=object((await item.account.request('/strategy/config','GET',item.connection.clientId)).value);if(saved.accountSourceId===command.binding.sourceId)matches.push(item);}
+  if(matches.length!==1)throw new Problem('native_cancel_original_account_unavailable',409);
+  const item=matches[0]!;
+  const response=await item.account.request(send?'/strategy/commands':`/strategy/commands/${encodeURIComponent(command.requestId)}`,send?'POST':'GET',item.connection.clientId,
+    send?{...command,clientId:item.connection.clientId,accountId:item.connection.accountId}:undefined);
+  if(response.status>=400)throw new Problem(String(object(response.value).error??'native_cancel_outcome_unknown'),response.status);
+  return object(response.value);
+ }
+ return {list,create,binding,nativeControl,async close(){closing=true;await lane;await closeOpened();}};
 }

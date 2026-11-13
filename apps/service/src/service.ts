@@ -1,3 +1,5 @@
+import {createAccountStrategyCommand} from './account-strategy.ts';
+import type {NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
 import {nativePreparationTools} from './native-preparation-tools.ts';
 import {processAccounts} from './process-accounts.ts';
 import {nativeEnvironmentBuild} from './native-environment-build.ts';
@@ -55,11 +57,17 @@ export async function createService(options: ServiceOptions) {
     startResearch: value => preparationOperations.startResearch(value),
   });
   let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
+  const nativeControlTransport:NativeStrategyControlTransport={
+    async send(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,true);},
+    async read(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,false);},
+  };
+  const accountCommandTask=createAccountStrategyCommand(nativeControlTransport);
+
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
+  const installed: Extension[] = [{...science,tasks:science.tasks?.map(task=>task.definition.name==='qz.account-strategy-command'?accountCommandTask:task)}, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -282,7 +290,7 @@ export async function createService(options: ServiceOptions) {
   registerModels(app, research, work.getSettings);
   app.get(`${API}/accounts/configurations`,()=>accounts!.list());
   app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
-  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id));
+  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));

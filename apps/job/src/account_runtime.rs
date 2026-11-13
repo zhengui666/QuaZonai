@@ -276,6 +276,7 @@ impl AccountStrategyRegistrar<'_> {
 
 struct AccountController {
     core: StrategyCore,
+    cancel_node: Option<crate::account_queued_cancel::BoundCancelNode>,
     signal_strategy_id: Option<StrategyId>,
     user_registration: Option<AccountStrategyRegistration>,
     signal_restore_error: Option<String>,
@@ -360,7 +361,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none()}),
+                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some()}),
             ),
         );
         Ok(())
@@ -430,6 +431,18 @@ impl AccountController {
             self.ids.contains(&id),
             "account_native_strategy_instrument_not_configured"
         );
+        #[cfg(test)]
+        if self.config.client_id == "test-on-start-resting" {
+            return self.install_signal(tests::OnStartResting {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("RESTING-001")),
+                    order_id_tag: Some("001".into()),
+                    ..Default::default()
+                }),
+                instrument: id,
+                client: self.client,
+            });
+        }
         #[cfg(test)]
         if self.config.client_id == "test-on-start" {
             return self.install_signal(tests::OnStartSubmit {
@@ -607,8 +620,75 @@ impl AccountController {
         self.stamp = stamp;
         Ok(())
     }
+    // Installed only by the owned runtime's known official paper path. Public
+    // async/user-factory/live entry points cannot claim this node ownership.
+    fn cancel_order_operation(&self, r: &Request) -> Result<Value> {
+        use crate::account_queued_cancel::OriginalOrder;
+        let node = self
+            .cancel_node
+            .as_ref()
+            .ok_or_else(|| anyhow!("native_cancel_uninstalled"))?;
+        let expected = r
+            .body
+            .get("expected_native_session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("native_cancel_session_required"))?;
+        ensure!(
+            expected == self.session,
+            "native_cancel_node_binding_mismatch"
+        );
+        let command = r
+            .body
+            .get("command")
+            .ok_or_else(|| anyhow!("native_cancel_command_required"))?;
+        ensure!(
+            command["schemaVersion"] == 1
+                && command["action"] == "CANCEL"
+                && command["requestId"].as_str().is_some_and(|s| !s.is_empty()),
+            "native_cancel_command_invalid"
+        );
+        let binding = &command["binding"];
+        ensure!(
+            binding["nativeSessionId"] == expected
+                && binding["environmentId"] == "Sandbox"
+                && binding["sourceId"] == self.config.source_id
+                && binding["buildId"]
+                    == std::env::current_exe()?
+                        .canonicalize()?
+                        .to_string_lossy()
+                        .as_ref(),
+            "native_cancel_original_binding_mismatch"
+        );
+        let text = |key: &str| -> Result<&str> {
+            command["order"][key]
+                .as_str()
+                .ok_or_else(|| anyhow!("native_cancel_order_invalid"))
+        };
+        let original = OriginalOrder {
+            trader: text("traderId")?.parse()?,
+            account: text("accountId")?.parse()?,
+            strategy: command["strategyId"]
+                .as_str()
+                .ok_or_else(|| anyhow!("native_cancel_strategy_invalid"))?
+                .parse()?,
+            instrument: text("instrumentId")?.parse()?,
+            client_order_id: text("clientOrderId")?.parse()?,
+        };
+        let session = expected.parse().map_err(anyhow::Error::msg)?;
+        if r.operation == "ORDER_CANCEL_ATTEMPT" {
+            let id = node.dispatch_attempt(session, Environment::Sandbox, &original)?;
+            Ok(json!({"command":command,"status":"UNKNOWN","attemptId":id.to_string()}))
+        } else {
+            let order = node.observe_order(session, Environment::Sandbox, &original)?;
+            Ok(
+                json!({"command":command,"status":"UNKNOWN","orderObservation":{
+                "status":order.status().to_string(),"filledQuantity":order.filled_qty().to_string(),"lastEvent":order.last_event()}}),
+            )
+        }
+    }
     fn process(&mut self, r: &Request) -> Result<Value> {
         match r.operation.as_str() {
+            "ORDER_CANCEL_ATTEMPT" | "ORDER_OBSERVE" => self.cancel_order_operation(r),
             #[cfg(test)]
             "TEST_RESTING_LIMIT" => {
                 let instrument = self.ids[0];
@@ -1241,12 +1321,25 @@ pub async fn run() -> Result<()> {
 pub async fn run_with_registration(
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
+    // External callers may drive several nodes on one thread. No ownership claim.
+    run_input(registration, false).await
+}
+pub(crate) async fn run_owned_registration(
+    registration: Option<AccountStrategyRegistration>,
+    _owner: &crate::native_runner::OwnedAccountRuntime,
+) -> Result<()> {
+    run_input(registration, true).await
+}
+async fn run_input(
+    registration: Option<AccountStrategyRegistration>,
+    owned_runtime: bool,
+) -> Result<()> {
     let mut first = String::new();
     io::stdin().read_line(&mut first)?;
     let boot: Request = serde_json::from_str(&first)?;
     ensure!(boot.operation == "BOOT", "account_native_boot_required");
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
-    let result = run_config_with_registration(config, boot.id.clone(), registration).await;
+    let result = run_config_owned(config, boot.id.clone(), registration, owned_runtime).await;
     if let Err(e) = &result {
         // Full causal diagnostics stay on the private process stderr channel.
         // The public protocol keeps its existing stable top-level error.
@@ -1279,10 +1372,30 @@ fn execution_product_types(config: &AccountRuntimeConfig) -> Result<Vec<Hyperliq
 async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()> {
     run_config_with_registration(config, boot_id, None).await
 }
+#[cfg(test)]
 async fn run_config_with_registration(
     config: AccountRuntimeConfig,
     boot_id: String,
     registration: Option<AccountStrategyRegistration>,
+) -> Result<()> {
+    run_config_owned(config, boot_id, registration, false).await
+}
+fn ordinary_cancel_supported(
+    owned_runtime: bool,
+    mode: &str,
+    has_registration: bool,
+    strategy: &NativeCompiledStrategyV1,
+) -> bool {
+    owned_runtime
+        && mode == "paper"
+        && !has_registration
+        && matches!(strategy, NativeCompiledStrategyV1::EmaCross { .. })
+}
+async fn run_config_owned(
+    config: AccountRuntimeConfig,
+    boot_id: String,
+    registration: Option<AccountStrategyRegistration>,
+    owned_runtime: bool,
 ) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
@@ -1582,6 +1695,13 @@ async fn run_config_with_registration(
         .borrow_mut()
         .set_trading_state(nautilus_model::enums::TradingState::Halted);
     node.add_strategy(AccountController {
+        cancel_node: ordinary_cancel_supported(
+            owned_runtime,
+            &config.mode,
+            registration.is_some(),
+            &config.native_strategy.strategy,
+        )
+        .then(|| crate::account_queued_cancel::BoundCancelNode::capture(&node)),
         signal_strategy_id: None,
         user_registration: registration,
         signal_restore_error: None,
@@ -1633,6 +1753,32 @@ async fn run_config_with_registration(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ordinary_cancel_scope_does_not_claim_user_or_live_support() {
+        let builtin: NativeCompiledStrategyV1 = serde_json::from_value(
+            json!({"kind":"EMA_CROSS","trade_size":"1","fast_period":2,"slow_period":3}),
+        )
+        .unwrap();
+        assert!(ordinary_cancel_supported(true, "paper", false, &builtin));
+        assert!(!ordinary_cancel_supported(false, "paper", false, &builtin));
+        assert!(!ordinary_cancel_supported(true, "live", false, &builtin));
+        assert!(!ordinary_cancel_supported(true, "paper", true, &builtin));
+        let registered: NativeCompiledStrategyV1 = serde_json::from_value(
+            json!({"kind":"REGISTERED","name":"user.strategy","config":null}),
+        )
+        .unwrap();
+        assert!(!ordinary_cancel_supported(
+            true,
+            "paper",
+            false,
+            &registered
+        ));
+        let obi: NativeCompiledStrategyV1 = serde_json::from_value(json!({"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":1.0,"time_in_force":"IOC","dry_run":false})).unwrap();
+        assert!(
+            !ordinary_cancel_supported(true, "paper", false, &obi),
+            "existing account lifecycle rejects OBI before installation"
+        );
+    }
     #[test]
     fn native_risk_defaults_and_explicit_limits() {
         let defaults = super::AccountRiskConfig::default().native(&[]).unwrap();
@@ -1815,6 +1961,38 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    pub(super) struct OnStartResting {
+        pub(super) core: StrategyCore,
+        pub(super) instrument: InstrumentId,
+        pub(super) client: ClientId,
+    }
+    nautilus_strategy!(OnStartResting, {});
+    impl DataActor for OnStartResting {
+        fn on_start(&mut self) -> Result<()> {
+            let instrument = self.instrument;
+            let order = self.order_factory().limit(
+                instrument,
+                OrderSide::Buy,
+                Quantity::from("1.00"),
+                Price::from("1.00"),
+                Some(TimeInForce::Gtc),
+                None,
+                Some(false),
+                Some(false),
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(ClientOrderId::from("signal-resting")),
+            );
+            self.submit_order(order, None, Some(self.client), None)
+        }
+    }
+
     type Replies = Rc<RefCell<BTreeMap<String, Value>>>;
     fn pair(id: &str, base: Currency) -> InstrumentAny {
         InstrumentAny::CurrencyPair(
@@ -1929,6 +2107,9 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
         node.add_strategy(AccountController {
+            cancel_node: Some(crate::account_queued_cancel::BoundCancelNode::capture(
+                &node,
+            )),
             signal_strategy_id: None,
             user_registration: None,
             signal_restore_error: None,
@@ -2049,6 +2230,235 @@ mod tests {
         get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
             id, price, price, size, size, now, now,
         ))))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[ignore = "explicit isolated Pi integration fixture"]
+    #[tokio::test(flavor = "current_thread")]
+    async fn pi_cancel_sandbox_transport_fixture() -> Result<()> {
+        let path = std::env::var("QZ_CANCEL_SANDBOX_FIXTURE")?;
+        let directory = std::path::PathBuf::from(path);
+        ensure!(directory.is_dir(), "test_directory_required");
+        let ndjson = std::env::var_os("QZ_CANCEL_NDJSON_FIXTURE").is_some();
+        let service_fixture = std::env::var_os("QZ_CANCEL_SERVICE_FIXTURE").is_some();
+        let boot: Option<Request> = if ndjson {
+            let line = io::stdin()
+                .lock()
+                .lines()
+                .next()
+                .ok_or_else(|| anyhow!("test_boot_required"))??;
+            let request: Request = serde_json::from_str(&line)?;
+            ensure!(request.operation == "BOOT", "test_boot_required");
+            Some(request)
+        } else {
+            None
+        };
+        let cache_directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(cache_directory.path()).await?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.client_id = "test-on-start-resting".into();
+            owner.config.source_id = "test-source".into();
+            if let Some(boot) = &boot {
+                ensure!(
+                    boot.value("config")["mode"] == "paper",
+                    "test_requires_paper"
+                );
+                if service_fixture {
+                    owner.config.source_id = boot.value("config")["source_id"]
+                        .as_str().ok_or_else(|| anyhow!("test_source_required"))?.to_owned();
+                } else {
+                    ensure!(boot.value("config")["source_id"] == "test-source", "test_source_required");
+                }
+                owner.boot_id = boot.id.clone();
+            }
+        }
+
+        let session = native.instance_id();
+        let environment = native.kernel().environment();
+        ensure!(environment == Environment::Sandbox, "test_requires_sandbox");
+        let handle = native.handle();
+        let stop = handle.clone();
+        let cache = native.kernel().cache();
+        let engine = native.kernel().exec_engine().clone();
+        if ndjson {
+            let input = tx.clone();
+            let closed = handle.clone();
+            std::thread::spawn(move || {
+                for line in io::stdin().lock().lines() {
+                    let Ok(line) = line else { break };
+                    let Ok(request) = serde_json::from_str::<Request>(&line) else {
+                        break;
+                    };
+                    if request.ensure_external().is_err() || input.send(request).is_err() {
+                        break;
+                    }
+                }
+                closed.stop();
+            });
+        }
+        let write = |name: &str, value: &Value| -> Result<()> {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let pending = directory.join(format!("{name}.pending"));
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&pending)?;
+            file.write_all(&serde_json::to_vec(value)?)?;
+            drop(file);
+            std::fs::rename(pending, directory.join(name))?;
+            Ok(())
+        };
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if service_fixture {
+                ensure!(cache.borrow().orders(None, None, None, None, None).is_empty(), "test_boot_created_order");
+                write("boot-empty.json", &json!({"orders":0}))?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while !directory.join("explicit-test-start").exists() {
+                    ensure!(std::time::Instant::now() < deadline, "test_explicit_start_timeout");
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            publish_native_quote_size(&cache, "1.00", "0.25")?;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let order = cache
+                .borrow()
+                .order(&ClientOrderId::from("signal-resting"))
+                .unwrap()
+                .clone();
+            ensure!(
+                order.status() == nautilus_model::enums::OrderStatus::PartiallyFilled,
+                "test_partial_fill_required"
+            );
+            let command = json!({"schemaVersion":1,"requestId":"sandbox-cancel-original","action":"CANCEL",
+                "strategyId":order.strategy_id().to_string(),"order":{"traderId":order.trader_id().to_string(),"accountId":order.account_id().unwrap().to_string(),"instrumentId":order.instrument_id().to_string(),"clientOrderId":order.client_order_id().to_string()},
+                "binding":{"sourceId":boot.as_ref().filter(|_| service_fixture).map(|b|b.value("config")["source_id"].clone()).unwrap_or(json!("test-source")),"buildId":std::env::current_exe()?.canonicalize()?.to_string_lossy(),"environmentId":"Sandbox","nativeSessionId":session.to_string()}});
+            let before = engine.borrow().command_count();
+            let wrong_session = request(
+                &tx,
+                &replies,
+                "ORDER_CANCEL_ATTEMPT",
+                json!({"expected_native_session_id":"wrong","command":command}),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                wrong_session.to_string(),
+                "native_cancel_node_binding_mismatch"
+            );
+            let mut wrong_source = command.clone();
+            wrong_source["binding"]["sourceId"] = json!("other");
+            assert_eq!(
+                request(
+                    &tx,
+                    &replies,
+                    "ORDER_CANCEL_ATTEMPT",
+                    json!({"expected_native_session_id":session.to_string(),"command":wrong_source})
+                )
+                .await
+                .unwrap_err()
+                .to_string(),
+                "native_cancel_original_binding_mismatch"
+            );
+            assert_eq!(engine.borrow().command_count(), before);
+            write(
+                "ready.json",
+                &json!({"command":command,"filledQuantity":order.filled_qty().to_string(),"commandCount":before}),
+            )?;
+            // Only this explicit ignored fixture creates the simulated test
+            // order; production BOOT remains unchanged and recovery-only.
+            if ndjson {
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while handle.is_running() {
+                    ensure!(std::time::Instant::now() < deadline, "test_ndjson_timeout");
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                return Ok::<_, anyhow::Error>(());
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            let mut sequence = 0;
+            loop {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "test_transport_timeout"
+                );
+                let name = format!("request-{sequence}.json");
+                let path = directory.join(&name);
+                if !path.exists() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    continue;
+                }
+                let bytes = std::fs::read(path)?;
+                ensure!(bytes.len() <= 16384, "test_request_too_large");
+                let input: Value = serde_json::from_slice(&bytes)?;
+                let op = input["op"].as_str().unwrap_or("");
+                let response = if input["command"] != command {
+                    json!({"error":"test_original_binding_mismatch"})
+                } else if op == "CANCEL" {
+                    let attempt = request(
+                        &tx,
+                        &replies,
+                        "ORDER_CANCEL_ATTEMPT",
+                        json!({"expected_native_session_id":session.to_string(),"command":command}),
+                    )
+                    .await?;
+                    // A void official queue send is attempted, not a durable receipt.
+                    attempt
+                } else if op == "READ" {
+                    let mut observed = request(
+                        &tx,
+                        &replies,
+                        "ORDER_OBSERVE",
+                        json!({"expected_native_session_id":session.to_string(),"command":command}),
+                    )
+                    .await?;
+                    observed["commandCount"] = json!(engine.borrow().command_count());
+                    observed
+                } else if op == "STOP_FIXTURE" {
+                    json!({"stopped":true})
+                } else {
+                    json!({"error":"test_operation_unsupported"})
+                };
+                write(&format!("response-{sequence}.json"), &response)?;
+                sequence += 1;
+                if op == "STOP_FIXTURE" && input["command"] == command {
+                    break;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+        run?;
+        result?;
+        native.dispose();
         Ok(())
     }
 
@@ -2278,7 +2688,10 @@ mod tests {
                     "derived_free_quantity_retained"
                 );
                 ensure!(row["value"].is_null(), "derived_position_value_retained");
-                ensure!(row["pnl"].is_null(), "caller_selected_position_pnl_retained");
+                ensure!(
+                    row["pnl"].is_null(),
+                    "caller_selected_position_pnl_retained"
+                );
                 ensure!(
                     cache
                         .borrow()

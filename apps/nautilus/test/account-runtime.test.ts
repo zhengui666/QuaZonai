@@ -101,3 +101,32 @@ test('diagnostic creation failure explicitly reports no process started', async 
     assert.equal(await readFile(blocked,'utf8'), 'retain this file');
   } finally { await runtime.close(); await rm(directory,{recursive:true,force:true}); }
 });
+
+test('paper cancellation binding never follows a replacement process or boots on read', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-cancel-generation-'));
+  const script = join(directory, 'protocol.mjs'), binary = join(directory, 'runner'), counter = join(directory, 'starts');
+  await writeFile(script, `import fs from 'node:fs';import readline from 'node:readline';
+let n=1;try{n=Number(fs.readFileSync(${JSON.stringify(counter)},'utf8'))+1}catch{}fs.writeFileSync(${JSON.stringify(counter)},String(n));
+readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);const reply=result=>console.log(JSON.stringify({requestId:v.requestId,result}));
+if(v.operation==='BOOT')reply({native_session_id:'session-'+n,ordinary_venue_cancel:true});
+else if(v.operation==='EXIT')process.exit(0);
+else if(v.operation==='SHUTDOWN'){reply({});process.exit(0)}
+else reply({operation:v.operation,expected_native_session_id:v.expected_native_session_id});});`);
+  await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, {mode:0o700});
+  const runtime = new AccountRuntime(binary, {id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:[]}, 'source', directory);
+  try {
+    assert.throws(()=>runtime.bindPaperCancellationSession('session-1'), /original_session_unavailable/);
+    await assert.rejects(readFile(counter), /ENOENT/);
+    await runtime.start();
+    assert.throws(()=>runtime.bindPaperCancellationSession('wrong'), /original_session_unavailable/);
+    const bound=runtime.bindPaperCancellationSession('session-1');
+    assert.deepEqual(await bound.request('ORDER_OBSERVE',{expected_native_session_id:'wrong'}), {operation:'ORDER_OBSERVE',expected_native_session_id:'session-1'});
+    await assert.rejects(runtime.request('EXIT'), /outcome_uncertain/);
+    await assert.rejects(bound.request('ORDER_CANCEL_ATTEMPT',{}), /original_session_unavailable/);
+    assert.equal(await readFile(counter,'utf8'),'1');
+    await runtime.start(); // New explicit connection, never done by bound requests.
+    await assert.rejects(bound.request('ORDER_OBSERVE',{}), /original_session_unavailable/);
+    assert.equal(await readFile(counter,'utf8'),'2');
+    assert.equal((await runtime.bindPaperCancellationSession('session-2').request('ORDER_OBSERVE',{})).expected_native_session_id,'session-2');
+  } finally {await runtime.close();await rm(directory,{recursive:true,force:true});}
+});
