@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DECIMAL_SCALE, decimal, divide, divideUp, ledgerAmount, ledgerTransfer, parseHyperliquidAccount, readHyperliquidLedger } from '../src/hyperliquid-account.ts';
+import { DECIMAL_SCALE, decimal, ledgerAmount, ledgerTransfer, parseHyperliquidAccount, readHyperliquidLedger } from '../src/hyperliquid-account.ts';
 import type { HyperliquidLedgerRow } from '../src/hyperliquid-account.ts';
 
 const row = (delta: Record<string, unknown>): HyperliquidLedgerRow => ({ time: 1_794_398_400_000, hash: 'original-ledger-reference', delta });
@@ -27,13 +27,6 @@ test('withdrawals retain the reported USDC source amount without inventing a fee
   const withdrawal = row({ type: 'withdraw', usdc: '100.000000000000000001', fee: '1' });
   assert.equal(ledgerAmount(withdrawal, 'WITHDRAWAL'), 100n * DECIMAL_SCALE + 1n);
   assert.throws(() => ledgerAmount(row({ type: 'accountClassTransfer', toPerp: true, usdc: '100' }), 'WITHDRAWAL'), /withdrawal_required/);
-});
-test('net-proceeds division rounds upward at the last exact decimal unit', () => {
-  assert.equal(divideUp(DECIMAL_SCALE, 3n * DECIMAL_SCALE), 333_333_333_333_333_334n);
-  assert.equal(divide(DECIMAL_SCALE, 3n * DECIMAL_SCALE), 333_333_333_333_333_333n);
-  assert.equal(divideUp(10n * DECIMAL_SCALE, 2n * DECIMAL_SCALE), 5n * DECIMAL_SCALE);
-  assert.equal(divideUp(0n, 3n), 0n);
-  for (const divisor of [0n, -1n]) assert.throws(() => divideUp(DECIMAL_SCALE, divisor), /divisor_invalid/);
 });
 test('cash evidence is dated from request start and response latency does not extend its lifetime', () => {
   const started = new Date(Date.now() - 20_000).toISOString();

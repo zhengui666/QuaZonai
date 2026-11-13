@@ -7,14 +7,6 @@ export function decimal(value: bigint): string {
   const text = absolute.toString().padStart(19, '0');
   return (negative ? '-' : '') + `${text.slice(0, -18)}.${text.slice(-18)}`.replace(/\.?0+$/, '');
 }
-export const minimum = (...values: bigint[]) => values.reduce((a, b) => a < b ? a : b);
-export const maximum = (...values: bigint[]) => values.reduce((a, b) => a > b ? a : b);
-export const multiply = (a: bigint, b: bigint) => a * b / DECIMAL_SCALE;
-export const divide = (a: bigint, b: bigint) => { if (b <= 0n) throw new Error('capital_divisor_invalid'); return a * DECIMAL_SCALE / b; };
-export const divideUp = (a: bigint, b: bigint) => { if (b <= 0n) throw new Error('capital_divisor_invalid'); return (a * DECIMAL_SCALE + b - 1n) / b; };
-export const roundDown = (value: bigint, step: bigint) => { if (step <= 0n) throw new Error('capital_increment_invalid'); return value / step * step; };
-export const roundUp = (value: bigint, step: bigint) => { if (step <= 0n) throw new Error('capital_increment_invalid'); return (value + step - 1n) / step * step; };
-
 export interface HyperliquidAccountProof {
   account_address: string; asof: string; received_at: string; valid_until: string; abstraction: string;
   spot_total: string; spot_hold: string; spot_free: string | null; withdrawable: string | null;

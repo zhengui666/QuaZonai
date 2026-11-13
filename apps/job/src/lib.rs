@@ -36,7 +36,6 @@ pub use report::write_probe_report;
 pub mod source_market;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
-pub mod spot_fees;
 pub mod ticks;
 
 pub mod native_strategy;
