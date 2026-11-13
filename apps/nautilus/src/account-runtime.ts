@@ -137,7 +137,8 @@ export class AccountRuntime implements NativeAccountRuntime {
     })().finally(() => { this.starting = null; });
     return this.starting;
   }
-  /** Uninstalled cancellation adapter prerequisite. Never starts/restarts a node.
+  /** Session-bound adapter for the scoped owned-paper cancellation path.
+   * Production cancellation remains unverified. Never starts/restarts a node.
    * Captures the actual BOOT session and child generation, not an arbitrary caller
    * claim. This is process identity only, NOT proof of exclusive Nautilus TLS/node
    * ownership or permission to trade. Native operations must independently check

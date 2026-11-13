@@ -1,4 +1,5 @@
-/** Internal candidate; no production route accepts this contract yet.
+/** Scoped paper CANCEL uses the existing Service account routes; START/STOP in
+ * this contract are not admitted there. Production cancellation remains unverified.
  * One explicit command for an existing official StrategyId. This is neither a
  * native configuration schema nor a durable task/receipt ledger.
  */
