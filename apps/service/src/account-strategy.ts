@@ -16,6 +16,9 @@ interface CommandRecord {
   status: 'PENDING' | 'UNCERTAIN' | 'COMPLETED' | 'REJECTED'; receipt: JsonObject | null; error: string | null; taskId: number;
 }
 const context = BACKGROUND_CONTEXT;
+function throwIfHistoricalHttp(connection: ConnectionConfig) {
+  if (!('kind' in connection) || connection.kind !== 'RUST_PROCESS') throw new Problem('native_http_control_retired_migrate_to_rust_process', 410);
+}
 const commandRecord = (value: unknown) => value as CommandRecord;
 function accept(record: CommandRecord, value: JsonObject) {
   assertEnvelope(record.connection, value, record.currency);
@@ -115,6 +118,9 @@ export function accountStrategyWorkbench(host: ResearchHost) {
       if (canonical(commandRecord(old).original) !== canonical(json(input))) throw new Problem('request_id_conflict', 409);
       return old;
     }
+    // A new historical HTTP command is refused before creating durable intent.
+    // Existing request IDs above remain readable without inventing a new UNKNOWN.
+    throwIfHistoricalHttp(binding.connection);
     const key = await host.harness.commit(async tx => {
       const app = await tx.doc(Application); const key = `${accountKey(binding.connection, app.accountControls)}:${input.requestId}`;
       const old = app.strategyCommands?.[key];

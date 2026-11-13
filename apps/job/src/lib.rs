@@ -6,6 +6,7 @@ pub fn build_identity() -> serde_json::Value {
     serde_json::json!({
         "nautilusVersion": NAUTILUS_VERSION,
         "nautilusRevision": NAUTILUS_REVISION,
+        "nautilusSource": env!("QZ_NAUTILUS_SOURCE"),
         "precision": if cfg!(feature = "high-precision") { "high" } else { "standard" },
         "jobVersion": env!("CARGO_PKG_VERSION"),
     })
@@ -48,3 +49,5 @@ pub mod cli;
 mod native_stdout;
 
 pub mod native_configured;
+
+pub mod native_runner;

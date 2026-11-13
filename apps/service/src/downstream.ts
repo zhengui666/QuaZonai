@@ -16,6 +16,7 @@ export function connectionBase(connection: ConnectionConfig): URL {
   return url;
 }
 export async function downstreamRequest(connection: ConnectionConfig, path: string, method: 'GET' | 'POST', body?: unknown, signal?: AbortSignal): Promise<JsonObject> {
+  if (method === 'POST') throw new Problem('native_http_control_retired_migrate_to_rust_process', 410);
   const url = connectionBase(connection); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-qz-client-id': connection.clientId };
   const hasDirectToken = Object.hasOwn(connection, 'token');

@@ -63,7 +63,8 @@ export function publicRustPath(value: string): string {
  * and dependency stanza. Never change the original workspace, lockfile, or private factory visibility.
  * A copied lock is only a starting point: a new package may require resolution in this directory.
  */
-export async function materializeRustLauncher(discovery: RustEnvironmentDiscovery, directory: string, main: string, glueDependencies: string): Promise<{ manifestPath: string; qualification: 'SOURCE_ONLY_NOT_BUILT' }> {
+export async function materializeRustLauncher(discovery: RustEnvironmentDiscovery, directory: string, main: string, glueDependencies: string, binaryName = 'qz-owner-launcher'): Promise<{ manifestPath: string; qualification: 'SOURCE_ONLY_NOT_BUILT' }> {
+  if (!/^qz-owner-launcher(?:-[a-f0-9-]+)?$/.test(binaryName)) throw new Error('rust_launcher_invalid_binary_name');
   if (!discovery.libraryTarget) throw new Error('rust_environment_public_library_required');
   const workspace = await realpath(discovery.workspaceRoot);
   if (!isAbsolute(directory)) throw new Error('rust_launcher_absolute_directory_required');
@@ -78,7 +79,7 @@ export async function materializeRustLauncher(discovery: RustEnvironmentDiscover
   await mkdir(join(destination, 'src'));
   const dependency = `owner_strategy = { package = ${JSON.stringify(discovery.source.packageName)}, path = ${JSON.stringify(dirname(discovery.source.manifestPath))}, features = ${JSON.stringify(discovery.source.features ?? [])} }`;
   await writeFile(join(destination, 'Cargo.lock'), lock, { flag: 'wx' });
-  await writeFile(join(destination, 'Cargo.toml'), `[package]\nname = "qz-owner-launcher"\nversion = "0.0.0"\nedition = "2024"\n\n[workspace]\n\n[dependencies]\n${dependency}\n${glueDependencies}\n`, { flag: 'wx' });
+  await writeFile(join(destination, 'Cargo.toml'), `[package]\nname = "qz-owner-launcher"\nversion = "0.0.0"\nedition = "2024"\nautobins = false\n\n[[bin]]\nname = ${JSON.stringify(binaryName)}\npath = "src/main.rs"\n\n[workspace]\n\n[dependencies]\n${dependency}\n${glueDependencies}\n`, { flag: 'wx' });
   await writeFile(join(destination, 'src/main.rs'), main, { flag: 'wx' });
   return { manifestPath: join(destination, 'Cargo.toml'), qualification: 'SOURCE_ONLY_NOT_BUILT' };
 }

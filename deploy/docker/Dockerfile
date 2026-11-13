@@ -37,6 +37,19 @@ COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 COPY --chmod=755 deploy/docker/configure.mjs deploy/docker/maintenance.mjs /opt/quazonai/deploy/docker/
 COPY --chmod=755 runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py /opt/quazonai/operator/
 
+# QZ-owned source glue only: no Cargo toolchain, upstream checkout, vendored
+# dependencies or native executable. Building is a separate explicit owner action.
+COPY --chmod=644 Cargo.toml Cargo.lock /opt/quazonai/native-glue/
+COPY --chmod=644 apps/job/Cargo.toml apps/job/build.rs /opt/quazonai/native-glue/apps/job/
+COPY --chmod=755 apps/job/src /opt/quazonai/native-glue/apps/job/src
+COPY --chmod=755 apps/job/examples /opt/quazonai/native-glue/apps/job/examples
+COPY --chmod=755 apps/job/tests /opt/quazonai/native-glue/apps/job/tests
+COPY --chmod=644 crates/contracts/Cargo.toml /opt/quazonai/native-glue/crates/contracts/
+COPY --chmod=755 crates/contracts/src /opt/quazonai/native-glue/crates/contracts/src
+COPY --chmod=644 crates/domain/Cargo.toml /opt/quazonai/native-glue/crates/domain/
+COPY --chmod=755 crates/domain/src /opt/quazonai/native-glue/crates/domain/src
+COPY --chmod=644 AGENTS.md /opt/quazonai/native-glue/README.md
+
 FROM application-source AS nautilus-source
 COPY --chmod=755 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
 COPY --chmod=755 apps/nautilus/src /opt/quazonai/apps/nautilus/src

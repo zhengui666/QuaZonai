@@ -70,6 +70,6 @@ test('retired WF reconciliation preserves large nested evidence and UNKNOWN acro
     const count = methods.length;
     assert.equal(await reconcileNativeExecution(ids.owner, runtime(), ids.child, context), true);
     assert.equal(methods.length, count, 'adopted receipt survives reopen without downloading again');
-    assert.deepEqual(methods, ['GET', 'DELETE', 'GET']);
+    assert.deepEqual(methods, ['GET', 'GET'], 'Retired HTTP cancellation preserves UNKNOWN without sending DELETE.');
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
