@@ -106,7 +106,7 @@ test('the real receiver rejects retired capital producers without sending contro
     assert.equal(preview.statusCode, 404);
     for (const action of ['START','RESUME','RELEASE_RESERVATION']) {
       const response = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload:{requestId:'retired-'+action,action} });
-      assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'capital_exit_planning_retired');
+      assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'native_http_control_retired_migrate_to_rust_process');
     }
     const status = await state.service.app.inject({url:path,headers:state.headers});
     assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,'0.000000000000000000');

@@ -1,3 +1,4 @@
+import {directAccountProtocol} from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
@@ -97,8 +98,9 @@ async function protocolReceiver() {
         ? { instrument_id: object(body.sizing).instrument_id, quantity: '0.00000001', model: 'NAUTILUS_FIXED_RISK', input_source: 'REQUEST_SCENARIO', account_balance_verified: false }
         : { submitted: falselySubmitted, automatic_protection_enabled: false, orders: malformedPreview ? [null] : [{ instrument_id: body.instrument_id }] }) };
   });
-  const url = await server.listen({ host: '127.0.0.1', port: 0 });
+  const url='rust-process://controlled/unbound';
   const connection: ConnectionConfig = { id: 'capital-connection', name: 'Existing cash account', url, clientId: envelope.clientId, accountId: envelope.accountId, mode: envelope.mode };
+  const detach=await directAccountProtocol(connection,server);
   return { nativePreviewPosts, malformedResponse() { malformedPreview = true; }, wrongIdentity() { wrongPreviewIdentity = true; }, submittedResponse() { falselySubmitted = true; }, connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
     retainOriginal(requestId = 'original-lost-start') {
       current = { schema_version: 2, id: 'original-exit', revision: '1', account_source_id: 'physical-source', environment: 'PAPER', state: 'WAITING_CASH', preparation_state: 'WAITING_CASH', account_control_revision: controlRevision, command_id: requestId, reason_codes: [],
@@ -108,7 +110,7 @@ async function protocolReceiver() {
       receipts.set(requestId, json({ ...envelope, requestId, command: { preview_id: 'retained-original-preview' }, status: 'ACCEPTED', result: current }));
     },
     get current() { return current; }, advanceObservation() { observationId = 'observation-later'; }, blockQuotes() { blocked = true; },
-    loseStart() { loseNextStart = true; allowReceipt = false; }, revealReceipt() { allowReceipt = true; }, close: () => server.close() };
+    loseStart() { loseNextStart = true; allowReceipt = false; }, revealReceipt() { allowReceipt = true; }, close: async() => {detach();await server.close();} };
 }
 
 test('account-only observation reads retained capital facts and can stop without a new plan', { timeout: 30_000 }, async () => {

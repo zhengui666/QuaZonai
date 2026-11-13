@@ -56,7 +56,10 @@ test('direct process account configuration preserves identity, never launches on
  await assert.rejects(manager.create(original),/injected_publish_failure/);await assert.rejects(readFile(join(dir,'accounts','a-first','process-binding.json')),/ENOENT/);
  await manager.close();manager=await processAccounts(config);
  const saved=await manager.create(original);assert.ok(saved.accountSourceId);
- const second={requestId:'second-create',configuration:{...configuration,id:'b-second',accountId:'native-paper-b'}};await manager.create(second);await manager.close();
+ const second={requestId:'second-create',configuration:{...configuration,id:'b-second',accountId:'native-paper-b'}};await manager.create(second);
+ const blocked=join(dir,'accounts','a-first','capital-receipts.json.next');await mkdir(blocked);
+ await assert.rejects(manager.close(),/EISDIR/);assert.equal(config.connections.length,0,'All bindings detach even when the first account close fails');await rm(blocked,{recursive:true});
+ manager=await processAccounts(config);assert.equal((await manager.list()).length,2);await manager.close();
  const path=join(dir,'accounts','b-second','configuration.json');const text=await readFile(path,'utf8');await writeFile(path,'{}');
  await assert.rejects(processAccounts(config),/account_creation_request_invalid/);assert.equal(config.connections.length,0,'Prior attached handles are removed after later startup failure');
  await writeFile(path,text);manager=await processAccounts(config);assert.equal((await manager.list()).length,2);assert.equal((await manager.list())[0]!.accountSourceId,saved.accountSourceId);

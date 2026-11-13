@@ -4,10 +4,10 @@ import Fastify from 'fastify';
 import { downstream } from '../src/downstream.ts';
 import { Application, json, Problem } from '../src/facts.ts';
 import { validateNativeTargetBrackets } from '../../../packages/contracts/src/native-order-preview.ts';
-import { accountSourceFixture } from './pm-account-fixture.ts';
+import { accountSourceFixture,directAccountProtocol } from './pm-account-fixture.ts';
 import { setup, context } from './support.ts';
 
-// HTTP/owner protocol tests only; no native worker or exchange is exercised.
+// Controlled direct-handler/owner protocol tests only; no native worker or exchange is exercised.
 const nativeBrackets = { 'BTC-USDC-SPOT.HYPERLIQUID': { enabled: true as const, stop_loss: '90.000000000000000001', take_profit: '110.000000000000000001' } };
 test('bracket contract requires an explicit enable and decimal strings', () => {
   validateNativeTargetBrackets(nativeBrackets);
@@ -22,11 +22,11 @@ test('retired delivery is rejected before transport while cancellation binds the
   receiver.post<{ Params: { id: string } }>('/targets/:id/cancel-protection', request => {
     posts.push(request.body); return { target_id: request.params.id, cancellation_requested: 2, settled: false };
   });
-  const address = await receiver.listen({ host: '127.0.0.1', port: 0 });
+  let detach:()=>void=()=>{};
   const state = await setup();
   try {
     const source = accountSourceFixture();
-    source.observation.connection.url = address;
+    detach=await directAccountProtocol(source.observation.connection,receiver);
     source.observation.input = { requestId: 'protected-original', portfolioId: 'portfolio-original', mode: 'paper', connectionId: source.connection.id, nativeBrackets };
     source.observation.view.receipt = { id: 'target-original', status: 'ACKNOWLEDGED', expiresAt: new Date(Date.now()+60_000).toISOString(), externalId: null, acknowledgedAt: null };
     await assert.rejects(downstream({ id: source.observation.view.id, receiptId: 'target-original', connection: source.observation.connection,
@@ -43,13 +43,13 @@ test('retired delivery is rejected before transport while cancellation binds the
     const rejected = await state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${source.observation.view.id}/cancel-protection` });
     assert.equal(rejected.statusCode, 401);
     assert.equal(posts.length, 1);
-  } finally { await state.cleanup(); await receiver.close(); }
+  } finally { await state.cleanup();detach(); await receiver.close(); }
 });
 
 
 test('new bracket observations are refused while retained protection receipts survive restart and cancellation', async () => {
   const state = await setup();
-  const remote = Fastify();
+  const remote = Fastify();let detach:()=>void=()=>{};
   const posts: unknown[] = [];
   const cancels: { id: string; body: unknown }[] = [];
   remote.post('/targets', request => { posts.push(request.body); return { status: 'PENDING' }; });
@@ -58,9 +58,8 @@ test('new bracket observations are refused while retained protection receipts su
     return { target_id: request.params.id, cancellation_requested: cancels.length === 1 ? 2 : 0, settled: cancels.length > 1 };
   });
   try {
-    const url = await remote.listen({ host: '127.0.0.1', port: 0 });
     const source = accountSourceFixture();
-    source.observation.connection.url = url;
+    detach=await directAccountProtocol(source.observation.connection,remote);
     source.observation.input = { requestId: 'retained-bracket-request', portfolioId: 'portfolio-original', mode: 'paper', connectionId: source.connection.id, nativeBrackets };
     source.observation.view.receipt = { id: 'retained-target', status: 'ACKNOWLEDGED', expiresAt: new Date(Date.now()+60_000).toISOString(), externalId: 'original-native-target', acknowledgedAt: null,
       nativeProtection: { requested_brackets: 1, status: 'NATIVE_SUBMIT_ONLY', contingency: 'UPSTREAM_OTO_OUO_NOT_ATOMIC_OCO', fill_guaranteed: false } };
@@ -92,5 +91,5 @@ test('new bracket observations are refused while retained protection receipts su
     }
     assert.deepEqual(cancels, [1, 2].map(() => ({ id: original.view.receipt!.id, body: { clientId: source.connection.clientId, accountId: source.connection.accountId } })));
     assert.equal(posts.length, 0, 'Refusal, restart and cancellation cannot deliver a new target');
-  } finally { await state.cleanup(); await remote.close(); }
+  } finally { await state.cleanup();detach(); await remote.close(); }
 });
