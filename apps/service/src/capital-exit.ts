@@ -90,9 +90,25 @@ export function capitalStatusForBinding(value: AccountControl, connection: Conne
 }
 /** An original command binds both its exact permission source and the physical
  * account state. This is independent of the downstream receipt identity. */
+/** Zero obligations must be proven per original exit; an aggregate cannot override them. */
+export function retainedExitObligationUnsettled(exits: unknown, currency: string): boolean {
+  if (!Array.isArray(exits)) return true;
+  return exits.some(value => {
+    try {
+      const exit = object(value);
+      if (exit.state !== 'COMPLETED' && exit.state !== 'CLOSED') return true;
+      const funds = object(exit.funds);
+      return ['reserved_amount','staged_for_withdrawal_amount'].some(key => {
+        const amount = object(funds[key]);
+        return amount.currency !== currency || decimalUnits(decimal(amount.amount, 'original_exit_obligation')) !== 0n;
+      });
+    } catch { return true; }
+  });
+}
 export function capitalCommandPermission(value: AccountControl, connection: ConnectionConfig, action: CapitalExitAction = 'START'): CapitalCommandPermission {
   const capability = transportCapability(value, connection), status = capitalStatusForBinding(value, connection);
   const initiation = action === 'START' || action === 'RESUME';
+  if (initiation && retainedExitObligationUnsettled(status.exits, String(capability?.document.currency ?? ''))) throw new Problem('capital_original_exit_unsettled', 409);
   if (initiation && status.unsettledReservations?.some(fact => {
     if (fact.state === 'UNCERTAIN' || fact.state === 'PENDING' || fact.reserved === null) return true;
     try { return decimalUnits(decimal(fact.reserved, 'original_reservation')) !== 0n; } catch { return true; }
@@ -132,7 +148,6 @@ export async function readCapitalControl(connection: ConnectionConfig, currency:
     }
   }
   const reserved = native.reserved == null ? null : decimal(native.reserved, 'outstanding_reservation'); if (reserved !== null && decimalUnits(reserved) < 0n) throw new Problem('capital_exit_reservation_invalid');
-  if (reserved !== null && exits.reduce((sum, exit) => sum + decimalUnits(String(object(object(exit.funds).reserved_amount).amount)), 0n) > decimalUnits(reserved)) throw new Problem('capital_exit_aggregate_reservation_mismatch', 409);
   return { capabilities, capabilitiesReceivedAtNs, native, status: { capability: native.blocked === true ? 'BLOCKED' : capability?.supported === true ? 'SUPPORTED' : 'UNSUPPORTED', reason: typeof native.reason === 'string' ? native.reason : capability?.supported === true ? null : 'capital_exit_initiation_unavailable',
     accountSourceId: source, observationId: text(native.observationId, 'source_observation_id'), controlRevision: counter(native.controlRevision, 'account_control_revision'), reserved, exits: exits as unknown as CapitalExitStatus['exits'] } };
 }

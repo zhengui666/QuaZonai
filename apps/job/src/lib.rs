@@ -19,6 +19,8 @@ mod account_order_preview;
 pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
+#[cfg(feature = "account-runtime")]
+mod account_spot_observation;
 pub mod bounded;
 pub mod capital_exit_gate;
 pub mod catalog;

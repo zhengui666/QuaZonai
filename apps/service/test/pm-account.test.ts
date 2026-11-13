@@ -78,7 +78,18 @@ test('PM observed account: later local reservations and releases cannot inherit 
   const control = f.application.accountControls[accountKey(f.connection)] as unknown as JsonObject;
   control.commands = { pending: { state: 'PENDING', reserved: '1' } };
   const reserved = captureAccount(f.application, f.connection.id, '120');
-  assert.equal(reserved.basis.availableAtNs, '120'); assert.equal(reserved.basis.reserved?.amount, '1.000000000000000000');
+  assert.equal(reserved.basis.availableAtNs, '120'); assert.equal(reserved.basis.reserved?.amount, '0');
+  assert.deepEqual((reserved.artifact.capitalControl as JsonObject).unsettledReservations,[{requestId:'pending',state:'PENDING',reserved:'1'}]);
+  assert.throws(()=>toNativeObservedSpotStart(reserved,{selectionStartNs:'120'}),/capital_reserved_or_unknown/);
+  (control.commands as Record<string,JsonObject>).pending!.reserved='0';
+  const zeroPending=captureAccount(f.application,f.connection.id,'125');
+  assert.throws(()=>toNativeObservedSpotStart(zeroPending,{selectionStartNs:'125'}),/capital_reserved_or_unknown/);
+  (control.commands as Record<string,JsonObject>).pending!.state='UNCERTAIN';
+  assert.throws(()=>toNativeObservedSpotStart(captureAccount(f.application,f.connection.id,'126'),{selectionStartNs:'126'}),/capital_reserved_or_unknown/);
+  (control.commands as Record<string,JsonObject>).pending!.state='ACCEPTED';
+  const confirmedZero=captureAccount(f.application,f.connection.id,'127');
+  assert.equal(toNativeObservedSpotStart(confirmedZero,{selectionStartNs:'127'}).available_ns,'127');
+  assert.throws(()=>toNativeObservedSpotStart(confirmedZero,{selectionStartNs:'126'}),/snapshot_not_available_before_replay/);
   control.commands = {};
   const released = captureAccount(f.application, f.connection.id, '130');
   assert.equal(released.basis.availableAtNs, '130'); assert.equal(released.artifact.snapshotReceivedAtNs, '102');
@@ -232,4 +243,25 @@ test('PM account events: wrong account, post-receipt facts and unproven time cov
     envelope => { (envelope.executions as JsonObject[])[0]!.quantity = '0'; },
   ];
   for (const change of cases) { const f = eventsFixture(); change(f.envelope); assert.throws(() => projectAccountEvents(f.capture())); }
+});
+
+
+test('zero-obligation admission checks every retained exit rather than trusting an aggregate',()=>{
+ const f=fixture();const control=f.application.accountControls[accountKey(f.connection)];
+ for(const [aggregate,amounts] of [['0',['10']],['5',['5','5']]] as const){
+  control!.status.reserved=aggregate;
+  control!.status.exits=amounts.map((amount,index)=>({id:String(index),state:'CLOSED',funds:{reserved_amount:{amount,currency:'USDC'},staged_for_withdrawal_amount:{amount:'0',currency:'USDC'}}})) as never;
+  assert.throws(()=>toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110',reservationMode:'SEPARATE_TARGET_BUDGET'}),/capital_reserved_or_unknown/);
+ }
+ control!.status.reserved='0';control!.status.exits=[{id:'closed',state:'CLOSED',funds:{reserved_amount:{amount:'0',currency:'USDC'},staged_for_withdrawal_amount:{amount:'0',currency:'USDC'}}}] as never;
+ assert.equal(toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110'}).available_ns,'110');
+ const baseline=structuredClone(control!.status.exits);
+ for(const state of [['CLOSED'],undefined,null,'INVALID']){
+  control!.status.exits=structuredClone(baseline);(control!.status.exits[0] as unknown as JsonObject).state=state as never;
+  assert.throws(()=>toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110'}),/capital_reserved_or_unknown/);
+ }
+ control!.status.exits=structuredClone(baseline);
+ delete (control!.status.exits[0]!.funds as unknown as JsonObject).staged_for_withdrawal_amount;
+ assert.throws(()=>toNativeObservedSpotStart(f.capture(),{selectionStartNs:'110'}),/capital_reserved_or_unknown/);
+
 });

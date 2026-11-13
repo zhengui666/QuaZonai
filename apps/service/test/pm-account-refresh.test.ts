@@ -130,7 +130,7 @@ test('capital workbench keeps unreadable alias failures local and cannot authori
       payload: { requestId: 'unreadable-preview', amount: '1', currency: 'USDC' } });
     assert.equal(preview.statusCode, 404, preview.body); assert.deepEqual(remote.posts, []);
     const app = (await state.service.research.harness.snapshot(Application, context))!;
-    assert.equal(captureAccount(app, remote.a.id).basis.reserved?.amount, '0.000000000000000000');
+    assert.equal(captureAccount(app, remote.a.id).basis.reserved?.amount, '0');
     assert.equal(captureAccount(app, remote.b.id).basis.reserved, null);
   } finally { await state.cleanup(); await remote.close(); }
 });
@@ -197,6 +197,6 @@ test('official observation refresh follows account revision with actual capabili
     assert.equal(captureAccount(failed, remote.a.id).basis.reserved, null, 'A failed current source is unknown, not a healthy stale reservation.');
     remote.failCapabilities(false); await state.service.work.refreshObservation(remote.a.id);
     const recovered = (await state.service.research.harness.snapshot(Application, context))!;
-    assert.equal(captureAccount(recovered, remote.a.id).basis.reserved?.amount, '0.000000000000000000');
+    assert.equal(captureAccount(recovered, remote.a.id).basis.reserved?.amount, '0');
   } finally { await state.cleanup(); await remote.close(); }
 });

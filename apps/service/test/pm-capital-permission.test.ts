@@ -247,5 +247,13 @@ test('a retained pending CANCEL rechecks revoked transport permission before POS
    state.commands['original-unknown']!.state='ACCEPTED'; state.commands['original-unknown']!.reserved='invalid';
    assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_reservation_unsettled/);
    assert.equal(capitalStatus(state).unsettledReservations?.[0]?.reserved,'invalid');
+   state.commands={};
+   for(const [aggregate,amounts] of [['0',['10']],['5',['5','5']]] as const){
+    state.status!.reserved=aggregate;
+    state.status!.exits=amounts.map((amount,index)=>({id:String(index),state:'CLOSED',funds:{reserved_amount:{amount,currency:'USDC'},staged_for_withdrawal_amount:{amount:'0',currency:'USDC'}}})) as never;
+    assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_exit_unsettled/);
+    assert.equal(capitalCommandPermission(state,f.connection,'CANCEL').action,'CANCEL');
+   }
+
   }finally{await f.cleanup();}
  });

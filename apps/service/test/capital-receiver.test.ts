@@ -109,7 +109,7 @@ test('the real receiver rejects retired capital producers without sending contro
       assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'native_http_control_retired_migrate_to_rust_process');
     }
     const status = await state.service.app.inject({url:path,headers:state.headers});
-    assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,'0', 'The retained downstream string is not reformatted or combined.'); assert.deepEqual(status.json().unsettledReservations,[]);
+    assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,null, 'The worker no longer fabricates an aggregate reservation from legacy records.'); assert.deepEqual(status.json().unsettledReservations,[]);
     const refreshed=await state.service.app.inject({method:'POST',url:'/api/v3/observations/'+binding.json().id+'/refresh',headers:state.headers});
     assert.equal(refreshed.statusCode,200,refreshed.body);
     assert.ok((await state.service.research.harness.snapshot(Application,context))!.portfolios[sourceId]);

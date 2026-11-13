@@ -1,3 +1,4 @@
+import { retainedExitObligationUnsettled } from './capital-exit.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { counter, decimal, json, object, Problem, text } from './facts.ts';
@@ -69,6 +70,16 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   if (!capture.basis.reserved || capture.basis.reserved.currency !== capture.basis.currency
     || compareDecimal(capture.basis.reserved.amount, '0') < 0
     || options.reservationMode !== 'SEPARATE_TARGET_BUDGET' && compareDecimal(capture.basis.reserved.amount, '0') !== 0) refuse('capital_reserved_or_unknown');
+  if (retainedExitObligationUnsettled(control.exits, capture.basis.currency)) refuse('capital_reserved_or_unknown');
+  // Local pending facts are not native balances and must never be added to them.
+  if (control.unsettledReservations !== undefined) {
+    if (!Array.isArray(control.unsettledReservations)) refuse('capital_reserved_or_unknown');
+    for (const value of control.unsettledReservations as unknown[]) {
+      const fact = object(value, 'original_reservation');
+      if (fact.state === 'PENDING' || fact.state === 'UNCERTAIN' || fact.state !== 'ACCEPTED'
+        || typeof fact.reserved !== 'string' || compareDecimal(fact.reserved, '0') !== 0) refuse('capital_reserved_or_unknown');
+    }
+  }
   const balances = array(native.balances, 'native_balances'); if (!balances.length) refuse('native_balances_required');
   const currencies = new Set<string>();
   for (const value of balances) {

@@ -44,7 +44,7 @@ test('a managed reservation does not rewrite original native balances or erase o
   assert.throws(() => toNativeObservedSpotStart(capture, { selectionStartNs: '110' }), /capital_reserved_or_unknown/);
   const input = toNativeObservedSpotStart(capture, { selectionStartNs: '110', reservationMode: 'SEPARATE_TARGET_BUDGET' });
   assert.deepEqual(input.snapshot, original);
-  assert.equal(capture.basis.reserved?.amount, '100.000000000000000000');
+  assert.equal(capture.basis.reserved?.amount, '100');
   (source.snapshot.openOrders as JsonObject).count = 1;
   source.application.observations[source.connection.id]!.snapshot = source.snapshot;
   assert.throws(() => toNativeObservedSpotStart(source.capture(), { selectionStartNs: '110', reservationMode: 'SEPARATE_TARGET_BUDGET' }), /no_open_orders_proof_required/);

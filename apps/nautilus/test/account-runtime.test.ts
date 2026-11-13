@@ -64,3 +64,40 @@ const lines=readline.createInterface({input:process.stdin});lines.on('line',line
     assert.notEqual(result.requestId, 'attacker-selected'); assert.equal(result.operation, 'FIXED_RISK_SIZE');
   } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('native stderr stays private bounded and paper never receives signing credentials', async () => {
+  const { readdir, stat } = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-diagnostic-'));
+  const script = join(directory, 'protocol.mjs'), binary = join(directory, 'account-runtime');
+  await writeFile(script, `import readline from 'node:readline';
+const lines=readline.createInterface({input:process.stdin});lines.on('line',line=>{const v=JSON.parse(line);if(v.operation==='BOOT'){
+ if(process.env.HYPERLIQUID_PK||process.env.HYPERLIQUID_TESTNET_PK)throw Error('paper_received_signing_key');
+ process.stderr.write('x'.repeat(100000)+'PRIVATE_DIAGNOSTIC_END',()=>console.log(JSON.stringify({requestId:v.requestId,error:'account_native_node_run'})));
+}});`);
+  await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, { mode: 0o700 });
+  const prior = process.env.HYPERLIQUID_PK; process.env.HYPERLIQUID_PK = 'test-only-not-a-key';
+  const runtime = new AccountRuntime(binary, { id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:['HYPE-USDC-SPOT.HYPERLIQUID'] }, '01900000-0000-7000-8000-000000000001', directory);
+  try {
+    await assert.rejects(runtime.start(), error => error instanceof Error && error.message === 'account_native_node_run');
+    const names = (await readdir(directory)).filter(name => name.startsWith('native-stderr-'));
+    assert.equal(names.length, 1);
+    const path = join(directory, names[0]!); const content = await readFile(path);
+    assert.equal(content.length, 65536); assert.ok(content.toString().endsWith('PRIVATE_DIAGNOSTIC_END'));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+  } finally { if(prior===undefined)delete process.env.HYPERLIQUID_PK;else process.env.HYPERLIQUID_PK=prior;await runtime.close();await rm(directory,{recursive:true,force:true}); }
+});
+
+test('diagnostic creation failure explicitly reports no process started', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-diagnostic-prestart-'));
+  const blocked = join(directory, 'not-a-directory'), started = join(directory, 'started');
+  const binary = join(directory, 'native');
+  await writeFile(blocked, 'retain this file');
+  await writeFile(binary, `#!/bin/sh\nprintf started > ${quote(started)}\n`, { mode:0o700 });
+  const runtime = new AccountRuntime(binary, {id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:[]}, '01900000-0000-7000-8000-000000000001', blocked);
+  try {
+    await assert.rejects(runtime.start(), /^Error: account_runtime_not_started_diagnostic_unavailable$/);
+    assert.equal(runtime.isConnected(), false);
+    await assert.rejects(readFile(started), {code:'ENOENT'});
+    assert.equal(await readFile(blocked,'utf8'), 'retain this file');
+  } finally { await runtime.close(); await rm(directory,{recursive:true,force:true}); }
+});
