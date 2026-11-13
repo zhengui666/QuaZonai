@@ -1,7 +1,7 @@
 //! Offline reconstruction of selected candles from an existing immutable source.
 //! A parsed REST response's actual observation proves current retrieval only.
 //! No Hyper network collection, metadata refresh or polling is exposed here.
-use crate::{catalog, spot_cash_capture::ClosedBarSourceRow};
+use crate::catalog;
 use anyhow::{ensure, Context, Result};
 use contracts::{
     science::NativeBarSelectionV1, spot_cash::NativeSpotBarEventTimeV1, spot_cash_source::*,
@@ -23,6 +23,18 @@ use std::{
 
 pub const SIDECAR: &str = SPOT_CANDLE_SOURCE_FILE;
 const MINUTE_MS: u64 = 60_000;
+
+/// Exact boundary facts from the frozen source adapter. Native Bar alone does
+/// not declare whether ts_event is a bucket open or close. This type has no
+/// deserializer: the trusted preparation integration owns source verification.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ClosedBarSourceRow {
+    pub event_time: NativeSpotBarEventTimeV1,
+    pub source_row_key: String,
+    pub bar_open_ns: DbCounter,
+    pub bar_close_ns: DbCounter,
+    pub native: Bar,
+}
 
 pub struct VerifiedSpotSource {
     pub rows: Vec<ClosedBarSourceRow>,

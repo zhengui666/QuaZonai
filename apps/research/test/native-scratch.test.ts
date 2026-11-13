@@ -20,7 +20,7 @@ await writeFile(file, 'transport-only temporary content');
 await rm(file);
 process.stdout.write(JSON.stringify({ temporaryRoot: tmpdir(), cwd: process.cwd() }));
 `, { mode: 0o700 });
-    const result = await executeNative(binary, 'simulate', {}, [], directory, BACKGROUND_CONTEXT);
+    const result = await executeNative(binary, 'native-strategy-backtest', {}, [], directory, BACKGROUND_CONTEXT);
     assert.equal(result.cwd, directory);
     assert.equal(result.temporaryRoot, directory);
   } finally { await rm(directory, { recursive: true, force: true }); }

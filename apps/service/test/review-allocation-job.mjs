@@ -21,9 +21,6 @@ if (command === 'review-source') {
   result = { schema_version: 1, kind: input.kind, method: 'QZ_REVIEW_QUALITY_DIVERSIFICATION_FIXED_DIAGONAL_10_V1', solver_version: 'clarabel/0.11.1',
     members: input.members.map(member => ({ id: member.id, source_report_id: member.source_report_id, quality_coefficient: 1, prior: 0.5, weight: '0.5' })),
     covariance: [[1,0],[0,1]], lambda: 1, objective: 0.5, primal_residual: 0, dual_residual: 0, requires_new_candidate: true, requires_shared_account_study: true };
-} else if (command === 'assess-capacity') {
-  const count = input.simulation.target_points.length;
-  result = { status: 'ESTIMATED', coverage: { decisionCount: count, assessedDecisionCount: count, requiredObservations: count, coveredObservations: count }, scenarios: [{ capital: '1000', status: 'FEASIBLE' }] };
 } else if (command === 'review-science') {
   const metric = (code,value) => ({ code,value,status:'AVAILABLE',reason:null });
   result = { schema_version: 1, source_digest: input.source_digest, method_version: 'qz.review-science.v1', observations: input.analysis.timestamps_ns.length,

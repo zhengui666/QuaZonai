@@ -51,7 +51,7 @@ test('remote science keeps original payloads, shared catalog paths and distinct 
     const input = { amount: '9007199254740993123', rows: Array.from({ length: 2048 }, (_, index) => ({
       clock: '1790000000000000001', index, label: '原生🐋',
     })) };
-    for (let i = 0; i < 2; i++) assert.deepEqual(await source.execute('simulate', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
+    for (let i = 0; i < 2; i++) assert.deepEqual(await source.execute('native-strategy-backtest', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
     assert.notEqual(requests[0]!.requestId, requests[1]!.requestId, 'changed bytes at an owner-managed catalog path cannot be replaced by an old invocation');
     assert.deepEqual(requests[0]!.args, args);
     assert.deepEqual(requests[0]!.files, {});
@@ -80,7 +80,7 @@ test('cancelling an observation leaves native work owned until explicit task can
       reply(response, { schemaVersion: 1, requestId: original!.requestId, status: cancellationStatus, ...(cancellationStatus === 'UNKNOWN' ? { error: 'WORKER_INTERRUPTED' } : {}) });
     });
     try {
-      await assert.rejects(source.execute('simulate', {}, [], '/unused', withAbortSignal(controller.signal, BACKGROUND_CONTEXT)), /owner_stop/);
+      await assert.rejects(source.execute('native-strategy-backtest', {}, [], '/unused', withAbortSignal(controller.signal, BACKGROUND_CONTEXT)), /owner_stop/);
       assert.equal(cancelled, false, 'cancelling a wait does not cancel the task');
       const task = (await source.host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0]!;
       await source.host.harness.abortTask(task.id, BACKGROUND_CONTEXT);
@@ -102,7 +102,7 @@ test('admitted instance survives environment changes and production refuses miss
     process.env.QZ_REQUIRE_REMOTE_NAUTILUS = '1';
     assert.deepEqual(nativeTargetForData({ nautilusTarget: admitted }), admitted);
     assert.throws(() => nativeTargetForData({}), /local_nautilus_target_disabled/);
-    await assert.rejects(executeNativeValue('/old/binary', 'simulate', {}, [], '/unused', BACKGROUND_CONTEXT), /local_nautilus_target_disabled/);
+    await assert.rejects(executeNativeValue('/old/binary', 'native-strategy-backtest', {}, [], '/unused', BACKGROUND_CONTEXT), /local_nautilus_target_disabled/);
   } finally {
     for (const [name, value] of [['QZ_NAUTILUS_BACKTEST', before.remote], ['QZ_JOB_BINARY', before.local], ['QZ_REQUIRE_REMOTE_NAUTILUS', before.required]]) {
       if (value === undefined) delete process.env[name!]; else process.env[name!] = value;

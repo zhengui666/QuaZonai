@@ -6,7 +6,6 @@ import { Application, decimalUnits, json, nowNs, observation } from '../src/fact
 import { accountKey, capitalStatus, control } from '../src/capital-exit.ts';
 import { built, context, setup } from './support.ts';
 import { AdjustAccount, unsettledAdjustment } from '../src/automatic.ts';
-import { managedTradingBudget, unreservedStrategyCapital } from '../src/pm-account.ts';
 import type { TaskId } from '@earendil-works/pi-durable';
 
 const id = (value: string) => `01900000-0000-7000-8000-${value.padStart(12, '0')}`;
@@ -86,7 +85,6 @@ test('account-only capital bridge retains exact reservations, cancellation and u
     const controls = (await state.service.research.harness.snapshot(Application, context))!.accountControls!;
     assert.equal(accountKey(aliasConnection, controls), accountKey(connection, controls));
     assert.equal(started.receipt, null); assert.equal(alias.receipt, null); assert.equal(targetPosts, 0);
-    assert.equal(managedTradingBudget('600', '0', '50'), '550.000000000000000000');
     const path = `/api/v3/observations/${started.id}/capital-exits`;
     const firstContext = await state.service.app.inject({ url: path + '/planning-context', headers: state.headers }); assert.equal(firstContext.statusCode, 200, firstContext.body);
     const lostPreview = { requestId: 'preview-lost-original', amount: '10', currency: 'USD', contextId: firstContext.json().id, policy: { kind: 'CASH_ONLY' } };
@@ -118,16 +116,12 @@ test('account-only capital bridge retains exact reservations, cancellation and u
       await until(controlState, value => value.commands[actionId]?.state === 'ACCEPTED');
       const status = (await state.service.app.inject({ url: path, headers: state.headers })).json(); assert.equal(status.reserved, request.amount); assert.equal(status.exits[0].state, action === 'PAUSE' ? 'PAUSED' : 'CANCELLED_RESERVED');
     }
-    assert.equal(decimalUnits(managedTradingBudget(equity, request.amount, '50')), decimalUnits(equity) - decimalUnits(request.amount) - decimalUnits('50'));
     reservation = null;
     const unknown = (await state.service.app.inject({ url: path, headers: state.headers })).json();
     assert.equal(unknown.reserved, null); assert.equal(targetPosts, 0);
     support = false; reservation = request.amount; equity = '3000';
     const readOnly = (await state.service.app.inject({ url: path, headers: state.headers })).json();
     assert.equal(readOnly.capability, 'UNSUPPORTED'); assert.equal(readOnly.exits.length, 1); assert.equal(readOnly.reserved, request.amount);
-    assert.equal(managedTradingBudget(equity, request.amount, '50'), '2849.999999999999999999');
-    assert.ok(decimalUnits(unreservedStrategyCapital(equity, '50', '1000')) <= decimalUnits('1000'));
-    equity = '250'; assert.equal(managedTradingBudget(equity, request.amount, '50'), '99.999999999999999999');
     readable = false; const historical = (await state.service.app.inject({ url: path, headers: state.headers })).json();
     assert.equal(historical.capability, 'BLOCKED'); assert.equal(historical.reason, 'downstream_capital_exit_unsupported');
     assert.equal(historical.reserved, null); assert.equal(historical.exits.length, 1); assert.equal(historical.exits[0].id, exit.id);

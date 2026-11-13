@@ -45,7 +45,7 @@ print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocat
   }
   let url = await listen();
   const headers = { 'content-type': 'application/json' };
-  function request(input: NativeExecutionRequest['input'], command = 'simulate', args: string[] = [], files: Record<string, string> = {}) {
+  function request(input: NativeExecutionRequest['input'], command = 'catalog-inspect', args: string[] = [], files: Record<string, string> = {}) {
     const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command, input, args, files };
     return { ...body, requestId: executionId(body) };
   }
@@ -78,7 +78,7 @@ test('native execution inherits process limits and preserves original receipts',
   const f = await fixture();
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
-    assert.ok(caps.commands.includes('simulate'));
+    assert.ok(caps.commands.includes('catalog-inspect'));
     const body = f.request({ allocateBeyondLimit: true });
     const original = await (await f.post(body)).json();
     assert.equal(original.status, 'COMPLETED');
@@ -148,13 +148,13 @@ test('native catalog mounts remain restricted without a retired economic replay 
   const f = await fixture();
   try {
     const mounted = ['--catalog', f.options.catalogRoots[0]!];
-    const result = await (await f.post(f.request({}, 'simulate', mounted))).json();
+    const result = await (await f.post(f.request({}, 'catalog-inspect', mounted))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job');
-    const outside = await (await f.post(f.request({}, 'simulate', ['--catalog', f.directory]))).json();
+    const outside = await (await f.post(f.request({}, 'catalog-inspect', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
-    const outsideFunding = await (await f.post(f.request({}, 'simulate', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
+    const outsideFunding = await (await f.post(f.request({}, 'catalog-inspect', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
     assert.equal(outsideFunding.error, 'nautilus_argument_unsupported');
-    const waiting = f.request({ wait: true }, 'simulate', mounted);
+    const waiting = f.request({ wait: true }, 'catalog-inspect', mounted);
     const active = f.post(waiting); await f.started(2);
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
     assert.equal((await (await active).json()).status, 'RUNNING');
@@ -171,7 +171,7 @@ test('tick capacity rejects before creating a receipt; exact replay and BAR oper
     assert.equal(busy.status, 429); assert.deepEqual(await busy.json(), { schemaVersion: 1, requestId: next.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' });
     assert.equal((await fetch(`${f.url}/v1/executions/${next.requestId}`)).status, 404);
     assert.deepEqual(await (await f.post(completed)).json(), original);
-    const bar = await (await f.post(f.request({}, 'simulate'))).json();
+    const bar = await (await f.post(f.request({}, 'catalog-inspect'))).json();
     assert.equal(bar.status, 'COMPLETED');
     assert.notEqual(bar.result.limits[1], 2 * 1024 ** 3, 'tick-only limit does not change BAR process limits');
     const cancelled = await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json();
@@ -196,10 +196,10 @@ test('explicit precision companions route tick-only and bind both native files a
     const before = await (await fetch(`${f.url}/v1/capabilities`)).json();
     const tick = await (await f.post(f.request({}, 'native-strategy-backtest'))).json();
     assert.equal(tick.status, 'COMPLETED'); assert.equal(tick.result.executable, 'job-high-precision');
-    const barBody = f.request({}, 'simulate'); const bar = await (await f.post(barBody)).json();
+    const barBody = f.request({}, 'catalog-inspect'); const bar = await (await f.post(barBody)).json();
     assert.equal(bar.status, 'COMPLETED'); assert.equal(bar.result.executable, 'job');
     await writeFile(f.options.tickBinary!, await readFile(f.options.tickBinary!, 'utf8') + '\n# changed companion bytes\n');
-    const changed = await (await f.post(f.request({}, 'simulate'))).json();
+    const changed = await (await f.post(f.request({}, 'catalog-inspect'))).json();
     assert.equal(changed.status, 'FAILED'); assert.equal(changed.error, 'nautilus_implementation_changed');
     assert.equal((await readFile(f.calls, 'utf8')).trim().split('\n').length, 2, 'a changed companion cannot execute even an old standard identity');
     await f.restart();
@@ -224,7 +224,7 @@ test('upstream strategy replay shares tick precision, mounted catalogs and admis
     const files = {};
     const result = await (await f.post(f.request({}, 'native-strategy-backtest', mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
-    const bar = await (await f.post(f.request({}, 'simulate'))).json();
+    const bar = await (await f.post(f.request({}, 'catalog-inspect'))).json();
     assert.deepEqual(result.result.limits, bar.result.limits);
     const outside = await (await f.post(f.request({}, 'native-strategy-backtest', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');

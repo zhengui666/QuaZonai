@@ -58,13 +58,6 @@ enum Operation {
     },
     /// Blend explicit aligned native target rows using exact decimal member weights.
     BlendTargets,
-    /// Conditional historical capacity from original causal BAR liquidity and targets.
-    AssessCapacity {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
-    /// Exact, reserve-aware sizing inside an approved pool; target-only, no orders.
-    SizeAccount,
     /// Validate an original capital-exit V1 document; does not control an owner.
     ValidateCapitalExit,
     /// Exact native BAR identities for private exposure tracking; no observations.
@@ -79,24 +72,6 @@ enum Operation {
     },
     /// Replay explicit historical walk-forward windows with upstream strategies.
     NativeWalkForward {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
-    /// Replay frozen target weights in one native simulated account.
-    Simulate {
-        #[arg(long)]
-        catalog: PathBuf,
-        /// Existing DatasetRevision ID; required only by the explicit spot CASH mode.
-        #[arg(long, value_parser = parse_id)]
-        dataset_revision_id: Option<contracts::Id>,
-    },
-    /// Matched no-trade HOLD and target replay from original observed spot balances.
-    CompareObservedSpot {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
-    /// Value original observed spot balances using only original already available marks.
-    ValueObservedSpot {
         #[arg(long)]
         catalog: PathBuf,
     },
@@ -158,10 +133,6 @@ fn run(operation: Operation) -> Result<()> {
             )?)
         }
         Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
-        Operation::AssessCapacity { catalog } => {
-            output(&job::capacity::assess(&catalog, &input()?)?)
-        }
-        Operation::SizeAccount => output(&job::capacity::size_account(&input()?)?),
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
@@ -180,34 +151,14 @@ fn run(operation: Operation) -> Result<()> {
         Operation::NativeWalkForward { catalog } => {
             native_output(|| job::native_walk_forward::run(&catalog, input()?))
         }
-        Operation::Simulate {
-            catalog,
-            dataset_revision_id,
-        } => output(&job::simulation::simulate_explicit(
-            &catalog,
-            &input()?,
-            dataset_revision_id,
-        )?),
-        Operation::CompareObservedSpot { catalog } => {
-            output(&job::observed_spot::compare(&catalog, &input()?)?)
-        }
-        Operation::ValueObservedSpot { catalog } => {
-            output(&job::observed_spot::value(&catalog, &input()?)?)
-        }
         Operation::CatalogPrefixDigest { catalog } => {
             output(&job::catalog_prefix::digest(&catalog, &input()?)?)
         }
     }
 }
 
-fn public_error_code(error: &anyhow::Error) -> &'static str {
-    match error.to_string().as_str() {
-        "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
-            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
-        }
-        "SIMULATION_MARKET_UNSUPPORTED" => "QZ_SIMULATION_MARKET_UNSUPPORTED",
-        _ => "QZ_NATIVE_JOB_FAILED",
-    }
+fn public_error_code(_error: &anyhow::Error) -> &'static str {
+    "QZ_NATIVE_JOB_FAILED"
 }
 
 fn public_failure(error: &anyhow::Error) -> String {
@@ -263,18 +214,13 @@ mod tests {
     }
 
     #[test]
-    fn market_capability_error_has_a_stable_public_code() {
-        let unsupported = anyhow::anyhow!("SIMULATION_MARKET_UNSUPPORTED");
-        assert_eq!(
-            public_error_code(&unsupported),
-            "QZ_SIMULATION_MARKET_UNSUPPORTED"
-        );
-        let arbitrary = anyhow::anyhow!("private path /input/model.wasm");
-        assert_eq!(public_error_code(&arbitrary), "QZ_NATIVE_JOB_FAILED");
-        assert_eq!(
-            public_failure(&unsupported),
-            "QZ_SIMULATION_MARKET_UNSUPPORTED\nSIMULATION_MARKET_UNSUPPORTED"
-        );
+    fn retired_target_replay_and_valuation_are_not_cli_operations() {
+        for command in ["simulate", "compare-observed-spot", "value-observed-spot"] {
+            let error = Arguments::try_parse_from(["job", command])
+                .err()
+                .expect("retired operation");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
     }
 
     #[test]

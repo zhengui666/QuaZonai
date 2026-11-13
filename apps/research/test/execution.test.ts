@@ -36,12 +36,12 @@ test('native stderr takes precedence over broken stdout, while a successful proc
   try {
     for (const failed of [true, false]) {
       await writeFile(binary, `#!${process.execPath}\nfor await (const chunk of process.stdin) {}\nprocess.stdout.write('{"broken":');\n${failed ? `process.stderr.write(${JSON.stringify(diagnostic)}); process.exitCode = 1;` : ''}\n`, { mode: 0o700 });
-      await assert.rejects(executeNative(binary, 'simulate', {}, [], directory, BACKGROUND_CONTEXT), (error: unknown) => {
+      await assert.rejects(executeNative(binary, 'native-strategy-backtest', {}, [], directory, BACKGROUND_CONTEXT), (error: unknown) => {
         assert.ok(error instanceof ExecutionFailure);
         if (failed) assert.equal(error.message, diagnostic);
         const detail = classifyExecutionError(error)!;
         assert.equal(detail.code, failed ? 'CATALOG_EMPTY_SELECTION' : 'native_result_invalid');
-        assert.equal(detail.stage, failed ? 'execute' : 'decode'); assert.equal(detail.operation, 'simulate');
+        assert.equal(detail.stage, failed ? 'execute' : 'decode'); assert.equal(detail.operation, 'native-strategy-backtest');
         assert.doesNotMatch(JSON.stringify(detail), /\/private|synthetic-secret/);
         return true;
       });

@@ -1,8 +1,6 @@
 //! Native definition-transition regressions preserve original catalog history.
 #[path = "support/market.rs"]
 mod market;
-#[path = "support/command.rs"]
-mod native;
 
 use nautilus_model::{
     instruments::{Instrument, InstrumentAny},
@@ -10,7 +8,7 @@ use nautilus_model::{
 };
 
 #[test]
-fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+fn catalog_preserves_original_definition_transitions() {
     use contracts::catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE};
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
@@ -65,29 +63,6 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
             series.instrument_at(received).unwrap().price_increment(),
             update.price_increment()
         );
-        assert_eq!(
-            job::simulation::simulate(root.path(), &request)
-                .unwrap_err()
-                .to_string(),
-            "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
-        );
-        let output = native::command(
-            &[
-                "simulate".as_ref(),
-                "--catalog".as_ref(),
-                root.path().as_os_str(),
-            ],
-            &request,
-        );
-        assert!(!output.status.success());
-        assert!(
-            output.stdout.is_empty(),
-            "unsupported replay must publish no result"
-        );
-        assert_eq!(
-            String::from_utf8(output.stderr).unwrap().trim(),
-            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED\nSIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
-        );
         assert_eq!(std::fs::read(&fee_path).unwrap(), frozen_fee_bytes);
     }
 }
@@ -118,24 +93,4 @@ fn stable_window_after_original_transition_uses_the_original_new_definition() {
         .all(|series| series.instrument_updates.is_empty()
             && series.instrument.ts_init().as_u64() == 2 * market::INTERVAL_NS
             && series.instrument.price_increment() == Price::from("0.00010")));
-    let output = native::command(
-        &[
-            "simulate".as_ref(),
-            "--catalog".as_ref(),
-            root.path().as_os_str(),
-        ],
-        &request,
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: contracts::science::NativeSimulationResultV1 =
-        serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        result.consumed_target_points.get(),
-        request.target_points.len() as u64
-    );
-    assert_eq!(result.native_version, "0.69.0");
 }

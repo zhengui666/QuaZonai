@@ -5,7 +5,6 @@ use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
-    portfolio::{AllocationResultV1, SolverStatus},
     runtime_jobs::{native_output_contract, RuntimeOutputV1},
     science::{NativeBarSelectionV1, NativeForecastResultV1, NativeSimulationResultV1},
 };
@@ -40,9 +39,6 @@ pub(crate) use simulation::binding as check_simulation;
 pub use simulation::metrics as portfolio_simulation_metrics;
 pub use simulation::observed_binding as check_observed_spot_simulation;
 pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
-mod study;
-pub use study::binding as check_portfolio_study;
-pub use study::observed_binding as check_observed_spot_study;
 mod validation;
 pub use validation::metrics as alpha_validation_metrics;
 pub use validation::policy as alpha_validation_policy;
@@ -144,50 +140,6 @@ fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
     }
     Ok(())
 }
-fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
-    let success = matches!(
-        value.solver_status,
-        SolverStatus::Optimal | SolverStatus::AcceptableInaccurate
-    );
-    if value.objective_value.is_some_and(|n| !n.is_finite())
-        || value
-            .primal_residual
-            .is_some_and(|n| !n.is_finite() || n < 0.0)
-        || value
-            .dual_residual
-            .is_some_and(|n| !n.is_finite() || n < 0.0)
-        || success != value.targets.is_some()
-        || success != value.cash_weight.is_some()
-        || success == value.reason_code.is_some()
-    {
-        return Err(bad("native_output.allocation"));
-    }
-    if let Some(reason) = &value.reason_code {
-        text(reason, 1, 120, false)?;
-    }
-    if let Some(targets) = &value.targets {
-        if targets.is_empty()
-            || value.objective_value.is_none()
-            || value.primal_residual.is_none()
-            || value.dual_residual.is_none()
-        {
-            return Err(bad("native_output.allocation"));
-        }
-        let mut identities = BTreeSet::new();
-        for target in targets {
-            text(&target.instrument_id, 1, 200, false)?;
-            if !identities.insert(&target.instrument_id)
-                || !contracts::research_currency::supported(&target.currency)
-            {
-                return Err(bad("native_output.allocation_target"));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Public transport validation, without borrowing Operator or evaluator authority.
-/// Exact immutable task associations are additionally enforced by output_bindings.
 pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), DomainError> {
     let contract = native_output_contract(&output.schema.name, &output.schema.version)
         .ok_or_else(|| bad("native_output.schema"))?;
@@ -210,13 +162,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
                 decode(bytes)?;
             super::strategy_composition_result(&result.request, &result)
         }
-        "qz.native_portfolio" => {
-            let result: contracts::science::NativePortfolioBuildResultV1 = decode(bytes)?;
-            allocation(&result.allocation)?;
-            crate::portfolio::allocation_result(&result.input, &result.allocation)
-        }
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
-        "qz.portfolio_study" => study::shape(&decode(bytes)?),
         "qz.forward_evaluation" => crate::forward::evaluation::shape(&decode(bytes)?),
         "qz.portfolio_history" => contracts::portfolio_history::read(bytes)
             .map(|_| ())
@@ -315,24 +261,6 @@ pub fn output_bindings(
             )?;
         }
         NativeTaskParametersV1::ValidateData { .. } => {}
-        NativeTaskParametersV1::StudyPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.portfolio_study")?.1)?;
-            study::binding(request, &result)?;
-            if let Some(simulation) = &result.simulation {
-                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
-            }
-            let original = contracts::portfolio_history::batch(request, &result)
-                .map_err(|_| bad("portfolio_history.source"))?;
-            let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
-                .map_err(|_| bad("portfolio_history.body"))?;
-            if actual != original {
-                return Err(bad("portfolio_history.binding"));
-            }
-        }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
         }
@@ -390,8 +318,9 @@ pub fn output_bindings(
                 spot_cash_report::dataset(simulation, *dataset_revision_id)?;
             }
         }
-        NativeTaskParametersV1::BuildPortfolio { request, .. } => {
-            super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
+        NativeTaskParametersV1::BuildPortfolio { .. }
+        | NativeTaskParametersV1::StudyPortfolio { .. } => {
+            return Err(bad("native_output.retired_task"))
         }
         NativeTaskParametersV1::SimulatePortfolio {
             dataset_revision_id,

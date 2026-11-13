@@ -209,6 +209,9 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 | NativeTaskParametersV1::CompileFeatureModel { .. }
                 | NativeTaskParametersV1::EvaluateExperiment { .. }
                 | NativeTaskParametersV1::ComposeStrategyTargets { .. }
+                | NativeTaskParametersV1::SimulatePortfolio { .. }
+                | NativeTaskParametersV1::SimulateCandidate { .. }
+                | NativeTaskParametersV1::SimulatePortfolioSequence { .. }
         ),
         "NATIVE_RESEARCH_OPERATION_RETIRED"
     );
@@ -224,19 +227,6 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     };
     let selections = match &parameters {
         NativeTaskParametersV1::ValidateData { selections, .. } => selections.clone(),
-        NativeTaskParametersV1::SimulateCandidate {
-            dataset_revision_id,
-            source_selection,
-            ..
-        }
-        | NativeTaskParametersV1::SimulatePortfolioSequence {
-            dataset_revision_id,
-            source_selection,
-            ..
-        } => vec![contracts::execution::NativeDatasetSelectionV1 {
-            dataset_revision_id: *dataset_revision_id,
-            selection: source_selection.clone(),
-        }],
         _ => Vec::new(),
     };
     if !selections.is_empty() {
@@ -289,81 +279,11 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
         | NativeTaskParametersV1::ComposeStrategyTargets { .. }
         | NativeTaskParametersV1::EvaluateAlpha { .. }
         | NativeTaskParametersV1::StudyPortfolio { .. }
-        | NativeTaskParametersV1::BuildPortfolio { .. } => {
+        | NativeTaskParametersV1::BuildPortfolio { .. }
+        | NativeTaskParametersV1::SimulatePortfolio { .. }
+        | NativeTaskParametersV1::SimulateCandidate { .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { .. } => {
             anyhow::bail!("NATIVE_RESEARCH_OPERATION_RETIRED")
-        }
-        NativeTaskParametersV1::SimulatePortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = crate::simulation::simulate_explicit(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-                Some(dataset_revision_id),
-            )?;
-            outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
-        }
-        NativeTaskParametersV1::SimulateCandidate {
-            candidate_id,
-            candidate_available_ns,
-            dataset_revision_id,
-            target_artifact_id,
-            settings_artifact_id,
-            request,
-            ..
-        } => {
-            let target: contracts::science::PortfolioTargetsV1 = serde_json::from_slice(&read(
-                &input.join("objects").join(target_artifact_id.to_string()),
-            )?)?;
-            let settings: contracts::science::NativeSimulationSettingsV1 = serde_json::from_slice(
-                &read(&input.join("objects").join(settings_artifact_id.to_string()))?,
-            )?;
-            ensure!(
-                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
-                "CANDIDATE_SIMULATION_SETTINGS_SOURCE_MISMATCH"
-            );
-            domain::execution::candidate_simulation(
-                candidate_id,
-                candidate_available_ns,
-                &target,
-                &request,
-            )?;
-            let result = crate::simulation::simulate(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-            )?;
-            outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
-        }
-        NativeTaskParametersV1::SimulatePortfolioSequence {
-            dataset_revision_id,
-            sources,
-            settings_artifact_id,
-            request,
-            ..
-        } => {
-            let settings: contracts::science::NativeSimulationSettingsV1 =
-                document(&input.join("objects").join(settings_artifact_id.to_string()))?;
-            ensure!(
-                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
-                "PORTFOLIO_SEQUENCE_SETTINGS_SOURCE_MISMATCH"
-            );
-            let targets = sources
-                .iter()
-                .map(|source| {
-                    document(
-                        &input
-                            .join("objects")
-                            .join(source.target_artifact_id.to_string()),
-                    )
-                })
-                .collect::<Result<Vec<contracts::science::PortfolioTargetsV1>>>()?;
-            domain::execution::portfolio_sequence(&sources, &targets, &request)?;
-            let result = crate::simulation::simulate(
-                &input.join("catalogs").join(dataset_revision_id.to_string()),
-                &request,
-            )?;
-            outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
         }
     }
     ensure!(

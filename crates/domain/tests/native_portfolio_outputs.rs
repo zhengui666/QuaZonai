@@ -16,225 +16,6 @@ use domain::execution::output_bindings;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-fn cash_funding_contract_fixture() -> (AllocationInputV1, AllocationResultV1) {
-    let mut input: AllocationInputV1 = serde_json::from_str(r###"{"schema_version":1,"forecasts":{"schema_version":1,"decision_asof_ns":"20000000000","forecast_asof_ns":"10000000000","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","max_input_age_seconds":10,"instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"members":[{"alpha_id":"01990000-0000-7000-8000-000000000011","alpha_version_id":"01990000-0000-7000-8000-000000000012","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]},{"alpha_id":"01990000-0000-7000-8000-000000000021","alpha_version_id":"01990000-0000-7000-8000-000000000022","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]}]},"objective":"MIN_RISK","risk":"VARIANCE","base_currency":"USD","capital_assumption":"1000000","current_cash_weight":"0","exposure_tolerance":"0.000001","constraints":{"schema_version":1,"long_only":true,"min_cash_weight":"0","max_cash_weight":"0","min_asset_weight":"0","max_asset_weight":"1","max_gross_exposure":"1","min_net_exposure":"1","max_net_exposure":"1","max_turnover_per_rebalance":"2","max_participation":null,"max_ex_ante_risk":null,"group_bounds":[],"asset_overrides":[],"transaction_costs_ref":"01990000-0000-7000-8000-000000000001","liquidity_ref":null},"optimizer":{"schema_version":1,"adapter_kind":"CLARABEL_QP","upstream_class":"clarabel::solver::DefaultSolver","upstream_version":"0.11.1","parameters":{"schema_version":1,"risk_aversion":"1","max_iterations":200,"solver_tolerance":"0.0000000001","accept_inaccurate":false}},"alpha_ensemble":{"schema_version":1,"adapter_kind":"FIXED_WEIGHTED_FORECAST","upstream_class":"ndarray::ArrayBase::dot","upstream_version":"0.17.1","parameters":{}},"assets":[{"instrument_id":"ALPHA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-a"]},{"instrument_id":"BETA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-b"]}],"covariance_estimator":{"schema_version":1,"adapter_kind":"SAMPLE_COVARIANCE","upstream_class":"ndarray_stats::CorrelationExt::cov","upstream_version":"0.7.0","parameters":{"ddof":1}},"return_history":{"schema_version":1,"base_currency":"USD","horizon_kind":"FIXED_BARS","horizon_value":"4","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"end_ns":["100","200","300","400","500"],"available_ns":["100","200","300","400","500"],"asset_returns":[[0.0,2.0,0.0,2.0,1.0],[0.0,0.0,4.0,4.0,2.0]]}}"###)
-    .unwrap();
-    input.objective = AllocationObjective::MaxUtility;
-    input.exposure_tolerance = "0.001".parse().unwrap();
-    input.current_cash_weight = "1".parse().unwrap();
-    input.constraints.min_net_exposure = "0".parse().unwrap();
-    input.constraints.max_cash_weight = "1".parse().unwrap();
-    input.constraints.cash_funding =
-        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
-    for asset in &mut input.assets {
-        asset.current_weight = "0".parse().unwrap();
-        asset.transaction_cost_rate = "0.0005".parse().unwrap();
-    }
-    let targets = input
-        .assets
-        .iter()
-        .zip(["1", "0"])
-        .map(|(asset, weight)| AllocationTargetV1 {
-            instrument_id: asset.instrument_id.clone(),
-            currency: asset.currency.clone(),
-            weight: weight.parse().unwrap(),
-        })
-        .collect();
-    let result = AllocationResultV1 {
-        schema_version: SchemaV1,
-        solver_status: SolverStatus::Optimal,
-        reason_code: None,
-        targets: Some(targets),
-        cash_weight: Some("0".parse().unwrap()),
-        cvar_risk_budget_witness: None,
-        numerical_output: None,
-        iterations: 1,
-        objective_value: Some(0.0),
-        primal_residual: Some(0.0),
-        dual_residual: Some(0.0),
-    };
-    (input, result)
-}
-
-#[test]
-fn cash_numerical_absolute_budget_cannot_disappear_in_large_float_objectives() {
-    let (mut input, mut result) = cash_funding_contract_fixture();
-    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut input.optimizer else {
-        panic!("unexpected optimizer")
-    };
-    parameters.cash_numerical_output =
-        Some(NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1);
-    parameters.solver_tolerance = "0.0000000001".parse().unwrap();
-    for asset in &mut input.assets {
-        asset.transaction_cost_rate = "0".parse().unwrap();
-    }
-    for rows in &mut input.return_history.asset_returns {
-        rows.fill(0.0);
-    }
-    for member in &mut input.forecasts.members {
-        member.forecasts = vec![1e10, 0.0];
-    }
-    let mut raw = result.targets.take().unwrap();
-    raw[0].weight = "0.999999999999999900".parse().unwrap();
-    let raw_cash = "-0.000000000000000001".parse().unwrap();
-    let anchor =
-        domain::portfolio::cash_numerical_anchor(&input, NativeCashAnchorKindV1::AllCash).unwrap();
-    let fraction = "0.000000000000000001".parse().unwrap();
-    let (targets, cash) =
-        domain::portfolio::cash_numerical_segment(&raw, &anchor, &fraction).unwrap();
-    assert_eq!(targets[0].weight, "0.999999999999999899".parse().unwrap());
-    let raw_objective = domain::portfolio::cash_numerical_objective(&input, &raw).unwrap();
-    let final_objective = domain::portfolio::cash_numerical_objective(&input, &targets).unwrap();
-    assert_eq!(raw_objective, final_objective); // IEEE-754 cancellation is the counterexample.
-    let raw_error = domain::portfolio::allocation_point_feasibility(&input, &raw, &raw_cash, None)
-        .unwrap_err()
-        .to_string();
-    result.targets = Some(targets);
-    result.cash_weight = Some(cash);
-    result.objective_value = Some(final_objective);
-    result.numerical_output = Some(NativeCashNumericalOutputV1 {
-        protocol: NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1,
-        outcome: NativeCashNumericalOutcomeV1::Corrected,
-        raw_x: vec![
-            0.9999999999999999,
-            0.0,
-            -1e-18,
-            0.9999999999999999,
-            0.0,
-            0.9999999999999999,
-            0.0,
-        ],
-        raw_native_status: "Solved".into(),
-        raw_objective_value: raw_objective,
-        raw_point_objective_value: raw_objective,
-        raw_primal_residual: 0.0,
-        raw_dual_residual: 0.0,
-        raw_targets: raw,
-        raw_cash_weight: raw_cash,
-        raw_constraint_error: Some(raw_error),
-        anchor: Some(anchor),
-        segment_fraction: Some(fraction),
-        objective_delta: Some(0.0),
-        objective_delta_exact: Some("0".into()),
-        objective_change_limit: "0.0000000001".parse().unwrap(),
-        search_steps: 1,
-        reason_code: None,
-    });
-    // The exact original point difference is 1e10 * 1e-18 = 1e-8, larger
-    // than 1e-10. A zero difference between large f64 reports is not proof.
-    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
-    let trace = result.numerical_output.as_mut().unwrap();
-    let exact_delta = domain::portfolio::cash_numerical_objective_delta(
-        &input,
-        &trace.raw_targets,
-        result.targets.as_ref().unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        exact_delta,
-        "0.00000001".parse::<bigdecimal::BigDecimal>().unwrap()
-    );
-    trace.objective_delta = Some(1e-8);
-    trace.objective_delta_exact = Some("0.00000001".into());
-    // Even a truthful delta must be rejected when it exceeds the original limit.
-    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
-}
-
-#[test]
-fn cash_funding_cannot_use_weight_tolerance_to_authorize_negative_post_fee_cash() {
-    let (input, result) = cash_funding_contract_fixture();
-    domain::portfolio::allocation_input(&input).unwrap();
-    // A structural malformed-success counterexample, not a fabricated solver
-    // run: cash=0, actual linear cost=.0005, min cash=0, tolerance=.001.
-    // The original relaxed floor admits -.0005; CASH no-borrow must not.
-    assert_eq!(
-        domain::portfolio::allocation_result(&input, &result),
-        Err(domain::DomainError::Invalid("cash_funding_borrowing"))
-    );
-}
-
-#[test]
-fn cash_funding_cannot_inflate_reported_cash_with_capital_tolerance() {
-    for (weight, fee, reported_cash) in [
-        ("1", "0.0005", "0.0005"),
-        ("1", "0.000000000000000001", "0.000000000000000001"),
-        ("1.000000000000000001", "0", "0"),
-    ] {
-        let (mut input, mut result) = cash_funding_contract_fixture();
-        input.assets[0].transaction_cost_rate = fee.parse().unwrap();
-        result.targets.as_mut().unwrap()[0].weight = weight.parse().unwrap();
-        result.cash_weight = Some(reported_cash.parse().unwrap());
-        domain::portfolio::allocation_input(&input).unwrap();
-        // The reported cash pays all declared fees, and capital equality is
-        // within the registered .001 tolerance. But original NAV minus actual
-        // target weights and fees is strictly negative: no borrowed cash exists.
-        assert_eq!(
-            domain::portfolio::allocation_result(&input, &result),
-            Err(domain::DomainError::Invalid("cash_funding_nav_shortfall")),
-            "weight={weight}, fee={fee}, reported_cash={reported_cash}",
-        );
-    }
-}
-
-#[test]
-fn cash_funding_cannot_spend_capital_tolerance_a_second_time_on_cash_floor() {
-    let (mut input, mut result) = cash_funding_contract_fixture();
-    input.constraints.min_cash_weight = "0.2".parse().unwrap();
-    input.assets[0].transaction_cost_rate = "0.002".parse().unwrap();
-    input.assets[1].transaction_cost_rate = "0".parse().unwrap();
-    let targets = result.targets.as_mut().unwrap();
-    targets[0].weight = "0.5".parse().unwrap();
-    targets[1].weight = "0.301".parse().unwrap();
-    result.cash_weight = Some("0.2".parse().unwrap());
-    // net=.801, cash=.2 is within capital tolerance; cost=.001.
-    // Reported post-fee cash .199 meets minimum(.2)-tolerance(.001),
-    // but the original NAV funds only .198. The same allowance is not spent twice.
-    assert_eq!(
-        domain::portfolio::allocation_result(&input, &result),
-        Err(domain::DomainError::Invalid("cash_funding_bound")),
-    );
-}
-
-#[test]
-fn cash_funding_cannot_use_long_only_tolerance_to_short_unowned_assets() {
-    let (mut input, mut result) = cash_funding_contract_fixture();
-    result.targets.as_mut().unwrap()[0].weight = "-0.0005".parse().unwrap();
-    result.cash_weight = Some("1.0005".parse().unwrap());
-    // The old general allocation protocol permits bounded numerical exposure
-    // residuals. The opt-in CASH method cannot authorize borrowing the asset.
-    input.constraints.cash_funding = None;
-    domain::portfolio::allocation_result(&input, &result).unwrap();
-    input.constraints.cash_funding =
-        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
-    assert_eq!(
-        domain::portfolio::allocation_result(&input, &result),
-        Err(domain::DomainError::Invalid("cash_funding_shorting")),
-    );
-}
-
-#[test]
-fn cash_funding_zero_post_fee_cash_is_exact_and_positive_floor_retains_frozen_tolerance() {
-    let (mut input, mut result) = cash_funding_contract_fixture();
-    input.assets[0].transaction_cost_rate = "0.001".parse().unwrap();
-    input.assets[1].transaction_cost_rate = "0".parse().unwrap();
-    let targets = result.targets.as_mut().unwrap();
-    targets[0].weight = "0.5".parse().unwrap();
-    targets[1].weight = "0.4995".parse().unwrap();
-    result.cash_weight = Some("0.0005".parse().unwrap());
-    // Exact zero after fees is fundable. A positive minimum may use the
-    // registered weight tolerance, but that allowance cannot create borrowing.
-    for minimum in ["0", "0.001"] {
-        input.constraints.min_cash_weight = minimum.parse().unwrap();
-        domain::portfolio::allocation_result(&input, &result).unwrap();
-    }
-    input.constraints.min_cash_weight = "0".parse().unwrap();
-    input.assets[0].transaction_cost_rate = "0.001000000000000001".parse().unwrap();
-    assert_eq!(
-        domain::portfolio::allocation_result(&input, &result),
-        Err(domain::DomainError::Invalid("cash_funding_borrowing"))
-    );
-}
-
 #[test]
 fn native_portfolio_refuses_unbound_execution_costs() {
     let input: AllocationInputV1 = serde_json::from_str(r###"{"schema_version":1,"forecasts":{"schema_version":1,"decision_asof_ns":"20000000000","forecast_asof_ns":"10000000000","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","max_input_age_seconds":10,"instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"members":[{"alpha_id":"01990000-0000-7000-8000-000000000011","alpha_version_id":"01990000-0000-7000-8000-000000000012","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]},{"alpha_id":"01990000-0000-7000-8000-000000000021","alpha_version_id":"01990000-0000-7000-8000-000000000022","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]}]},"objective":"MIN_RISK","risk":"VARIANCE","base_currency":"USD","capital_assumption":"1000000","current_cash_weight":"0","exposure_tolerance":"0.000001","constraints":{"schema_version":1,"long_only":true,"min_cash_weight":"0","max_cash_weight":"0","min_asset_weight":"0","max_asset_weight":"1","max_gross_exposure":"1","min_net_exposure":"1","max_net_exposure":"1","max_turnover_per_rebalance":"2","max_participation":null,"max_ex_ante_risk":null,"group_bounds":[],"asset_overrides":[],"transaction_costs_ref":"01990000-0000-7000-8000-000000000001","liquidity_ref":null},"optimizer":{"schema_version":1,"adapter_kind":"CLARABEL_QP","upstream_class":"clarabel::solver::DefaultSolver","upstream_version":"0.11.1","parameters":{"schema_version":1,"risk_aversion":"1","max_iterations":200,"solver_tolerance":"0.0000000001","accept_inaccurate":false}},"alpha_ensemble":{"schema_version":1,"adapter_kind":"FIXED_WEIGHTED_FORECAST","upstream_class":"ndarray::ArrayBase::dot","upstream_version":"0.17.1","parameters":{}},"assets":[{"instrument_id":"ALPHA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-a"]},{"instrument_id":"BETA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-b"]}],"covariance_estimator":{"schema_version":1,"adapter_kind":"SAMPLE_COVARIANCE","upstream_class":"ndarray_stats::CorrelationExt::cov","upstream_version":"0.7.0","parameters":{"ddof":1}},"return_history":{"schema_version":1,"base_currency":"USD","horizon_kind":"FIXED_BARS","horizon_value":"4","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"end_ns":["100","200","300","400","500"],"available_ns":["100","200","300","400","500"],"asset_returns":[[0.0,2.0,0.0,2.0,1.0],[0.0,0.0,4.0,4.0,2.0]]}}"###)
@@ -417,104 +198,29 @@ fn accepts<T: serde::Serialize>(
 }
 
 #[test]
-fn allocation_success_requires_exact_instruments_currency_weights_and_solver_contract() {
-    let request: AllocationInputV1 = serde_json::from_str(r###"{"schema_version":1,"forecasts":{"schema_version":1,"decision_asof_ns":"20000000000","forecast_asof_ns":"10000000000","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","max_input_age_seconds":10,"instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"members":[{"alpha_id":"01990000-0000-7000-8000-000000000011","alpha_version_id":"01990000-0000-7000-8000-000000000012","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]},{"alpha_id":"01990000-0000-7000-8000-000000000021","alpha_version_id":"01990000-0000-7000-8000-000000000022","forecast_unit":"RETURN_PER_HORIZON","horizon_kind":"FIXED_BARS","horizon_value":"4","base_currency":"USD","asof_ns":"10000000000","available_ns":"20000000000","ensemble_weight":"0.5","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"forecasts":[0.1,0.2]}]},"objective":"MIN_RISK","risk":"VARIANCE","base_currency":"USD","capital_assumption":"1000000","current_cash_weight":"0","exposure_tolerance":"0.000001","constraints":{"schema_version":1,"long_only":true,"min_cash_weight":"0","max_cash_weight":"0","min_asset_weight":"0","max_asset_weight":"1","max_gross_exposure":"1","min_net_exposure":"1","max_net_exposure":"1","max_turnover_per_rebalance":"2","max_participation":null,"max_ex_ante_risk":null,"group_bounds":[],"asset_overrides":[],"transaction_costs_ref":"01990000-0000-7000-8000-000000000001","liquidity_ref":null},"optimizer":{"schema_version":1,"adapter_kind":"CLARABEL_QP","upstream_class":"clarabel::solver::DefaultSolver","upstream_version":"0.11.1","parameters":{"schema_version":1,"risk_aversion":"1","max_iterations":200,"solver_tolerance":"0.0000000001","accept_inaccurate":false}},"alpha_ensemble":{"schema_version":1,"adapter_kind":"FIXED_WEIGHTED_FORECAST","upstream_class":"ndarray::ArrayBase::dot","upstream_version":"0.17.1","parameters":{}},"assets":[{"instrument_id":"ALPHA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-a"]},{"instrument_id":"BETA.EXAMPLE","currency":"USD","current_weight":"0.5","transaction_cost_rate":"0","available_notional":null,"groups":["sector-b"]}],"covariance_estimator":{"schema_version":1,"adapter_kind":"SAMPLE_COVARIANCE","upstream_class":"ndarray_stats::CorrelationExt::cov","upstream_version":"0.7.0","parameters":{"ddof":1}},"return_history":{"schema_version":1,"base_currency":"USD","horizon_kind":"FIXED_BARS","horizon_value":"4","instrument_ids":["ALPHA.EXAMPLE","BETA.EXAMPLE"],"bar_types":["ALPHA.EXAMPLE-1-MINUTE-LAST-EXTERNAL","BETA.EXAMPLE-1-MINUTE-LAST-EXTERNAL"],"end_ns":["100","200","300","400","500"],"available_ns":["100","200","300","400","500"],"asset_returns":[[0.0,2.0,0.0,2.0,1.0],[0.0,0.0,4.0,4.0,2.0]]}}"###)
-    .unwrap();
-    let parameters = NativeTaskParametersV1::BuildPortfolio {
-        schema_version: SchemaV1,
-        dataset_revision_id: Id::new(),
-        request: Box::new(portfolio_config::request(&request)),
-    };
-    let accepts_allocation = |parameters: &NativeTaskParametersV1,
-                              allocation: &AllocationResultV1| {
-        accepts(
-            parameters,
-            "qz.native_portfolio",
-            &NativePortfolioBuildResultV1 {
-                schema_version: SchemaV1,
-                bar_notionals: Vec::new(),
-                slippage_references: Vec::new(),
-                input: request.clone(),
-                allocation: allocation.clone(),
-                consumed_fuel: Some(DbCounter::new(1).unwrap()),
+fn retired_allocation_and_study_outputs_are_not_accepted() {
+    for name in ["qz.native_portfolio", "qz.portfolio_study"] {
+        let contract = native_output_contract(name, "1").unwrap();
+        let bytes = b"{}";
+        let descriptor = RuntimeOutputV1 {
+            kind: contract.kind,
+            schema: contracts::runtime::RuntimeArtifactSchemaV1 {
+                name: name.into(),
+                version: "1".into(),
             },
-        )
-    };
-    let result = AllocationResultV1 {
-        schema_version: SchemaV1,
-        solver_status: SolverStatus::Optimal,
-        reason_code: None,
-        targets: Some(vec![
-            AllocationTargetV1 {
-                instrument_id: request.assets[0].instrument_id.clone(),
-                currency: "USD".into(),
-                weight: "0.8".parse().unwrap(),
-            },
-            AllocationTargetV1 {
-                instrument_id: request.assets[1].instrument_id.clone(),
-                currency: "USD".into(),
-                weight: "0.2".parse().unwrap(),
-            },
-        ]),
-        cash_weight: Some("0".parse().unwrap()),
-        iterations: 10,
-        cvar_risk_budget_witness: None,
-        numerical_output: None,
-        objective_value: Some(0.8),
-        primal_residual: Some(0.0),
-        dual_residual: Some(0.0),
-    };
-    assert!(accepts_allocation(&parameters, &result));
-    let mut wrong_forecasts = request.clone();
-    wrong_forecasts.assets.swap(0, 1);
-    assert!(!accepts_allocation(
-        &NativeTaskParametersV1::BuildPortfolio {
-            schema_version: SchemaV1,
-            dataset_revision_id: Id::new(),
-            request: Box::new(portfolio_config::request(&wrong_forecasts)),
-        },
-        &result
-    ));
-    for dimension in 0..12 {
-        let mut invalid = result.clone();
-        match dimension {
-            0 => invalid.targets = Some(Vec::new()),
-            1 => invalid.targets.as_mut().unwrap()[0].instrument_id = "OTHER.EXAMPLE".into(),
-            2 => invalid.targets.as_mut().unwrap()[0].currency = "EUR".into(),
-            3 => invalid.targets.as_mut().unwrap().swap(0, 1),
-            4 => invalid.targets.as_mut().unwrap()[0].weight = "1.1".parse().unwrap(),
-            5 => invalid.cash_weight = Some("0.2".parse().unwrap()),
-            6 => invalid.solver_status = SolverStatus::AcceptableInaccurate,
-            7 => invalid.reason_code = Some("NO_SOLUTION".into()),
-            8 => invalid.objective_value = None,
-            9 => invalid.primal_residual = Some(-0.1),
-            10 => {
-                invalid.iterations = domain::portfolio::optimizer_settings(&request.optimizer)
-                    .unwrap()
-                    .max_iterations
-                    + 1
-            }
-            _ => invalid.cash_weight = None,
-        }
-        assert!(
-            !accepts_allocation(&parameters, &invalid),
-            "allocation dimension {dimension}"
+            storage_ref: Id::new(),
+            storage_version: Revision::INITIAL,
+            byte_count: count(bytes.len() as u64),
+            media_type: contract.media_type.into(),
+        };
+        assert_eq!(
+            domain::execution::output_shape(&descriptor, bytes),
+            Err(domain::research::invalid(
+                "native_output.schema",
+                "NATIVE_OUTPUT_CONTRACT_INVALID"
+            ))
         );
     }
-    let unavailable = AllocationResultV1 {
-        solver_status: SolverStatus::Infeasible,
-        reason_code: Some("SOLVER_INFEASIBLE".into()),
-        targets: None,
-        cash_weight: None,
-        objective_value: None,
-        primal_residual: None,
-        dual_residual: None,
-        ..result
-    };
-    assert!(accepts_allocation(&parameters, &unavailable));
-    let mut fabricated_fallback = unavailable;
-    fabricated_fallback.cash_weight = Some("1".parse().unwrap());
-    assert!(!accepts_allocation(&parameters, &fabricated_fallback));
 }
 
 fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {

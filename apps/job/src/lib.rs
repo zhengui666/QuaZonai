@@ -19,30 +19,23 @@ pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
 pub mod bounded;
-pub mod capacity;
 pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod catalog_prefix;
 mod fee_models;
 pub mod forward;
-mod live_progress;
 pub mod managed;
 #[cfg(feature = "native-sandbox-test")]
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
 pub mod native_walk_forward;
-pub mod observed_spot;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;
-mod performance;
 mod report;
 pub use report::write_probe_report;
-pub mod simulation;
 pub mod source_market;
-pub mod spot_cash_capture;
-mod spot_cash_runtime;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
 pub mod spot_fees;

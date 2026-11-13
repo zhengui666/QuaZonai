@@ -16,8 +16,6 @@ chrono-tz = "=0.10.4"
 thiserror = "=2.0.21"
 iso_currency = "=0.7.0"
 bigdecimal = "=0.4.8"
-ndarray = "=0.17.1"
-ndarray-stats = "=0.7.0"
 serde.workspace = true
 serde_json.workspace = true
 oci-spec = { version = "=0.10.0", default-features = false, features = ["distribution"] }
