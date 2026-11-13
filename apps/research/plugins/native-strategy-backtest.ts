@@ -11,7 +11,7 @@ import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, canc
 import { validateNumbers } from '../src/input.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
-import { ResearchConfiguration, assertResearchRunSettled, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
+import { ResearchConfiguration, assertResearchRunSettled, registeredNativeStrategyRequest, registeredNativeResearchRequest } from '../src/research-configuration.ts';
 import { executionVersions } from '../src/native-result-version.ts';
 
 
@@ -26,6 +26,15 @@ function resolveSchema(value: unknown): unknown {
 }
 export const nativeStrategyRequestSchema = resolveSchema(schemas.NativeStrategyBacktestRequestV1) as Schema<JsonObject>;
 const validateRequest = compile(nativeStrategyRequestSchema);
+export const nativeConfiguredRequestSchema = resolveSchema(schemas.NativeConfiguredBacktestRequestV1) as Schema<JsonObject>;
+const validateConfiguredRequest = compile(nativeConfiguredRequestSchema);
+export function nativeConfiguredResult(value: Parameters<typeof object>[0], request: JsonObject): JsonObject {
+  const result = object(value, 'native_configured_result');
+  if (result.schema_version !== 1 || canonical(result.request!) !== canonical(request) || typeof result.native_version !== 'string' || !Array.isArray(result.native_results)
+    || (result.canonical_result === null ? typeof result.canonical_unavailable_reason !== 'string' : !result.canonical_result || typeof result.canonical_result !== 'object' || Array.isArray(result.canonical_result))) throw new Error('native_configured_result_invalid');
+  return result;
+}
+
 const nativeCatalogInspectSchema = resolveSchema(schemas.NativeCatalogInspectRequestV1) as Schema<JsonObject>;
 const validateCatalogQuery = compile(nativeCatalogInspectSchema);
 export const nativeStrategyCatalogTool = defineTool({
@@ -100,11 +109,46 @@ export const nativeStrategyConfigureTool = defineTool({
       configuration.request = request;
       configuration.configuredByTaskId = api.taskId;
       study.input.data.native_strategy_backtest_request = request;
+      delete study.input.data.native_configured_backtest_request;
       // The previous result remains on its original Pi Task; it is not the result of this configuration.
       study.final = null;
     }, context);
     return { output: [{ type: 'text', text: JSON.stringify({ request, configurationTaskId: api.taskId,
       scope: 'CONFIGURED_NOT_EXECUTED', instrumentDefinition: request.instrument_definition ?? { mode: 'HISTORICAL_AS_OF_START' }, limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
+  },
+});
+
+export const nativeConfiguredConfigureTool = defineTool({
+  name: 'native_configured_configure',
+  description: 'Configure an installed Rust backtest factory name and opaque config on the unchanged catalog/executor. Retain prior executions on their original Tasks and clear only the current displayed result. Declare all intended factory requests to native_strategy_logic_review before execution, then explicitly configure/run each requested case. This does not compile code, create folds, choose winners or validate factory implementation. No live trading.',
+  parameters: obj({ request: nativeConfiguredRequestSchema }), replay: 'safe', executionMode: 'sequential',
+  prepareArguments(args) {
+    // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
+    validateNumbers(args);
+    if (!args || typeof args !== 'object' || !validateConfiguredRequest.check((args as Record<string, unknown>).request)) throw new Error('native_configured_request_schema_invalid');
+    return args as { request: JsonObject };
+  },
+  async execute(args, api, context) {
+    validateNumbers(args.request);
+    if (!validateConfiguredRequest.check(args.request)) throw new Error('native_configured_request_schema_invalid');
+    const request = structuredClone(args.request);
+    await api.commit(async tx => {
+      const study = await tx.doc(Study, api.conversationId);
+      if (!study.input || typeof study.input.data.catalog !== 'string' || !study.input.data.catalog) throw new Error('catalog_required');
+      // Run the existing historical-binding check without changing the admitted catalog or executor.
+      registeredNativeResearchRequest({ ...study.input, data: { ...study.input.data, native_configured_backtest_request: request } });
+      const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
+      if (configuration.configuredByTaskId === api.taskId) return;
+      await assertResearchRunSettled(tx, api.conversationId);
+      configuration.request = request;
+      configuration.configuredByTaskId = api.taskId;
+      study.input.data.native_configured_backtest_request = request;
+      delete study.input.data.native_strategy_backtest_request;
+      // The previous result remains on its original Pi Task; it is not the result of this configuration.
+      study.final = null;
+    }, context);
+    return { output: [{ type: 'text', text: JSON.stringify({ request, configurationTaskId: api.taskId,
+      scope: 'CONFIGURED_NOT_EXECUTED', instrumentDefinition: { mode: 'FACTORY_CONFIGURATION_NOT_INDEPENDENTLY_VERIFIED' }, limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
   },
 });
 
@@ -229,7 +273,49 @@ export const nativeStrategyBacktestTool = defineTool({
   },
 });
 
-export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
+export const nativeConfiguredBacktestTool = defineTool({
+  name: 'native_configured_backtest', outputLimits: nativeToolOutputLimits,
+  description: 'Run a user-compiled Rust factory through the registered native runner and catalog. The factory constructs official Nautilus BacktestRunConfig, BacktestNode and Strategies, including multiple instruments. name and config are opaque runner-owned inputs, not a QZ strategy DSL. Use only the owner-approved installed factory and explicit assumptions. Returns original official native_results and optional canonical report; no computed equity, selection, grading or live permission. Unknown factory must fail, never fall back to a template.',
+  parameters: obj({ request: opt(nativeConfiguredRequestSchema), finishResearch: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
+  async execute(args, api, context) {
+    const input = await studyInput(api, context);
+    const request = (args.request ?? input.data.native_configured_backtest_request) as JsonObject;
+    if (input.data.native_configured_backtest_request !== undefined && canonical(request) !== canonical(input.data.native_configured_backtest_request)) throw new Error('native_configured_request_requires_configuration');
+    validateNumbers(request);
+    if (!validateConfiguredRequest.check(request)) throw new Error('native_configured_request_schema_invalid');
+    if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
+    const id = await api.commit(async tx => {
+      const study = await tx.doc(Study, api.conversationId);
+      if (study.trials.length || study.final && study.final.taskId !== api.taskId) throw new Error('research_already_final');
+      const binding = await tx.doc(NativeStrategyChild, api.taskId);
+      if (!binding.taskId) await assertResearchRunSettled(tx, api.conversationId);
+      if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
+        configured: true, request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
+      }, { ownership: { kind: 'task', taskId: api.taskId } });
+      const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
+      if (configuration.evaluationTaskId !== binding.taskId) {
+        if (configuration.evaluationTaskId) configuration.previousTaskIds = [...(configuration.previousTaskIds ?? []), configuration.evaluationTaskId];
+        configuration.evaluationTaskId = binding.taskId;
+      }
+      return binding.taskId;
+    }, context);
+    const settled = await api.waitForTask(id, context);
+    if (settled.state.outcome.status !== 'completed') {
+      const outcome = settled.state.outcome;
+      throw new Error('error' in outcome && outcome.error ? outcome.error.message : 'native_strategy_backtest_aborted');
+    }
+    const result = nativeConfiguredResult(settled.state.outcome.result, request);
+    await api.commit(async tx => {
+      const study = await tx.doc(Study, api.conversationId);
+      if (study.final && study.final.taskId !== api.taskId) throw new Error('research_already_final');
+      study.final = { taskId: api.taskId, trialId: null, comparedTrials: [], status: 'COMPUTED',
+        reason: 'explicit_native_configured_backtest_completed', scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result };
+    }, context);
+    return { output: [{ type: 'text', text: nativeToolText(nativeResultView(result, id), id) }], ...(args.finishResearch === true ? { control: { terminate: true } } : {}) };
+  },
+});
+
+export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; configured?: boolean; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     if (task.input.walkForward) {
@@ -240,9 +326,9 @@ export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; cata
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-strategy-'));
     try {
       const raw = await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(
-        task.input.target, 'native-strategy-backtest', task.input.request,
+        task.input.target, task.input.configured ? 'native-configured-backtest' : 'native-strategy-backtest', task.input.request,
         ['--catalog', task.input.catalog], directory, context), task.input.scanContext);
-      const result = nativeStrategyResult(raw, task.input.request);
+      const result = task.input.configured ? nativeConfiguredResult(raw, task.input.request) : nativeStrategyResult(raw, task.input.request);
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);
@@ -275,9 +361,9 @@ export const nativeStrategyBriefTool = defineTool({
     const input = await studyInput(api, context);
     const request = input.data.native_strategy_backtest_request === undefined ? null : registeredNativeStrategyRequest(input);
     return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, specification: input.specification ?? null,
-      request, requestSchema: nativeStrategyRequestSchema, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
+      request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
       scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
   },
 });
-export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask, NativeStrategyCatalogTask], tools: [nativeStrategyBriefTool, nativeStrategyCatalogTool, nativeStrategyConfigureTool, nativeStrategyBacktestTool] });
+export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask, NativeStrategyCatalogTask], tools: [nativeStrategyBriefTool, nativeStrategyCatalogTool, nativeStrategyConfigureTool, nativeStrategyBacktestTool, nativeConfiguredConfigureTool, nativeConfiguredBacktestTool] });

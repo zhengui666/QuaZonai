@@ -11,7 +11,7 @@ import { arr, int, map, obj, opt, str, unknown } from '@earendil-works/pi-schema
 import { AssistantEntry, configure, defineDoc, defineExtension, defineTask, defineTool, section, type JsonObject, type TaskId, type Tx, type ConversationId, type TaskRecord } from '@earendil-works/pi-durable';
 import { canonical, Study, type ResearchInput } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
-import { ResearchConfiguration, registeredNativeStrategyRequest } from '../src/research-configuration.ts';
+import { ResearchConfiguration, registeredNativeResearchRequest } from '../src/research-configuration.ts';
 
 function executionSource(data: JsonObject): JsonObject {
   let target: JsonValue = null;
@@ -20,6 +20,9 @@ function executionSource(data: JsonObject): JsonObject {
   return { catalog: typeof data.catalog === 'string' ? data.catalog : null, target };
 }
 function sameRequest(a: JsonValue | undefined, b: JsonObject): boolean {
+  if (a && typeof a === 'object' && !Array.isArray(a) && typeof a.name === 'string' && Object.hasOwn(a, 'config')) {
+    return typeof b.name === 'string' && Object.hasOwn(b, 'config') && canonical(a) === canonical(b);
+  }
   if (!a || typeof a !== 'object' || Array.isArray(a) || !a.venue || !a.strategy
     || !b || typeof b !== 'object' || Array.isArray(b) || !b.venue || !b.strategy) return false;
   const left = normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(a))); const right = normalizedNativeStrategyRequest(JSON.parse(JSON.stringify(b)));
@@ -208,10 +211,11 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const model = runtime.models.getModel(task.input.model.provider, task.input.model.modelId);
     if (!model) throw new Error('research_assessment_model_unavailable');
     const synthesis = task.input.mode === 'SYNTHESIS';
-    const instrumentDefinition = task.input.request.instrument_definition && typeof task.input.request.instrument_definition === 'object' && !Array.isArray(task.input.request.instrument_definition) ? task.input.request.instrument_definition : { mode: 'HISTORICAL_AS_OF_START' };
+    const typedFactory = typeof task.input.request.name === 'string' && Object.hasOwn(task.input.request, 'config');
+    const instrumentDefinition = typedFactory ? { mode: 'FACTORY_CONFIGURATION_NOT_INDEPENDENTLY_VERIFIED' } : task.input.request.instrument_definition && typeof task.input.request.instrument_definition === 'object' && !Array.isArray(task.input.request.instrument_definition) ? task.input.request.instrument_definition : { mode: 'HISTORICAL_AS_OF_START' };
     const staticScenario = instrumentDefinition.mode === 'STATIC_SCENARIO';
     const eligible = synthesis && object(task.input.evidence.ratingReadiness ?? {}, 'rating_readiness').eligible === true;
-    const systemPrompt = `${rubric}\nInstrument assumption: ${staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
+    const systemPrompt = `${rubric}\nInstrument assumption: ${typedFactory ? 'FACTORY_CONFIGURATION: opaque user Rust factory declarations are not proof of source code, windows, native definitions, independence or executed plan. A null canonical_result means that report was omitted, not zero orders or zero exposure. If equity_performance is absent, do not derive a substitute equity/Sharpe or claim the requested equity-return objective was verified from position statistics. Verify original official data; missing implementation evidence and unverified config semantics remain explicit uncertainty, and material insufficiency requires null ratings.' : staticScenario ? 'STATIC_SCENARIO: exact catalog instrument rules are hypothetically held constant; historical rules are NOT verified. Any judgment must be explicitly conditional, not actual historical validation or live trading evidence.' : 'HISTORICAL_AS_OF_START: the catalog definition was available at each window start; this is not independent source accuracy verification.'}\n${synthesis
         ? `Synthesize logic and data evidence separately, never average stars. Return the judgment JSON plus evidenceSufficient (boolean) and dataJudgment (a judgment object with stars/rationale/risks/uncertainties). Original logic/protocol and data task presence is ${eligible}; false means overall and data stars MUST be null. True means only that documents exist, not completed validation or a scientific pass: independently judge sample adequacy, performance, stability, transaction activity, cost sensitivity for every selected strategy and selection bias (especially maximizing Sharpe across noisy short samples); return null if material evidence is insufficient. Stars rate only this recorded protocol and this conversation's trials, not universal robustness. Disclose untested CPCV, cross-conversation trial history and independent source-data audit. Native metrics are original official metrics; position-return is not daily equity-return. exposureEvidence contains only original Task references, table paths and row counts, NOT row contents. Initially you have NOT inspected those account or position rows. Use native_assessment_read_exposure to read relevant original table pages on demand before discussing exposure. State precisely which tables/ranges you read and what remains unread; nextOffset=null completes only that table, not the entire review. Never equate delivered pages with a completed semantic audit. Disclose partial review explicitly; do not claim exposure, margin adequacy, unlevered returns or peak position was verified from references or row counts. Empty or incomplete rows mean exposure or margin is unverified, not zero; ending positions alone do not establish peak intrarun exposure. Do not label high-return results unlevered without supporting native evidence. Do not invent leverage ratios, margin rates or user-imposed position caps. Inspect every explicit request window, strategy and cost configuration, native data count semantics, fills and failed trials. Determine whether the protocol was declared before these tasks, whether test data was withheld and whether all attempted candidates are disclosed. No QZ splitting or winner selection was performed; never invent either. One ordinary historical backtest cannot establish independent validation. Read all result notes before interpreting dataRowsByType: when CATALOG_ROW_COUNTS identifies a pre-run validation scan, those counts are not engine-consumed events. REPLAY_READER_ROWS_INCLUDING_PREFETCH includes look-ahead, not engine consumption. CATALOG_READ_CONSISTENCY_UNVERIFIED means Parquet Latest/read-only does not isolate concurrent writers; different folds/candidates may read different contents, and equal counts do not prove identical inputs. A count mismatch alone does not identify its cause. Official run bounds/iterations describe execution, not immutable input or continuous coverage. Do not label older reports as streaming when their notes do not establish that mode; absent count semantics remain unspecified. distinguish sampled book snapshots from event-complete incremental feeds, disclose known depth/cadence, dropped empty or malformed books and carry/checkpoint limitations; simulated fills on snapshots do not prove actual high-frequency fillability; a high Sharpe in a short sample does not establish annual return. equityPerformance preserves the separate official snapshot-only return statistics. Its returns field is an original Task reference, not reviewed return rows; use the read tool when individual returns are needed and disclose unread rows. Inspect status/reason, actual observed UTC days versus return_days (which can include upstream carry-forward), unpriced counts, currency and 252 versus 365 annualization. CAGR is a short-window extrapolation, not a realized annual return or proof a 500% target was achieved. Never substitute canonical position returns when equityPerformance is unavailable. Do not convert USDT/USDC or treat requested balances as actual available funds. Raw hex statistics are accompanied by representation-only decoded objective values, not newly computed indicators. No trading gate, return probability or claim that all overfitting is prevented.`
         : 'This is a pre-execution logic review. You receive only the strategy configuration and a declared economic hypothesis, not the conversation transcript or native results. These declarations are not verified evidence. Do not claim to have inspected implementation source. Evaluate logic only, not investment performance.'}`;
     const content = JSON.stringify({ request: task.input.request, configurationTaskId: task.input.configurationTaskId, evidence: task.input.evidence });
@@ -248,7 +252,7 @@ export const ResearchAssessmentTask = defineTask<AssessmentInput, { phase: 'revi
     const judgment = assessmentJudgment(response);
     const dataJudgment = synthesis && response.dataJudgment !== undefined ? assessmentJudgment(response.dataJudgment) : null;
     const rated = eligible && response.evidenceSufficient === true && dataJudgment?.stars !== null && dataJudgment !== null && judgment.stars !== null;
-    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST', instrumentDefinitionAssumption: { ...instrumentDefinition, qualification: staticScenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT' },
+    const result: JsonObject = { mode: task.input.mode, request: task.input.request, configurationTaskId: task.input.configurationTaskId, binding: 'REGISTERED_NATIVE_REQUEST', instrumentDefinitionAssumption: { ...instrumentDefinition, qualification: typedFactory ? 'FACTORY_CONFIGURATION_NOT_INDEPENDENTLY_VERIFIED' : staticScenario ? 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' : 'CATALOG_AS_OF_NOT_INDEPENDENT_SOURCE_AUDIT' },
       model: task.input.model, rubricVersion: 'SCOPED_RESEARCH_ADVISORY_V2', judgment: synthesis && !rated ? { ...judgment, stars: null } : judgment,
       ...(synthesis ? { dataJudgment: dataJudgment ? { ...dataJudgment, stars: rated ? dataJudgment.stars : null } : null, ratingStatus: rated ? staticScenario ? 'RATED_CONDITIONAL_STATIC_SCENARIO' : 'RATED_WITH_DISCLOSED_LIMITATIONS' : 'NOT_RATED_INSUFFICIENT_EVIDENCE' } : {}),
       ...(synthesis ? { reviewConversationId, exposureReads, exposureReviewScope: 'RECORDED_TOOL_READS_ONLY_NOT_AUTOMATIC_FULL_AUDIT' } : {}),
@@ -265,21 +269,23 @@ export const logicReviewTool = defineTool({
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     const thinkingLevel = (await api.agent(context)).thinkingLevel;
-    const request = registeredNativeStrategyRequest(input);
+    const request = registeredNativeResearchRequest(input);
     const source = executionSource(input.data);
     const declaredRequests = args.validationMethod?.requests;
     if (declaredRequests !== undefined && !Array.isArray(declaredRequests)) throw new Error('research_assessment_declared_requests_invalid');
-    const candidates = declaredRequests === undefined
+    const typed = input.data.native_configured_backtest_request !== undefined;
+    if (typed && args.strategies !== undefined) throw new Error('typed_factory_review_requires_complete_requests');
+    const candidates = declaredRequests === undefined && typed ? [request] : declaredRequests === undefined
       ? (args.strategies as JsonObject[] | undefined ?? [object(request.strategy, 'native_strategy_config')]).map(strategy => ({ ...request, strategy }))
       : declaredRequests.map(value => object(value, 'research_assessment_declared_request'));
-    for (const candidate of candidates) { const binding = structuredClone(input) as ResearchInput; binding.data.native_strategy_backtest_request = candidate; registeredNativeStrategyRequest(binding); }
+    for (const candidate of candidates) { const binding = structuredClone(input) as ResearchInput; binding.data[typed ? 'native_configured_backtest_request' : 'native_strategy_backtest_request'] = candidate; registeredNativeResearchRequest(binding); }
     if (!candidates.some(candidate => sameRequest(candidate, request))) throw new Error('research_assessment_current_request_not_declared');
     if (candidates?.length === 0) throw new Error('research_assessment_candidates_required');
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
       for (const candidate of [request, ...candidates]) if (await upstreamExecution(tx, api.conversationId, candidate, source, true)) throw new Error('research_assessment_pre_execution_required');
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
-      if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
+      if (!currentInput || !sameRequest(registeredNativeResearchRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
       child.taskId = await tx.createTask(ResearchAssessmentTask, { mode: 'LOGIC' as const, thinkingLevel, model: input.model, request,
         configurationTaskId: (await tx.doc(ResearchConfiguration, api.conversationId)).configuredByTaskId ?? null,
         evidence: { executionSource: source, hypothesis: args.hypothesis, reviewedCandidates: candidates, validationMethod: (args.validationMethod ?? null) as JsonObject | null, source: 'DECLARED_NOT_INDEPENDENTLY_VERIFIED', resultsAccess: 'NO_TRANSCRIPT_OR_NATIVE_RESULTS', implementationSourceInspected: false } },
@@ -300,12 +306,12 @@ export const assessmentReportTool = defineTool({
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
     const thinkingLevel = (await api.agent(context)).thinkingLevel;
-    const request = registeredNativeStrategyRequest(input);
+    const request = registeredNativeResearchRequest(input);
     const source = executionSource(input.data);
     const id = await api.commit(async tx => {
       const child = await tx.doc(AssessmentChild, api.taskId); if (child.taskId) return child.taskId;
       const currentInput = (await tx.doc(Study, api.conversationId)).input;
-      if (!currentInput || !sameRequest(registeredNativeStrategyRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
+      if (!currentInput || !sameRequest(registeredNativeResearchRequest(currentInput), request) || canonical(executionSource(currentInput.data)) !== canonical(source)) throw new Error('research_assessment_configuration_changed');
       const assessment = await tx.doc(ResearchAssessment, api.conversationId);
       const logic = assessment.logicTaskId ? await tx.task(assessment.logicTaskId) : undefined;
       const matchingLogic = logic?.kind === 'qz.research.assessment' && object(logic.input, 'logic_input').mode === 'LOGIC' && logic.state.status === 'terminal' && logic.state.outcome.status === 'completed'

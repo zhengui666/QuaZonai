@@ -1,5 +1,5 @@
 //! Original account identity and input checks for upstream simulation configuration.
-use crate::{DomainError, control};
+use crate::{control, DomainError};
 use bigdecimal::BigDecimal;
 use contracts::portfolio::*;
 use std::collections::BTreeSet;

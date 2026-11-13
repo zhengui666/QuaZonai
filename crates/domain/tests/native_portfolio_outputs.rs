@@ -1,7 +1,7 @@
 //! Retired output admission remains rejected; historical contracts remain readable.
 use contracts::{
+    runtime_jobs::{native_output_contract, RuntimeOutputV1},
     DbCounter, Id, Revision,
-    runtime_jobs::{RuntimeOutputV1, native_output_contract},
 };
 
 fn count(value: u64) -> DbCounter {

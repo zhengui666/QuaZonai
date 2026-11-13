@@ -25,3 +25,11 @@ test('retained historical economic replay schema does not require a hand-written
   assert.match(value.source!, /decision_clock\?: 'COHORT_BUCKET_V1' \| 'FIXED_INTERVAL_V1'/);
   assert.match(value.source!, /decision_clock_ticks\?: string/);
 });
+
+
+test('CLI exposes the official generated typed backtest factory contract', async () => {
+  const value = await schemas('NativeConfiguredBacktestRequestV1', true);
+  const schema = value.schema as { properties: Record<string, unknown> };
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['config', 'name', 'schema_version']);
+  assert.equal('instrument_id' in schema.properties, false);
+});

@@ -1,0 +1,290 @@
+//! One-process native science entrypoints. No database or delivery authority.
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use serde::{de::DeserializeOwned, Serialize};
+use std::{io::Write, path::PathBuf};
+
+use crate as job;
+use crate::native_configured::ConfiguredRunFactory;
+use crate::native_stdout;
+use crate::native_strategy::registry::StrategyRegistration;
+
+/// Keep upstream native console messages out of the typed stdout transport.
+fn native_output<T: Serialize>(run: impl FnOnce() -> Result<T>) -> Result<()> {
+    output(&native_stdout::with_stderr_logs(run)?)
+}
+
+#[derive(Parser)]
+#[command(
+    name = "job",
+    version,
+    about = "Bounded native research computations; no delivery authority"
+)]
+struct Arguments {
+    #[command(subcommand)]
+    command: Operation,
+}
+
+#[derive(Subcommand)]
+enum Operation {
+    /// Exact upstream source and precision of this binary.
+    BuildIdentity,
+    /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
+    RunBounded,
+    /// Project official native snapshots into downstream account observation envelopes.
+    NativeAccountObservation(job::account_observation_cli::Args),
+    /// Execute one typed native operation. Root overrides are trusted local CLI only.
+    Execute {
+        #[arg(long, default_value = "/input")]
+        input_root: PathBuf,
+        #[arg(long, default_value = "/output")]
+        output_root: PathBuf,
+    },
+    /// Discover stored native instruments and market-data file intervals without modifying them.
+    CatalogInspect {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Read native catalog file coverage; inclusive ts_init bounds, not event completeness.
+    CatalogCoverage {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Validate original source-owner metadata; no inferred permission or PIT status.
+    ReviewSource,
+    /// Validate an original capital-exit V1 document; does not control an owner.
+    ValidateCapitalExit,
+    /// Exact native BAR identities for private exposure tracking; no observations.
+    CatalogFactorScope {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Run a user crate's official typed Nautilus configuration.
+    NativeConfiguredBacktest {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Run a compiled upstream strategy on original native market events.
+    NativeStrategyBacktest {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Digest actual original native instruments, history and BARs at a frozen cutoff.
+    CatalogPrefixDigest {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+}
+
+fn input<T: DeserializeOwned>() -> Result<T> {
+    Ok(serde_json::from_reader(std::io::stdin().lock())?)
+}
+
+fn output<T: Serialize>(value: &T) -> Result<()> {
+    let mut stream = std::io::stdout().lock();
+    serde_json::to_writer(&mut stream, value)?;
+    writeln!(stream)?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn run(
+    operation: Operation,
+    registration: Option<StrategyRegistration>,
+    factory: Option<ConfiguredRunFactory>,
+) -> Result<()> {
+    match operation {
+        Operation::BuildIdentity => {
+            serde_json::to_writer(std::io::stdout(), &job::build_identity())?;
+            Ok(())
+        }
+
+        Operation::NativeAccountObservation(args) => {
+            job::account_observation_cli::run(args)?;
+            Ok(())
+        }
+        Operation::RunBounded => {
+            job::bounded::run()?;
+            Ok(())
+        }
+        Operation::Execute {
+            input_root,
+            output_root,
+        } => {
+            job::managed::execute(&input_root, &output_root)?;
+            Ok(())
+        }
+        Operation::ReviewSource => output(&job::catalog::validate_source(&input()?)?),
+        Operation::ValidateCapitalExit => output(&input::<
+            contracts::capital_exit::NativeCapitalExitDocumentV1,
+        >()?),
+        Operation::CatalogInspect { catalog } => {
+            output(&job::catalog::inspect::query(&catalog, input()?)?)
+        }
+        Operation::CatalogCoverage { catalog } => {
+            output(&job::catalog::coverage::query(&catalog, input()?)?)
+        }
+        Operation::CatalogFactorScope { catalog } => {
+            output(&job::catalog::catalog_factor_scope(&catalog)?)
+        }
+        Operation::NativeConfiguredBacktest { catalog } => {
+            native_output(|| job::native_configured::run(&catalog, input()?, factory))
+        }
+        Operation::NativeStrategyBacktest { catalog } => native_output(|| {
+            job::native_strategy::run_with_registration(&catalog, input()?, registration)
+        }),
+        Operation::CatalogPrefixDigest { catalog } => {
+            output(&job::catalog_prefix::digest(&catalog, &input()?)?)
+        }
+    }
+}
+
+fn public_error_code(_error: &anyhow::Error) -> &'static str {
+    "QZ_NATIVE_JOB_FAILED"
+}
+
+fn public_failure(error: &anyhow::Error) -> String {
+    let mut detail = format!("{error:#}");
+    // Fields deliberately has a generic Display for other transports. Preserve
+    // its actual field/code diagnostics only at this local native CLI boundary.
+    for cause in error.chain() {
+        if let Some(domain::DomainError::Fields(issues)) = cause.downcast_ref() {
+            for issue in issues {
+                detail.push_str(&format!("; {} [{}]", issue.field, issue.code));
+            }
+        }
+    }
+    format!("{}\n{detail}", public_error_code(error))
+}
+
+fn failure_exit_code(_error: &anyhow::Error) -> i32 {
+    1
+}
+
+pub fn main_with_registration(registration: Option<StrategyRegistration>) {
+    main_with_native_hooks(registration, None);
+}
+
+/// Shared CLI for an optional user-crate typed run factory and/or single-strategy registration.
+pub fn main_with_native_hooks(
+    registration: Option<StrategyRegistration>,
+    factory: Option<ConfiguredRunFactory>,
+) {
+    let args = Arguments::parse();
+    if let Err(error) = run(args.command, registration, factory) {
+        // Keep stdout reserved for typed evidence. Local stderr retains bounded
+        // causes without reading or dumping model, catalog or request contents.
+        eprintln!("{}", public_failure(&error));
+        std::process::exit(failure_exit_code(&error));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{public_error_code, public_failure, Arguments};
+    use clap::Parser;
+
+    #[test]
+    fn hyper_network_collection_is_not_a_cli_operation() {
+        for command in ["capture-spot-candles", "hyperliquid-public"] {
+            let error = Arguments::try_parse_from(["job", command])
+                .err()
+                .expect("Hyper network collection must not be exposed");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
+
+    #[test]
+    fn retired_compiler_messages_cannot_select_the_resource_exit() {
+        for message in ["NATIVE_COMPILER_MEMORY_LIMIT", "NATIVE_COMPILATION_FAILED"] {
+            let error = anyhow::anyhow!(message);
+            assert_eq!(public_error_code(&error), "QZ_NATIVE_JOB_FAILED");
+            assert_eq!(super::failure_exit_code(&error), 1);
+        }
+    }
+
+    #[test]
+    fn retired_target_replay_and_valuation_are_not_cli_operations() {
+        for command in [
+            "simulate",
+            "compare-observed-spot",
+            "value-observed-spot",
+            "assess-capacity",
+            "size-account",
+            "blend-targets",
+            "capital-curve",
+            "native-walk-forward",
+        ] {
+            let error = Arguments::try_parse_from(["job", command])
+                .err()
+                .expect("retired operation");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
+
+    #[test]
+    fn native_failure_preserves_source_fields_and_bounded_utf8_details() {
+        #[derive(Debug)]
+        struct Wrapped(domain::DomainError);
+        impl std::fmt::Display for Wrapped {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("native request")
+            }
+        }
+        impl std::error::Error for Wrapped {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let fields = domain::DomainError::Fields(vec![contracts::research::FieldIssue {
+            field: "split_policy.train_size".into(),
+            code: "OUT_OF_RANGE".into(),
+            message: "request contents are not echoed".into(),
+        }]);
+        assert_eq!(
+            public_failure(&anyhow::Error::new(fields.clone())),
+            "QZ_NATIVE_JOB_FAILED\nresearch contract fields are invalid; split_policy.train_size [OUT_OF_RANGE]"
+        );
+        for error in [
+            anyhow::Error::new(fields.clone()).context("evaluate experiment"),
+            anyhow::Error::new(Wrapped(fields)).context("evaluate experiment"),
+        ] {
+            let diagnostic = public_failure(&error);
+            assert!(diagnostic.starts_with("QZ_NATIVE_JOB_FAILED\nevaluate experiment: "));
+            assert!(diagnostic.contains("research contract fields are invalid"));
+            assert!(diagnostic.contains("split_policy.train_size [OUT_OF_RANGE]"));
+            assert!(!diagnostic.contains("request contents are not echoed"));
+        }
+        let diagnostic = public_failure(&anyhow::anyhow!("界".repeat(2000)));
+        let (code, detail) = diagnostic.split_once('\n').unwrap();
+        assert_eq!(code, "QZ_NATIVE_JOB_FAILED");
+        assert_eq!(detail, "界".repeat(2000));
+    }
+
+    #[test]
+    fn executable_commands_exclude_the_removed_compatibility_probe() {
+        for command in ["run-bounded", "execute"] {
+            assert!(Arguments::try_parse_from(["job", command]).is_ok());
+        }
+        assert!(Arguments::try_parse_from(["job", "allocate"]).is_err());
+        assert!(Arguments::try_parse_from([
+            "job",
+            "verify-native",
+            "--output",
+            "unused-output-directory",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn default_scientific_job_does_not_expose_paper_commands() {
+        assert!(
+            Arguments::try_parse_from(["job", "paper", "serve", "--config", "paper.json"]).is_err()
+        );
+    }
+
+    #[test]
+    fn retired_wasm_evaluation_is_not_a_cli_operation() {
+        assert!(Arguments::try_parse_from(["job", "evaluate-experiment"]).is_err());
+    }
+}

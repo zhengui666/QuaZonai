@@ -2,8 +2,8 @@
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_fixture;
 use contracts::{
-    DbCounter, Id, forward::DownstreamWeightsSubmitV1, portfolio::*, science::*,
-    strategy_portfolio::FreshPaperCashV1,
+    forward::DownstreamWeightsSubmitV1, portfolio::*, science::*,
+    strategy_portfolio::FreshPaperCashV1, DbCounter, Id,
 };
 use serde_json::json;
 
@@ -63,14 +63,12 @@ fn lineage_compares_original_root_and_downstream_without_mandate_or_session_rese
             2 => changed.trader_id = "OTHER-001".into(),
             _ => changed.account_id = "OTHER-001".into(),
         }
-        assert!(
-            domain::portfolio::paper_initialization_binding(
-                &changed,
-                original,
-                original.downstream_id
-            )
-            .is_err()
-        );
+        assert!(domain::portfolio::paper_initialization_binding(
+            &changed,
+            original,
+            original.downstream_id
+        )
+        .is_err());
     }
     assert!(
         domain::portfolio::paper_initialization_binding(original, original, Id::new()).is_err()

@@ -1,10 +1,10 @@
 //! Validate downstream observation structure, not issuer authority or portfolio eligibility.
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use std::collections::BTreeSet;
 
 pub mod evaluation;
 mod window;
-pub use window::{ForwardWindow, ForwardWindowSource, window};
+pub use window::{window, ForwardWindow, ForwardWindowSource};
 
 /// Structural observations only; a complete report is not a qualification.
 pub fn message(request: &contracts::forward::ForwardMessageSubmitV1) -> Result<(), DomainError> {
@@ -70,7 +70,7 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use contracts::{DbCounter, Id, SchemaV1, forward::*, science::NativeReturnV1};
+    use contracts::{forward::*, science::NativeReturnV1, DbCounter, Id, SchemaV1};
     #[test]
     fn report_requires_bounded_ordered_observations_and_explicit_missing_data() {
         let start = chrono::DateTime::from_timestamp(1800000000, 0).unwrap();

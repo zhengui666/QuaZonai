@@ -187,7 +187,8 @@ pub(super) fn run_with_quotes(
                 "NATIVE_GRID_QUOTE_DATA_REQUIRED"
             ),
             // Subscriptions and internal BAR aggregation belong to the official strategy/data engine.
-            NativeCompiledStrategyV1::HurstVpinDirectional { .. } => {}
+            NativeCompiledStrategyV1::HurstVpinDirectional { .. }
+            | NativeCompiledStrategyV1::Registered { .. } => {}
             NativeCompiledStrategyV1::OrderBookImbalance { .. } => {
                 ensure!(book == BookType::L2_MBP, "NATIVE_IMBALANCE_L2_REQUIRED");
                 ensure!(

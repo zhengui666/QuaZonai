@@ -16,7 +16,7 @@ export function nativeToolText(view: JsonObject, taskId: number): string {
 
 /** A model-facing view only; the official Task retains the result and original row-page references. */
 export function nativeResultTables(result: JsonObject, taskId: number, resultPath = '$'): JsonObject {
-  const report = object(result.canonical_result, 'native_report');
+  const report = result.canonical_result === null && Array.isArray(result.native_results) ? {} : object(result.canonical_result, 'native_report');
   const tables: JsonObject = {};
   for (const [name, rows] of Object.entries(report)) if (Array.isArray(rows) || isNativeTable(rows)) tables[name] = { path: `${resultPath}.canonical_result.${name}`, rowCount: nativeRowCount(rows) };
   const equity = result.equity_performance;
@@ -35,9 +35,9 @@ export function nativeResultView(result: JsonObject, taskId: number, resultPath 
   const reference = nativeResultTables(result, taskId, resultPath);
   const tables = reference.tables as JsonObject;
   const rowReference = (name: string): JsonObject => ({ source: 'ORIGINAL_TASK_ROWS_NOT_INCLUDED', taskId, ...object(tables[name], 'native_table'), rowsReviewed: false });
-  const report = object(result.canonical_result, 'native_report');
+  const report = result.canonical_result === null && Array.isArray(result.native_results) ? {} : object(result.canonical_result, 'native_report');
   const equity = result.equity_performance ? object(result.equity_performance, 'native_equity') : null;
   return { ...result, taskId, projection: 'COMPACT_NATIVE_RESULT_ORIGINAL_TASK_RETAINED', evidenceTables: reference,
-    canonical_result: Object.fromEntries(Object.entries(report).map(([key, value]) => [key, Array.isArray(value) || isNativeTable(value) ? rowReference(key) : value])),
+    canonical_result: result.canonical_result === null ? null : Object.fromEntries(Object.entries(report).map(([key, value]) => [key, Array.isArray(value) || isNativeTable(value) ? rowReference(key) : value])),
     ...(equity ? { equity_performance: { ...equity, returns: rowReference('equity_returns') } } : {}) };
 }

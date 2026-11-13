@@ -204,3 +204,20 @@ STATIC_SCENARIO 原样贯穿配置、各显式回测与成本/邻域候选；原
 本次顺序独立进程压力测试使用临时合成648份原生Parquet、2653560行delta及884520完整帧，官方OBI dry-run：原预载路径峰值648732 KiB、回放35.91秒；延迟组官方node含选中行预计数峰值160028 KiB、69.59秒。完整canonical结果仅显式run标签不同，资金与时间字段未删改。此样本内峰值约降75%、时间约增94%，不外推真实27天数据或实盘效果。相关定向验证使用jobs=1、debug=0；因共享构建空间不足，最终定向重试关闭incremental缓存，不扩展为额外验证流程。
 
 本轮科学减法已删除自有 BAR 容量估算、账户 sizing、目标混合、资金曲线规划、旧目标回放、组合数值优化和库存估值执行入口。历史合同和原始资金记录保留，不代表旧算法可执行。界面只展示上游统计与原始权益，不重算年化、收益或回撤；原始回撤负值保留，越接近 0 损失越小，API 数值排序不变，界面首次按降序显示。
+## 用户 Rust 原生策略的静态接线
+
+用户策略作为独立 Rust crate 实现官方 Nautilus `Strategy`，不属于 QZ 的科学计算实现。请求可使用 `strategy: { kind: "REGISTERED", name, config }`；名称和配置由用户 crate 的注册函数解释，QZ 不维护策略名称白名单、不实现策略 DSL、不推断参数或重写算法。默认发行 `job` 未注册用户策略时明确拒绝，不回退到四个示例。
+
+现有 job 库公开 `native_strategy::registry::StrategyRegistration`：函数接收官方 `BacktestEngine`、请求的 `InstrumentId`、名称及原配置，构造用户策略并调用官方 `engine.add_strategy(...)`。用户 crate 的二进制入口调用 `job::cli::main_with_registration(Some(register))`，复用相同 CLI、日志隔离、单次回测 与结果传输；每个回测均创建独立原生实例。用户 crate 依赖此仓库 `apps/job` 及与 Cargo.lock 固定 revision 完全相同的 Nautilus crate，使用统一 precision feature；新策略类型需要编译部署，已编入策略的配置变更不要求重新编译。此机制不是 `.so` 动态加载，也不增加 Python 环境。
+
+部署沿用现远程 native 服务的 `QZ_JOB_BINARY` 和 `QZ_TICK_JOB_BINARY`。原生策略 走后者，未配置则使用前者；必须将相应路径指向新构建的用户 runner。既有 `runtimes/native/build-native-image.mjs --job-binary /path/to/user-runner --output-dir /outside/new-directory` 支持打包实际二进制并生成其原生 manifest；若部署配置了 `QZ_NATIVE_MANIFEST`，必须一起安装对应新产物，旧 manifest 与新二进制不匹配会拒绝启动。保留 catalog、任务回执、账户缓存与登录数据，不删除存储完成升级。
+
+此接缝放开的是策略 Rust 类型，不声称现有数据/账户接线支持 Nautilus 所有用法：请求仍为既有单 `instrument_id`、selectors 和 venue 合同；多标的、其他市场适配与实盘生命周期需另按原生能力接线。不得把构造 API 完成等同于某个用户策略已编译、部署或回测成功。
+
+用户 crate 若需多标的、多 venue 或完整引擎配置，可实现 `native_configured::ConfiguredRunFactory`，并调用 `cli::main_with_native_hooks(single_registration, Some(factory))`。工厂接收实际绑定的 catalog 根目录、用户注册名与原始配置，返回 `ConfiguredNativeRun { config: BacktestRunConfig, install }`；`config` 由用户代码调用官方 typed builders 构造，`install` 在新建的官方 engine 上安装一个或多个原生 Strategy。工厂必须对未知注册名返回错误，默认 job 未注册工厂明确失败。typed工厂可先安装官方Actor/Controller，再由上游生命周期动态创建策略，QZ不在运行前强制策略数量；输出原生结果，不将空结果或无交易推断为策略验证成功。单策略REGISTERED入口仍约定立即安装Strategy，不能将该窄契约当作完整配置限制。
+
+对应 `native-configured-backtest --catalog ...` 输入为 `{ schema_version: 1, name, config }`，仍在现 job 进程/远端 worker 内执行。QZ 不复制多 venue/data/engine 的字段 schema，也不覆盖用户选择的 `DataEngineConfig`、`emit_quotes_from_book`、官方流式块大小或撮合参数。运行前检查工厂返回配置中每个 catalog 的真实路径仍在本次允许根目录下，当前仅接本地 file 协议；这项路径检查不是对任意用户 Rust 代码的沙箱隔离。工厂不得另写数据源或算法来绕过官方 API。
+
+返回 `native_results` 为官方 `BacktestResult` 原序列化值，不重新年化、打分、择优或聚合；当官方配置 `dispose_on_completion=false` 时附原 `canonical_result`，启用官方释放则明确 `OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG`，不修改该选择。官方 `raise_exception=false` 可能产生空 results；空数组不是已完成完整窗口或策略有效性证明。此入口不自动生成现单标的 `equity_performance` 包装，不把两种报告形状混用。现Pi任务与远端回执仍拥有执行状态，不能把重新构建node称为从中途checkpoint恢复。
+
+多标的/多 venue 配置接口与实际策略、数据源覆盖须分别验收；它不是LiveNode账户策略注册接口，不解除现账户策略生命周期限制，也不启动模拟盘/实盘。用户策略的官方save/load、订单归属和账户恢复仍需另行接线与验证。

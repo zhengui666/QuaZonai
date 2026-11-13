@@ -18,7 +18,7 @@ import { JSONParser, JsonReader, jsonChunks, canonicalJsonDigest } from './nativ
 import { NativeTableReader } from './native-table.ts';
 import { canonical } from './documents.ts';
 
-export const nativeCommands = new Set(['review-source', 'native-strategy-backtest', 'validate-capital-exit', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
+export const nativeCommands = new Set(['review-source', 'native-strategy-backtest', 'native-configured-backtest', 'validate-capital-exit', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
@@ -135,7 +135,7 @@ export function nativeTargetForData(data: { [key: string]: unknown }): NativeTar
 }
 
 // Retired WF receipts still need bounded historical recovery; this does not authorize new execution.
-const tableCommands = new Set(['native-strategy-backtest', 'native-walk-forward']);
+const tableCommands = new Set(['native-strategy-backtest', 'native-configured-backtest', 'native-walk-forward']);
 type TableOwner = { taskId: TaskId; runtime: ReceiptRuntime; context: Context };
 function tableReader(owner: TableOwner) {
   return new NativeTableReader({ taskId: owner.taskId, conversationId: owner.runtime.conversationId }, async (key, data) => {
@@ -443,7 +443,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       await writer.commit(async tx => { (await tx.doc(NativeExecutionRequestPart, conversationId, `${request.requestId}:${index}`, null)).data = data; return undefined; }, context);
     });
     const frozen: RemoteTaskInput = { target, requestId: request.requestId, basis: callsKey, command, request: retained,
-      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'native-strategy-backtest') ? { receiptRequired: true } : {}) };
+      ...(owner ? { ownerTaskId: owner.taskId } : {}), ...(owner && (owner.scanContext || command === 'native-strategy-backtest' || command === 'native-configured-backtest') ? { receiptRequired: true } : {}) };
     if (owner) await owner.runtime.commit(async tx => {
       const call = await tx.doc(NativeCalls, owner.taskId, callsKey, null);
       let selectedRequestId = request.requestId;
