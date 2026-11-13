@@ -173,4 +173,8 @@ pub struct NativeConfiguredBacktestResultV1 {
     /// Present only if the user's official node configuration retains the engine.
     pub canonical_result: Option<serde_json::Value>,
     pub canonical_unavailable_reason: Option<String>,
+    /// Official snapshot-only account-equity statistics, never position-return fallback.
+    /// Absent when the configured run does not retain a completed native engine.
+    pub equity_performance: Option<NativeEquityPerformanceV1>,
+    pub equity_performance_unavailable_reason: Option<String>,
 }

@@ -11,7 +11,7 @@ use nautilus_backtest::engine::BacktestEngine;
 use nautilus_model::{events::PortfolioSnapshot, identifiers::AccountId};
 use std::collections::BTreeSet;
 
-pub(super) fn from_engine(engine: &BacktestEngine) -> NativeEquityPerformanceV1 {
+pub(crate) fn from_engine(engine: &BacktestEngine) -> NativeEquityPerformanceV1 {
     let ids: Vec<_> = engine
         .kernel()
         .cache
@@ -53,7 +53,7 @@ fn analyze(ids: &[AccountId], snapshots: &[PortfolioSnapshot]) -> NativeEquityPe
             statistics.push(NativeEquityStatisticV1 {
                 native_key,
                 annualization_days: period,
-                value: value.filter(|value| value.is_finite()),
+                value: value.filter(|value| reason.is_none() && value.is_finite()),
             });
         }
     }
@@ -186,5 +186,20 @@ mod tests {
             Some("UNPRICED_PORTFOLIO_SNAPSHOTS")
         );
         assert_eq!(missing.snapshot_count, "3");
+        assert!(missing.statistics.iter().all(|stat| stat.value.is_none()));
+        assert!(empty.statistics.iter().all(|stat| stat.value.is_none()));
+    }
+    #[test]
+    fn mixed_currency_snapshots_do_not_produce_equity_statistics() {
+        let ids = [AccountId::from("SIM-001"), AccountId::from("OTHER-002")];
+        let mut second = snapshot(2, 110.0);
+        second.account_id = ids[1];
+        second.total_equity = vec![Money::new(110.0, Currency::EUR())];
+        second.base_currency = Some(Currency::EUR());
+        let result = analyze(&ids, &[snapshot(1, 100.0), second]);
+        assert_eq!(result.status, "UNAVAILABLE");
+        assert!(result.currency.is_none());
+        assert!(result.returns.is_empty());
+        assert!(result.statistics.iter().all(|stat| stat.value.is_none()));
     }
 }
