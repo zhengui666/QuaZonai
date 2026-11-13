@@ -10,11 +10,12 @@ import { defineTask, defineExtension } from '@earendil-works/pi-durable';
 import { openResearch } from '../../research/src/host.ts';
 import { Application, json } from '../src/facts.ts';
 import { nativeStrategyControlPhases, admitNativeControlTask, assertNativeControlTask, type NativeControlInput } from '../src/native-strategy-control-phases.ts';
+import { acceptNativeStrategyControl } from '../src/native-strategy-control-state.ts';
 import { nativeStrategyControl } from '../../../packages/contracts/src/native-strategy-control.ts';
 
-test('existing account task identity checkpoints UNKNOWN before queue send and only reads after SQLite reopen', async () => {
+for (const action of ['START', 'CANCEL'] as const) test(`existing account task ${action} identity checkpoints UNKNOWN before queue send and only reads after SQLite reopen`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-control-phase-'));
-  const original = nativeStrategyControl({ schemaVersion: 1, requestId: 'retained-id', action: 'START', strategyId: 'SECOND-002', binding: { sourceId: 'source', environmentId: 'environment', buildId: 'build', nativeSessionId: 'session' } });
+  const original = nativeStrategyControl({ schemaVersion: 1, requestId: 'retained-id', action, ...(action === 'CANCEL' ? { order: { traderId: 'TRADER-001', accountId: 'VENUE-001', instrumentId: 'BTC-USDC-SPOT.HYPERLIQUID', clientOrderId: 'original-CLOID' } } : {}), strategyId: 'SECOND-002', binding: { sourceId: 'source', environmentId: 'environment', buildId: 'build', nativeSessionId: 'session' } });
   let sent = 0; let reads = 0; let entered = false;
   const models = createModels(); models.setProvider(fauxProvider().provider);
   // Test-only installation under the EXISTING name. Production registration and
@@ -50,9 +51,11 @@ test('existing account task identity checkpoints UNKNOWN before queue send and o
     const retained = (await host.harness.snapshot(Application, context))!.strategyCommands!.retained!;
     assert.throws(() => assertNativeControlTask(retained, { id, conversationId: root.id, owner: 999, input: { key: 'retained', original } }), /identity_mismatch/);
     assert.throws(() => assertNativeControlTask(retained, { id: Number(id) + 1, conversationId: root.id, input: { key: 'retained', original } }), /identity_mismatch/);
+    if (action === 'CANCEL') await assert.rejects(root.commit(tx => admitNativeControlTask(tx, Task, { key: 'retained', original: { ...original, order: { ...original.order!, clientOrderId: 'OTHER' } } }, { conversationId: root.id, ownership: { kind: 'conversation' } }), context), /identity_mismatch/);
     host.harness.resume();
     for (let i = 0; i < 200 && !entered; i++) await delay(10);
     assert.equal(entered, true); assert.equal(sent, 1);
+    if (action === 'CANCEL') await assert.rejects(root.commit(tx => acceptNativeStrategyControl(tx, 'retained', json({ command: original, status: 'COMPLETED', persisted: true, result: { strategyId: original.strategyId, success: true } })), context), /native_cancel_observation_unavailable/);
     await host.close(); host = await openResearch(options);
     await host.harness.waitForTask(id, context);
     assert.equal(sent, 1); assert.equal(reads, 1);

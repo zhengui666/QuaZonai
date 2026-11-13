@@ -10,7 +10,7 @@ use nautilus_common::{
 };
 use nautilus_core::UUID4;
 use nautilus_execution::engine::ExecutionEngine;
-use nautilus_live::node::LiveNodeHandle;
+use nautilus_live::node::{LiveNode, LiveNodeHandle};
 use nautilus_model::{
     enums::OrderStatus,
     identifiers::{AccountId, ClientOrderId, InstrumentId, StrategyId, TraderId},
@@ -24,6 +24,66 @@ pub(crate) struct OriginalOrder {
     pub strategy: StrategyId,
     pub instrument: InstrumentId,
     pub client_order_id: ClientOrderId,
+}
+
+/// Internal node-owned binding, not a production admission or source/build proof.
+/// Capture all native references together; never accept independently supplied
+/// cache/engine/clock at a transport boundary. Rc also prevents Send/Sync transfer.
+/// This does NOT establish ownership of thread-global message-bus endpoints or
+/// TLS trading sender: a second node on this thread can replace both. Installing
+/// this component requires a verified exclusive single-node runner lifecycle;
+/// multi-node owner threads are unsupported. No production installation exists.
+#[allow(dead_code)]
+pub(crate) struct BoundCancelNode {
+    session: UUID4,
+    trader: TraderId,
+    environment: nautilus_common::enums::Environment,
+    owner: std::thread::ThreadId,
+    handle: LiveNodeHandle,
+    cache: Rc<RefCell<Cache>>,
+    engine: Rc<RefCell<ExecutionEngine>>,
+    clock: Rc<RefCell<dyn Clock>>,
+}
+
+#[allow(dead_code)]
+impl BoundCancelNode {
+    pub(crate) fn capture(node: &LiveNode) -> Self {
+        Self {
+            session: node.instance_id(),
+            trader: node.trader_id(),
+            environment: node.kernel().environment(),
+            owner: std::thread::current().id(),
+            handle: node.handle(),
+            cache: node.kernel().cache(),
+            engine: node.kernel().exec_engine().clone(),
+            clock: node.kernel().clock(),
+        }
+    }
+
+    /// The expected native instance and environment must come from the original
+    /// durable command. This still does not authenticate a source/build or prove
+    /// the Pi send checkpoint was committed; no production caller installs it.
+    pub(crate) fn dispatch_attempt(
+        &self,
+        session: UUID4,
+        environment: nautilus_common::enums::Environment,
+        original: &OriginalOrder,
+    ) -> Result<UUID4> {
+        ensure!(
+            self.owner == std::thread::current().id()
+                && self.session == session
+                && self.environment == environment
+                && self.trader == original.trader,
+            "native_cancel_node_binding_mismatch"
+        );
+        dispatch_attempt(
+            &self.handle,
+            &self.cache,
+            &self.engine,
+            original,
+            &self.clock,
+        )
+    }
 }
 
 /// Call only from the owning running node thread, after the original Pi command

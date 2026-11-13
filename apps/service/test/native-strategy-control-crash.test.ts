@@ -13,9 +13,11 @@ import { openResearch } from '../../research/src/host.ts';
 import { Application, json } from '../src/facts.ts';
 import { nativeStrategyControlPhases, admitNativeControlTask, type NativeControlInput } from '../src/native-strategy-control-phases.ts';
 import { nativeStrategyControl } from '../../../packages/contracts/src/native-strategy-control.ts';
-const original = nativeStrategyControl({ schemaVersion: 1, requestId: 'crash-request', action: 'STOP', strategyId: 'ORIGINAL-001', binding: { sourceId: 'source', environmentId: 'environment', buildId: 'build', nativeSessionId: 'session' } });
+const action = process.env.QZ_CONTROL_CRASH_ACTION === 'CANCEL' ? 'CANCEL' : 'STOP';
+const originalFor = (action: 'STOP' | 'CANCEL') => nativeStrategyControl({ schemaVersion: 1, requestId: 'crash-request', action, ...(action === 'CANCEL' ? { order: { traderId: 'TRADER-001', accountId: 'VENUE-001', instrumentId: 'BTC-USDC-SPOT.HYPERLIQUID', clientOrderId: 'ORIGINAL-CLOID' } } : {}), strategyId: 'ORIGINAL-001', binding: { sourceId: 'source', environmentId: 'environment', buildId: 'build', nativeSessionId: 'session' } });
+const original = originalFor(action);
 let attemptedResends = 0;
-async function open(directory: string, worker: boolean) {
+async function open(directory: string, worker: boolean, original = originalFor(action)) {
   const models = createModels(); models.setProvider(fauxProvider().provider);
   const Task = defineTask<NativeControlInput, { phase: 'send' | 'read' }, null>({
     name: 'qz.account-strategy-command', version: 1, initial: () => ({ phase: 'send' }),
@@ -44,9 +46,10 @@ if (process.env.QZ_CONTROL_CRASH_DIRECTORY) {
   host.harness.resume();
   // Keep only the test owner process alive until its parent kills it.
   setInterval(() => {}, 1000);
-} else test('SIGKILL after consumption preserves original task checkpoint and never resends', { timeout: 30000 }, async () => {
+} else for (const action of ['STOP', 'CANCEL'] as const) test(`SIGKILL after ${action} consumption preserves original task checkpoint and never resends`, { timeout: 30000 }, async () => {
+  const original = originalFor(action); attemptedResends = 0;
   const directory = await mkdtemp(join(tmpdir(), 'qz-control-crash-'));
-  const child = spawn(process.execPath, ['--experimental-strip-types', fileURLToPath(import.meta.url)], { env: { ...process.env, QZ_CONTROL_CRASH_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', fileURLToPath(import.meta.url)], { env: { ...process.env, QZ_CONTROL_CRASH_DIRECTORY: directory, QZ_CONTROL_CRASH_ACTION: action }, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = ''; child.stdout.on('data', value => output += value); child.stderr.on('data', value => output += value);
   const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
   try {
@@ -59,7 +62,7 @@ if (process.env.QZ_CONTROL_CRASH_DIRECTORY) {
     assert.deepEqual(JSON.parse(consumed || '{}'), original, output);
     assert.equal(child.kill('SIGKILL'), true);
     assert.equal((await exited).signal, 'SIGKILL');
-    const { host } = await open(directory, false);
+    const { host } = await open(directory, false, original);
     try {
       const before = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.account-strategy-command' }, 10), context);
       assert.equal(before.items.length, 1);

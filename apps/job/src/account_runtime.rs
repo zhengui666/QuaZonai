@@ -2313,6 +2313,9 @@ mod tests {
             .unwrap();
             owner.config.client_id = "test-on-start-resting".into();
         }
+        let bound_cancel = crate::account_queued_cancel::BoundCancelNode::capture(&native);
+        let node_session = native.instance_id();
+        let node_environment = native.kernel().environment();
         let handle = native.handle();
         let stop = handle.clone();
         let cache = native.kernel().cache();
@@ -2445,7 +2448,24 @@ mod tests {
             cache
                 .borrow_mut()
                 .add_order(order.clone(), None, Some(original_client), true)?;
-            let _attempt = dispatch_attempt(&handle, &cache, &engine, &original, &clock)?;
+            let before_binding_rejections = engine.borrow().command_count();
+            assert_eq!(
+                bound_cancel
+                    .dispatch_attempt(UUID4::new(), node_environment, &original)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_node_binding_mismatch"
+            );
+            assert_eq!(
+                bound_cancel
+                    .dispatch_attempt(node_session, Environment::Live, &original)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_node_binding_mismatch"
+            );
+            assert_eq!(engine.borrow().command_count(), before_binding_rejections);
+            let _attempt =
+                bound_cancel.dispatch_attempt(node_session, node_environment, &original)?;
             // The running official sender deferred delivery, with no manufactured PendingCancel.
             assert_eq!(engine.borrow().command_count(), count);
             assert_eq!(

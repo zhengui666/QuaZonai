@@ -41,3 +41,18 @@ test('action must be an actual string enum, never coerced', () => {
     assert.equal(nativeStrategyControl({ ...original, action }).action, action);
   }
 });
+
+test('cancel retains every original venue order identity, without inferring a currency', () => {
+  const order = { traderId: 'TRADER-001', accountId: 'VENUE-001', instrumentId: 'BTC-USDC-SPOT.HYPERLIQUID', clientOrderId: 'CLOID-001' };
+  const cancel = nativeStrategyControl({ ...original, action: 'CANCEL', order });
+  assert.deepEqual(cancel.order, order);
+  assertSameNativeStrategyControl(cancel, structuredClone(cancel));
+  for (const field of Object.keys(order)) {
+    assert.throws(() => assertSameNativeStrategyControl(cancel, { ...cancel, order: { ...order, [field]: 'other' } }), /identity_mismatch/);
+    assert.throws(() => nativeStrategyControl({ ...cancel, order: { ...order, [field]: null } }), /invalid/);
+  }
+  for (const bad of [undefined, null, [], { ...order, currency: 'USD' }]) {
+    assert.throws(() => nativeStrategyControl({ ...cancel, order: bad }), /invalid/);
+  }
+  assert.throws(() => nativeStrategyControl({ ...original, order }), /invalid/);
+});

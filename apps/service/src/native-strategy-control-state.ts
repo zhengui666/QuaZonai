@@ -32,6 +32,9 @@ export async function acceptNativeStrategyControl(tx: Tx, key: string, value: Js
   assertSameNativeStrategyControl(original, value.command);
   if (record.status === 'PENDING') throw new Problem('native_control_reply_before_dispatch');
   if (value.status !== 'COMPLETED' && value.status !== 'UNKNOWN') throw new Problem('native_control_reply_invalid');
+  // Queue dispatch returns no durable cancellation receipt. Until an official
+  // event reader is installed, CANCEL may only retain UNKNOWN, never completion.
+  if (value.status === 'COMPLETED' && original.action === 'CANCEL') throw new Problem('native_cancel_observation_unavailable');
   if (value.status === 'COMPLETED') {
     const result = object(value.result, 'native_control_result_required');
     if (value.persisted !== true || result.strategyId !== original.strategyId || result.success !== true) throw new Problem('native_control_unrecorded_or_wrong_result');
