@@ -19,7 +19,7 @@ export interface DatasetConfig extends DatasetView {
   /** Explicit source-owner metadata and grant files covered by revisionManifest. */
   reviewSourceEvidence?: import('../../../packages/contracts/src/review-source.ts').ReviewSourceFiles;
 }
-export type ConnectionConfig = NautilusConnection & { credentialRef?: string };
+export type ConnectionConfig = NautilusConnection & { credentialRef?: string; kind?: 'RUST_PROCESS'; processBinding?: { runner: ProcessNativeTarget; directory: string } };
 type BacktestConfig = RemoteNativeTarget & { token?: string };
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string; config?: JsonObject }
 export interface ServiceConfig {

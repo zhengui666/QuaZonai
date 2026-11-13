@@ -6,19 +6,15 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask, MemoryStorage } from '@earendil-works/pi-durable';
-import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { remoteNativeCapabilities, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
-import { openRetainedResearch as openResearch } from '../../research/test/frozen-input.ts';
+import { defineExtension, defineTask, defineDocFamily, MemoryStorage } from '@earendil-works/pi-durable';
+import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import { remoteNativeCapabilities, remoteNativeExecutionStatus, NativeRemoteUncertainty, NativeExecutionTask, reconcileNativeExecution, cancelUnsettledNativeExecutions } from '../../research/src/native-execution.ts';
+import { openResearch } from '../../research/src/host.ts';
 import { executeNative } from '../../research/src/native-execution.ts';
 
 const digest = `sha256:${'c'.repeat(64)}`;
 function signal() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 function reply(response: ServerResponse, value: unknown) { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value)); }
-async function readRequest(request: IncomingMessage): Promise<NativeExecutionRequest> {
-  const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
 async function peer(handler: (request: IncomingMessage, response: ServerResponse) => Promise<void> | void) {
   const failures: unknown[] = [];
   const server = createServer((request, response) => { void Promise.resolve(handler(request, response)).catch(error => {
@@ -40,19 +36,18 @@ async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T>
   })]); } finally { if (timer) clearTimeout(timer); }
 }
 
-test('Native capabilities and scientific execution interrupt a connected capabilities request', { timeout: 10_000 }, async () => {
+test('historical capabilities GET honors caller abort; new HTTP execution is rejected without admission', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-helper-capabilities-abort-'));
   const host = await explicitHost(directory);
   try {
-    for (const helper of ['implementation', 'science']) {
+    {
       const accepted = signal(); const requests: string[] = []; const controller = new AbortController();
       const source = await peer((request, _response) => {
         requests.push(`${request.method} ${request.url}`); accepted.resolve();
         // Connected, but no headers/body: a connect timeout cannot end this wait.
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
-      const operation = host.withNativeHost(() => helper === 'implementation' ? remoteNativeCapabilities(source.target, context.abortSignal)
-        : executeNative(source.target, 'review-source', {}, [], directory, context));
+      const operation = host.withNativeHost(() => remoteNativeCapabilities(source.target, context.abortSignal));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {
         await bounded(accepted.promise);
@@ -61,85 +56,70 @@ test('Native capabilities and scientific execution interrupt a connected capabil
         assert.match(outcome.error?.message ?? '', /owner_stop_capability_probe/);
         assert.deepEqual(requests, ['GET /v1/capabilities'], 'no native operation was admitted and no replacement request is sent');
         assert.deepEqual(source.failures, []);
+        const before = (await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},10),BACKGROUND_CONTEXT)).items;
+        await assert.rejects(host.withNativeHost(()=>executeNative(source.target,'review-source',{},[],directory,BACKGROUND_CONTEXT)),/native_http_execution_retired/);
+        assert.deepEqual((await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},10),BACKGROUND_CONTEXT)).items,before);
+        assert.deepEqual(requests,['GET /v1/capabilities']);
       } finally { await source.close(); await settled; }
     }
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('scientific execution forwards task abort and cancels only the accepted original request', { timeout: 10_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-capital-request-abort-'));
-  const accepted = signal(); const requests: string[] = []; const controller = new AbortController(); let original: NativeExecutionRequest | undefined;
-  const source = await peer(async (request, response) => {
-    requests.push(`${request.method} ${request.url}`);
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['review-source'] });
-    if (request.method === 'POST') { original = await readRequest(request); accepted.resolve(); return; }
-    assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
-    reply(response, { schemaVersion: 1, requestId: original!.requestId, status: 'CANCELLED' });
-  });
-  const host = await explicitHost(directory);
-  const operation = host.withNativeHost(() => executeNative(source.target, 'review-source', { amount: '9007199254740993.0001' }, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
-  const settled = operation.then(() => ({ error: null }), error => ({ error }));
-  try {
-    await bounded(accepted.promise); controller.abort(new Error('owner_stop_capital_validation'));
-    const outcome = await bounded(settled);
-    assert.match(outcome.error?.message ?? '', /owner_stop_capital_validation/);
-    assert.equal(requests.some(value => value.startsWith('DELETE')), false, 'an observer abort does not cancel owned work');
-    const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0]!;
-    await host.harness.abortTask(task.id, BACKGROUND_CONTEXT); await host.harness.waitForTask(task.id, BACKGROUND_CONTEXT);
-    assert.equal(original!.command, 'review-source');
-    assert.deepEqual(original!.input, { amount: '9007199254740993.0001' });
-    assert.deepEqual(requests, ['GET /v1/capabilities', 'POST /v1/execute', `DELETE /v1/executions/${original!.requestId}`]);
-    assert.deepEqual(source.failures, []);
-  } finally { await host.close(); await source.close(); await settled; await rm(directory, { recursive: true, force: true }); }
+// Reconstruct retained identities in the official SQLite store, never issue an old POST.
+const Calls = defineDocFamily<any, null>({kind:'qz.native-call',version:1,scope:'task',family:true,initial:()=>({taskId:null}),checkpointWhen:()=>true});
+const RetainedOwner = defineTask<null,{phase:'hold'},null>({
+  name:'test.retained-native-owner',version:1,initial:()=>({phase:'hold'}),
+  phases:{hold:(_task,runtime,context)=>runtime.commit(()=>({status:'sleeping',until:runtime.now()+60000,checkpoint:{phase:'hold'}}),context)},
+  async abort(task,runtime,context){await cancelUnsettledNativeExecutions(task.id,runtime,context);await runtime.commit(()=>({status:'terminal',outcome:{status:'aborted'}}),context);},
 });
 
-test('unanswered scientific cancellation retains the original reference through Durable task abort and reopen', { timeout: 15_000 }, async t => {
-  const actualTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
-  // Leave time for the real loopback DELETE to reach the peer under concurrent CI work.
-  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 100 : milliseconds); });
-  const directory = await mkdtemp(join(tmpdir(), 'qz-capital-unknown-receipt-')); const accepted = signal();
-  let original: NativeExecutionRequest | undefined; let posts = 0; let cancels = 0;
-  const source = await peer(async (request, response) => {
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['review-source'] });
-    if (request.method === 'POST') { posts++; original = await readRequest(request); accepted.resolve(); return; }
-    assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`); cancels++;
-    // Never confirm cancellation. The helper must preserve the unknown identity.
+for(const abortOwner of [false,true])test(`retained HTTP task cancellation preserves original UNKNOWN and GET-only identity (owner abort=${abortOwner})`,{timeout:15000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'qz-retained-http-cancel-'));
+  const accepted=signal(),controller=new AbortController(),requestId='a'.repeat(64);
+  const requests:string[]=[];let hang=true;
+  const source=await peer((request,response)=>{
+    requests.push(`${request.method} ${request.url}`);
+    assert.equal(request.method,'GET');assert.equal(request.url,`/v1/executions/${requestId}`);accepted.resolve();
+    if(!hang)reply(response,{schemaVersion:1,requestId,status:'UNKNOWN',error:'original_outcome_unknown'});
   });
-  const validation = defineTask<{ target: RemoteNativeTarget }, { phase: 'validate' }, null>({
-    name: 'test.capital-remote-validation', version: 1, initial: () => ({ phase: 'validate' }),
-    phases: { async validate(task, runtime, context) {
-      try {
-        await withNativeRemoteTracking(task.id, runtime, context,
-          () => executeNative(task.input.target, 'review-source', {}, [], directory, context));
-        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context);
-      } catch (error) {
-        await retainNativeRemoteUncertainty(error, task.id, runtime, context);
-        throw error;
-      }
-    } },
-    async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
-  });
-  // Exercise the real Durable task directly, without depending on an unrelated
-  // model tool allowlist or inventing a scientific result.
-  const extension = defineExtension({ name: 'test.capital-remote-stop', tasks: [validation] });
-  const models = createModels(); models.setProvider(fauxProvider().provider);
-  const options = { database: join(directory, 'research.sqlite'), models, extensions: [extension] };
-  let host = await openResearch(options);
-  try {
-    const taskId = await host.harness.commit(async tx => {
-      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-      return tx.createTask(validation, { target: source.target }, { conversationId: conversation.id, ownership: { kind: 'conversation' } });
-    }, BACKGROUND_CONTEXT);
-    await bounded(accepted.promise);
-    await bounded(host.harness.abortTask(taskId, BACKGROUND_CONTEXT));
-    await bounded(host.harness.waitForTask(taskId, BACKGROUND_CONTEXT));
-    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'test.capital-remote-validation' }, 10), BACKGROUND_CONTEXT);
-    assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
-    assert.equal(task.state.outcome?.status, 'aborted'); assert.equal(posts, 1); assert.equal(cancels, 1); assert.ok(deadlines.includes(15_000));
-    const receipt = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-    assert.deepEqual(receipt, { requests: [{ taskId: task.id, requestId: original!.requestId, target: source.target, status: 'UNKNOWN', error: 'nautilus_cancellation_unknown' }] });
-    await host.close(); host = await openResearch(options);
-    assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), receipt);
-    assert.equal(posts, 1); assert.deepEqual(source.failures, []);
-  } finally { await source.close(); await host.close(); await rm(directory, { recursive: true, force: true }); }
+  const models=createModels();models.setProvider(fauxProvider().provider);
+  const options={database:join(directory,'research.sqlite'),models,deferResume:true,extensions:[defineExtension({name:'test.retained-http-owner',tasks:[RetainedOwner]})]};
+  let host=await openResearch(options);
+  try{
+    const root=await host.harness.root(BACKGROUND_CONTEXT);
+    const ids=await root.commit(async tx=>{
+      const owner=await tx.createTask(RetainedOwner,null,{ownership:{kind:'conversation'}});
+      const child=await tx.createTask(NativeExecutionTask,{target:source.target,requestId,basis:'retained-original',command:'review-source',request:{request:{schemaVersion:1,requestId,command:'review-source',implementationDigest:digest,args:[],input:{amount:'9007199254740993.0001'}}},ownerTaskId:owner,receiptRequired:true},{ownership:{kind:'task',taskId:owner}});
+      (await tx.doc(Calls,owner,'retained-original',null)).taskId=child;
+      (await tx.doc(NativeRemoteUncertainty,root.id,String(owner),null)).requests.push({taskId:owner,requestId,target:source.target,status:'UNKNOWN',error:'original_outcome_unknown'});
+      return {owner,child};
+    },BACKGROUND_CONTEXT);
+    const runtime=()=>({conversationId:root.id,signal:new AbortController().signal,getTask:host.harness.getTask.bind(host.harness),snapshot:host.harness.snapshot.bind(host.harness),commit:host.harness.commit.bind(host.harness)} as unknown as Parameters<typeof reconcileNativeExecution>[1]);
+    await assert.rejects(reconcileNativeExecution(ids.child,runtime(),ids.child,BACKGROUND_CONTEXT),/native_reconciliation_identity_conflict/);
+    assert.deepEqual(requests,[],'wrong owner cannot read or adopt another original task');
+    const before=await host.harness.snapshot(NativeRemoteUncertainty,root.id,String(ids.owner),BACKGROUND_CONTEXT);
+    const operation=reconcileNativeExecution(ids.owner,runtime(),ids.child,withAbortSignal(controller.signal,BACKGROUND_CONTEXT));
+    const settled=operation.then(()=>({error:null}),error=>({error}));
+    await bounded(accepted.promise);controller.abort(new Error('owner_stop_original_receipt_read'));
+    assert.match((await bounded(settled)).error?.message??'',/owner_stop_original_receipt_read/);
+    assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty,root.id,String(ids.owner),BACKGROUND_CONTEXT),before,'aborted read cannot invent settled cancellation');
+    assert.deepEqual(requests,[`GET /v1/executions/${requestId}`]);
+    hang=false;
+    if(abortOwner){host.harness.resume();await bounded(host.harness.abortTask(ids.owner,BACKGROUND_CONTEXT));await bounded(host.harness.waitForTask(ids.owner,BACKGROUND_CONTEXT));assert.equal((await host.harness.getTask(ids.owner,BACKGROUND_CONTEXT))!.state.outcome?.status,'aborted');}
+    else await cancelUnsettledNativeExecutions(ids.owner,runtime(),BACKGROUND_CONTEXT);
+    const retained=await host.harness.snapshot(NativeRemoteUncertainty,root.id,String(ids.owner),BACKGROUND_CONTEXT);
+    assert.equal(retained!.requests.length,1);assert.equal(retained!.requests[0]!.requestId,requestId);assert.equal(retained!.requests[0]!.status,'UNKNOWN');assert.deepEqual(retained!.requests[0]!.target,source.target);
+    const nativeTask=await host.harness.getTask(ids.child,BACKGROUND_CONTEXT);
+    assert.equal((nativeTask!.input as any).request.request.input.amount,'9007199254740993.0001');
+    await host.close();host=await openResearch(options);
+    assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty,root.id,String(ids.owner),BACKGROUND_CONTEXT),retained);
+    assert.deepEqual((await host.harness.getTask(ids.child,BACKGROUND_CONTEXT))!.input,nativeTask!.input,'reopen retains original command, exact amount, target and IDs');
+    if(abortOwner){
+      await assert.rejects(reconcileNativeExecution(ids.owner,runtime(),ids.child,BACKGROUND_CONTEXT),/native_reconciliation_identity_conflict/,'terminal owner may not adopt new scientific evidence');
+      assert.equal((await remoteNativeExecutionStatus(source.target,requestId)).status,'UNKNOWN');
+    } else assert.equal(await reconcileNativeExecution(ids.owner,runtime(),ids.child,BACKGROUND_CONTEXT),false);
+    assert.equal((await host.harness.snapshot(NativeRemoteUncertainty,root.id,String(ids.owner),BACKGROUND_CONTEXT))!.requests[0]!.status,'UNKNOWN');
+    assert.ok(requests.length>=2);assert.ok(requests.every(row=>row===`GET /v1/executions/${requestId}`),'neither abort nor reopen sends POST, DELETE or replacement identity');
+    assert.deepEqual(source.failures,[]);
+  }finally{await source.close();await host.close();await rm(directory,{recursive:true,force:true});}
 });

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
+import { writeFile, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { ConnectionConfig } from '../src/config.ts';
 import { retainTarget } from './retained-target.ts';
 import { built, setup } from './support.ts';
@@ -30,9 +32,9 @@ async function peer(mode: 'paper' | 'live', suffix: string) {
 test('paper and live retain distinct remote instances across configuration changes and restart', { timeout: 30_000 }, async () => {
   const state = await setup(); const paper = await peer('paper', '00000000001'); const live = await peer('live', '00000000002');
   try {
-    const configured = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
-      payload: { expectedRevision: 0, backtest: null, connections: [paper.connection, live.connection] } });
-    assert.equal(configured.statusCode, 200, configured.body);
+    // Persist genuinely historical HTTP settings, never use the retired new-write API.
+    const settingsPath=join(state.directory,'instances.json');
+    await writeFile(settingsPath,JSON.stringify({revision:0,backtest:null,connections:[paper.connection,live.connection]}),{mode:0o600});
     await state.restart();
     const { view } = await built(state); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     const wrongMode = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
@@ -50,14 +52,21 @@ test('paper and live retain distinct remote instances across configuration chang
       assert.equal(observed.receipt?.externalId, `${remote.connection.mode}-original-receipt`);
       assert.equal(observed.equity, remote === paper ? '1000' : '2000');
     }
-    // Reconfiguring an ID applies only to new work; historical receipt/account
-    // refresh must keep the original captured transport and account identity.
-    const changed = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
-      payload: { expectedRevision: 1, backtest: null, connections: [{ ...paper.connection, url: live.connection.url }, { ...live.connection, url: paper.connection.url }] } });
-    assert.equal(changed.statusCode, 200, changed.body);
+    const changed = await state.service.app.inject({method:'PUT',url:'/api/v3/settings/instances',headers:state.headers,
+      payload:{expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'new-rust',cargoBinary:process.execPath,manifestPath:join(state.directory,'Cargo.toml'),packageName:'protocol_only'}}});
+    assert.equal(changed.statusCode,200,changed.body);
+    const forbidden=await state.service.app.inject({method:'PUT',url:'/api/v3/settings/instances',headers:state.headers,
+      payload:{expectedRevision:changed.json().revision,backtest:null,connections:[{...paper.connection,url:live.connection.url},{...live.connection,url:paper.connection.url}]}});
+    assert.equal(forbidden.statusCode,400,'a new HTTP transport may not be configured');
+    // Reopen an already-saved historical configuration with swapped current URLs.
+    // Original observation facts must still route to their captured peers.
+    const stored=JSON.parse(await readFile(settingsPath,'utf8'));
+    await writeFile(settingsPath,JSON.stringify({...stored,connections:[{...paper.connection,url:live.connection.url},{...live.connection,url:paper.connection.url}]}),{mode:0o600});
+    await state.restart();
     const workspace = await state.service.app.inject({ method: 'GET', url: '/api/v3/workspace', headers: state.headers });
     assert.ok(workspace.json().connections.every((item: { connected: boolean }) => !item.connected), 'an old observed binding does not prove the replacement connection works');
-    await state.restart(); paper.requests.length = 0; live.requests.length = 0;
+    assert.ok(([...paper.requests,...live.requests] as string[]).every(path=>path.startsWith('GET ')),'historical refresh, source save and restart never send a new target/control');
+    paper.requests.length = 0; live.requests.length = 0;
     for (const [index, remote] of [paper, live].entries()) {
       const other = remote === paper ? live : paper; const otherCount = other.requests.length;
       const refreshed = await state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${ids[index]}/refresh`, headers: state.headers });

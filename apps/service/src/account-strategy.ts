@@ -89,8 +89,9 @@ export const AccountStrategyCommand = defineTask<{ key: string }, { phase: 'send
   },
 });
 
-export function accountStrategyWorkbench(host: ResearchHost) {
+export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(id:string)=>Promise<{connection:ConnectionConfig;view:{currency:string}}>) {
   async function fact(id: string) {
+    if(configuredBinding)return configuredBinding(id);
     const app = await host.harness.snapshot(Application, context); const value = app?.observations[id];
     if (!value) throw new Problem('observation_not_found', 404); return observation(value);
   }

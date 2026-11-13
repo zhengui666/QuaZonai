@@ -24,8 +24,9 @@ export function strategyResultText(value: StrategyReceipt) {
     : value.status === 'REJECTED' ? '原生明确拒绝本次启动，未启动策略。'
     : '原命令尚未确定；这里只查询同一请求，不自动重发或用当前状态代替回执。';
 }
-export default function AccountStrategy({ value }: { value: ObservationView }) {
-  const path = `/observations/${encodeURIComponent(value.id)}/strategy`;
+export default function AccountStrategy({ value, configured=false }: { value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
+  const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
+  const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
   const fence = useResource<{ accountSourceId: string; strategyRevision: string }>(`${path}/fence`, { poll: 3000 });
   const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; connected: boolean | null; runnerValidated: boolean; pendingConfigurationRequests: string[] }>(`${path}/config`);
@@ -33,15 +34,15 @@ export default function AccountStrategy({ value }: { value: ObservationView }) {
   const [configurationError, setConfigurationError] = useState<unknown>();
   const [verifyingConfiguration, setVerifyingConfiguration] = useState(false);
   const [configurationReceipt, setConfigurationReceipt] = useState<{ status: string }>();
-  const saveConfiguration = useCommand<{ status: string }>(`strategy:${value.id}:CONFIGURE`, result => { setConfigurationReceipt(result); setEdited(undefined); void configuration.refetch(); void fence.refetch(); }, `${path}/config`);
+  const saveConfiguration = useCommand<{ status: string }>(`strategy:${commandIdentity}:CONFIGURE`, result => { setConfigurationReceipt(result); setEdited(undefined); void configuration.refetch(); void fence.refetch(); }, `${path}/config`);
   const configurationText = edited ?? (configuration.data ? JSON.stringify(configuration.data.configuration, null, 2) : '');
-  const key = `account-strategy:${value.id}`;
+  const key = `account-strategy:${commandIdentity}`;
   const [last, setLast] = useState(() => readDraft<string>(key));
   const confirm = useConfirm();
   const accepted = (result: StrategyReceipt) => { saveDraft(key, result.requestId); setLast(result.requestId); void status.refetch(); void fence.refetch(); };
-  const start = useCommand<StrategyReceipt>(`strategy:${value.id}:START`, accepted, `${path}/commands`);
-  const stop = useCommand<StrategyReceipt>(`strategy:${value.id}:STOP`, accepted, `${path}/commands`);
-  const recover = useCommand<StrategyReceipt>(`strategy:${value.id}:RECOVER`, accepted, `${path}/commands`);
+  const start = useCommand<StrategyReceipt>(`strategy:${commandIdentity}:START`, accepted, `${path}/commands`);
+  const stop = useCommand<StrategyReceipt>(`strategy:${commandIdentity}:STOP`, accepted, `${path}/commands`);
+  const recover = useCommand<StrategyReceipt>(`strategy:${commandIdentity}:RECOVER`, accepted, `${path}/commands`);
   const requestId = (stop.pending ? stop.values?.requestId as string | undefined : start.pending ? start.values?.requestId as string | undefined : recover.pending ? recover.values?.requestId as string | undefined : undefined) ?? last;
   const receipt = useResource<StrategyReceipt>(`${path}/commands/${encodeURIComponent(requestId ?? '')}`, { enabled: !!requestId, poll: 2000 });
   const native = status.data?.strategy;

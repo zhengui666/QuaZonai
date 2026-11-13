@@ -1,3 +1,4 @@
+import AccountConfiguration from './account-configuration';
 import { Button, Form, Input } from 'antd';
 import { useEffect, useState } from 'react';
 import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
@@ -62,7 +63,7 @@ export default function InstanceSettings() {
   if (!loaded) return query.error ? <ErrorNotice error={query.error} /> : <Loading />;
   return <div className="settings-page instance-settings"><header className="page-heading"><h2>Nautilus 原生 Rust 环境</h2></header>
     <p>只有一种连接方式：使用你已有的 Rust 项目构建薄启动器，通过进程连接查看与控制 Nautilus。QuaZonai 不随应用捆绑 Nautilus，不修改其源码，不要求预装常驻适配服务。</p>
-    <p>路径必须能被 QuaZonai 服务所在机器访问；容器需要已有挂载。这里不会通过 SSH 自动访问远程机器，也不会接管已运行且未提供接口的节点。</p>
+    <p>路径必须能被 QuaZonai 服务所在机器访问；默认容器没有 Cargo / rustc 或宿主项目挂载，不能直接填写宿主路径当作可用环境。容器需要所有者准备兼容的已有工具链、系统库和挂载，宿主与容器 glibc 不一致也可能无法运行。这里不会通过 SSH 自动访问远程机器，也不会接管已运行且未提供接口的节点。</p>
     <p>保存配置、检查或构建环境、连接账户、启动交易是不同操作。单一环境可承载独立研究进程和显式账户进程，不代表只有一个操作系统进程；研究权限不是交易许可。</p>
     {!!saved && (!!saved.backtest || saved.connections.length > 0) && <p>检测到旧 HTTP 配置，已作为迁移事实保留，不再提供新的 HTTP 配置入口。旧任务、账户及未决回执不会改写成新连接，UNKNOWN 不会自动重发或清除。</p>}
     <Form form={form} layout="vertical" disabled={busy || !!pending}>
@@ -86,6 +87,7 @@ export default function InstanceSettings() {
     {build&&<pre>{JSON.stringify(build,null,2)}</pre>}
     {saved?.runner&&<><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><pre>{JSON.stringify(saved.runner.capabilities,null,2)}</pre></>}
     <p>当前 QZ 账户接线仅支持 Hyperliquid、单账户中的一个 EMA 或已注册 Rust Strategy，最多 256 个标的，不等于任意官方 LiveNode 配置。账户工厂未编入时不能恢复账户；研究工厂可用不构成交易权限。连接与启动交易仍须账户页各自显式操作。</p>
+    <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
     {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}
     {discovery !== undefined && <pre>{JSON.stringify(discovery,null,2)}</pre>}
   </div>;

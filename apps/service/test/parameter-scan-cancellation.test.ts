@@ -41,6 +41,6 @@ for(const confirmed of [true,false]) test(`terminal parent and UNKNOWN child: ca
   assert.equal((await harness.getTask(parent,ctx))?.state.status,'terminal');
   const retained=await harness.snapshot(NativeRemoteUncertainty,owner.id,String(unknown),ctx);
   assert.equal(retained?.requests[0]?.status,confirmed?'CANCELLED':'UNKNOWN');assert.equal(retained?.requests[0]?.requestId,requestId);
-  assert.equal(calls.filter(call=>call.startsWith('DELETE')).length,1);assert.equal(calls[0],`DELETE /v1/executions/${requestId}`);assert.equal(calls.some(call=>call.startsWith('POST')),false);
+  assert.equal(calls.filter(call=>call.startsWith('DELETE')).length,0);assert.equal(calls[0],`GET /v1/executions/${requestId}`);assert.ok(calls.every(call=>call===`GET /v1/executions/${requestId}`),'Only the original receipt is queried; local stop is not remote cancellation');assert.equal(calls.some(call=>call.startsWith('POST')),false);
  }finally{await harness.close(ctx);server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });

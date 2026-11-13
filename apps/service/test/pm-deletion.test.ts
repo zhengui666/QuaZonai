@@ -9,8 +9,8 @@ import type { TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
 import { fact, PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
 import { idlePmDeleteMonitor } from '../src/pm-deletion.ts';
-import { executeNativeValue, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
-import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import { NativeRemoteUncertainty } from '../../research/src/native-execution.ts';
+import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { context, setup } from './support.ts';
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
@@ -153,7 +153,7 @@ test('only the original idle monitor checkpoint can be ignored by PM deletion', 
 test('PM deletion retains unknown remote work across restart until GET confirms the original terminal receipt', { timeout: 30_000 }, async t => {
   const f = await fixture();
   const requests: string[] = []; const failures: unknown[] = [];
-  let original: NativeExecutionRequest | undefined;
+  const original={requestId:'d'.repeat(64)};
   let mode: 'UNKNOWN' | 'RUNNING' | 'MISMATCH' | 'UNAVAILABLE' | 'HANG' | 'COMPLETED' = 'UNKNOWN';
   const realTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
   t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return realTimeout(milliseconds === 5000 && mode === 'HANG' ? 20 : milliseconds); });
@@ -161,11 +161,6 @@ test('PM deletion retains unknown remote work across restart until GET confirms 
     requests.push(`${request.method} ${request.url}`);
     const reply = (value: unknown) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value)); };
     if (request.url === '/v1/capabilities') return reply({ schemaVersion: 1, implementationDigest: `sha256:${'d'.repeat(64)}`, commands: ['native-strategy-backtest'] });
-    if (request.method === 'POST' && request.url === '/v1/execute') {
-      const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      original = JSON.parse(Buffer.concat(chunks).toString('utf8')) as NativeExecutionRequest;
-      return reply({ schemaVersion: 1, requestId: original.requestId, status: 'UNKNOWN', error: 'controlled_original_outcome_unknown' });
-    }
     assert.equal(request.method, 'GET'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
     if (mode === 'HANG') return;
     if (mode === 'UNAVAILABLE') { response.statusCode = 503; response.end(); return; }
@@ -178,10 +173,11 @@ test('PM deletion retains unknown remote work across restart until GET confirms 
   const target: RemoteNativeTarget = { id: 'original-pm-deletion-worker', url: `http://127.0.0.1:${address.port}` };
   const child = defineTask<{ mandateId: string }, { phase: 'compute' }, null>({ name: 'test.pm-delete-remote-child', version: 1,
     initial: () => ({ phase: 'compute' }), phases: { async compute(task, runtime, ctx) {
-      try {
-        await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'native-strategy-backtest', {}, [], f.state.directory, ctx));
-        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
-      } catch (error) { await retainNativeRemoteUncertainty(error, task.id, runtime, ctx); throw error; }
+      // This is a retained historical task identity, not a newly admitted HTTP execution.
+      // Record the original uncertainty through the official Durable Doc API before
+      // the local task faults; deletion must consult the original GET receipt.
+      await runtime.commit(async tx=>{(await tx.doc(NativeRemoteUncertainty,runtime.conversationId,String(task.id),null)).requests=[{taskId:task.id,requestId:original.requestId,target,status:'UNKNOWN',error:'retained_original_outcome_unknown'}];return undefined;},ctx);
+      throw new Error('retained_local_task_failed_remote_unknown');
     } }, async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); } });
   try {
     f.state.options.extensions.push(defineExtension({ name: 'test.pm-delete-remote-child', tasks: [child] })); await f.state.restart();
@@ -209,7 +205,7 @@ test('PM deletion retains unknown remote work across restart until GET confirms 
     assert.equal(settled!.requests[0]!.requestId, original!.requestId); assert.deepEqual(settled!.requests[0]!.target, target);
     await f.state.restart(); assert.equal((await record(f.state, f.id)).deletedAt, deleted.json().deletedAt);
     assert.deepEqual(await family(), settled);
-    assert.equal(requests.filter(item => item.startsWith('POST ')).length, 1);
+    assert.equal(requests.filter(item => item.startsWith('POST ')).length, 0,'Historical uncertainty is never resubmitted');
     assert.equal(requests.filter(item => item.startsWith('DELETE ')).length, 0, 'deletion never issues remote cancellation or resubmission');
     assert.deepEqual(failures, []);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await f.state.cleanup(); }

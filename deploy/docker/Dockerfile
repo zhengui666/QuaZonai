@@ -30,7 +30,7 @@ FROM scratch AS application-source
 COPY --chmod=755 apps/service/src /opt/quazonai/apps/service/src
 # QZ-only process/build glue; no HTTP server entry or Nautilus binary is bundled.
 COPY --chmod=644 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
-COPY --chmod=644 apps/nautilus/src/rust-environment.ts apps/nautilus/src/rust-launcher-build.ts /opt/quazonai/apps/nautilus/src/
+COPY --chmod=644 apps/nautilus/src/rust-environment.ts apps/nautilus/src/rust-launcher-build.ts apps/nautilus/src/account-runtime.ts apps/nautilus/src/account-configurations.ts apps/nautilus/src/capital-account.ts apps/nautilus/src/hyperliquid-account.ts /opt/quazonai/apps/nautilus/src/
 COPY --chmod=755 apps/research/src /opt/quazonai/apps/research/src
 COPY --chmod=755 apps/research/plugins /opt/quazonai/apps/research/plugins
 COPY --chmod=755 apps/cli/src /opt/quazonai/apps/cli/src

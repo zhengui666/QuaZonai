@@ -39,15 +39,19 @@ test('invalid or ambiguous remote bindings fail instead of selecting another ins
 });
 
 
-test('changing the backtest transport cannot restore retired portfolio creation', async () => {
+test('saving a Rust source cannot restore retired portfolio creation or configure new HTTP transport', async () => {
   const { setup } = await import('./support.ts');
   const state = await setup();
   try {
-    const target = { id: 'new-backtest', url: 'http://127.0.0.1:1' };
+    const target = {kind:'RUST_PROCESS',id:'owner-rust',cargoBinary:process.execPath,manifestPath:join(state.directory,'Cargo.toml'),packageName:'protocol_only'};
     const saved = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
-      payload: { expectedRevision: 0, backtest: target, connections: [] } });
+      payload: { expectedRevision: 0, environment: target } });
     assert.equal(saved.statusCode, 200, saved.body);
-    assert.deepEqual(scienceTarget(state.service.config), target);
+    assert.deepEqual(saved.json().environment,target);
+    assert.equal(saved.json().runner,null,'saving source is not building or selecting a running engine');
+    const legacy=await state.service.app.inject({method:'PUT',url:'/api/v3/settings/instances',headers:state.headers,payload:{expectedRevision:saved.json().revision,backtest:{id:'old-http',url:'http://127.0.0.1:1'},connections:[]}});
+    assert.equal(legacy.statusCode,400);
+    assert.deepEqual((await state.service.app.inject({url:'/api/v3/settings/instances',headers:state.headers})).json(),saved.json());
     const before = await state.service.work.snapshot();
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: {
       requestId: 'new-remote-backtest', name: 'Retired portfolio creation', researchIds: [], datasetId: 'controlled', capital: '1000' } });

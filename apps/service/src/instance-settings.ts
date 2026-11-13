@@ -143,7 +143,8 @@ export async function instanceSettings(config: ServiceConfig) {
     config.nativeProcess = value.runner ?? undefined;
     const target = config.nativeProcess ?? historicalTarget;
     config.nautilus = historicalTarget ? { backtest: historicalTarget } : {};
-    config.connections = value.connections.map(connection => {
+    const processConnections=config.connections.filter(connection=>connection.kind==='RUST_PROCESS');
+    config.connections = [...processConnections,...value.connections.map(connection => {
       if (Object.hasOwn(connection, 'token')) {
         const { token, tokenEnv: _tokenEnv, ...safe } = connection;
         const reference = state.connectionRefs[connection.id];
@@ -153,7 +154,7 @@ export async function instanceSettings(config: ServiceConfig) {
       const { tokenEnv: _tokenEnv, ...safe } = connection;
       const legacy = state.connectionTokenEnvs[connection.id] ?? connection.tokenEnv;
       return legacy ? { ...safe, tokenEnv: legacy } as ConnectionConfig : safe as ConnectionConfig;
-    });
+    })];
     for (const dataset of config.datasets) {
       const data = scienceDataWithoutBinding(dataset.data);
       dataset.data = target ? bindScienceData(data, target) : data;

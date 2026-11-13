@@ -15,7 +15,20 @@ export function connectionBase(connection: ConnectionConfig): URL {
   if (!url.pathname.endsWith('/')) url.pathname += '/';
   return url;
 }
+// Ephemeral direct handles only; original account files and Pi remain the stores.
+const processAccounts=new Map<string,{binding:string;request:(path:string,method:'GET'|'POST',clientId:unknown,input?:unknown)=>Promise<{status:number;value:unknown}>}>();
+export function registerProcessAccount(connection:ConnectionConfig,request:(path:string,method:'GET'|'POST',clientId:unknown,input?:unknown)=>Promise<{status:number;value:unknown}>) {
+  if(connection.kind!=='RUST_PROCESS'||!connection.processBinding)throw new Problem('native_process_account_binding_required');
+  const key=connectionBase(connection).href;if(processAccounts.has(key))throw new Problem('native_process_account_already_open',409);
+  const value={binding:canonical(connection as unknown as JsonObject),request};processAccounts.set(key,value);return ()=>{if(processAccounts.get(key)===value)processAccounts.delete(key);};
+}
 export async function downstreamRequest(connection: ConnectionConfig, path: string, method: 'GET' | 'POST', body?: unknown, signal?: AbortSignal): Promise<JsonObject> {
+  if(connection.kind==='RUST_PROCESS'){
+    const handle=processAccounts.get(connectionBase(connection).href);if(!handle||handle.binding!==canonical(connection as unknown as JsonObject))throw new Problem('native_process_original_account_unavailable',409);
+    if(signal?.aborted)throw signal.reason;
+    try{const response=await handle.request('/'+path,method,connection.clientId,body);if(response.status>=400)throw new Problem(String(object(response.value).error??'native_account_request_failed'),response.status);return object(response.value,'native_account_response');}
+    catch(error){if(error instanceof Problem)throw error;throw new Problem(error instanceof Error?error.message:'native_account_outcome_unknown',Number((error as {statusCode?:number})?.statusCode??503));}
+  }
   if (method === 'POST') throw new Problem('native_http_control_retired_migrate_to_rust_process', 410);
   const url = connectionBase(connection); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-qz-client-id': connection.clientId };

@@ -1,3 +1,4 @@
+import {processAccounts} from './process-accounts.ts';
 import {nativeEnvironmentBuild} from './native-environment-build.ts';
 import { researchTaskEvidence } from './research-assessments.ts';
 import { accountStrategyWorkbench } from './account-strategy.ts';
@@ -46,6 +47,7 @@ export async function createService(options: ServiceOptions) {
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
   const nativeBuild = nativeEnvironmentBuild(config);
+  let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
@@ -133,15 +135,16 @@ export async function createService(options: ServiceOptions) {
     return [...extensions.values()].map(item => ({ ...item, enabled: enabled[item.name] ?? defaults.get(item.name) ?? true,
       required: requiredExtensions.has(item.name), state: item.error ? 'error' : registry.extension(item.name) ? 'loaded' : 'disabled' }));
   }
-  research.harness.resume();
   const readTasks = researchTaskViews(research);
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const eventStreams = new Set<() => Promise<void>>();
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   app.addHook('onRequest', (_request, _reply, done) => research.withNativeHost(done));
   app.addHook('preClose', async () => { await Promise.all([...eventStreams].map(close => close())); await sources.close(); });
-  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); });
+  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); await accounts?.close(); });
   try {
+  accounts = await processAccounts(config);
+  research.harness.resume();
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
@@ -265,6 +268,16 @@ export async function createService(options: ServiceOptions) {
     return observationView(await work.getObservation(id));
   });
   registerModels(app, research, work.getSettings);
+  app.get(`${API}/accounts/configurations`,()=>accounts!.list());
+  app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
+  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id,r.body));
+  app.post<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/config/commands/:requestId/verify`,r=>configuredStrategies.verifyConfiguration(r.params.id,r.params.requestId));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,async(r,reply)=>reply.code(202).send(await configuredStrategies.command(r.params.id,r.body)));
+  app.get<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/commands/:requestId`,r=>configuredStrategies.receipt(r.params.id,r.params.requestId));
   registerInstanceSettings(app, instances);
   const builds=nativeBuild.workbench(research,instances);
   app.post(`${API}/settings/instances/build`,request=>builds.start(request.body));
@@ -307,7 +320,7 @@ export async function createService(options: ServiceOptions) {
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
-  } catch (error) { await extensionWatch?.stop(); await research.close(); throw error; }
+  } catch (error) { await extensionWatch?.stop(); await research.close(); await accounts?.close(); throw error; }
 }
 export const buildService = createService;
 export type Service = Awaited<ReturnType<typeof createService>>;
