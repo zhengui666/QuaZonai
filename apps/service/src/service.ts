@@ -271,6 +271,7 @@ export async function createService(options: ServiceOptions) {
   app.get(`${API}/accounts/configurations`,()=>accounts!.list());
   app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
   const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));

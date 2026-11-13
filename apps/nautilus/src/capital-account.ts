@@ -122,6 +122,24 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       || typeof value.sequence !== 'string' || typeof value.observation_id !== 'string') fail('account_native_snapshot_invalid');
     return value as unknown as NativeAccountSnapshot;
   }
+  async function spotObservation() {
+    // Read the already-connected original runner only. Do not combine this async
+    // observation with Portfolio sequence, cash, CONTROL or trading permission.
+    const raw = (await readNativeSnapshot()).spot_balance_observation;
+    if (raw == null) return { ...envelope(), accountSourceId: state.sourceId, observation: null };
+    const value = record(raw);
+    if (options.mode !== 'live' || value.kind !== 'NAUTILUS_SPOT_BALANCE_OBSERVATION'
+      || value.source_id !== state.sourceId || value.account_id !== options.accountId
+      || value.account_address !== options.accountAddress || value.network !== (options.network ?? 'mainnet')) fail('account_native_spot_observation_binding_mismatch');
+    if (typeof value.observation_id !== 'string' || !value.observation_id
+      || typeof value.request_started_ns !== 'string' || !/^\d+$/.test(value.request_started_ns)
+      || typeof value.received_ns !== 'string' || !/^\d+$/.test(value.received_ns)
+      || BigInt(value.received_ns) < BigInt(value.request_started_ns)
+      || value.exchange_timestamp_ns !== null || value.atomic_reservation !== false || value.trade_permission !== false
+      || (value.balances !== null && !Array.isArray(value.balances))
+      || (value.error !== null && typeof value.error !== 'string')) fail('account_native_spot_observation_invalid');
+    return { ...envelope(), accountSourceId: state.sourceId, observation: structuredClone(value) };
+  }
   async function applyControl() {
     // Only a fresh, explicitly requested START with individually proven zero
     // obligations may establish this new epoch. This is not old CONTROL replay.
@@ -435,6 +453,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         if (method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);
         if (method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
+        if (method === 'GET' && path === '/spot-balance-observation') return { status: 200, value: await spotObservation() };
         if (method === 'GET' && path === '/account') return { status: 200, value: account() };
         if (method === 'GET' && path === '/capital-exits') return { status: 200, value: status() };
 

@@ -39,6 +39,8 @@ export interface NativeAccountSnapshot {
   native_version: string;
   observed_at_ns: string; observation_id: string; native_session_id: string; native_trader_id: string; native_account_id: string;
   native_snapshot: Record<string, unknown> | null;
+  /** Independently timed official spot facts, never part of Portfolio sequence. */
+  spot_balance_observation?: Record<string, unknown> | null;
   positions: { instrument_id: string; quantity: string; value: string | null; pnl: string | null }[];
   instruments: NativeInstrument[]; orders: NativeOrder[]; fills: NativeFill[];
   cash: string | null; equity: string | null; currency: string; currency_precision: number;

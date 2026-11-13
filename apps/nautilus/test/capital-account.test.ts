@@ -294,3 +294,35 @@ test('unrecorded live rejection remains uncertain and never launches a node', as
     assert.equal(starts, 0); assert.equal(native.requests.some(row => ['CONTROL', 'STRATEGY_START'].includes(row.operation)), false);
   } finally { await account.close().catch(()=>{}); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('official spot facts remain separately bound and timed without changing portfolio or trade gates', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-spot-observation-')), native = new NativeProtocol();
+  const account = await createCapitalAccount(options, directory, '/unused', native, { account: async () => accountProof(), ledger: async () => [] });
+  const get = async (path: string) => (await account.request(path, 'GET', options.clientId)).value as any;
+  try {
+    const fence = await get('/strategy/fence');
+    assert.equal((await get('/spot-balance-observation')).observation, null);
+    const raw = {kind:'NAUTILUS_SPOT_BALANCE_OBSERVATION',observation_id:'spot-original',source_id:fence.accountSourceId,account_id:options.accountId,account_address:options.accountAddress,network:'mainnet',request_started_ns:'100',received_ns:'200',exchange_timestamp_ns:null,balances:[{currency:'USDC',total:'100.000000',locked:'10.000000',free:'90.000000'}],error:null,atomic_reservation:false,trade_permission:false};
+    native.snapshot.spot_balance_observation = raw;
+    const portfolio = await get('/account');
+    assert.deepEqual((await get('/spot-balance-observation')).observation, raw);
+    assert.equal('observation' in portfolio,false);
+    native.snapshot.spot_balance_observation = {...raw,observation_id:'later',received_ns:'300',balances:[]};
+    assert.deepEqual((await get('/spot-balance-observation')).observation.balances,[]);
+    assert.deepEqual(await get('/account'),portfolio); // Same Portfolio sequence is untouched by async spot facts.
+    native.snapshot.spot_balance_observation = {...raw,balances:null,error:'official_read_failed'};
+    assert.equal((await get('/spot-balance-observation')).observation.balances,null);
+    for (const key of ['source_id','account_id','account_address','network']) {
+      native.snapshot.spot_balance_observation = {...raw,[key]:'wrong'};
+      await assert.rejects(get('/spot-balance-observation'),/binding_mismatch/);
+    }
+    for (const change of [{received_ns:'99'},{request_started_ns:100},{exchange_timestamp_ns:'200'},{trade_permission:true},{atomic_reservation:true}]) {
+      native.snapshot.spot_balance_observation = {...raw,...change};
+      await assert.rejects(get('/spot-balance-observation'),/observation_invalid/);
+    }
+    native.snapshot.spot_balance_observation = raw;
+    const started = await account.request('/strategy/commands','POST',options.clientId,{clientId:options.clientId,accountId:options.accountId,requestId:'spot-does-not-authorize-start',action:'START',expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision});
+    assert.equal((started.value as any).error,'hyperliquid_native_spot_free_required');
+    assert.ok(native.requests.every(r=>r.operation==='SNAPSHOT'));
+  } finally { await account.close(); await rm(directory,{recursive:true,force:true}); }
+});
