@@ -12,6 +12,7 @@ use nautilus_common::{
 };
 use nautilus_core::DurationNanos;
 use nautilus_live::node::LiveNodeBuilder;
+use nautilus_model::accounts::{Account, AccountAny};
 use nautilus_model::identifiers::StrategyId;
 use nautilus_system::Controller;
 use serde_json::Value;
@@ -25,6 +26,19 @@ pub type AccountNodeFactory = fn(&Value) -> Result<LiveNodeBuilder>;
 /// Implementations use the official Controller and return actual created IDs.
 /// This callback is trusted code too; it is not proof that strategies stay stopped.
 pub type AccountComponentsFactory = fn(&Controller, &str, &Value) -> Result<Vec<StrategyId>>;
+
+/// Exact native account facts, with no conversion, combined equity or assumed
+/// currency/venue. Does not serialize the account's unbounded event history.
+/// Caller must resolve the original account identity on the owning node thread.
+pub fn account_facts(account: &AccountAny) -> Result<Value> {
+    Ok(serde_json::json!({
+        "account_id": account.id(),
+        "account_type": account.account_type(),
+        "base_currency": account.base_currency(),
+        "balances": account.balances(),
+        "last_event": account.last_event(),
+    }))
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Preparation {
@@ -211,6 +225,47 @@ mod tests {
             error.to_string(),
             "NATIVE_CONFIGURED_ACCOUNT_REQUIRES_USER_FACTORY"
         );
+    }
+
+    #[test]
+    fn account_facts_keep_distinct_native_ids_and_currencies_without_valuation() -> Result<()> {
+        use nautilus_core::{UUID4, UnixNanos};
+        use nautilus_model::{
+            accounts::cash::CashAccount,
+            enums::AccountType,
+            events::AccountState,
+            identifiers::AccountId,
+            types::{AccountBalance, Money},
+        };
+        for (id, funds, zero) in [
+            ("VENUE-A-001", "1.23456789 BTC", "0 BTC"),
+            ("VENUE-B-002", "123.45 EUR", "0 EUR"),
+        ] {
+            let event = AccountState::new(
+                AccountId::from(id),
+                AccountType::Cash,
+                vec![AccountBalance::new(
+                    Money::from(funds),
+                    Money::from(zero),
+                    Money::from(funds),
+                )],
+                vec![],
+                true,
+                UUID4::new(),
+                UnixNanos::from(42u64),
+                UnixNanos::from(43u64),
+                None,
+            );
+            let account = AccountAny::Cash(CashAccount::new(event.clone(), false, false));
+            let facts = account_facts(&account)?;
+            assert_eq!(facts["account_id"], id);
+            assert_eq!(facts["balances"], serde_json::to_value(account.balances())?);
+            assert_eq!(facts["last_event"], serde_json::to_value(event)?);
+            assert!(facts["base_currency"].is_null());
+            assert!(facts.get("total_equity").is_none());
+            assert!(facts.get("events").is_none());
+        }
+        Ok(())
     }
 
     #[test]
