@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import type { TaskId } from '@earendil-works/pi-durable';
 import { createCapitalAccount } from '../../nautilus/src/capital-account.ts';
@@ -23,7 +24,7 @@ async function until<T>(read: () => Promise<T>, ready: (value: T) => boolean) {
   assert.fail('The real service/receiver protocol did not settle: ' + JSON.stringify(value));
 }
 
-test('the real receiver and service share command receipts, account reservations and safe release semantics', { timeout: 30_000 }, async () => {
+test('the real receiver rejects retired capital producers without sending controls or altering historical sources', { timeout: 30_000 }, async () => {
   // Only the external NDJSON transport is replaced. This test exercises real receiver/service business code,
   // HTTP and official Durable/SQLite; these protocol samples are not exchange or native financial evidence.
   const state = await setup(); const calls: { operation: string; payload: Record<string, unknown> }[] = [];
@@ -54,7 +55,10 @@ test('the real receiver and service share command receipts, account reservations
   };
   const options: AccountOptions = { id: 'cash-protocol', clientId: 'receiver-client', accountId: 'HYPERLIQUID-PAPER-PROTOCOL', mode: 'paper',
     nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'], startingBalance: '1000', paperFeeRate: '0.001', cashBuffer: '100' };
-  const receiver = await createCapitalAccount(options, join(state.directory, 'receiver'), '/missing-native-worker', runtime);
+  const originalCommand = { requestId: 'historical-unknown', clientId: options.clientId, accountId: options.accountId, command: { schema_version: 2, preview_id: 'original-plan' } };
+  const receiverDir = join(state.directory, 'receiver'); await mkdir(receiverDir);
+  await writeFile(join(receiverDir, 'capital-receipts.json'), JSON.stringify({ schema_version: 2, sourceId: 'retained-receiver-source', identity: {mode:'paper',network:'mainnet',accountId:options.accountId,accountAddress:null,currency:'USDC'}, revision:'3',epoch:'3',previews:{},exits:{},targets:{},ledgerClaims:{original:'original-ledger'},reverseTransferPending:false,commands:{'historical-unknown':{original:originalCommand,state:'UNCERTAIN',error:'original-response-lost',exitId:'original-exit'}} }));
+  let receiver = await createCapitalAccount(options, receiverDir, '/missing-native-worker', runtime);
   const remote = Fastify(); const responses: { method: string; path: string; body: unknown; response: unknown }[] = [];
   remote.all('/*', async (request, reply) => {
     if (request.method === 'POST' && object(request.body).requestId === 'receiver-release-race') {
@@ -97,89 +101,37 @@ test('the real receiver and service share command receipts, account reservations
     assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
     const path = '/api/v3/observations/' + binding.json().id + '/capital-exits';
     const planning = await state.service.app.inject({ url: path + '/planning-context', headers: state.headers });
-    assert.equal(planning.statusCode, 200, planning.body); assert.equal(planning.json().funds.free_cash.amount, '1000');
-    const preview = await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers,
-      payload: { requestId: 'receiver-cash-preview', amount: '200', currency: 'USDC', contextId: planning.json().id, policy: { kind: 'CASH_ONLY' } } });
-    assert.equal(preview.statusCode, 200, preview.body); assert.equal(preview.json().capability, 'SUPPORTED');
-    const startRequest = { requestId: 'receiver-cash-start', action: 'START', previewId: preview.json().id };
-    const started = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: startRequest });
-    assert.equal(started.statusCode, 202, started.body);
-    const readControl = async () => {
-      const app = (await state.service.research.harness.snapshot(Application, context))!;
-      return control(app.accountControls![accountKey(connection, app.accountControls)]);
+    assert.equal(planning.statusCode, 400); assert.equal(planning.json().error, 'downstream_control_404');
+    const preview = await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers, payload: {requestId:'retired-preview'} });
+    assert.equal(preview.statusCode, 404);
+    for (const action of ['START','RESUME','RELEASE_RESERVATION']) {
+      const response = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload:{requestId:'retired-'+action,action} });
+      assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'capital_exit_planning_retired');
+    }
+    const status = await state.service.app.inject({url:path,headers:state.headers});
+    assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,'0.000000000000000000');
+    const refreshed=await state.service.app.inject({method:'POST',url:'/api/v3/observations/'+binding.json().id+'/refresh',headers:state.headers});
+    assert.equal(refreshed.statusCode,200,refreshed.body);
+    assert.ok((await state.service.research.harness.snapshot(Application,context))!.portfolios[sourceId]);
+    assert.ok(calls.length>0); assert.ok(calls.every(row=>row.operation==='SNAPSHOT'));
+    assert.equal(responses.filter(row=>row.method==='POST').length,0,'Retired financial actions cannot reach the actual receiver.');
+    const raw = async (method: string, path: string, body?: unknown, expected = 200) => {
+      const response = await fetch(url + path, {method,headers:{'content-type':'application/json','x-qz-client-id':options.clientId},...(body ? {body:JSON.stringify(body)} : {})});
+      assert.equal(response.status,expected); return response.json();
     };
-    const acknowledged = await until(readControl, value => value.commands[startRequest.requestId]?.state === 'ACCEPTED');
-    const accepted = acknowledged.commands[startRequest.requestId]!;
-    const startExchange = responses.find(row => row.method === 'POST' && row.path === '/capital-exits')!;
-    const actualReceipt = object(startExchange.response); const actualRequest = object(startExchange.body);
-    assert.equal(actualReceipt.requestId, startRequest.requestId); assert.equal(actualReceipt.status, 'ACCEPTED');
-    assert.deepEqual(actualReceipt.command, actualRequest.command, 'The real receiver echoes the exact financial command envelope consumed by the Service.');
-    assert.equal(object(accepted.result).status, 'ACCEPTED');
-    validateCapitalDocument('VIEW', actualReceipt.result);
+    const originalReceipt = await raw('GET','/capital-exits/commands/historical-unknown');
+    assert.equal(originalReceipt.status,'UNCERTAIN'); assert.deepEqual(originalReceipt.command,originalCommand.command);
+    await raw('POST','/capital-exits',originalCommand,404);
+    assert.deepEqual(await raw('GET','/capital-exits/commands/historical-unknown'),originalReceipt);
+    await receiver.close(); receiver = await createCapitalAccount(options,receiverDir,'/missing-native-worker',runtime);
+    assert.deepEqual(await raw('GET','/capital-exits/commands/historical-unknown'),originalReceipt);
+    assert.deepEqual(JSON.parse(await readFile(join(receiverDir,'capital-receipts.json'),'utf8')).ledgerClaims,{original:'original-ledger'});
+    assert.ok(calls.every(row=>row.operation==='SNAPSHOT'),'Receipt retry and reopen do not issue controls.');
 
-    const status = await state.service.app.inject({ url: path, headers: state.headers });
-    assert.equal(status.statusCode, 200, status.body); assert.equal(capitalDecimalUnits(status.json().reserved), capitalDecimalUnits('200'));
-    const reconciled = await readControl(); assert.equal(reconciled.commands[startRequest.requestId]!.reserved, '0');
-    assert.equal(capitalDecimalUnits(capitalStatus(reconciled).reserved), capitalDecimalUnits('200'), 'Native aggregate and a local START reservation are counted once after native status includes the command.');
-    assert.equal(reconciled.status!.exits.length, 1);
-
-    // Retired signal delivery never interferes with the account-owned capital lifecycle.
-    const refreshed = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations/' + binding.json().id + '/refresh', headers: state.headers });
-    assert.equal(refreshed.statusCode, 200, refreshed.body);
-    assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
-
-    const ready = await until(async () => {
-      const response = await state.service.app.inject({ url: path, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);
-      return response.json().exits[0] as CapitalExitView;
-    }, exit => exit.state === 'READY');
-    validateCapitalDocument('VIEW', ready); assert.equal(ready.funds.withdrawability, 'SIMULATED');
-    const paused = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers,
-      payload: { requestId: 'receiver-pause', action: 'PAUSE', exitId: ready.id, expectedRevision: ready.revision } });
-    assert.equal(paused.statusCode, 202, paused.body);
-    await until(readControl, value => value.commands['receiver-pause']?.state === 'ACCEPTED');
-    const stopped = await until(async () => {
-      const response = await state.service.app.inject({ url: path, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);
-      return response.json().exits[0] as CapitalExitView;
-    }, exit => exit.state === 'PAUSED');
-    assert.equal(stopped.funds.reserved_amount.amount, '200'); assert.equal(stopped.action_availability.RELEASE_RESERVATION!.allowed, true);
-    const staleRelease = { requestId: 'receiver-release-race', action: 'RELEASE_RESERVATION', exitId: stopped.id, expectedRevision: stopped.revision };
-    const rejected = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: staleRelease });
-    assert.equal(rejected.statusCode, 202, rejected.body);
-    const rejectedControl = await until(readControl, value => value.commands[staleRelease.requestId]?.state === 'REJECTED');
-    assert.equal(rejectedControl.commands[staleRelease.requestId]!.error, 'capital_exit_revision_conflict');
-    const retryRejected = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: staleRelease });
-    assert.equal(retryRejected.statusCode, 202, retryRejected.body); assert.equal(retryRejected.json().state, 'REJECTED');
-    assert.equal(responses.filter(row => row.method === 'POST' && object(row.body).requestId === staleRelease.requestId).length, 1);
-    const cancelled = await until(async () => {
-      const afterConflict = await state.service.app.inject({ url: path, headers: state.headers });
-      assert.equal(afterConflict.statusCode, 200, afterConflict.body); return afterConflict.json().exits[0] as CapitalExitView;
-    }, exit => exit.state === 'CANCELLED_RESERVED');
-    assert.equal(cancelled.state, 'CANCELLED_RESERVED'); assert.equal(cancelled.funds.reserved_amount.amount, '200');
-    const released = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers,
-      payload: { requestId: 'receiver-release', action: 'RELEASE_RESERVATION', exitId: cancelled.id, expectedRevision: cancelled.revision } });
-    assert.equal(released.statusCode, 202, released.body);
-    await until(readControl, value => value.commands['receiver-release']?.state === 'ACCEPTED');
-    const closed = await state.service.app.inject({ url: path + '/' + stopped.id, headers: state.headers });
-    assert.equal(closed.statusCode, 200, closed.body); const closedExit = closed.json() as CapitalExitView;
-    validateCapitalDocument('VIEW', closedExit); assert.equal(closedExit.state, 'CLOSED'); assert.equal(closedExit.preparation_state, 'CLOSED');
-    assert.equal(closedExit.funds.reserved_amount.amount, '0'); assert.equal(closedExit.funds.waived_amount.amount, '200');
-    const finalStatus = await state.service.app.inject({ url: path, headers: state.headers }); assert.equal(capitalDecimalUnits(finalStatus.json().reserved), 0n);
-    const releaseTask = (await readControl()).commands['receiver-release']!.taskId;
-    assert.equal((await state.service.research.harness.getTask(releaseTask as TaskId, context))!.state.status, 'terminal');
-    // A historical closed exit may retain its last fence fact. It does not remain an active obligation.
-    const nextSignal = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
-      payload: { requestId: 'ordinary-signal-after-close', portfolioId: sourceId, mode: 'paper', connectionId: connection.id } });
-    assert.equal(nextSignal.statusCode, 410, nextSignal.body);
-    assert.equal(calls.filter(row => row.operation === 'TARGET').length, 0);
-    const retained = (await state.service.research.harness.snapshot(Application, context))!;
-    assert.ok(retained.portfolios[sourceId], 'Retiring execution preserves historical source facts.');
-    assert.ok(calls.some(row => row.operation === 'CONTROL')); assert.ok(calls.some(row => row.operation === 'CANCEL_EXIT'));
-    assert.ok(calls.every(row => ['SNAPSHOT', 'CONTROL', 'CANCEL_EXIT'].includes(row.operation)));
-    assert.equal(responses.filter(row => row.method === 'POST' && row.path === '/capital-exits').length, 1);
   } finally { await remote.close(); await receiver.close(); await state.cleanup(); }
 });
 
-test('live economic proof is published with its new native observation while proof heartbeats retain their sequence', { timeout: 30_000 }, async () => {
+test('independent live proof never rewrites a native observation or automatically sends CONTROL', { timeout: 30_000 }, async () => {
   // The actual receiver and Service run unchanged. This NDJSON protocol peer
   // models the official owner's CONTROL -> new Portfolio observation contract;
   // it does not claim exchange connectivity, a fill or scientific qualification.
@@ -225,7 +177,7 @@ test('live economic proof is published with its new native observation while pro
       payload: { requestId: 'live-read-binding', purpose: 'ACCOUNT_ONLY', mode: 'live', connectionId: connection.id } });
     assert.equal(created.statusCode, 202, created.body); const id = created.json().id;
     await state.service.research.harness.waitForTask((await state.service.work.getObservation(id)).taskId as TaskId, context);
-    const initial = (await state.service.work.getObservation(id)).snapshot!; assert.equal(initial.cash, '1000');
+    const initial = (await state.service.work.getObservation(id)).snapshot!; assert.equal(initial.cash, null);
     const initialReads = proofReads;
     await until(async () => proofReads, count => count > initialReads);
     const heartbeat = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations/' + id + '/refresh', headers: state.headers });
@@ -234,13 +186,13 @@ test('live economic proof is published with its new native observation while pro
     spotTotal = '900'; const beforeEconomicRead = proofReads;
     await until(async () => proofReads, count => count > beforeEconomicRead);
     const changed = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations/' + id + '/refresh', headers: state.headers });
-    assert.equal(changed.statusCode, 200, changed.body); assert.equal(changed.json().error, null); assert.equal(changed.json().cash, '900');
+    assert.equal(changed.statusCode, 200, changed.body); assert.equal(changed.json().error, null); assert.equal(changed.json().cash, null);
     const observed = (await state.service.work.getObservation(id)).snapshot!;
-    assert.ok(BigInt(String(observed.sequence)) > BigInt(String(initial.sequence)), 'The new economic proof must follow an actual owner observation, never a reused sequence.');
+    assert.equal(observed.sequence, initial.sequence, 'Independent venue proof must not invent a native event or overwrite its values.');
     assert.equal(observed.controlRevision, initial.controlRevision, 'An external cash observation does not itself create a new trading control epoch.');
     const originalNative = object(object(observed.nativeObservation).snapshot);
     assert.equal(originalNative.account_type, 'MARGIN'); assert.equal(originalNative.base_currency, null, 'Read projections must not manufacture CASH scientific scope.');
-    assert.equal(controls.at(-1)!.spot_free_cash, '900'); assert.equal(controls.at(-1)!.spot_total_cash, '900');
+    assert.deepEqual(controls, [], 'Refreshing external proof never sends CONTROL.');
     const repeated = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations/' + id + '/refresh', headers: state.headers });
     assert.equal(repeated.statusCode, 200, repeated.body); assert.equal(repeated.json().error, null);
     assert.equal((await state.service.work.getObservation(id)).snapshot!.sequence, observed.sequence);

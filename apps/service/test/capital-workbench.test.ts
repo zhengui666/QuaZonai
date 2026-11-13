@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { CapitalExitPlanningContext, CapitalExitPreview, CapitalExitPolicy, CapitalExitView } from '../../../packages/contracts/src/capital-exit.ts';
 import type { ConnectionConfig } from '../src/config.ts';
-import { accountKey, control } from '../src/capital-exit.ts';
+import { accountKey, control, CapitalExitCommand } from '../src/capital-exit.ts';
 import { Application, json, nowNs, object } from '../src/facts.ts';
 import { context, setup } from './support.ts';
 
@@ -100,12 +100,20 @@ async function protocolReceiver() {
   const url = await server.listen({ host: '127.0.0.1', port: 0 });
   const connection: ConnectionConfig = { id: 'capital-connection', name: 'Existing cash account', url, clientId: envelope.clientId, accountId: envelope.accountId, mode: envelope.mode };
   return { nativePreviewPosts, malformedResponse() { malformedPreview = true; }, wrongIdentity() { wrongPreviewIdentity = true; }, submittedResponse() { falselySubmitted = true; }, connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
+    retainOriginal(requestId = 'original-lost-start') {
+      current = { schema_version: 2, id: 'original-exit', revision: '1', account_source_id: 'physical-source', environment: 'PAPER', state: 'WAITING_CASH', preparation_state: 'WAITING_CASH', account_control_revision: controlRevision, command_id: requestId, reason_codes: [],
+        policy: { kind: 'CASH_ONLY' }, scope: { kind: 'AMOUNT', amount: '100', currency: 'USDC' }, remaining_trading: 'FENCED_PENDING_TARGET',
+        funds: { requested_amount: money('100'), reserved_amount: money('100'), staged_for_withdrawal_amount: money('0'), waived_amount: money('0'), released_cash_amount: money('0'), verified_withdrawable_amount: null, reconciled_withdrawal_amount: money('0'), withdrawability: 'UNVERIFIED' },
+        action_availability: { PAUSE: { allowed: true, reason: null }, CANCEL: { allowed: true, reason: null } }, progress: [], events: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      receipts.set(requestId, json({ ...envelope, requestId, command: { preview_id: 'retained-original-preview' }, status: 'ACCEPTED', result: current }));
+    },
     get current() { return current; }, advanceObservation() { observationId = 'observation-later'; }, blockQuotes() { blocked = true; },
     loseStart() { loseNextStart = true; allowReceipt = false; }, revealReceipt() { allowReceipt = true; }, close: () => server.close() };
 }
 
-test('account-only capital preparation uses local contracts, retained planning observations, details and independent stop capability', { timeout: 30_000 }, async () => {
+test('account-only observation reads retained capital facts and can stop without a new plan', { timeout: 30_000 }, async () => {
   const state = await setup(); const remote = await protocolReceiver();
+  remote.retainOriginal();
   try {
     state.options.config.jobBinary = join(state.directory, 'missing-science-worker'); state.options.config.connections = [remote.connection]; await state.restart();
     const bindingRequest = { requestId: 'existing-account', purpose: 'ACCOUNT_ONLY', mode: 'paper', connectionId: remote.connection.id };
@@ -116,29 +124,13 @@ test('account-only capital preparation uses local contracts, retained planning o
     assert.deepEqual((await state.service.research.harness.snapshot(Application, context))!.portfolios, {});
     const initialControls = (await state.service.research.harness.snapshot(Application, context))!.accountControls!;
     const initialMonitorId = control(initialControls[accountKey(remote.connection, initialControls)]).monitorTaskId!;
-    await until(async () => (await state.service.research.harness.getTask(initialMonitorId as TaskId, context))!.state.status, value => value === 'terminal');
+    assert.ok(initialMonitorId, 'Existing obligation keeps an original read monitor.');
     const repeated = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: bindingRequest });
     assert.equal(repeated.statusCode, 202, repeated.body); assert.equal(repeated.json().id, binding.id);
-    const planned = await state.service.app.inject({ url: path + '/planning-context', headers: state.headers }); assert.equal(planned.statusCode, 200, planned.body);
-    assert.equal(planned.json().instruments[0].instrument_id, 'BTC/USDC.HYPERLIQUID');
-    remote.advanceObservation();
-    const previewRequest = { requestId: 'natural-preview', amount: '100', currency: 'USDC', contextId: remote.plan.id,
-      policy: { kind: 'NATURAL_RELEASE', deadline: new Date(Date.now() + 60_000).toISOString() } };
-    const preview = await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers, payload: previewRequest });
-    assert.equal(preview.statusCode, 200, preview.body); assert.equal(preview.json().original_observation_id, 'observation-original');
-    assert.equal(object(remote.previewPosts[0]!.request).expected_source_observation_id, 'observation-original');
-    const started = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers,
-      payload: { requestId: 'natural-start', action: 'START', previewId: preview.json().id } });
-    assert.equal(started.statusCode, 202, started.body);
-    await until(async () => {
-      const app = (await state.service.research.harness.snapshot(Application, context))!;
-      return control(app.accountControls![accountKey(remote.connection, app.accountControls)]).commands['natural-start']?.state;
-    }, value => value === 'ACCEPTED');
-    assert.equal(remote.startPosts.length, 1); assert.deepEqual(remote.targetPosts, []);
-    const startedControls = (await state.service.research.harness.snapshot(Application, context))!.accountControls!;
-    const activeMonitorId = control(startedControls[accountKey(remote.connection, startedControls)]).monitorTaskId!;
-    assert.notEqual(activeMonitorId, initialMonitorId, 'START must retain its replacement reader after the account-only admission reader has completed.');
-    assert.notEqual((await state.service.research.harness.getTask(activeMonitorId as TaskId, context))!.state.status, 'terminal');
+    assert.equal((await state.service.app.inject({ url: path + '/planning-context', headers: state.headers })).statusCode, 400);
+    assert.equal((await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers, payload: { requestId: 'removed-preview' } })).statusCode, 404);
+    const refused = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: { requestId: 'new-start', action: 'START' } });
+    assert.equal(refused.statusCode, 410); assert.equal(remote.startPosts.length, 0); assert.equal(remote.previewPosts.length, 0); assert.deepEqual(remote.targetPosts, []);
     const detail = await state.service.app.inject({ url: path + '/' + remote.current!.id, headers: state.headers }); assert.equal(detail.statusCode, 200, detail.body);
     assert.equal(detail.json().funds.reserved_amount.amount, '100');
     remote.blockQuotes();
@@ -156,22 +148,28 @@ test('account-only capital preparation uses local contracts, retained planning o
 
 test('a lost capital POST resumes its original Durable request and never sends a replacement command', { timeout: 30_000 }, async () => {
   const state = await setup(); const remote = await protocolReceiver();
+  remote.retainOriginal();
   try {
     state.options.config.jobBinary = join(state.directory, 'missing-science-worker'); state.options.config.connections = [remote.connection]; await state.restart();
     const created = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
       payload: { requestId: 'account-for-lost-response', purpose: 'ACCOUNT_ONLY', mode: 'paper', connectionId: remote.connection.id } });
     assert.equal(created.statusCode, 202, created.body); const path = '/api/v3/observations/' + created.json().id + '/capital-exits';
-    await state.service.app.inject({ url: path + '/planning-context', headers: state.headers });
-    const preview = await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers,
-      payload: { requestId: 'cash-preview', amount: '100', currency: 'USDC', contextId: remote.plan.id, policy: { kind: 'CASH_ONLY' } } });
-    assert.equal(preview.statusCode, 200, preview.body); remote.loseStart();
-    const request = { requestId: 'original-lost-start', action: 'START', previewId: preview.json().id };
-    const started = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: request });
-    assert.equal(started.statusCode, 202, started.body);
+    const request = { requestId: 'original-lost-start', action: 'START', previewId: 'retained-original-preview' };
+    remote.loseStart();
+    // Persist the original uncertain command in the real existing Doc; do not issue a retired START.
+    await state.service.research.harness.commit(async tx => {
+      const app = await tx.doc(Application); const key = accountKey(remote.connection, app.accountControls); const retained = control(app.accountControls![key]);
+      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId: request.requestId, connection: remote.connection, reconcile: true, binary: state.options.config.jobBinary, dataDir: state.options.config.dataDir }, { conversationId: retained.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+      retained.commands[request.requestId] = { original: request, body: { preview_id: request.previewId }, path: 'capital-exits', reserved: '100', state: 'UNCERTAIN', result: null, error: 'original_reply_unknown', taskId };
+      app.accountControls![key] = json(retained);
+    }, context);
+    // Reopen the existing SQLite state so recovery, not new command admission, owns the retained task.
+    await state.restart();
     const original = await until(async () => {
       const app = (await state.service.research.harness.snapshot(Application, context))!;
       return control(app.accountControls![accountKey(remote.connection, app.accountControls)]).commands[request.requestId];
-    }, value => value?.state === 'UNCERTAIN' && remote.startPosts.length === 1);
+    }, value => value?.state === 'UNCERTAIN' && remote.receiptGets.length > 0);
+    assert.equal(original.reserved, '100'); assert.equal(remote.startPosts.length, 0);
     const taskId = original.taskId; await state.restart(); remote.revealReceipt();
     const settled = await until(async () => {
       const app = (await state.service.research.harness.snapshot(Application, context))!;
@@ -180,7 +178,7 @@ test('a lost capital POST resumes its original Durable request and never sends a
     assert.equal(settled.taskId, taskId); assert.equal((await state.service.research.harness.getTask(taskId as TaskId, context))!.state.status, 'terminal');
     const retry = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload: request });
     assert.equal(retry.statusCode, 202, retry.body); assert.equal(retry.json().state, 'ACCEPTED');
-    assert.equal(remote.startPosts.length, 1); assert.ok(remote.receiptGets.length > 0); assert.ok(remote.receiptGets.every(id => id === request.requestId));
+    assert.equal(remote.startPosts.length, 0); assert.ok(remote.receiptGets.length > 0); assert.ok(remote.receiptGets.every(id => id === request.requestId));
     assert.deepEqual(remote.targetPosts, []);
   } finally { await state.cleanup(); await remote.close(); }
 });

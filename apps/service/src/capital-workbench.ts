@@ -61,21 +61,6 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const state = control((await host.harness.snapshot(Application, context))?.accountControls?.[key]);
     return { ...capitalStatusForBinding(state, original.connection), commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error, result: value.result })) };
   }
-  async function planningContext(id: string) {
-    const original = await fact(id);
-    const response = await downstreamRequest(original.connection, 'capital-exits/planning-context', 'GET');
-    assertEnvelope(original.connection, response, original.view.currency);
-    const plan = object(response.context);
-    await validateCapitalDocument(config, 'CONTEXT', plan);
-    if (plan.currency !== original.view.currency || plan.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_context_binding_mismatch', 409);
-    await host.harness.commit(async tx => {
-      const app = await tx.doc(Application); const binding = observation(app.observations[id]);
-      binding.capitalPlanningContexts = Object.fromEntries(Object.entries(binding.capitalPlanningContexts ?? {}).filter(([, value]) => Date.parse(String(value.valid_until)) > Date.now()));
-      binding.capitalPlanningContexts[String(plan.id)] = json(plan);
-      app.observations[id] = json(binding);
-    }, context);
-    return plan;
-  }
   async function getCapitalExit(id: string, exitId: string) {
     const original = await fact(id);
     const response = await downstreamRequest(original.connection, `capital-exits/${encodeURIComponent(exitId)}`, 'GET');
@@ -87,96 +72,29 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       || exit.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE') || object(exit.scope).currency !== original.view.currency) throw new Problem('capital_exit_identity_mismatch', 409);
     return exit;
   }
-  async function previewCapital(id: string, value: unknown) {
-    const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = await fact(id);
-    let captured = original.capitalPreviews?.[requestId];
-    if (captured && canonical(captured.original!) !== canonical(body)) throw new Problem('request_id_conflict', 409);
-    if (!captured) {
-      const status = await refreshCapital(id);
-      if (status.capability !== 'SUPPORTED' || !status.accountSourceId || !status.observationId || !status.controlRevision) throw new Problem(status.reason ?? 'capital_exit_unavailable', 409);
-      const plan = original.capitalPlanningContexts?.[String(body.contextId)];
-      if (!plan || body.contextId !== plan.id || plan.account_source_id !== status.accountSourceId || plan.account_control_revision !== status.controlRevision || Date.parse(String(plan.valid_until)) <= Date.now()) throw new Problem('capital_exit_context_stale', 409);
-      const amount = decimal(body.amount, 'amount'); if (decimalUnits(amount) <= 0n || body.currency !== original.view.currency) throw new Problem('capital_exit_amount_or_currency_invalid', 422);
-      const policy = body.policy === undefined ? { kind: 'CASH_ONLY' } : object(body.policy);
-      if (!status.supportedPolicies?.includes(String(policy.kind) as 'CASH_ONLY' | 'NATURAL_RELEASE' | 'BOUNDED_LIMIT')) throw new Problem('capital_exit_policy_unsupported', 409);
-      if (body.resumeExitId !== undefined || body.expectedExitRevision !== undefined) {
-        const exit = status.exits.find(item => item.id === body.resumeExitId);
-        if (!exit || exit.revision !== body.expectedExitRevision) throw new Problem('capital_exit_revision_conflict', 409);
-        if (decimalUnits(amount) !== decimalUnits(exit.funds.reserved_amount.amount)) throw new Problem('capital_exit_resume_amount_mismatch', 422);
-      }
-      const request = { schema_version: 2, account_source_id: status.accountSourceId, expected_source_observation_id: plan.observation_id,
-        expected_account_control_revision: status.controlRevision, planning_context_id: text(body.contextId, 'context_id'),
-        scope: { kind: 'AMOUNT', amount, currency: body.currency }, policy,
-        ...(body.resumeExitId !== undefined ? { resume_exit_id: text(body.resumeExitId, 'resume_exit_id'), expected_exit_revision: counter(body.expectedExitRevision, 'exit_revision') } : {}) };
-      await validateCapitalDocument(config, 'REQUEST', request);
-      captured = await host.harness.commit(async tx => {
-        const facts = await tx.doc(Application); const current = observation(facts.observations[id]);
-        const prior = current.capitalPreviews?.[requestId]; if (prior && canonical(prior.original!) !== canonical(body)) throw new Problem('request_id_conflict', 409);
-        current.capitalPreviews ??= {}; current.capitalPreviews[requestId] ??= json({ original: body, controlRevision: status.controlRevision, envelope: { requestId, clientId: original.connection.clientId, accountId: original.connection.accountId, request } });
-        facts.observations[id] = json(current); return json(current.capitalPreviews[requestId]);
-      }, context);
-    }
-    if (captured.preview) return captured.preview;
-    const envelope = object(captured.envelope); const request = object(envelope.request);
-    const response = await downstreamRequest(original.connection, 'capital-exits/preview', 'POST', envelope);
-    if (response.requestId !== requestId || response.clientId !== original.connection.clientId || response.accountId !== original.connection.accountId) throw new Problem('capital_exit_preview_identity_mismatch', 409);
-    const preview = object(response.preview); await validateCapitalDocument(config, 'PREVIEW', preview);
-    if (preview.account_source_id !== request.account_source_id || preview.original_observation_id !== request.expected_source_observation_id || preview.expected_account_control_revision !== captured.controlRevision
-      || preview.resume_exit_id !== request.resume_exit_id || preview.expected_exit_revision !== request.expected_exit_revision
-      || canonical(preview.scope!) !== canonical(json(request.scope)) || canonical(preview.policy!) !== canonical(json(request.policy)) || preview.environment !== (original.connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_preview_binding_mismatch', 409);
-    await host.harness.commit(async tx => {
-      const facts = await tx.doc(Application); const current = observation(facts.observations[id]);
-      const prior = current.capitalPreviews?.[requestId];
-      if (prior && canonical(prior.original!) !== canonical(body)) throw new Problem('request_id_conflict', 409);
-      current.capitalPreviews![requestId] = json({ ...prior, preview }); facts.observations[id] = json(current);
-    }, context);
-    return preview;
-  }
   async function commandCapital(id: string, value: unknown) {
     const original = object(value); const requestId = text(original.requestId, 'request_id'); const current = await fact(id);
     const priorControls = (await host.harness.snapshot(Application, context))?.accountControls;
     const existing = control(priorControls?.[accountKey(current.connection, priorControls)]).commands[requestId];
     if (existing) { if (canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return { requestId, state: existing.state, result: existing.result }; }
+    if(!['PAUSE','CANCEL'].includes(String(original.action)))throw new Problem('capital_exit_planning_retired',410);
     const status = await refreshCapital(id); const controls = (await host.harness.snapshot(Application, context))?.accountControls; const key = accountKey(current.connection, controls);
     const action = text(original.action, 'action') as CapitalExitAction;
     const permissionBasis = capitalCommandPermission(control(controls?.[key]), current.connection, action);
     if (canonical(physicalCapitalState(permissionBasis.status)) !== canonical(physicalCapitalState(status))) throw new Problem('capital_exit_permission_basis_changed', 409);
-    const previews = Object.values(current.capitalPreviews ?? {}).filter(value => value.preview).map(value => object(value.preview));
-    let native: import('@earendil-works/pi-durable').JsonObject; let path: string; let reserved = '0';
-    if (action === 'START') {
-      const preview = previews.find(value => value.id === original.previewId);
-      if (!preview || preview.resume_exit_id !== undefined || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
-      if (preview.expected_account_control_revision !== status.controlRevision || preview.account_source_id !== status.accountSourceId) throw new Problem('capital_exit_preview_stale', 409);
-      native = { schema_version: 2, preview_id: preview.id!, expected_account_control_revision: counter(preview.expected_account_control_revision, 'control_revision'),
-        acknowledged_plan_artifact_id: preview.plan_artifact_id!, expected_source_observation_id: preview.original_observation_id! };
-      await validateCapitalDocument(config, 'START', native);
-      reserved = decimal(object(object(preview.funds).requested).amount, 'requested_amount'); path = 'capital-exits';
-    } else {
-      const exitId = text(original.exitId, 'capital_exit_id'); const exit = status.exits.find(value => value.id === exitId);
-      if (!exit) throw new Problem('capital_exit_not_found', 404);
-      if (original.expectedRevision !== exit.revision) throw new Problem('capital_exit_revision_conflict', 409);
-      const availability = exit.action_availability[action]; if (availability?.allowed !== true) throw new Problem(availability?.reason ?? 'capital_exit_action_unavailable', 409);
-      native = { schema_version: 2, expected_revision: exit.revision, action };
-      if (action === 'RESUME') {
-        const preview = previews.find(value => value.id === original.previewId);
-        if (!preview || preview.capability !== 'SUPPORTED' || Date.parse(String(preview.valid_until)) <= Date.now()
-          || preview.resume_exit_id !== exitId || preview.expected_exit_revision !== exit.revision || preview.expected_account_control_revision !== status.controlRevision
-          || preview.account_source_id !== status.accountSourceId) throw new Problem('capital_exit_preview_invalid_or_expired', 409);
-        native.preview_id = preview.id!;
-      }
-      if (action === 'RECONCILE_WITHDRAWAL' || action === 'RECONCILE_EXTERNAL_TRANSFER') {
-        const amount = decimal(original.amount, 'withdrawal_amount'); if (decimalUnits(amount) <= 0n || original.currency !== current.view.currency) throw new Problem('capital_exit_amount_or_currency_invalid', 422);
-        native.user_reported_amount = amount; native.currency = current.view.currency;
-        native.external_transfer_ref = text(original.externalTransferRef, 'external_transfer_ref');
-      }
-      await validateCapitalDocument(config, 'ACTION', native); path = `capital-exits/${encodeURIComponent(exitId)}/actions`;
-    }
+    const exitId=text(original.exitId,'capital_exit_id');const exit=status.exits.find(value=>value.id===exitId);
+    if(!exit)throw new Problem('capital_exit_not_found',404);
+    if(original.expectedRevision!==exit.revision)throw new Problem('capital_exit_revision_conflict',409);
+    const availability=exit.action_availability[action];if(availability?.allowed!==true)throw new Problem(availability?.reason??'capital_exit_action_unavailable',409);
+    const native={schema_version:2,expected_revision:exit.revision,action};
+    await validateCapitalDocument(config,'ACTION',native);
+    const path=`capital-exits/${encodeURIComponent(exitId)}/actions`,reserved='0';
     return host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const state = control(facts.accountControls?.[key]);
       const prior = state.commands[requestId];
       if (prior) { if (canonical(prior.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return json({ requestId, state: prior.state, result: prior.result }); }
       assertCapitalCommandPermission(state, current.connection, permissionBasis);
-      if (Object.values(state.commands).some(value => ['PENDING', 'UNCERTAIN'].includes(value.state))) throw new Problem('capital_exit_command_requires_reconciliation', 409);
+      // Stop-only admission may proceed while older intents remain uncertain; their reservations are retained.
       if (state.status?.controlRevision !== status.controlRevision) throw new Problem('capital_exit_revision_conflict', 409);
       const owner = await ensureCapitalWatch(tx, current.connection, current.view.currency);
       const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: config.jobBinary, dataDir: config.dataDir },
@@ -186,7 +104,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       facts.accountControls![owner.key] = json(admitted); return { requestId, state: 'PENDING', result: null };
     }, context);
   }
-  return { refreshCapital, planningContext, getCapitalExit, previewCapital, commandCapital,
+  return { refreshCapital, getCapitalExit, commandCapital,
     previewFixedRisk: (id: string, value: unknown) => previewNative(id, value, 'sizing'),
     previewOrder: (id: string, value: unknown) => previewNative(id, value, 'order') };
 }

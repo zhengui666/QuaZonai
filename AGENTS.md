@@ -222,6 +222,13 @@ STATIC_SCENARIO 原样贯穿配置、各显式回测与成本/邻域候选；原
 
 多标的/多 venue 配置接口与实际策略、数据源覆盖须分别验收；它不是LiveNode账户策略注册接口，不解除现账户策略生命周期限制，也不启动模拟盘/实盘。用户策略的官方save/load、订单归属和账户恢复仍需另行接线与验证。
 
+## 用户账户策略的静态 Rust 接线
+
+账户继续使用现有独立 `account-runtime` 协议与 `QZ_ACCOUNT_BINARY`。用户 crate 可在 current-thread Tokio 入口调用 `job::account_runtime::run_with_registration(Some(register))`，并保留 `build-identity` 输出 `job::build_identity()`。用户 runner 依赖同一固定 Nautilus revision、`account-runtime` feature 与 high precision；不是新增服务或动态源码加载。
+
+账户配置沿用 `native_strategy: { instrument_id, strategy: { kind: "REGISTERED", name, config } }`，`config` 为原始 JSON 值。只有明确 START 通过原控制准入后调用静态回调；回调通过 `AccountStrategyRegistrar::add` 注册一个具体官方 Strategy 类型，官方 Controller 完成注册、官方 Cache 与 DataActor callback 恢复状态，随后官方启动。无回调、未知名称或未注册任何策略均真实失败，不回退示例。新增类型需构建部署用户账户 runner；已有类型仅改配置不需重新编译。回调可读取原账户的全部 instrument IDs，但当前账户宿主仍为已接入的 Hyperliquid/Sandbox 与既有账户模型，不能据此声称所有多 venue LiveNode 配置已支持。
+
+RECOVER 不实例化或加载用户信号策略，也不调用其 `on_start`。既有独占缓存锁下先调用官方 `ExecutionEngine.load_cache`，完整性失败或含任何 emulated 订单则在连接/启动前拒绝恢复，保留原订单文件。官方 emulator 会自动恢复此类订单且无禁用配置，不能通过 HALTED 冒称没有自动撤单。普通非 emulated 恢复、显式 START 与参数变化仍须官方 Sandbox 以及独立用户 crate 编译验证；不得将回测工厂或无行情生命周期验收冒充已完成真实账户/实盘验收。
 ## 应用部署与用户原生环境分离
 
 默认 dev/release 仅发布、安装和更新 QuaZonai 应用及 CLI，不携带或自动管理 Nautilus 运行环境。安装器仅操作 Compose 的 `app --no-deps`，不更新、启动、停止或删除用户已有 Nautilus 容器及账户/目录数据；旧 `--local-runtime` 已退役。已有外部服务必须由所有者单独维护。

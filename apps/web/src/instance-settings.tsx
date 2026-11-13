@@ -80,14 +80,18 @@ export default function InstanceSettings() {
   const loadLatest = () => {
     if (!query.data) return; form.resetFields(); form.setFieldsValue(fields(query.data)); setSaved(query.data); setRevision(query.data.revision); setPending(undefined); setError(undefined); setNotice(''); clearDraft(); setDraftSaved(true);
   };
-  return <div className="settings-page instance-settings"><header className="page-heading"><h2>实例连接</h2><Button icon={<ArrowClockwiseIcon size={15} />} disabled={saving || !!pending} onClick={() => { void query.refetch(); }}>刷新配置</Button></header>
+  return <div className="settings-page instance-settings"><header className="page-heading"><h2>自管 Nautilus 运行环境与连接</h2><Button icon={<ArrowClockwiseIcon size={15} />} disabled={saving || !!pending} onClick={() => { void query.refetch(); }}>刷新配置</Button></header>
+    <p>选择并保存你已有的 Nautilus 运行环境连接。QuaZonai 部署不附带或自动启动 Nautilus；连接配置不是安装步骤，也不修改你的原生策略。</p>
+    <p>当前表单仅支持已经接通的兼容 HTTP 接口。Nautilus 的进程内 API、官方消息总线和远程 HTTP 不是同一种接口；本机或远程原生环境的直接接入仍待验证，不能只填任意地址就宣称已连接。已有 Rust 安装用于运行新节点，与接入正在运行的节点是两种能力；本页尚未提供对应原生探测入口，保存不会探测版本或证明运行能力。</p>
+    <p>官方 Redis 消息总线仅可读取节点已经配置并发布的流，不代表完整历史，也不自动提供启停或交易控制；本页尚未接入该只读来源。可执行文件路径也不是通用 Nautilus 接口，现有 runner 需要对应 JSON 协议，不能将任意 Rust 二进制视为可直接连接。</p>
+    <p>保存连接只保存地址和访问配置，不安装或启动服务，不连接交易账户，不启动策略。账户配置保存、恢复连接和交易启动均为独立明确操作。</p>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
     {query.isPending ? <Loading /> : !saved ? null : <Form form={form} layout="vertical" disabled={saving || !!pending} onValuesChange={changed} onFinish={() => { void save(); }}>
       <section className="settings-group instance-backtest"><header><h2>回测与研究</h2></header><div className="settings-group-body">
         <Form.Item label="启用回测连接" name="backtestEnabled" valuePropName="checked"><Switch aria-label="启用回测连接" /></Form.Item>
         {current?.backtestEnabled && <div className="instance-fields">
           <Form.Item label="实例标识" name={['backtest', 'id']} rules={required}><Input autoComplete="off" /></Form.Item>
-          <Form.Item label="服务地址" name={['backtest', 'url']} rules={address}><Input placeholder="https://nautilus.example.com" autoComplete="off" /></Form.Item>
+          <Form.Item label="兼容适配器根地址" name={['backtest', 'url']} rules={address}><Input placeholder="https://adapter.example.com" autoComplete="off" /></Form.Item>
           <Form.Item label="访问令牌" name={['backtest', 'token']} extra="直接填写访问令牌；无需凭据时留空。"><Input.Password autoComplete="new-password" /></Form.Item>
         </div>}
       </div></section>
@@ -98,7 +102,7 @@ export default function InstanceSettings() {
           <Form.Item {...rest} label="名称" name={[name, 'name']} rules={required}><Input autoComplete="off" /></Form.Item>
           <div className="instance-pair"><Form.Item {...rest} label="模式" name={[name, 'mode']} rules={[{ required: true, message: '请选择模式' }]}><Select options={[{ value: 'paper', label: '模拟盘' }, { value: 'live', label: '实盘' }]} /></Form.Item>
           <Form.Item {...rest} label="实例标识" name={[name, 'id']} rules={required}><Input autoComplete="off" /></Form.Item></div>
-          <Form.Item {...rest} label="服务地址" name={[name, 'url']} rules={address}><Input placeholder="https://nautilus.example.com" autoComplete="off" /></Form.Item>
+          <Form.Item {...rest} label="兼容适配器账户地址" name={[name, 'url']} rules={address}><Input placeholder="https://adapter.example.com/accounts/your-account" autoComplete="off" /></Form.Item>
           <div className="instance-pair"><Form.Item {...rest} label="客户端标识" name={[name, 'clientId']} rules={required}><Input autoComplete="off" /></Form.Item>
           <Form.Item {...rest} label="账户标识" name={[name, 'accountId']} rules={required}><Input autoComplete="off" /></Form.Item></div>
           <Form.Item {...rest} label="访问令牌" name={[name, 'token']}><Input.Password autoComplete="new-password" /></Form.Item>

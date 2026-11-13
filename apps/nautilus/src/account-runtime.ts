@@ -42,6 +42,8 @@ export interface NativeAccountSnapshot {
   cash: string | null; equity: string | null; currency: string; currency_precision: number;
 }
 export interface NativeAccountRuntime {
+  start?(): Promise<void>;
+  isConnected?(): boolean;
   request(operation: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
   subscribeTicks?(listener: () => void): () => void;
   close(): Promise<void>;
@@ -61,7 +63,8 @@ export class AccountRuntime implements NativeAccountRuntime {
   constructor(binary: string, options: AccountOptions, sourceId: string, dataDir: string) {
     this.binary = binary; this.options = options; this.sourceId = sourceId; this.dataDir = dataDir;
   }
-  private async start(): Promise<void> {
+  isConnected(): boolean { return this.child !== null || this.starting !== null; }
+  async start(): Promise<void> {
     if (this.stopped) throw new Error('account_runtime_stopped');
     if (this.starting) return this.starting;
     if (this.child) return;
@@ -123,7 +126,10 @@ export class AccountRuntime implements NativeAccountRuntime {
     });
   }
   async request(operation: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-    await this.start(); return this.send(operation, payload);
+    if (this.stopped) throw new Error('account_runtime_stopped');
+    if (!this.child) throw new Error('account_runtime_not_started');
+    if (this.starting) await this.starting;
+    return this.send(operation, payload);
   }
   subscribeTicks(listener: () => void): () => void { this.ticks.add(listener); return () => { this.ticks.delete(listener); }; }
   async close(): Promise<void> {

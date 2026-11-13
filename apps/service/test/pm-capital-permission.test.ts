@@ -20,7 +20,7 @@ async function until(read: () => Promise<boolean>, message: string) {
 async function fixture() {
   const state = await setup(), remote = Fastify();
   let permission: 'SUPPORTED' | 'READABLE' | 'FAILED' = 'SUPPORTED', loseResponse = false, receiptReady = false;
-  let accountSequence = 0n;
+  let accountSequence = 0n; let stopAllowed = true;
   let nextStatusGate: { enter: () => void; released: Promise<void> } | null = null;
   const releaseStatusGates: (() => void)[] = [];
   const posts: JsonObject[] = [], gets: string[] = [];
@@ -40,7 +40,7 @@ async function fixture() {
   for (const prefix of ['', '/other-source']) {
     remote.get(prefix + '/capabilities', (_request, reply) => permission === 'FAILED' ? reply.code(503).send({ error: 'source_unavailable' }) : {
       ...envelope, capitalExit: { version: 2, supported: permission === 'SUPPORTED', readable: true, policies: ['CASH_ONLY'],
-        actions: permission === 'SUPPORTED' ? ['START', 'PAUSE', 'CANCEL'] : ['PAUSE', 'CANCEL'] } });
+        actions: !stopAllowed ? [] : permission === 'SUPPORTED' ? ['START', 'PAUSE', 'CANCEL'] : ['PAUSE', 'CANCEL'] } });
     remote.get(prefix + '/capital-exits', async () => {
       if (prefix === '' && nextStatusGate) {
         const gate = nextStatusGate; nextStatusGate = null; gate.enter(); await gate.released;
@@ -70,16 +70,13 @@ async function fixture() {
       payload: { requestId: 'existing-account', purpose: 'ACCOUNT_ONLY', mode: 'paper', connectionId: connection.id } });
     assert.equal(admitted.statusCode, 202, admitted.body); assert.equal(admitted.json().portfolioId, null);
     const path = '/api/v3/observations/' + admitted.json().id + '/capital-exits';
-    const planning = await state.service.app.inject({ url: path + '/planning-context', headers: state.headers }); assert.equal(planning.statusCode, 200, planning.body);
-    const planned = await state.service.app.inject({ method: 'POST', url: path + '/preview', headers: state.headers,
-      payload: { requestId: 'original-preview-request', amount: '10', currency: 'USDC', contextId: plan.id, policy: { kind: 'CASH_ONLY' } } });
-    assert.equal(planned.statusCode, 200, planned.body);
+    const observed = await state.service.app.inject({ url: path, headers: state.headers }); assert.equal(observed.statusCode, 200, observed.body);
     const request = { requestId: 'original-capital-command', action: 'START', previewId: preview.id };
     const native = { schema_version: 2, preview_id: preview.id, expected_account_control_revision: '7',
       expected_source_observation_id: 'native-observation', acknowledged_plan_artifact_id: preview.plan_artifact_id };
     const read = async () => (await state.service.research.harness.snapshot(Application, context))!;
     return { state, connection, path, request, native, posts, gets, read,
-      permission(value: typeof permission) { permission = value; },
+      permission(value: typeof permission) { permission = value; }, revokeStops() { stopAllowed = false; },
       holdNextStatus() {
         let enter!: () => void, release!: () => void;
         const entered = new Promise<void>(resolve => { enter = resolve; });
@@ -143,14 +140,14 @@ test('a delayed old status response cannot restore its earlier SUPPORTED permiss
     assert.equal(object(transportCapability(state, f.connection)!.document.capitalExit).supported, false);
     assert.equal(capitalStatusForBinding(state, f.connection).capability, 'UNSUPPORTED');
     assert.throws(() => capitalCommandPermission(state, f.connection, 'START'), /capital_exit_initiation_unavailable/);
-    const denied = await f.send(); assert.equal(denied.statusCode, 409, denied.body); assert.equal(f.posts.length, 0);
+    const denied = await f.send(); assert.equal(denied.statusCode, 410, denied.body); assert.equal(f.posts.length, 0);
   } finally { gate.release(); if (oldRead) await oldRead.catch(() => {}); await f.cleanup(); }
 });
 
 for (const changed of ['READABLE', 'FAILED'] as const) test('a current ' + changed + ' source rejects a new START despite its retained valid preview', { timeout: 20_000 }, async () => {
   const f = await fixture();
   try {
-    f.permission(changed); const result = await f.send(); assert.equal(result.statusCode, 409, result.body);
+    f.permission(changed); await f.refresh(); const result = await f.send(); assert.equal(result.statusCode, 410, result.body);
     const app = await f.read(), state = control(app.accountControls![accountKey(f.connection, app.accountControls)]);
     assert.deepEqual(state.commands, {}); assert.equal(f.posts.length, 0);
     assert.notEqual(capitalStatusForBinding(state, f.connection).capability, 'SUPPORTED');
@@ -158,7 +155,7 @@ for (const changed of ['READABLE', 'FAILED'] as const) test('a current ' + chang
   } finally { await f.cleanup(); }
 });
 
-test('a persisted pending task rejects revoked permission before POST and releases only its unsent local reservation', { timeout: 20_000 }, async () => {
+test('a retired persisted pending START never POSTs or releases its original reservation', { timeout: 20_000 }, async () => {
   const f = await fixture();
   try {
     const app = await f.read(), initial = control(app.accountControls![accountKey(f.connection, app.accountControls)]);
@@ -178,23 +175,56 @@ test('a persisted pending task rejects revoked permission before POST and releas
     }, context);
     await f.state.service.research.harness.waitForTask(taskId as TaskId, context);
     const after = await f.read(), state = control(after.accountControls![accountKey(f.connection, after.accountControls)]), command = state.commands[f.request.requestId]!;
-    assert.equal(f.posts.length, 0); assert.equal(command.state, 'REJECTED'); assert.equal(command.reserved, '0');
-    assert.equal(command.result, null, 'A local refusal is not a remote receipt.'); assert.ok(command.error); assert.deepEqual(command.original, f.request);
-    assert.equal(capitalStatus(state).reserved, '25.000000000000000000', 'The pre-existing native account reservation remains protected.');
+    assert.equal(f.posts.length, 0); assert.equal(command.state, 'PENDING'); assert.equal(command.reserved, '10');
+    assert.equal(command.result, null, 'A local refusal is not a remote receipt.'); assert.equal(command.error, null); assert.deepEqual(command.original, f.request);
+    assert.equal(capitalStatus(state).reserved, '35.000000000000000000', 'The pre-existing native account reservation remains protected.');
   } finally { await f.cleanup(); }
 });
 
-test('a response-lost POST reconciles its original receipt after permission is revoked without a replacement POST', { timeout: 20_000 }, async () => {
+test('a retained historical response-lost intent reconciles its original receipt after permission revocation without a replacement POST', { timeout: 20_000 }, async () => {
   const f = await fixture();
   try {
-    f.loseResponse(); const response = await f.send(); assert.equal(response.statusCode, 202, response.body);
-    await until(async () => f.posts.length === 1, 'The original POST must have reached the source.');
-    const original = structuredClone(f.posts[0]!); f.permission('READABLE'); const refreshed = await f.refresh(); assert.equal(refreshed.statusCode, 200, refreshed.body);
+    // The original request reached the remote before upgrade; restore its exact unresolved fact.
+    const original = { requestId: f.request.requestId, clientId: f.connection.clientId, accountId: f.connection.accountId, command: f.native };
+    f.posts.push(structuredClone(original));
+    await f.state.service.research.harness.commit(async tx => {
+      const facts = await tx.doc(Application), key = accountKey(f.connection, facts.accountControls);
+      const retained = control(facts.accountControls![key]);
+      const conversation = (retained.conversationId ?? (await tx.createConversation({ ownership: { kind: 'ownerless' } })).id) as ConversationId;
+      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId: f.request.requestId, connection: f.connection, reconcile: true, binary: f.state.options.config.jobBinary, dataDir: f.state.directory }, { conversationId: conversation, ownership: { kind: 'conversation' }, background: true });
+      retained.commands[f.request.requestId] = { original: f.request, body: f.native, path: 'capital-exits', reserved: '10', state: 'UNCERTAIN', result: null, error: 'original_response_lost', taskId };
+      facts.accountControls![key] = json(retained);
+    }, context);
+    f.permission('READABLE'); const refreshed = await f.refresh(); assert.equal(refreshed.statusCode, 200, refreshed.body);
     f.allowReceipt();
     const app = await f.read(), command = control(app.accountControls![accountKey(f.connection, app.accountControls)]).commands[f.request.requestId]!;
     await f.state.service.research.harness.waitForTask(command.taskId as TaskId, context);
     const after = await f.read(), settled = control(after.accountControls![accountKey(f.connection, after.accountControls)]).commands[f.request.requestId]!;
     assert.equal(settled.state, 'REJECTED'); assert.deepEqual(settled.result, { ...original, status: 'REJECTED', result: null });
     assert.deepEqual(f.posts, [original]); assert.ok(f.gets.length > 0 && f.gets.every(id => id === f.request.requestId));
+  } finally { await f.cleanup(); }
+});
+
+test('a retained pending CANCEL rechecks revoked transport permission before POST without erasing native reservations', async () => {
+  const f = await fixture();
+  try {
+    const app = await f.read(), initial = control(app.accountControls![accountKey(f.connection, app.accountControls)]);
+    const permissionBasis = capitalCommandPermission(initial, f.connection, 'CANCEL');
+    f.revokeStops(); const revoked = await readCapitalControl(f.connection, 'USDC');
+    const original = { requestId: 'original-cancel', action: 'CANCEL', exitId: 'original-exit', expectedRevision: '7' };
+    const taskId = await f.state.service.research.harness.commit(async tx => {
+      const facts = await tx.doc(Application), key = accountKey(f.connection, facts.accountControls);
+      recordCapitalControl(facts.accountControls!, f.connection, revoked);
+      const retained = control(facts.accountControls![key]);
+      const conversation = (retained.conversationId ?? (await tx.createConversation({ ownership: { kind: 'ownerless' } })).id) as ConversationId;
+      const id = await tx.createTask(CapitalExitCommand, { key, requestId: original.requestId, connection: f.connection, reconcile: false, binary: f.state.options.config.jobBinary, dataDir: f.state.directory }, { conversationId: conversation, ownership: { kind: 'conversation' }, background: true });
+      retained.commands[original.requestId] = { original, body: { schema_version: 2, expected_revision: '7', action: 'CANCEL' }, path: 'capital-exits/original-exit/actions', reserved: '0', state: 'PENDING', result: null, error: null, taskId: id, permissionBasis };
+      facts.accountControls![key] = json(retained); return id;
+    }, context);
+    await f.state.service.research.harness.waitForTask(taskId, context);
+    const after = await f.read(), retained = control(after.accountControls![accountKey(f.connection, after.accountControls)]);
+    assert.equal(f.posts.length, 0); assert.equal(retained.commands[original.requestId]!.state, 'REJECTED');
+    assert.deepEqual(retained.commands[original.requestId]!.original, original); assert.equal(retained.commands[original.requestId]!.result, null);
+    assert.equal(retained.status!.reserved, '25');
   } finally { await f.cleanup(); }
 });
