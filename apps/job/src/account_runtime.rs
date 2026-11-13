@@ -567,9 +567,10 @@ impl AccountController {
                 "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
         }).collect();
         let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
-            let quote=cache.quote(&p.instrument_id);
-            let pnl=quote.and_then(|q|p.unrealized_pnl(q.bid_price).ok());
-            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"value":Value::Null,"pnl":pnl.map(|v|v.as_decimal().to_string())})
+            // Public per-position PnL requires a caller-selected price. The official
+            // Portfolio price/staleness selection is private and its public PnL is
+            // aggregate; do not recreate that policy or duplicate an aggregate here.
+            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"value":Value::Null,"pnl":Value::Null})
         }).collect();
         order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
         positions.sort_by_key(|v| v["instrument_id"].as_str().unwrap_or_default().to_owned());
@@ -2267,7 +2268,7 @@ mod tests {
                 "explicit_start_did_not_run_native_callback"
             );
             // A position is not a currency balance or a QZ-computed available size.
-            // Preserve official position quantity/PnL and original order quantities.
+            // Preserve official position quantities and original orders; no per-position valuation policy is recreated.
             let snapshot = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
             let positions = snapshot["positions"].as_array().unwrap();
             ensure!(!positions.is_empty(), "native_position_not_projected");
@@ -2277,6 +2278,7 @@ mod tests {
                     "derived_free_quantity_retained"
                 );
                 ensure!(row["value"].is_null(), "derived_position_value_retained");
+                ensure!(row["pnl"].is_null(), "caller_selected_position_pnl_retained");
                 ensure!(
                     cache
                         .borrow()

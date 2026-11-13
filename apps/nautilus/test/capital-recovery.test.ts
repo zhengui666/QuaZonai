@@ -246,13 +246,17 @@ test('worker durable CAS rejects a delayed older START after STOP, across restar
 });
 
 
-test('missing native position value remains null without a derived available quantity', async () => {
+for (const quantity of ['10','-10']) for (const quote of ['available','missing','stale']) test(`controlled ${quantity} position keeps missing per-position valuation with ${quote} quote, without changing native aggregate`, async () => {
   const native = new ControlledProtocol();
-  native.snapshot.positions[0]!.value = null;
+  native.snapshot.positions[0] = { instrument_id: instrumentId, quantity, value: null, pnl: null };
+  if (quote === 'missing') { native.snapshot.instruments[0]!.bid = null; native.snapshot.instruments[0]!.ask = null; }
+  if (quote === 'stale') native.snapshot.instruments[0]!.asof_ns = '1';
+  const original = structuredClone(native.snapshot.native_snapshot);
   const account = await openAccount(native);
   try {
     const result = await account.call('GET', '/account');
-    assert.deepEqual(result.positions, [{ instrumentId, quantity: '10', value: null, pnl: null }]);
+    assert.deepEqual(result.positions, [{ instrumentId, quantity, value: null, pnl: null }]);
+    assert.deepEqual((result.nativeObservation as Json).snapshot, original);
     assert.equal('free_quantity' in native.snapshot.positions[0]!, false);
   } finally { await account.close(); }
 });
