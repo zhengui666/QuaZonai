@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { NativeJson } from '../../../packages/contracts/src/nautilus.ts';
 import { JSONParser } from '@streamparser/json';
+export { JSONParser };
 import type { JsonObject } from '@earendil-works/pi-durable';
 
 type JsonValue = JsonObject[string];

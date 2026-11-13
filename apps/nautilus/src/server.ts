@@ -1,18 +1,19 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createReadStream } from 'node:fs';
-import { readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { appendFile, readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { JsonReader, jsonChunks, canonicalJsonDigest } from '../../research/src/native-json.ts';
+import { JsonReader, JSONParser, jsonChunks, canonicalJsonDigest } from '../../research/src/native-json.ts';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import { createCapitalAccount } from './capital-account.ts';
 import type { AccountOptions } from './account-runtime.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
-type Active = { promise: Promise<Receipt>; cancel: () => void; progressPath?: string };
+type StoredReceipt = Receipt & { receiptFile?: string; progressFile?: string };
+type Active = { promise: Promise<StoredReceipt>; cancel: () => void; progressPath?: string };
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
@@ -143,11 +144,21 @@ export async function createNautilusWorker(options: WorkerOptions) {
     await writeFile(temporary, jsonChunks(receipt as never), { mode: 0o600 });
     await rename(temporary, join(directory, 'receipt.json'));
   }
-  async function read(id: string): Promise<Receipt | null> {
+  async function read(id: string): Promise<StoredReceipt | null> {
     try {
-      const parser = new JsonReader();
-      for await (const chunk of createReadStream(join(receipts, id, 'receipt.json'), { encoding: 'utf8' })) parser.write(chunk);
-      let receipt = parser.finish() as unknown as Receipt;
+      const file = join(receipts, id, 'receipt.json');
+      // Select only envelope fields. The parser still validates the complete JSON,
+      // but never retains the potentially hundreds-of-MB result object.
+      async function envelope(): Promise<StoredReceipt> {
+        const parser = new JSONParser({ paths: ['$.schemaVersion', '$.requestId', '$.status', '$.error'], keepStack: false });
+        const fields: Record<string, unknown> = {};
+        parser.onValue = ({ key, value }) => { fields[String(key)] = value; };
+        for await (const chunk of createReadStream(file)) parser.write(chunk);
+        if (!parser.isEnded) parser.end();
+        if (fields.schemaVersion !== 1 || fields.requestId !== id || !['RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN'].includes(String(fields.status))) throw new Error('nautilus_receipt_invalid');
+        return { ...fields, ...(fields.status === 'RUNNING' ? {} : { receiptFile: file }) } as StoredReceipt;
+      }
+      let receipt = await envelope();
       // An old RUNNING receipt never grants permission to repeat an uncertain run.
       if (receipt.status === 'RUNNING') {
         const execution = active.get(id);
@@ -155,16 +166,12 @@ export async function createNautilusWorker(options: WorkerOptions) {
           if (launching.has(id)) return receipt;
           // A reader can have opened RUNNING just before the terminal rename
           // and active-map removal. Reopen after observing no active owner.
-          const latest = new JsonReader();
-          for await (const chunk of createReadStream(join(receipts, id, 'receipt.json'), { encoding: 'utf8' })) latest.write(chunk);
-          receipt = latest.finish() as unknown as Receipt;
+          receipt = await envelope();
           return receipt.status === 'RUNNING' ? { ...receipt, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' } : receipt;
         }
         if (execution.progressPath) {
           try {
-            const rows = (await readFile(execution.progressPath, 'utf8')).split('\n'); rows.pop();
-            const snapshots = rows.filter(Boolean).map(row => (JSON.parse(row) as { snapshot: Json }).snapshot);
-            return { ...receipt, progress: { snapshots } };
+            return { ...receipt, progressFile: execution.progressPath };
           } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         }
       }
@@ -206,16 +213,16 @@ export async function createNautilusWorker(options: WorkerOptions) {
       if (!child?.pid) return;
       try { process.kill(-child.pid, signal); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
     }
-    const execution: Active = { promise: undefined as unknown as Promise<Receipt>, cancel() {
+    const execution: Active = { promise: undefined as unknown as Promise<StoredReceipt>, cancel() {
       if (cancelRequested) return;
       cancelRequested = true;
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), 5_000); killTimer.unref();
     } };
     active.set(request.requestId, execution);
-    execution.promise = (async (): Promise<Receipt> => {
+    execution.promise = (async (): Promise<StoredReceipt> => {
       let directory: string | undefined;
-      let receipt: Receipt;
+      let receipt: StoredReceipt;
       try {
         directory = await mkdtemp(join(scratch, 'run-'));
         const args = await argumentsFor(request);
@@ -228,18 +235,27 @@ export async function createNautilusWorker(options: WorkerOptions) {
           const selectedBinary = tick ? tickBinary : binary;
           const childArgs = [request.command, ...args];
           if (request.command === 'simulate') execution.progressPath = join(directory, 'progress.ndjson');
+          const temporary = join(receiptDirectory, 'receipt.next.json');
+          await writeFile(temporary, JSON.stringify({ ...running, status: 'COMPLETED' }).slice(0, -1) + ',"result":', { mode: 0o600 });
+          // Cancellation may arrive while the temporary receipt is being opened.
+          if (cancelRequested) throw new Error('nautilus_execution_cancelled');
           child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory,
               ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
-          const parser = new JsonReader(); let parseError: unknown; let stderr = '';
-          child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
-          child.stdout!.on('data', chunk => {
-            if (!parseError) { try { parser.write(chunk); } catch (error) { parseError = error; } }
-          });
-          child.stderr!.on('data', chunk => { if (stderr.length < 65_536) stderr += chunk.slice(0, 65_536 - stderr.length); });
           const closed = new Promise<number | null>((resolve, reject) => { child!.once('error', reject); child!.once('close', resolve); });
+          const parser = new JSONParser({ paths: [], keepStack: false });
+          let sawToken = false;
+          parser.onToken = () => { sawToken = true; };
+          let parseError: unknown; let stderr = '';
+          child.stderr!.setEncoding('utf8');
+          const output = pipeline(child.stdout!, new Transform({ transform(chunk, _encoding, callback) {
+            if (!parseError) { try { parser.write(chunk); } catch (error) { parseError = error; } }
+            callback(null, chunk);
+          } }), createWriteStream(temporary, { flags: 'a', mode: 0o600 })).then(() => undefined, error => { parseError ??= error; });
+          child.stderr!.on('data', chunk => { if (stderr.length < 65_536) stderr += chunk.slice(0, 65_536 - stderr.length); });
           void pipeline(Readable.from(jsonChunks(request.input as never)), child.stdin!).catch(() => {});
-          const code = await closed;
+          const code = await closed.catch(async error => { await output; throw error; });
+          await output;
           if (cancelRequested) {
             // The main process can exit before a compiler child. Stop its entire
             // process group before acknowledging cancellation and clearing timers.
@@ -249,17 +265,52 @@ export async function createNautilusWorker(options: WorkerOptions) {
           else if (code !== 0) receipt = { ...running, status: 'FAILED', error: stderr.trim() || `native_${request.command}_exit_${code}` };
           else {
             if (parseError) throw parseError;
-            receipt = { ...running, status: 'COMPLETED', result: parser.finish() as Json };
+            if (!parser.isEnded) parser.end();
+            if (!sawToken) throw new Error('nautilus_empty_native_result');
+            await appendFile(temporary, '}');
+            await rename(temporary, join(receiptDirectory, 'receipt.json'));
+            receipt = { ...running, status: 'COMPLETED', receiptFile: join(receiptDirectory, 'receipt.json') } as StoredReceipt;
           }
         }
       } catch (error) { receipt = cancelRequested ? { ...running, status: 'CANCELLED' }
         : { ...running, status: 'FAILED', error: error instanceof Error ? error.message : 'nautilus_execution_failed' }; }
       finally { if (killTimer) clearTimeout(killTimer); if (directory) await rm(directory, { recursive: true, force: true }); }
-      await save(receipt);
+      if (!receipt.receiptFile) await save(receipt);
       return receipt;
     })().finally(() => active.delete(request.requestId));
     return execution;
   }
+  async function sendReceipt(response: ServerResponse, status: number, receipt: StoredReceipt): Promise<void> {
+    if (response.destroyed) return;
+    if (!receipt.receiptFile && !receipt.progressFile) return send(response, status, receipt);
+    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    if (receipt.receiptFile) {
+      await pipeline(createReadStream(receipt.receiptFile), response).catch(() => {});
+      return;
+    }
+    const { progressFile, ...metadata } = receipt;
+    async function* progress() {
+      yield JSON.stringify(metadata).slice(0, -1) + ',"progress":{"snapshots":[';
+      let pending = ''; let first = true;
+      try {
+        for await (const chunk of createReadStream(progressFile!, { encoding: 'utf8' })) {
+          pending += chunk;
+          let newline: number;
+          while ((newline = pending.indexOf('\n')) >= 0) {
+            const line = pending.slice(0, newline); pending = pending.slice(newline + 1);
+            if (!line) continue;
+            const snapshot = (JSON.parse(line) as { snapshot: Json }).snapshot;
+            if (!first) yield ','; first = false;
+            yield* jsonChunks(snapshot);
+          }
+        }
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      // A partial final NDJSON row is not committed progress.
+      yield ']}}';
+    }
+    await pipeline(Readable.from(progress()), response).catch(() => {});
+  }
+
   function launch(request: Request): Promise<Active> {
     const running = active.get(request.requestId);
     if (running) return Promise.resolve(running);
@@ -303,10 +354,10 @@ export async function createNautilusWorker(options: WorkerOptions) {
         const execution = active.get(match[1]!);
         if (request.method === 'DELETE' && execution) {
           execution.cancel();
-          return await send(response, 200, await execution.promise);
+          return await sendReceipt(response, 200, await execution.promise);
         }
         const receipt = await read(match[1]!);
-        return await send(response, receipt ? receipt.status === 'RUNNING' ? 202 : 200 : 404, receipt ?? { error: 'nautilus_execution_not_found' });
+        return receipt ? await sendReceipt(response, receipt.status === 'RUNNING' ? 202 : 200, receipt) : await send(response, 404, { error: 'nautilus_execution_not_found' });
       }
       if (request.method !== 'POST' || request.url !== '/v1/execute') return await send(response, 404, { error: 'not_found' });
       if (closing) return await send(response, 503, { error: 'nautilus_worker_closing' });
@@ -318,7 +369,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
       // launch() has persisted RUNNING before acknowledging admission.
       void execution.promise.catch(() => {});
       const receipt = await read(value.requestId) ?? await execution.promise;
-      await send(response, receipt.status === 'RUNNING' ? 202 : 200, receipt);
+      await sendReceipt(response, receipt.status === 'RUNNING' ? 202 : 200, receipt);
     } catch (error) {
       await send(response, typeof (error as { statusCode?: unknown }).statusCode === 'number' ? (error as { statusCode: number }).statusCode : 400,
         error instanceof Error && 'rejection' in error ? error.rejection : { error: error instanceof Error ? error.message : 'nautilus_request_failed' });

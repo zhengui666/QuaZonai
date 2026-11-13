@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord';
 import type { ConversationId, Harness, JsonObject, Tx } from '@earendil-works/pi-durable';
 import { canonical } from './documents.ts';
-import { NativeRemoteUncertainty, remoteNativeExecutionReceipt, validateRemoteTarget } from './native-execution.ts';
+import { NativeRemoteUncertainty, remoteNativeExecutionStatus, validateRemoteTarget } from './native-execution.ts';
 
 export interface NativeRemoteTaskReference { id: number; conversationId: number }
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
@@ -29,7 +29,7 @@ export async function reconcileNativeRemoteTasks(harness: Pick<Harness, 'snapsho
       if (signal.aborted) return;
       if (settled(reference) || !validReference(reference, task.id)) continue;
       try {
-        const result = await remoteNativeExecutionReceipt(validateRemoteTarget(reference.target), String(reference.requestId), signal);
+        const result = await remoteNativeExecutionStatus(validateRemoteTarget(reference.target), String(reference.requestId), signal);
         if (!terminal.has(result.status)) continue;
         await harness.commit(async tx => {
           const current = await tx.doc(NativeRemoteUncertainty, task.conversationId as ConversationId, String(task.id), null);

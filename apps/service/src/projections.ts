@@ -1,3 +1,4 @@
+import { isNativeTable } from '../../research/src/native-table.ts';
 import { readResearchAssessments } from './research-assessments.ts';
 import { AssistantEntry } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -227,6 +228,7 @@ function nativeMoney(value: Json | undefined, currency: string): string | null {
 }
 export function nativeCurve(simulation: JsonObject, currency: string): EquityPoint[] {
   const canonical = object(simulation.canonical_result, 'canonical_result');
+  if (isNativeTable(canonical.portfolio_snapshots)) throw new Problem('native_equity_pages_not_loaded');
   if (!Array.isArray(canonical.portfolio_snapshots) || !canonical.portfolio_snapshots.length) throw new Problem('native_shared_account_equity_missing');
   const points = canonical.portfolio_snapshots.map((value) => {
     const snapshot = object(value, 'native_snapshot');

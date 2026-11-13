@@ -1,3 +1,4 @@
+import { isNativeTable } from '../src/native-table.ts';
 import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
@@ -177,7 +178,7 @@ export function nativeStrategyResult(value: Parameters<typeof object>[0], reques
   const report = object(result.canonical_result, 'native_strategy_canonical_result');
   const run = object(report.run, 'native_strategy_run');
   if (report.schema !== 'nautilus-backtest-result/v1' || !['completed', 'stopped'].includes(String(run.outcome))) throw new Error('native_strategy_report_invalid');
-  for (const key of ['accounts', 'diagnostics', 'fills', 'orders', 'portfolio_snapshots', 'position_snapshots', 'positions']) if (!Array.isArray(report[key])) throw new Error('native_strategy_report_invalid');
+  for (const key of ['accounts', 'diagnostics', 'fills', 'orders', 'portfolio_snapshots', 'position_snapshots', 'positions']) if (!Array.isArray(report[key]) && !isNativeTable(report[key])) throw new Error('native_strategy_report_invalid');
   object(report.statistics, 'native_strategy_statistics');
   object(report.components, 'native_strategy_components');
   const counts = object(result.data_rows_by_type, 'native_strategy_data_rows');

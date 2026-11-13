@@ -1,3 +1,4 @@
+import { isNativeTable, nativeRowCount } from '../../research/src/native-table.ts';
 import { NativeStrategyBacktestTask, nativeEquityPerformance } from '../../research/plugins/native-strategy-backtest.ts';
 import { randomUUID } from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -162,9 +163,9 @@ function selectedMetric(metrics: Metric[], metricId: ParameterScanMetricId): Sca
   const rows = metrics.filter(row => row.key === metricId);
   return rows.length === 1 ? rows[0] as ScanMetric : unavailable(rows.length ? 'ambiguous_native_metric' : 'metric_missing', metricId);
 }
-function sampleCounts(value: JsonObject): Record<string, string> {
+export function sampleCounts(value: JsonObject): Record<string, string> {
   const report = object(value.canonical_result, 'native_strategy_report');
-  return Object.fromEntries(['orders', 'positions', 'fills'].flatMap(key => Array.isArray(report[key]) ? [[key, String(report[key].length)]] : []));
+  return Object.fromEntries(['orders', 'positions', 'fills'].flatMap(key => (Array.isArray(report[key]) || isNativeTable(report[key])) ? [[key, String(nativeRowCount(report[key]))]] : []));
 }
 
 async function scanFact(tx: Tx, conversationId: ConversationId, id: string) {

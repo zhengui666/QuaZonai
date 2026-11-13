@@ -1,3 +1,4 @@
+import { isNativeTable, nativeRowCount } from './native-table.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { JsonValue } from '@earendil-works/chord';
 import { object } from './trials.ts';
@@ -13,11 +14,11 @@ export function nativeToolText(view: JsonObject, taskId: number): string {
     summaryPath: '$.summary', rowsReviewed: false, note: 'Even the compact summary exceeds one response; read the original Task summary in pages. Original evidence is retained.' });
 }
 
-/** A model-facing view only; the official Task retains its complete original result. */
+/** A model-facing view only; the official Task retains the result and original row-page references. */
 export function nativeResultTables(result: JsonObject, taskId: number, resultPath = '$'): JsonObject {
   const report = object(result.canonical_result, 'native_report');
   const tables: JsonObject = {};
-  for (const [name, rows] of Object.entries(report)) if (Array.isArray(rows)) tables[name] = { path: `${resultPath}.canonical_result.${name}`, rowCount: rows.length };
+  for (const [name, rows] of Object.entries(report)) if (Array.isArray(rows) || isNativeTable(rows)) tables[name] = { path: `${resultPath}.canonical_result.${name}`, rowCount: nativeRowCount(rows) };
   const equity = result.equity_performance;
   if (equity && typeof equity === 'object' && !Array.isArray(equity) && Array.isArray(equity.returns)) tables.equity_returns = { path: `${resultPath}.equity_performance.returns`, rowCount: equity.returns.length };
   return { source: 'UPSTREAM_CANONICAL_REPORT_REFERENCE', taskId, resultRoot: 'task.state.outcome.result', resultPath, tables,
@@ -37,6 +38,6 @@ export function nativeResultView(result: JsonObject, taskId: number, resultPath 
   const report = object(result.canonical_result, 'native_report');
   const equity = result.equity_performance ? object(result.equity_performance, 'native_equity') : null;
   return { ...result, taskId, projection: 'COMPACT_NATIVE_RESULT_ORIGINAL_TASK_RETAINED', evidenceTables: reference,
-    canonical_result: Object.fromEntries(Object.entries(report).map(([key, value]) => [key, Array.isArray(value) ? rowReference(key) : value])),
+    canonical_result: Object.fromEntries(Object.entries(report).map(([key, value]) => [key, Array.isArray(value) || isNativeTable(value) ? rowReference(key) : value])),
     ...(equity ? { equity_performance: { ...equity, returns: rowReference('equity_returns') } } : {}) };
 }

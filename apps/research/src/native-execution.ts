@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord';
 import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
-import { defineDocFamily, defineTask, type Harness, type ConversationId, type JsonObject, type TaskId, type TaskRuntime } from '@earendil-works/pi-durable';
+import { defineDocFamily, defineTask, type Harness, type ConversationId, type JsonObject, type TaskId, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -13,7 +13,8 @@ import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts
 import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativeEvidenceParts } from '../plugins/native-evidence.ts';
-import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
+import { JSONParser, JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
+import { NativeTableReader } from './native-table.ts';
 import { canonical } from './documents.ts';
 
 export const nativeCommands = new Set(['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'capital-curve', 'compare-observed-spot', 'value-observed-spot', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
@@ -132,7 +133,23 @@ export function nativeTargetForData(data: { [key: string]: unknown }): NativeTar
   return defaultNativeTarget();
 }
 
-async function remoteRequest(target: RemoteNativeTarget, path: string, method: 'GET' | 'POST' | 'DELETE', body?: NativeJson, signal?: AbortSignal): Promise<NativeJson> {
+const tableCommands = new Set(['native-strategy-backtest', 'native-walk-forward']);
+type TableOwner = { taskId: TaskId; runtime: ReceiptRuntime; context: Context };
+function tableReader(owner: TableOwner) {
+  return new NativeTableReader({ taskId: owner.taskId, conversationId: owner.runtime.conversationId }, async (key, data) => {
+    await owner.runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, owner.runtime.conversationId, key, null)).data = data; return undefined; }, owner.context);
+  });
+}
+
+class ReceiptStatusReader {
+  private parser = new JSONParser({ paths: ['$.schemaVersion', '$.requestId', '$.status', '$.error'], keepStack: false });
+  private value: Record<string, NativeJson> = {};
+  constructor() { this.parser.onValue = ({ key, value }) => { this.value[String(key)] = value as NativeJson; }; }
+  write(text: string) { this.parser.write(text); }
+  finish(): NativeJson { if (!this.parser.isEnded) this.parser.end(); return this.value; }
+}
+
+async function remoteRequest(target: RemoteNativeTarget, path: string, method: 'GET' | 'POST' | 'DELETE', body?: NativeJson, signal?: AbortSignal, tables?: TableOwner, statusOnly = false): Promise<NativeJson> {
   target = validateRemoteTarget(target);
   const url = new URL(target.url.endsWith('/') ? target.url : `${target.url}/`); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -167,9 +184,10 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
       throw new Error(`nautilus_http_${response.status}`);
     }
     if (!response.body) throw new Error('nautilus_response_missing');
-    const parser = new JsonReader(); const decoder = new TextDecoder();
-    for await (const bytes of response.body) parser.write(decoder.decode(bytes, { stream: true }));
-    parser.write(decoder.decode()); return parser.finish();
+    // Cancellation consumes status only; never materialize a raced completed result.
+    const parser = method === 'DELETE' || statusOnly ? new ReceiptStatusReader() : tables ? tableReader(tables) : new JsonReader(); const decoder = new TextDecoder();
+    for await (const bytes of response.body) await parser.write(decoder.decode(bytes, { stream: true }));
+    await parser.write(decoder.decode()); return await parser.finish();
   } finally { await dispatcher.close(); }
 }
 
@@ -180,19 +198,25 @@ export async function remoteNativeCapabilities(target: RemoteNativeTarget, signa
   return value;
 }
 
-function receipt(value: NativeJson, requestId: string): NativeExecutionReceipt {
+function receipt(value: NativeJson, requestId: string, statusOnly = false): NativeExecutionReceipt {
   const result = value as unknown as NativeExecutionReceipt;
   if (result?.schemaVersion !== 1 || result.requestId !== requestId || !['COMPLETED', 'FAILED', 'CANCELLED', 'RUNNING', 'UNKNOWN'].includes(result.status)
-    || result.status === 'COMPLETED' && !Object.hasOwn(result, 'result')
+    || !statusOnly && result.status === 'COMPLETED' && !Object.hasOwn(result, 'result')
     || ['FAILED', 'UNKNOWN'].includes(result.status) && typeof (result as { error?: unknown }).error !== 'string') throw new Error('nautilus_receipt_invalid');
   return result;
 }
 
 /** Read only the receipt for this original invocation and retained instance.
  * This does not submit or cancel any remote execution. */
-export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal): Promise<NativeExecutionReceipt> {
+export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal, tables?: TableOwner): Promise<NativeExecutionReceipt> {
   if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
-  return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
+  return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal, tables), requestId);
+}
+
+/** Metadata-only reconciliation: result is deliberately absent, never fabricated. */
+export async function remoteNativeExecutionStatus(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal): Promise<Pick<NativeExecutionReceipt, 'schemaVersion' | 'requestId' | 'status'> & { error?: string }> {
+  if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
+  return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal, undefined, true), requestId, true);
 }
 
 type AdoptedReceipt = { requestId: string } & ({ status: 'COMPLETED'; native: JsonObject } | { status: 'FAILED' | 'CANCELLED'; error: string });
@@ -227,9 +251,10 @@ export async function reconcileNativeExecution(ownerTaskId: TaskId, runtime: Rec
     if (binding.adoptedReceipt.requestId !== input.requestId) throw new Error('native_reconciliation_identity_conflict');
     return true;
   }
-  const deadline = AbortSignal.timeout(5000);
+  // Evidence downloads include durable page writes; a fixed 5s deadline causes
+  // repeated UNKNOWN reads of valid large receipts. Caller/runtime owns cancellation.
   let state: NativeExecutionReceipt;
-  try { state = await remoteNativeExecutionReceipt(input.target, input.requestId, context.abortSignal ? AbortSignal.any([deadline, context.abortSignal]) : deadline); }
+  try { state = await remoteNativeExecutionReceipt(input.target, input.requestId, context.abortSignal ? AbortSignal.any([runtime.signal, context.abortSignal]) : runtime.signal, tableCommands.has(input.command) ? { taskId: nativeTaskId, runtime, context } : undefined); }
   catch (error) { if (context.abortSignal?.aborted || runtime.signal.aborted) throw error; return false; }
   const native = state.status === 'COMPLETED' ? await retainNativeEvidence({ value: state.result }, async (index, data) => {
     await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${nativeTaskId}:${index}`, null)).data = data; return undefined; }, context);
@@ -261,7 +286,7 @@ export async function cancelUnsettledNativeExecutions(ownerTaskId: TaskId, runti
     const target = validateRemoteTarget(reference.target);
     const requestId = String(reference.requestId);
     let state: NativeExecutionReceipt;
-    try { state = receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), requestId); }
+    try { state = receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), requestId, true); }
     catch { state = { schemaVersion: 1, requestId, status: 'UNKNOWN', error: 'nautilus_cancellation_unknown' }; }
     await runtime.commit(async tx => {
       const current = await tx.doc(NativeRemoteUncertainty, runtime.conversationId, String(ownerTaskId), null);
@@ -312,7 +337,7 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
         return undefined;
       }, context);
       let state: NativeExecutionReceipt;
-      try { state = receipt(await remoteRequest(task.input.target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal), task.input.requestId); }
+      try { state = receipt(await remoteRequest(task.input.target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined), task.input.requestId); }
       catch (error) {
         if (context.abortSignal?.aborted) throw error;
         if (error instanceof RemoteAdmissionRejectedError) {
@@ -326,14 +351,14 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
             return { status: 'terminal', outcome: { status: 'failed', error: { message: error.rejection.error, detail: { admission: 'REJECTED' } } } };
           }, context); return;
         }
-        try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal); }
+        try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined); }
         catch { state = { schemaVersion: 1, requestId: task.input.requestId, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' }; }
       }
       await recordExecution(task, runtime, state, context);
     },
     async poll(task, runtime, context) {
       let state: NativeExecutionReceipt;
-      try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal); }
+      try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined); }
       catch (error) {
         if (context.abortSignal?.aborted) throw error;
         // Only a receipt can establish an outcome. Losing observation does not
@@ -352,7 +377,7 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
       }
     }
     let state: NativeExecutionReceipt;
-    try { state = receipt(await remoteRequest(task.input.target, `v1/executions/${task.input.requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), task.input.requestId); }
+    try { state = receipt(await remoteRequest(task.input.target, `v1/executions/${task.input.requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), task.input.requestId, true); }
     catch (error) {
       state = { schemaVersion: 1, requestId: task.input.requestId, status: !task.input.receiptRequired && error instanceof Error && error.message === 'nautilus_http_404' ? 'CANCELLED' : 'UNKNOWN', error: 'nautilus_cancellation_unknown' } as NativeExecutionReceipt;
     }
@@ -428,14 +453,17 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       if (adopted) {
         if (adopted.requestId !== (task.input as unknown as RemoteTaskInput).requestId) throw new Error('native_reconciliation_identity_conflict');
         if (adopted.status !== 'COMPLETED') throw new Error(adopted.error);
-        const result = await readNativeEvidence(owner.runtime, task.conversationId, task.id, adopted.native, context);
+        const result = await readNativeEvidence(owner.runtime, task.conversationId, task.id, adopted.native, context, tableCommands.has(command) ? async (key, data) => { await owner.runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, task.conversationId, key, null)).data = data; return undefined; }, context); } : undefined);
         return result.value!;
       }
     }
     if (task.state.outcome.status === 'completed') {
       const reader = owner?.runtime ?? nativeHost!.harness;
       const stored = (task.state.outcome.result as JsonObject).native as JsonObject;
-      const result = await readNativeEvidence(reader, task.conversationId, task.id, stored, context);
+      const result = await readNativeEvidence(reader, task.conversationId, task.id, stored, context, tableCommands.has(command) ? async (key, data) => {
+        const commit = async (tx: Tx) => { (await tx.doc(NativeEvidencePart, task.conversationId, key, null)).data = data; return undefined; };
+        await reader.commit(commit, context);
+      } : undefined);
       return result.value!;
     }
     const error = task.state.outcome.status === 'failed' || task.state.outcome.status === 'faulted' ? task.state.outcome.error : undefined;
