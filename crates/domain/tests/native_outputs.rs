@@ -501,41 +501,10 @@ fn forecast_fuel_binding_preserves_explicit_budget_and_unmetered_absence() {
 }
 
 #[test]
-fn sealed_policy_keeps_every_asset_requirement_beyond_the_old_sixty_four_limit() {
-    use contracts::evidence::{Comparator, MetricRequirementV1};
-    let bars = NativeBarSelectionV1 {
-        schema_version: SchemaV1,
-        bar_types: (0..65)
-            .map(|index| format!("ASSET{index}.SIM-1-MINUTE-LAST-EXTERNAL"))
-            .collect(),
-        event_start_ns: count(1),
-        event_end_ns: count(10),
-        decision_cutoff_ns: count(11),
-        maximum_rows: 65,
-    };
-    let requirements: Vec<_> = (0..65)
-        .map(|index| MetricRequirementV1 {
-            schema_version: SchemaV1,
-            metric_code: "PEARSON_IC".into(),
-            scope: format!("asset:{index}"),
-            comparator: Comparator::Ge,
-            threshold_low: Some("0.1".parse().unwrap()),
-            threshold_high: None,
-            required: true,
-            minimum_observations: count(2),
-            method_allowlist: vec!["ndarray-stats.pearson_correlation".into()],
-        })
-        .collect();
-    assert!(domain::execution::alpha_sealed_policy(&requirements, &bars, 5).is_ok());
-    assert!(domain::execution::alpha_sealed_policy(&[], &bars, 5).is_err());
-    assert!(domain::execution::alpha_sealed_policy(&requirements, &bars, 0).is_err());
-    for dimension in 0..3 {
-        let mut invalid = requirements.clone();
-        match dimension {
-            0 => invalid[64].scope = "asset:65".into(),
-            1 => invalid[64].method_allowlist = vec!["unregistered-method".into()],
-            _ => invalid[64].metric_code = "UNKNOWN_METRIC".into(),
-        }
-        assert!(domain::execution::alpha_sealed_policy(&invalid, &bars, 5).is_err());
-    }
+fn retired_experiment_output_cannot_enter_new_publication_validation() {
+    // The historical wire descriptor remains readable, but no factor execution
+    // validator or split generation is reachable through new output admission.
+    let (descriptor, bytes) = output("qz.experiment_evaluation", &serde_json::json!({}));
+    assert!(native_output_contract("qz.experiment_evaluation", "1").is_some());
+    assert!(output_shape(&descriptor, &bytes).is_err());
 }

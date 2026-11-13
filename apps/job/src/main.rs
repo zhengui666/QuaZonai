@@ -61,11 +61,6 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-    /// Replay explicit historical walk-forward windows with upstream strategies.
-    NativeWalkForward {
-        #[arg(long)]
-        catalog: PathBuf,
-    },
     /// Digest actual original native instruments, history and BARs at a frozen cutoff.
     CatalogPrefixDigest {
         #[arg(long)]
@@ -122,9 +117,6 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::NativeStrategyBacktest { catalog } => {
             native_output(|| job::native_strategy::run(&catalog, input()?))
-        }
-        Operation::NativeWalkForward { catalog } => {
-            native_output(|| job::native_walk_forward::run(&catalog, input()?))
         }
         Operation::CatalogPrefixDigest { catalog } => {
             output(&job::catalog_prefix::digest(&catalog, &input()?)?)

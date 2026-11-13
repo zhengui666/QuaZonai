@@ -19,19 +19,11 @@ fn exact_native_versions(
     actual == expected
 }
 
-mod experiment;
 mod experiment_summary;
 mod strategy_summary;
-pub use experiment::binding as check_experiment_evaluation;
-pub use experiment_summary::experiment_summary;
 pub use strategy_summary::strategy_portfolio_summary;
-mod forecast;
-mod sealed;
-pub use sealed::{
-    binding as check_alpha_sealed, metrics as alpha_sealed_metrics, policy as alpha_sealed_policy,
-    request as alpha_sealed_request,
-};
 mod equity_curve;
+mod forecast;
 mod simulation;
 mod spot_cash_report;
 pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
@@ -39,12 +31,6 @@ pub(crate) use simulation::binding as check_simulation;
 pub use simulation::metrics as portfolio_simulation_metrics;
 pub use simulation::observed_binding as check_observed_spot_simulation;
 pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
-mod validation;
-pub use validation::metrics as alpha_validation_metrics;
-pub use validation::policy as alpha_validation_policy;
-pub use validation::{
-    freeze_calibration as freeze_alpha_calibration, frozen_calibration as check_alpha_calibration,
-};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_OUTPUT_CONTRACT_INVALID")
@@ -156,7 +142,6 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
-        "qz.experiment_evaluation" => experiment::shape(&decode(bytes)?),
         "qz.strategy_portfolio" => {
             let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
                 decode(bytes)?;
@@ -288,20 +273,8 @@ pub fn output_bindings(
         NativeTaskParametersV1::EvaluateAlpha { request, .. } => {
             forecast::binding(request, &decode(body("qz.native_forecast")?.1)?)?;
         }
-        NativeTaskParametersV1::EvaluateExperiment {
-            request,
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_ids,
-            ..
-        } => {
-            experiment::binding(
-                request,
-                *dataset_revision_id,
-                *model_artifact_id,
-                feature_artifact_ids,
-                &decode(body("qz.experiment_evaluation")?.1)?,
-            )?;
+        NativeTaskParametersV1::EvaluateExperiment { .. } => {
+            return Err(bad("native_output.retired_task"))
         }
         NativeTaskParametersV1::ComposeStrategyTargets {
             dataset_revision_id,

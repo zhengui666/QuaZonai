@@ -80,6 +80,7 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
 #[test]
 fn retired_ensemble_and_review_allocation_commands_are_not_executable() {
     for operation in [
+        "native-walk-forward",
         "blend-targets",
         "capital-curve",
         "assess-capacity",

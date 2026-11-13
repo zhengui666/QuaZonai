@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 anyhow = "=1.0.104"
-solow-cv = "=0.7.3"
 contracts = { path = "../contracts" }
 chrono = { version = "=0.4.45", features = ["serde"] }
 chrono-tz = "=0.10.4"

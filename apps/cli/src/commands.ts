@@ -27,13 +27,10 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]
-  parameter-scan options [--file QUERY.json] | preview --file REQUEST.json
-  parameter-scan create --file REQUEST.json [--request-id ORIGINAL_ID] | list [--file QUERY.json] | get ID | stop ID
-  parameter-scan trials ID [--file QUERY.json] | surface ID --file QUERY.json
+  parameter-scan list [--file QUERY.json] | get ID | stop ID
+  parameter-scan trials ID [--file QUERY.json]
   parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
-    Native scan: source={kind:"research",researchId}; axes use existing numeric request paths.
-    objective={metricId:<options.metricId>,partition:"FULL_SELECTION",direction:"maximize"|"minimize"}; execution={concurrency}.
-    Equity metric IDs retain source and 252/365 frequency; stopped runs do not enter full-window ranking.
+    Historical scan records only; no parameter generation, ranking, or new scans.
   portfolio list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
@@ -146,15 +143,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);
     method = 'POST'; path = '/research';
   } else if (group === 'parameter-scan') {
-    if (action === 'options') path = `/parameter-scans/options${await fileQuery(values.file)}`;
-    else if (action === 'preview' || action === 'create') {
-      const file = await fileBody(values.file);
-      if (action === 'create') requestId(file.body, values['request-id']);
-      method = 'POST'; path = `/parameter-scans${action === 'preview' ? '/preview' : ''}`; body = file.bytes;
-    } else if (action === 'list') path = `/parameter-scans${await fileQuery(values.file)}`;
-    else if (action === 'trials' || action === 'surface') {
-      if (action === 'surface' && !values.file) throw new CliError('file_required');
-      path = `/parameter-scans/${resourceId(id)}/${action}${await fileQuery(values.file, action === 'surface' ? ['fixed'] : [])}`;
+    if (action === 'list') path = `/parameter-scans${await fileQuery(values.file)}`;
+    else if (action === 'trials') {
+      path = `/parameter-scans/${resourceId(id)}/trials${await fileQuery(values.file)}`;
     } else if (['get', 'stop', 'watch', 'wait'].includes(action)) {
       path = `/parameter-scans/${resourceId(id)}`;
       if (action === 'stop') { method = 'POST'; path += '/stop'; }

@@ -2,7 +2,7 @@ import type { ExecutionErrorCategory, ExecutionErrorDetail } from '../../../pack
 
 type ExecutionContext = { operation?: unknown; stage?: unknown };
 type Fallback = 'scientific_execution_failed' | 'backtest_failed' | 'operation_failed';
-const operations = new Set(['native-strategy-backtest', 'native-walk-forward', 'evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
+const operations = new Set(['native-strategy-backtest', 'evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
   'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest']);
 const stages = new Set(['compile', 'execute', 'decode', 'validate']);
 

@@ -29,7 +29,6 @@ pub mod managed;
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
-pub mod native_walk_forward;
 #[cfg(feature = "catalog-prepare")]
 pub mod operator;
 mod report;
@@ -39,7 +38,6 @@ pub mod source_market;
 pub mod spot_cash_source;
 pub mod spot_fees;
 pub mod ticks;
-pub mod validation;
 
 pub mod native_strategy;
 

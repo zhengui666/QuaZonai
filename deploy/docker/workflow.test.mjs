@@ -64,10 +64,11 @@ test('science CI exercises original high-precision data and upstream strategies 
   const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
   const make = await readFile(new URL('../../Makefile', import.meta.url), 'utf8');
   assert.match(ci, /cargo test[^\n]*--features market-history,catalog-prepare,hyperliquid-offline --lib ticks::/);
-  for (const target of ['native_strategy', 'native_walk_forward', 'native_instrument_updates']) {
+  for (const target of ['native_strategy', 'native_instrument_updates']) {
     assert.ok(ci.includes(`--test ${target}`));
     await readFile(new URL(`../../apps/job/tests/${target}.rs`, import.meta.url));
   }
+  assert.doesNotMatch(ci, /--test native_walk_forward/);
   assert.doesNotMatch(ci, /QZ_TICK_NATIVE_FIXTURE_DIR|tick-native\.test\.ts|--test instrument_versions/);
   assert.match(ci, /run: make check-science PROFILE="\$PROFILE"/);
   assert.match(ci, /run: make check-core/);

@@ -33,16 +33,16 @@ describe('parameter scan result presentation', () => {
   it('retains exact large counts and separates running, comparable and scientific qualification', () => {
     const visible = text(render(scan));
     expect(visible).toContain('9007199254740993');
-    expect(visible).toContain('尚无目标指标可用');
+    expect(visible).toContain('不重新计算排名');
     expect(visible).toContain('探索性结果，未获科学资格');
     expect(visible).toContain('关闭页面不会取消扫描');
     expect(visible).toContain('不代表独立证据通过');
   });
-  it('displays an actual zero as the best validation value without fabricating one when absent', () => {
-    const html = text(render({ ...scan, status: 'COMPLETED', best: { ordinal: '9007199254740993', parameters: { fast_period: '5', slow_period: '20' }, metric: { key: 'Custom Native Statistic', label: 'Custom Native Statistic', partition: 'FULL_SELECTION', status: 'AVAILABLE', value: 0, reason: null } } }));
-    expect(html).toContain('试验 #9007199254740993');
-    expect(html).not.toContain('尚无目标指标可用');
-    expect(html).toContain('· 0');
+  it('does not advertise creation, rankings or retired analysis tabs', () => {
+    const visible = text(render(scan));
+    for (const label of ['最佳可比', '参数分析', '曲线对比', '新建扫描']) expect(visible).not.toContain(label);
+    expect(text(render(scan, '', true))).not.toContain('新建扫描');
+    expect(text(render(scan, 'tab=surface'))).toContain('不重新计算排名');
   });
   it('shows cancellation and remote uncertainty without claiming remote termination', () => {
     const stopping = text(render({ ...scan, status: 'STOPPING' }));
@@ -57,8 +57,8 @@ describe('parameter scan result presentation', () => {
 it('renders the chosen minimizing direction and preserves the native key', () => {
   const value = { ...scan, objective: { ...scan.objective, metricId: 'Custom Native Statistic', direction: 'minimize' as const } };
   const visible = text(render(value));
-  expect(visible).toContain('FULL_SELECTION');
-  expect(visible).toContain('最小化原生统计值');
+  expect(visible).toContain('历史探索记录');
+  expect(visible).not.toContain('最小化原生统计值');
   expect(visible).not.toContain('VALIDATION');
 });
 
@@ -70,4 +70,12 @@ it('shows independent official strategy task concurrency without retired batchin
   expect(visible).toContain('strategy.fast_period');
   expect(visible).not.toContain('batchSize');
   expect(visible).not.toContain('signal.fast_period');
+});
+
+it('contains no removed API calls or deleted grid imports', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('./parameter-scans.tsx', import.meta.url), 'utf8');
+  for (const retired of ['parameterScanPlan', 'parameterScanAxisValue', '/preview', '/surface', '/options', 'ScanBuilder', 'trialOrder', 'ParameterHeatmap']) expect(source).not.toContain(retired);
+  const research = await readFile(new URL('./research.tsx', import.meta.url), 'utf8');
+  expect(research).not.toContain('/parameter-scans/new');
 });

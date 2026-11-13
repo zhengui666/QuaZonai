@@ -8,7 +8,7 @@ import { LiteratureDoc } from '../src/literature-document.ts';
 import { literatureInstructions, literatureTools } from '../src/literature-tools.ts';
 import { CampaignResearchDoc } from '../src/pm-campaign.ts';
 
-const instructions = `Research the owner's question using the registered brief and literature. Use native_strategy_backtest for an explicitly bound, unchanged upstream Nautilus strategy, and native_strategy_walk_forward for separate out-of-sample validation. Do not translate custom signals into non-equivalent upstream strategies. Preserve registered data, original fee models and execution receipts. Never read sealed data, invent performance, approval or trading permission. Ask for genuinely missing inputs; an ordinary discussion does not need an executable binding.
+const instructions = `Research the owner's question using the registered brief and literature. Use native_strategy_backtest for an explicitly bound, unchanged upstream Nautilus strategy, and predeclare explicit training and validation windows before running their separate native_strategy_backtest invocations. Preserve each original request and receipt for Pi to assess out-of-sample evidence; automatic walk-forward selection is unavailable. Do not translate custom signals into non-equivalent upstream strategies. Preserve registered data, original fee models and execution receipts. Never read sealed data, invent performance, approval or trading permission. Ask for genuinely missing inputs; an ordinary discussion does not need an executable binding.
 ${literatureInstructions}`;
 export function researchExtension(search?: Parameters<typeof literatureTools>[0]) {
   return defineExtension({ name: 'qz.research', sections: [section('research', () => instructions)],

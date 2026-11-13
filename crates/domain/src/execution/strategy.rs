@@ -207,43 +207,6 @@ pub(super) fn task(
     Ok(())
 }
 
-/// The selected original fold, including its exact model and observation identity.
-pub fn source<'a>(
-    policy: &FrozenTargetPolicyV1,
-    report: &'a NativeExperimentEvaluationResultV1,
-) -> Result<&'a NativeExperimentFoldV1, DomainError> {
-    super::check_experiment_evaluation(
-        &report.request,
-        report.dataset_revision_id,
-        report.model_artifact_id,
-        &report.feature_artifact_ids,
-        report,
-    )?;
-    let fold = report
-        .folds
-        .get(usize::from(policy.initialization.source_fold_index))
-        .ok_or_else(|| bad("strategy.source_fold"))?;
-    let first = fold
-        .decisions
-        .first()
-        .ok_or_else(|| bad("strategy.source_fold"))?;
-    if policy.dataset_revision_id != report.dataset_revision_id
-        || policy.model_artifact_id != report.model_artifact_id
-        || policy.feature_artifact_ids != report.feature_artifact_ids
-        || policy.feature_schema != report.request.feature_schema
-        || policy.instrument_id != report.instrument_id
-        || policy.base_currency != report.request.settings.base_currency
-        || policy.target_ttl_ns != report.request.target_ttl_ns
-        || policy.model_abi != FEATURE_MODEL_ABI_V2
-        || policy.initialization.first_ordinal != first.ordinal
-        || policy.initialization.first_event_ns != first.event_ns
-        || policy.initialization.first_decision_ns != first.decision_ns
-    {
-        return Err(bad("strategy.source_binding"));
-    }
-    Ok(fold)
-}
-
 fn decimal(value: BigDecimal) -> Result<DecimalValue, DomainError> {
     value
         .to_plain_string()

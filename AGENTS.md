@@ -2,7 +2,7 @@
 
 ## 项目定位与首要原则
 
-QuaZonai 是基于 **NautilusTrader 与官方 Pi Durable 封装**的单人量化研究工作台。它连接想法、Agent 研究、原生指标回测与参数扫描、目标交付和账户观测。项目的价值在业务集成、研究体验与结果表达，不在重新实现底层框架。
+QuaZonai 是基于 **NautilusTrader 与官方 Pi Durable 封装**的单人量化研究工作台。它连接想法、Agent 研究、显式原生策略回测、目标交付和账户观测。项目的价值在业务集成、研究体验与结果表达，不在重新实现底层框架。
 
 **尽可能不造重复轮子：先查 NautilusTrader 和 Pi Durable 的官方能力，优先直接复用，再做最薄的业务适配。** 只有现有公开接口确实不能满足具体需求时才写项目代码；不要因为不了解上游能力而新增替代实现。依赖使用官方包或已固定的官方上游版本，通过公开 API 集成，不复制上游实现、不维护补丁或 fork。
 
@@ -47,7 +47,7 @@ Web / CLI
         → 独立的模拟盘或实盘账户连接：目标回执与观测
 ```
 
-当前研究入口直接调用原生指标回测及参数扫描，不再走自研因子生成、WASM 拟合、独立评分或 PM BUILD/STUDY 准入链。回测结果是历史计算，不是 PASS、不代表样本外有效，也不自动生成交易许可。目标交付和账户观测是独立业务事实，研究完成不等于已交付，收到回执不等于已成交。
+当前研究入口直接调用显式原生策略回测，不再走自研因子生成、WASM 拟合、独立评分或 PM BUILD/STUDY 准入链。回测结果是历史计算，不是 PASS、不代表样本外有效，也不自动生成交易许可。目标交付和账户观测是独立业务事实，研究完成不等于已交付，收到回执不等于已成交。
 
 - `apps/service/src/service.ts` 是服务装配入口；`facts.ts`、`pm-facts.ts` 等通过官方 Durable Doc 表达业务事实。不要另建事实数据库。
 - `apps/research/src/host.ts` 装配官方 Harness 与 SQLite Storage；研究、工具和科学子任务使用原 Conversation/Submission/Task 身份。
@@ -88,13 +88,13 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 4. 根据影响运行必要的类型检查、编译或相关单元测试。不要运行上面禁止的流程，不以数量代替验证价值。
 5. 交付时说明行为变化、实际验证结果与未完成事项；用户要求合并到 dev 时完成远程合并并读回提交状态。
 
-## 原生研究与参数扫描的实际范围
+## 原生研究与历史扫描记录的实际范围
 
 - `native_strategy_configure` 在同一 Pi Conversation 保存官方策略的明确请求；`native_strategy_backtest` 通过原 Task、远端执行回执和已绑定 catalog 运行，不另建策略状态机。
 - 当前单标的回测已接官方 EMA_CROSS（QuoteTick）、ORDER_BOOK_IMBALANCE（L2）、GRID_MARKET_MAKER（QuoteTick）及 HURST_VPIN_DIRECTIONAL（官方 BAR/QuoteTick/TradeTick 订阅）。Grid 的策略专属字段逐一映射官方 GridMarketMakerConfig，instrument_id 来自原请求；可选 base 原样由官方 StrategyConfig 解析。省略 trade_size/expire_time_secs 保持官方 None 语义，其余数值/开关显式提供，不由胶水补交易规则。尚未接任意 Python 策略、多标的或全部原生策略。
 - Hurst/VPIN 的所有策略专属配置按公开 HurstVpinDirectionalConfig 字段映射，窗口校验与指标/交易算法由上游执行。官方 INTERNAL BAR 由 DataEngine 按真实 TradeTick 聚合；EXTERNAL BAR 使用完整 BarType 标识，不能以 instrument ID 替代。同标的不同 BarType 可并列读取。外部非时间 BAR 若只用作策略输入，应显式设置官方 venue.bar_execution=false 并提供真实 Quote/Trade 执行数据；省略保持官方 true 及其原生拒绝行为，不静默改变撮合语义。
 - 回放使用原始事件与可用时间窗口、官方账户/撮合/费用及原生统计；不把缺失值补零，不把回测当独立样本外验证。账户运行仍仅允许原有 EMA_CROSS，Grid、Hurst/VPIN 和订单簿不因回测注册而开放账户执行。
-- Web/API/CLI 参数扫描基于已有原生研究请求，枚举其实际数值字段。每项经同一 Pi Durable 与官方原生策略回测，保持独立账户状态；没有已退役的 indicator_strategy_batch_request 执行入口。扫描仅属探索，不自动授予实盘权限。
+- 自研参数网格枚举、批量择优与扫描执行已退役，Web/API/CLI 不再创建、重试或取消后重提扫描。历史扫描保留原始请求、Task、结果及回执，展示只读状态；必要的停止操作只沿原身份处理未决子任务，不创建新回测。
 - 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。Rust job 已不依赖 WASM 解释器或 Clarabel 求解器；历史 Wire 类型及拒绝旧请求的测试仍可保留相关标识，不等于支持执行。真实资金/账户与原始数据代码须按调用图保留，不能按关键词盲删。
 - 原生兼容方向是使用官方配置、策略、指标、数据与报告接口，而不是再造策略 DSL。当前 Rust `add_strategy<T>` 需要编译时具体类型；尚无任意 Python `ImportableStrategyConfig` 动态执行接线，原生策略入口也不支持用户源码即席运行。已接入的策略不是 Nautilus 全部能力，扩展应接官方公开接口，不修改上游。
 
@@ -152,27 +152,27 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 
 ## 双路研究评级的当前接线
 
-`native_strategy_logic_review` 在已配置策略执行前创建官方 Pi Durable 子 Task。子 Task 用官方 pi-ai 的独立上下文审阅声明的经济机制、前视风险、自由度、参数依据和执行假设；对上游策略可显式传入与 walk-forward 相同顺序的 `strategies` 候选列表，省略时只审阅已注册策略，不读取主对话或原生回测结果，也不声称检查过未提供的源码。结果绑定原始策略请求、配置 Task ID、模型与评级规则版本；模型缺失或响应无效按真实失败处理。逻辑星级仅为研究判断，不是收益概率。
+`native_strategy_logic_review` 在已配置策略执行前创建官方 Pi Durable 子 Task。子 Task 用官方 pi-ai 的独立上下文审阅声明的经济机制、前视风险、自由度、参数依据和执行假设；对上游策略可显式传入需审阅的 `strategies` 与预声明完整请求列表，省略时只审阅已注册策略，不读取主对话或原生回测结果，也不声称检查过未提供的源码。结果绑定原始策略请求、配置 Task ID、模型与评级规则版本；模型缺失或响应无效按真实失败处理。逻辑星级仅为研究判断，不是收益概率。
 
-`native_strategy_assessment_report` 创建另一个官方子 Task，读取同一配置的真实逻辑审阅 Task 及原生执行 Task。此入口读取真实 walk-forward 与原生敏感性事实；未运行时数据状态为 `NOT_RUN`。仅有 walk-forward 或缺少事前方法/必要结果时综合星级为 `null`，不以模型建议覆盖缺失事实；完整局部方法的评级范围见下文。历史原生回测及探索参数扫描不得冒称独立验证。旧报告仍通过原 Task ID 留存，改参后的综合报告不复用不匹配的逻辑评级。
+`native_strategy_assessment_report` 创建另一个官方子 Task，读取同一配置的真实逻辑审阅 Task 及原生执行 Task。此入口读取显式回测及原生敏感性事实；历史 WF 仅作为原始历史。未运行时数据状态为 `NOT_RUN`，缺少事前方法或必要结果时综合星级为 `null`，不以模型建议覆盖缺失事实；完整局部方法的评级范围见下文。历史原生回测及探索参数扫描不得冒称独立验证。旧报告仍通过原 Task ID 留存，改参后的综合报告不复用不匹配的逻辑评级。
 
 这是完整自动双路流程的首个接线切片，不是已完成的数据验证产品；现有普通研究回测仍保持原收尾方式。审阅工具可在同一 Conversation 的后续 Submission 调用，不增设交易门禁、审批或资金权限。
 
-原生 `native_strategy_walk_forward` 工具使用已注册的 `native_strategy_backtest_request`，仅替换候选的上游 `strategy` 参数，不扩大数据、时间窗、账户初始条件或费用范围。`native-walk-forward` 沿既有 NativeStrategyBacktestTask 与远端 receipt 的等待、重启、取消路径运行；验证结果仍是同一 Conversation 下的真实子 Task，不另建作业数据库。工具调用的重放读取原 Task；用户再次明确调用会保留新的试验记录，但原远端结果未决时不重复提交。
+自动 walk-forward 分折与训练择优执行已退役，不提供新调用。历史 WF Task、原请求和原始报告仍可只读，并沿原回执恢复或取消未决执行；历史大型表继续用有界流式解析，不能因入口退役退回全量读取。
 
-每个训练候选和胜出候选的后续测试均由 Nautilus 在独立窗口冷启动，不携带之前账户、仓位或指标状态。切分按真实可用时间批次，不拆同时间数据；原始事件窗口与可用时间边界分别保留。原生报告统计原样保存，position-return 等统计不得标成日权益收益。综合报告仅从同一原始配置的真实验证 Task 读取分折事实、训练选择和测试统计。单独 walk-forward 状态仍为 `PARTIAL_WALK_FORWARD_EVIDENCE`，不自动生成综合星级；不能用已有逻辑审阅冒称覆盖所有变更的候选策略。
+新研究由 Pi 在见到结果前声明完整显式原生请求及训练/验证用途，逐次配置并调用同一原生回测。每次执行使用各自明确窗口、账户与上游配置；QZ 不生成折、不选胜出候选、不重新计算统计。原始事件窗口、可用时间边界、费用与原生报告保持原样。
 
-预审与 walk-forward 的候选覆盖按实际 Task 输入中的完整有序候选逐项比较：完全一致且逻辑 Task 早于验证 Task 时标为 `EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION`；候选变更或缺少预审时明确标为未覆盖，不限制回测执行。综合报告同时列出当前 Conversation 中所有已记录 walk-forward Task 的原请求、候选数、终态/运行态和真实失败原因，不只展示最新成功尝试。范围明确是 `THIS_CONVERSATION_ONLY`，跨会话试验完整性仍未核查，不能据此声称消除了反复试验的选择偏差。
+事前逻辑审阅可在 validationMethod.requests 中声明多个完整请求。后续每个回测按原始请求、catalog、target 和事前 Task 时序关联原预审，不因逐次配置的 Task ID 改变就丢失已声明覆盖，也不把未声明请求或旧 WF 形状纳入覆盖。综合报告保留本会话全部真实尝试与失败；跨会话试验完整性未经核查。
 
-事前逻辑工具的 `validationMethod` 记录实际 `split`、`objective`、`neighbourStrategies` 和 `costs`。`native_strategy_sensitivity` 复用官方原生策略 Task 独立运行原请求、指定邻域与 maker/taker 费用场景；只替换指定策略或两项费用，不改变原数据/账户窗口，不将该历史窗口敏感性冒充新增样本外。原始结果、失败与每次调用均留在同一 Pi Conversation，取消和恢复复用原回执。
+事前逻辑工具的 `validationMethod` 记录显式完整请求、用途及邻域/费用假设；这些声明不是 QZ 分折或择优参数。敏感性工具仅按明确场景调用原生回测，原始结果、失败与每次调用均保留原 Task，取消和恢复复用原回执，不把同窗口敏感性冒充独立样本外。
 
-综合审阅读取真实 Task，核对事前候选/方法与实际执行，并呈现原生分折统计、敏感性、交易笔数及已记录试验。可用证据齐备后由独立 Pi 子 Agent 判断是否足以给出 0–5 星，逻辑与数据分开、综合不取平均；材料不足或 Agent 认为不充分时保持 `null`。有效评级明确标记 `RATED_WITH_DISCLOSED_LIMITATIONS`，只评价本会话已记录方法，不是概率、全面防过拟合认证或交易门禁。CPCV、跨会话试验历史和独立源数据审计未执行时如实披露，不机械禁止有限范围研究判断。官方统计保留原值，IEEE754 十六进制只作展示解码，缺失/非有限数不补零。
+综合审阅读取真实 Task，核对事前候选/方法与实际执行，并呈现原生统计、显式窗口与敏感性、交易笔数及已记录试验。可用证据齐备后由独立 Pi 子 Agent 判断是否足以给出 0–5 星，逻辑与数据分开、综合不取平均；材料不足或 Agent 认为不充分时保持 `null`。有效评级明确标记 `RATED_WITH_DISCLOSED_LIMITATIONS`，只评价本会话已记录方法，不是概率、全面防过拟合认证或交易门禁。CPCV、跨会话试验历史和独立源数据审计未执行时如实披露，不机械禁止有限范围研究判断。官方统计保留原值，IEEE754 十六进制只作展示解码，缺失/非有限数不补零。
 
 审阅绑定同时比较官方归一化请求、实际 catalog 和原生执行 target。省略与官方等义的 null 不构成新策略，不能绕过事前结果检查；相同请求在不同 catalog/target 的结果不拼接为同一研究证据。这里记录的是执行来源，不是数据内容独立审计、不可变快照或证明。报告保留原生 `run.outcome`、notes 与数据行数；官方 `stopped` 是真实停止结果，不冒充完整验证。样本范围按本次原始窗口与实际数据记录说明，不把派生缓存的更长日期范围当原始行情覆盖；USDT/USDC 不由胶水默认等值。
 
-完整原生研究使用同一 Pi 工具循环：先 `native_strategy_brief` 读取已注册的原始请求与来源，再由 Agent 在未见结果时声明候选/方法并逻辑审阅，随后执行原生历史回测、walk-forward、邻域/成本与综合报告。`native_strategy_backtest` 默认保存真实历史结果但不强制结束整个研究；单次独立回测可显式 `finishResearch: true` 收尾。此连接不另建调度器，不运行新策略DSL、不推断币种换算，也不下实盘订单。没有已注册的原生请求、catalog、target 或必需账户/费用假设时仍须取得真实输入，不能冒充已自动完成数据登记。
+完整原生研究使用同一 Pi 工具循环：先 `native_strategy_brief` 读取已注册的原始请求与来源，再由 Agent 在未见结果时声明候选/方法并逻辑审阅，随后执行预声明显式窗口的原生历史回测、邻域/成本与综合报告。`native_strategy_backtest` 默认保存真实历史结果但不强制结束整个研究；单次独立回测可显式 `finishResearch: true` 收尾。此连接不另建调度器，不运行新策略DSL、不推断币种换算，也不下实盘订单。没有已注册的原生请求、catalog、target 或必需账户/费用假设时仍须取得真实输入，不能冒充已自动完成数据登记。
 
-多候选 walk-forward 的费用/邻域证据必须覆盖实际每折选出的官方策略，不能拿注册默认策略 A 的敏感性给胜出策略 B 评级。逻辑预审的 `validationMethod.sensitivityStrategies` 可明确声明敏感性候选，缺省采用本次预审的有序候选。`native_strategy_sensitivity` 的 `strategies` 列表为每个官方候选执行独立原费用回测与每个指定费用场景；未传时仍只跑注册策略，因此完整多候选研究须传相同候选列表。报告列出每个实际选中策略对应的原费用、费用变更和不同参数结果 Task ID，未覆盖如实保持证据不足。候选已在同源历史/WF/敏感性任务中执行后，不得把它改登记为新 base 再标为事前审阅。
+费用/邻域证据须对应实际执行的显式策略配置，不得以策略 A 的结果冒称覆盖策略 B。原始费用、变更场景与 Task ID 原样保留，覆盖不足如实披露；已运行过的配置不能重新登记后冒充事前审阅。
 
 最大化训练 Sharpe 只用于真实训练候选比较，不证明样本外或年化目标；报告保留官方收益口径、每折可用时间窗口、数据行数、成交数及选择历史，让 Agent 评价短样本与选择偏差，不把高值当稳定年化绩效。
 
@@ -184,13 +184,13 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 
 原生策略请求默认按窗口起点读取当时已进入 catalog 的 instrument 定义。可显式使用 `instrument_definition.mode=STATIC_SCENARIO` 并指定目录中原始定义的精确 `ts_init_ns` 与 `ts_event_ns`，将该版本作为整个窗口的固定模拟规格交给官方 `BacktestEngine.add_instrument`。此路径不改原定义时间、不回填历史、不改行情数据、不重写上游，也不在情景中混入其他规格更新。
 
-单次回测及每个 walk-forward 训练/测试结果均携带实际使用的定义时间和 `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED` 口径。时间外测试只表示该假设下按时间分离的结果，不验证历史规格，也不构成实盘证据。费用、币种和资金费模型仍须分别明确；无隐式 USDT/USDC 转换。默认严格路径的 `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` 仅描述目录可用时间，不冒称独立历史来源审计。
+每个显式窗口的原生回测结果均携带实际使用的定义时间和 `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED` 口径。时间外测试只表示该假设下按时间分离的结果，不验证历史规格，也不构成实盘证据。费用、币种和资金费模型仍须分别明确；无隐式 USDT/USDC 转换。默认严格路径的 `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` 仅描述目录可用时间，不冒称独立历史来源审计。
 
 原生请求的 `instrument_definition` 缺省为严格目录时点定义；只有显式 `STATIC_SCENARIO` 并给出真实目录定义的精确 `ts_init_ns`/`ts_event_ns` 才表示“假设这一规格整个窗口不变”。不改目录、行情或定义时间，不将未来定义偷偷重标历史。每个原生结果必须保存定义依据，严格模式仅证明目录定义在窗口开始已可用，不是独立源准确性审计。
 
-STATIC_SCENARIO 原样贯穿配置、回测、walk-forward 与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和探索扫描保留定义原时间与scope，不能混用严格历史与情景依据。
+STATIC_SCENARIO 原样贯穿配置、各显式回测与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和历史扫描保留定义原时间与scope，不能混用严格历史与情景依据。
 
-参数扫描的原生 Task 完成不等于执行窗口完整：`canonical_result.run.outcome=stopped` 保留原报告、统计和原因，但标为 STOPPED，不参与完整窗口排名或热图有效值；重启/投影不重新运行候选。探索扫描使用上游原统计，不把默认 Sharpe 视为已核实日权益收益或年化回报证据。
+历史扫描只读展示原生 Task 及原结果状态：stopped 仍为真实停止，不重标完整验证，不再计算排名或生成热图。恢复、查看与停止均不得重新运行旧候选；原始指标、时间与数据口径保持。
 
 原生策略结果的 `equity_performance` 只读官方 PortfolioAnalyzer 的 portfolio_returns（原始权益快照），直接调用官方 CAGR/Sharpe 的252与365两种频率，完全独立于可能回退到持仓收益的 canonical 默认统计。官方权益不可用时保留原因，不以持仓收益替代或隐式转换币种。原始快照UTC日期数、收益日数、未定价快照和时间范围同时展示；官方跨日延续不是每天实际观测，短样本CAGR只是外推，不是已实现年收益。WF可显式选择 `EQUITY_PERFORMANCE` 与频率，扫描以独立权益指标ID保持同名canonical值分离；无需新增交易门禁。
 盘口快照不等于逐事件增量数据；报告必须披露已知档位、采样频率、遗漏空簿/异常档位及carry/checkpoint语义，不把快照撮合结果宣称真实高频可成交性。
@@ -202,3 +202,5 @@ STATIC_SCENARIO 原样贯穿配置、回测、walk-forward 与成本/邻域候�
 原生策略在启动 node 前复用既有有界文件读取完整计数并校验帧尾，`data_rows_by_type` 仅表示预运行校验扫描当时观察到的原始行数，不是回放消费数或一致目录快照。报告现有 notes 同时披露实际reader读取行数（含预取）及目录一致性未验证；Parquet仅支持Latest，read-only不阻止其他导入者，组发现后添加的文件可能包含或不包含，替换文件即使行数不变也可能改变内容。不同fold/candidate不保证同一目录内容，不以相同行数冒充一致输入；不新增冻结、哈希或交易门禁。测试中的启动即停得到选中9行、预取6行、回放0帧，三者口径不同。具体 native_strategy 集成测试与相同 canonical 对照覆盖真实上游策略执行、费用、资金率同时间排序、显式/缺省起点及静态/历史定义；临时合成数据不充当历史交易或盈利证据。
 
 本次顺序独立进程压力测试使用临时合成648份原生Parquet、2653560行delta及884520完整帧，官方OBI dry-run：原预载路径峰值648732 KiB、回放35.91秒；延迟组官方node含选中行预计数峰值160028 KiB、69.59秒。完整canonical结果仅显式run标签不同，资金与时间字段未删改。此样本内峰值约降75%、时间约增94%，不外推真实27天数据或实盘效果。相关定向验证使用jobs=1、debug=0；因共享构建空间不足，最终定向重试关闭incremental缓存，不扩展为额外验证流程。
+
+本轮科学减法已删除自有 BAR 容量估算、账户 sizing、目标混合、资金曲线规划、旧目标回放、组合数值优化和库存估值执行入口。历史合同和原始资金记录保留，不代表旧算法可执行。界面只展示上游统计与原始权益，不重算年化、收益或回撤；原始回撤负值保留，越接近 0 损失越小，API 数值排序不变，界面首次按降序显示。

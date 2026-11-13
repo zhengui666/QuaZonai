@@ -1,50 +1,72 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { normalizeParameterScan, parameterScanPlan, parameterScanPoint, parameterScanStart, type ParameterAxis } from '../../../packages/contracts/src/parameter-scans.ts';
-function plan(axes: ParameterAxis[]) { return parameterScanPlan({ name: 'Native configuration grid', source: { kind: 'research', researchId: 1 }, mode: 'STRATEGY', axes, objective: { metricId: 'An upstream statistic', partition: 'FULL_SELECTION', direction: 'minimize' } }); }
-test('numeric paths and exact decimal grids do not impose proprietary indicator constraints', () => {
-  const grid = normalizeParameterScan(plan([{ key: 'signal.fast_period', domain: { kind: 'values', values: ['5', '20'] } }, { key: 'signal.slow_period', domain: { kind: 'values', values: ['3', '40'] } }, { key: 'long_weight', domain: { kind: 'values', values: ['0', '0.100000000000000001'] } }]), { 'settings.latency_model.parameters.insert_latency_ns': '9007199254740993' });
-  assert.equal(grid.total, '8'); assert.equal(grid.eligible, '8'); assert.equal(grid.skipped, '0');
-  assert.equal(parameterScanPoint(grid, '1').parameters.long_weight, '0.100000000000000001');
-  assert.equal(parameterScanPoint(grid, '0').parameters['settings.latency_model.parameters.insert_latency_ns'], '9007199254740993');
-  assert.equal(parameterScanPoint(grid, '0').skipReason, null, 'Nautilus, not the grid, validates strategy combinations');
+import test from 'node:test';
+import * as contracts from '../../../packages/contracts/src/parameter-scans.ts';
+import { registerParameterScanRoutes, parameterScanWorkbench, ParameterScanTask, ParameterScans, ParameterScanRecords, createParameterScanExtension } from '../src/parameter-scans.ts';
+import type { ResearchHost } from '../../research/src/host.ts';
+import type { ServiceConfig } from '../src/config.ts';
+
+test('retired grid helpers have no executable exports', () => {
+ for(const key of ['normalizeParameterScan','parameterScanPoint','parameterScanAxisValue','assertDistinctNativeNumbers','parameterScanPlan','parameterScanStart'])assert.equal(key in contracts,false);
 });
-test('large grids stay compact and exact, zero and negative native values remain expressible', () => {
-  const grid = normalizeParameterScan(plan([{ key: 'custom.value', domain: { kind: 'range', start: '-9007199254740993', end: '9007199254740993', step: '1' } }]), {});
-  assert.equal(normalizeParameterScan(plan([{ key: 'exact', domain: { kind: 'values', values: ['9.007199254740993e15'] } }]), {}).axes[0]!.domain.kind, 'values');
-  assert.equal(parameterScanPoint(normalizeParameterScan(plan([{ key: 'exact', domain: { kind: 'values', values: ['9.007199254740993e15'] } }]), {}), '0').parameters.exact, '9007199254740993');
-  assert.equal(grid.total, '18014398509481987'); assert.equal(parameterScanPoint(grid, '9007199254740993').parameters['custom.value'], '0');
-  const decimals = normalizeParameterScan(plan([{ key: 'native.threshold', domain: { kind: 'values', values: ['0.10', '0.1', '-1e-7'] } }]), {});
-  assert.equal(decimals.total, '2'); assert.equal(parameterScanPoint(decimals, '1').parameters['native.threshold'], '-0.0000001');
+test('new scan/preview/surface routes and workbench entry points are absent',async()=>{
+ const host={harness:new Proxy({}, {get(){throw Error('unexpected_storage_or_dispatch');}})} as unknown as ResearchHost;
+ const work=parameterScanWorkbench(host,{} as ServiceConfig,createParameterScanExtension(()=>host.harness).stopTask);
+ for(const key of ['start','preview','surface','options'])assert.equal(key in work,false);
+ const routes:string[]=[];
+ registerParameterScanRoutes({get:(path:string)=>routes.push(`GET ${path}`),post:(path:string)=>routes.push(`POST ${path}`)} as never,host,work,new Set());
+ assert.equal(routes.includes('POST /api/v3/parameter-scans'),false);
+ assert.equal(routes.some(path=>/preview|surface|options/.test(path)),false);
+ await assert.rejects(()=>work.trials('old',{sort:'metric'}),/parameter_scan_retired/);
 });
-test('independent scan concurrency and objective direction survive parsing; batching and unsafe inputs do not', () => {
-  const input = plan([{ key: 'signal.period', domain: { kind: 'values', values: ['2'] } }]);
-  const parsed = parameterScanStart({ ...input, requestId: 'owner-command', execution: { concurrency: 4 } });
-  assert.deepEqual(parsed.execution, { concurrency: 4 }); assert.equal(parsed.objective.direction, 'minimize');
-  assert.throws(() => parameterScanPlan({ ...input, source: { kind: 'factor', factorId: 'old' } }), /source_unsupported/);
-  assert.throws(() => parameterScanPlan({ ...input, axes: [{ key: '__proto__.polluted', domain: { kind: 'values', values: ['1'] } }] }), /axis_unsupported/);
-  assert.deepEqual(parameterScanPlan({ ...input, execution: undefined }).execution, { concurrency: 1 });
-  for (const concurrency of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '4']) {
-    assert.throws(() => parameterScanPlan({ ...input, execution: { concurrency } }), /parameter_scan_concurrency_invalid: execution.concurrency/);
-  }
-  for (const batchSize of [0, 3]) {
-    assert.throws(() => parameterScanPlan({ ...input, execution: { concurrency: 4, batchSize } }), /parameter_scan_field_unsupported: execution.batchSize/);
-    assert.throws(() => parameterScanStart({ ...input, requestId: 'owner-command', execution: { concurrency: 4, batchSize } }), /parameter_scan_field_unsupported: execution.batchSize/);
-  }
-  assert.throws(() => parameterScanPlan({ ...input, objective: { ...input.objective, partition: 'VALIDATION' } }), /objective_unsupported/);
-  assert.throws(() => parameterScanPlan({ ...input, axes: [...input.axes, ...input.axes] }), /duplicate_axis/);
+test('original scan phases are retired without creating any candidate',async()=>{
+ for(const phase of ['dispatch','collect'] as const)assert.throws(()=>ParameterScanTask.definition.phases[phase]({} as never,{} as never,{} as never),/parameter_scan_retired/);
+});
+test('historical point reads return stored parameters and original native evidence only',async()=>{
+ const row={ordinal:'0',parameters:{'strategy.period':'7'},taskId:12,status:'COMPLETED',metric:null,metrics:[],sampleCounts:null,error:null,remoteStatus:null};
+ const fact={original:{name:'old'},grid:{axes:[]},trials:{'0':row}};
+ let writes=0;
+ const native={canonical_result:{orders:[{original:true}]}};
+ const host={harness:{
+  snapshot:async(doc:unknown)=>doc===ParameterScans?{runs:{old:{conversationId:9,taskId:10}}}:doc===ParameterScanRecords?{value:fact}:undefined,
+  getTask:async(id:number)=>id===10?{kind:'qz.parameter-scan',state:{status:'terminal',outcome:{status:'completed'}}}:{state:{status:'terminal',outcome:{status:'completed',result:native}}},
+  commit:async()=>{writes++;throw Error('no_history_writes');}
+ }} as unknown as ResearchHost;
+ const work=parameterScanWorkbench(host,{} as ServiceConfig,createParameterScanExtension(()=>host.harness).stopTask);
+ const result=await work.trial('old','0');assert.deepEqual(result.parameters,row.parameters);assert.deepEqual(result.details?.nativeResult,native);assert.equal(writes,0);
+ await assert.rejects(()=>work.trial('old','999'),/parameter_scan_trial_not_found/);
 });
 
-import { assertDistinctNativeNumbers } from '../../../packages/contracts/src/parameter-scans.ts';
-test('JSON-number grid validation follows IEEE-754 distinguishability without trimming exact string grids', () => {
-  const axis = (start: string, end: string, step: string) => normalizeParameterScan(plan([{ key: 'native.f64', domain: { kind: 'range', start, end, step } }]), {}).axes[0]!;
-  assert.throws(() => assertDistinctNativeNumbers(axis('30', '30.00000000000000001', '0.000000000000000001')), /indistinguishable/);
-  assert.throws(() => assertDistinctNativeNumbers(axis('9007199254740993', '9007199254740997', '2')), /indistinguishable/, 'ties-to-even can collapse exact ULP steps');
-  assert.doesNotThrow(() => assertDistinctNativeNumbers(axis('0', '9007199254740992', '1')), 'exactly representable huge grid must stay accepted');
-  assert.doesNotThrow(() => assertDistinctNativeNumbers(axis('9007199254740992', '9007199254740996', '2')));
-  for (const [start, end, step] of [['-2', '2', '0.1'], ['-0.000000000000000001', '0.000000000000000001', '0.0000000000000000001'], ['1', '1.000000000000002', '0.0000000000000001'], ['-1.000000000000002', '-1', '0.0000000000000002'], ['9007199254740991', '9007199254740995', '1']]) {
-    const value = axis(start!, end!, step!); const numbers = Array.from({ length: Number(value.count) }, (_, i) => Number(parameterScanPoint({ axes: [value], fixed: {}, total: value.count, eligible: value.count, skipped: '0' }, String(i)).parameters['native.f64']));
-    const distinct = new Set(numbers).size === numbers.length;
-    if (distinct) assert.doesNotThrow(() => assertDistinctNativeNumbers(value)); else assert.throws(() => assertDistinctNativeNumbers(value), /indistinguishable/);
-  }
+test('history projects stored child and remote terminal facts without writes or polling',async()=>{
+ const row={ordinal:'0',parameters:{},taskId:12,status:'PENDING',remoteStatus:'UNKNOWN',metrics:[]};
+ const fact={original:{name:'old',requestId:'original'},grid:{total:'1',eligible:'1',skipped:'0'},trials:{'0':row}};
+ let remoteStatus='UNKNOWN'; let outcome='completed';
+ const host={harness:{
+  snapshot:async(doc:unknown)=>doc===ParameterScans?{runs:{old:{conversationId:9,taskId:10}}}:doc===ParameterScanRecords?{value:fact}:{requests:[{status:remoteStatus}]},
+  getTask:async(id:number)=>id===10?{kind:'qz.parameter-scan',state:{status:'terminal',outcome:{status:'aborted'}}}:{state:{status:'terminal',outcome:{status:outcome,result:{}}}},
+  commit:async()=>{throw Error('no_history_writes');}
+ }} as unknown as ResearchHost;
+ const work=parameterScanWorkbench(host,{} as ServiceConfig,createParameterScanExtension(()=>host.harness).stopTask);
+ assert.equal((await work.trial('old','0')).status,'RECONCILING');
+ assert.equal((await work.get('old')).status,'RECONCILING');
+ remoteStatus='COMPLETED';
+ assert.equal((await work.trial('old','0')).status,'COMPLETED');
+ assert.equal((await work.trial('old','0')).remoteStatus,'COMPLETED');
+ assert.equal((await work.get('old')).counts.completed,'1');
+ assert.equal((await work.get('old')).counts.unknown,'0');
+ assert.equal((await work.get('old')).status,'STOPPED');
+ remoteStatus='CANCELLED';outcome='aborted';
+ assert.equal((await work.trial('old','0')).status,'STOPPED');
+ assert.equal((await work.trial('old','0')).remoteStatus,'CANCELLED');
+ assert.equal(row.status,'PENDING');assert.equal(row.remoteStatus,'UNKNOWN');
+});
+
+test('stop explicitly aborts retained children even when original parent is terminal',async()=>{
+ const marked:number[]=[];let waiting:unknown;
+ const extension=createParameterScanExtension(()=>({abortTask:async(id:number)=>{marked.push(id);},getTask:async()=>null}) as never);
+ await extension.stopTask.definition.phases.stop({input:{id:'old',parentTaskId:10}} as never,{
+  conversationId:9,snapshot:async()=>({value:{trials:{a:{taskId:12},b:{taskId:13},c:{taskId:12}}}}),
+  commit:async(fn:()=>unknown)=>{waiting=fn();}
+ } as never,{} as never);
+ assert.deepEqual(marked,[10,12,13]);
+ assert.deepEqual(waiting,{status:'waiting',checkpoint:{phase:'reconcile'},on:[10,12,13],policy:'allSettled'});
 });

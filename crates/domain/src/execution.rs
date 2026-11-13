@@ -16,12 +16,8 @@ pub use strategy::{
 };
 mod output;
 mod portfolio;
-pub mod validation;
 pub use output::{
-    alpha_sealed_metrics, alpha_sealed_policy, alpha_sealed_request, alpha_validation_metrics,
-    alpha_validation_policy, check_alpha_calibration, check_alpha_sealed,
-    check_experiment_evaluation, check_observed_spot_simulation, equity_curve_query,
-    experiment_summary, freeze_alpha_calibration, output_bindings, output_shape,
+    check_observed_spot_simulation, equity_curve_query, output_bindings, output_shape,
     portfolio_equity_curve, portfolio_simulation_metrics, quality as native_quality,
     strategy_portfolio_summary,
 };
@@ -87,14 +83,6 @@ fn dataset(spec: &JobSpecV1, id: Id) -> bool {
     )
 }
 
-pub fn alpha_validation_request(
-    request: &contracts::science::NativeAlphaValidationRequestV1,
-) -> Result<(), DomainError> {
-    forecast_request(&request.forecast)?;
-    let horizon = u64::from(request.forecast.parameters.label_horizon_observations);
-    validation::policy_parameters(&request.split_policy, horizon)
-}
-
 fn forecast_inputs(
     spec: &JobSpecV1,
     dataset_revision_id: Id,
@@ -126,43 +114,6 @@ fn forecast_inputs(
     Ok(())
 }
 
-pub fn experiment_request(
-    request: &contracts::science::NativeExperimentEvaluationRequestV1,
-) -> Result<(), DomainError> {
-    use contracts::research::SplitKind;
-    selection(&request.selection)?;
-    features::schema(&request.feature_schema)?;
-    crate::control::text(&request.instrument_id, 1, 200, false)?;
-    if request.selection.bar_types.len() != 1
-        || request.selection.bar_types[0].rsplitn(5, '-').nth(4)
-            != Some(request.instrument_id.as_str())
-        || request.split_policy.kind != SplitKind::WalkForward
-        || request
-            .split_policy
-            .step_size
-            .is_none_or(|n| n < request.split_policy.test_size)
-        || request.total_fuel == Some(contracts::DbCounter::ZERO)
-        || request.target_ttl_ns == contracts::DbCounter::ZERO
-    {
-        return Err(bad("experiment_request"));
-    }
-    validation::policy_parameters(
-        &request.split_policy,
-        u64::from(request.label_horizon_observations),
-    )?;
-    crate::portfolio::simulation_settings(&request.settings)?;
-    if request.settings.leverage.as_decimal() != &bigdecimal::BigDecimal::from(1)
-        || request.settings.fee_rates.len() != 1
-        || request.settings.fee_rates[0].instrument_id != request.instrument_id
-        || !matches!(
-            request.settings.fee_model,
-            contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
-        )
-    {
-        return Err(bad("experiment_settings"));
-    }
-    Ok(())
-}
 fn artifact(spec: &JobSpecV1, id: Id, expected: ArtifactInputRole) -> bool {
     spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Artifact { artifact_id, role, .. } if *artifact_id == id && *role == expected))
 }
@@ -266,30 +217,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             forecast_request(request)?;
             forecast_inputs(spec, *dataset_revision_id, *model_artifact_id, None)?;
         }
-        NativeTaskParametersV1::EvaluateExperiment {
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_ids,
-            request,
-            ..
-        } => {
-            experiment_request(request)?;
-            features::artifact_ids(feature_artifact_ids)?;
-            let ids: BTreeSet<_> = feature_artifact_ids.iter().copied().collect();
-            if *model_artifact_id == spec.parameters_artifact_id
-                || ids.contains(model_artifact_id) || ids.contains(&spec.parameters_artifact_id)
-                || !artifact(spec, *model_artifact_id, ArtifactInputRole::Model)
-                || ids.iter().any(|id| !artifact(spec, *id, ArtifactInputRole::Parameters))
-                || !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset {revision_id, role: contracts::research::DataPartition::Validation, ..} if revision_id == dataset_revision_id))
-                || spec.inputs.iter().any(|i| match i {
-                    RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Validation,
-                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*artifact_id == *model_artifact_id && *role == ArtifactInputRole::Model
-                        || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters
-                        || ids.contains(artifact_id) && *role == ArtifactInputRole::Parameters),
-                }) {
-                return Err(bad("experiment_inputs"));
-            }
-        }
+        NativeTaskParametersV1::EvaluateExperiment { .. } => return Err(bad("retired_task")),
         NativeTaskParametersV1::StudyPortfolio {
             dataset_revision_id,
             request,

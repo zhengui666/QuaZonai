@@ -6,10 +6,10 @@ use contracts::{
     evidence::MetricStatus,
     experiment_summary::*,
     science::{
-        NativeAccountKind, NativeExperimentEvaluationResultV1, NativeSimulationRequestV1,
-        NativeSimulationResultV1, NativeStatisticGroup,
+        NativeAccountKind, NativeSimulationRequestV1, NativeSimulationResultV1,
+        NativeStatisticGroup,
     },
-    DbCounter, Id, SchemaV1,
+    DbCounter,
 };
 
 fn count(value: usize) -> Result<DbCounter, DomainError> {
@@ -86,53 +86,6 @@ fn statistic(
         },
         annualization_days,
     }
-}
-
-pub fn experiment_summary(
-    experiment_id: Id,
-    run_id: Id,
-    report_artifact_id: Id,
-    report: &NativeExperimentEvaluationResultV1,
-) -> Result<ExperimentSummaryV1, DomainError> {
-    super::experiment::shape(report)?;
-    let mut folds = Vec::with_capacity(report.folds.len());
-    for fold in &report.folds {
-        let request = &fold.simulation_request;
-        let result = &fold.simulation;
-        let summary = native_simulation_summary(request, result)?;
-        folds.push(ExperimentFoldSummaryV1 {
-            spot_cash: summary.spot_cash,
-            fold_index: fold.fold_index,
-            native_version: summary.native_version,
-            account_id: summary.account_id,
-            account_kind: summary.account_kind,
-            base_currency: summary.base_currency,
-            starting_capital: summary.starting_capital,
-            period_start_ns: summary.period_start_ns,
-            period_end_ns: summary.period_end_ns,
-            decision_count: count(fold.decisions.len())?,
-            orders: summary.orders,
-            positions: summary.positions,
-            daily_return_count: summary.daily_return_count,
-            return_frequency: summary.return_frequency,
-            native_account_pnl: summary.native_account_pnl,
-            sharpe_ratio: summary.sharpe_ratio,
-            max_drawdown: summary.max_drawdown,
-            commissions: summary.commissions,
-            commissions_reason: summary.commissions_reason,
-            equity_preview: summary.equity_preview,
-        });
-    }
-    Ok(ExperimentSummaryV1 {
-        schema_version: SchemaV1, experiment_id, run_id, report_artifact_id,
-        dataset_revision_id: report.dataset_revision_id,
-        model_artifact_id: report.model_artifact_id,
-        feature_artifact_ids: report.feature_artifact_ids.clone(),
-        native_versions: report.native_versions.clone(),
-        instrument_id: report.instrument_id.clone(),
-        interpretation: "Independent frozen-policy replay with fresh capital per fold; no fitted-model, external-training PIT or Alpha qualification claim. Folds are separate, with no aggregate/average Sharpe or concatenated equity.".into(),
-        folds,
-    })
 }
 
 /// The same native metrics and gap-preserving equity selection for every replay view.
