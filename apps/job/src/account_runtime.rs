@@ -399,6 +399,14 @@ impl DataActor for AccountController {
         Ok(())
     }
 }
+// Keep official integer tokens intact across JavaScript JSON parsing. This is
+// serialization only; legacy lastEvent remains for compatibility, not exact ns.
+// lastEventJson is official serde output, not exchange wire bytes. Already
+// persisted rounded objects are never upgraded or used to reconstruct it.
+fn official_order_event_json(event: &OrderEventAny) -> Result<String> {
+    Ok(serde_json::to_string(event)?)
+}
+
 impl AccountController {
     fn install_signal<T>(&mut self, strategy: T) -> Result<()>
     where
@@ -681,9 +689,12 @@ impl AccountController {
             Ok(json!({"command":command,"status":"UNKNOWN","attemptId":id.to_string()}))
         } else {
             let order = node.observe_order(session, Environment::Sandbox, &original)?;
+            let event = order.last_event();
+            let event_json = official_order_event_json(event)?;
             Ok(
                 json!({"command":command,"status":"UNKNOWN","orderObservation":{
-                "status":order.status().to_string(),"filledQuantity":order.filled_qty().to_string(),"lastEvent":order.last_event()}}),
+                "status":order.status().to_string(),"filledQuantity":order.filled_qty().to_string(),
+                "lastEvent":event,"lastEventJson":event_json}}),
             )
         }
     }
@@ -1780,6 +1791,24 @@ async fn run_config_owned(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn official_event_json_keeps_adjacent_nanoseconds() -> Result<()> {
+        use nautilus_model::events::OrderCanceled;
+        let event = OrderEventAny::Canceled(OrderCanceled::new(
+            "T-001".parse()?, "S-001".parse()?, "TEST.SIM".parse()?, "original".parse()?,
+            UUID4::new(), 1794603862176207674_u64.into(), 1794603862176207675_u64.into(),
+            false, None, None, None,
+        ));
+        let raw = official_order_event_json(&event)?;
+        assert_eq!(raw, serde_json::to_string(&event)?);
+        assert!(raw.contains("1794603862176207674"));
+        assert!(raw.contains("1794603862176207675"));
+        let wire = json!({"lastEvent":event,"lastEventJson":raw});
+        let decoded: Value = serde_json::from_str(&serde_json::to_string(&wire)?)?;
+        assert_eq!(decoded["lastEventJson"].as_str(), Some(raw.as_str()));
+        Ok(())
+    }
+
     #[test]
     fn ordinary_cancel_scope_does_not_claim_user_or_live_support() {
         let builtin: NativeCompiledStrategyV1 = serde_json::from_value(
