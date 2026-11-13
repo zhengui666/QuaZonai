@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
+import { discoverRustEnvironment, publicRustPath } from '../../nautilus/src/rust-environment.ts';
+import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { InstanceSettingsUpdate, InstanceSettingsView } from '../../../packages/contracts/src/index.ts';
@@ -26,7 +28,7 @@ function contents(value: Pick<InstanceSettingsView, 'backtest' | 'connections'>)
 
 function validate(value: unknown, revisionKey: 'revision' | 'expectedRevision'): InstanceSettingsView | InstanceSettingsUpdate {
   const body = object(value, 'instance_settings');
-  if (Object.keys(body).some(key => ![revisionKey, 'backtest', 'connections'].includes(key))
+  if (Object.keys(body).some(key => ![revisionKey, 'backtest', 'connections', 'environment'].includes(key))
     || !Number.isSafeInteger(body[revisionKey]) || Number(body[revisionKey]) < 0
     || !Object.hasOwn(body, 'backtest') || !Array.isArray(body.connections)) throw new Problem('instance_settings_invalid');
   if (body.connections.some(connection => !connection || typeof connection !== 'object' || Array.isArray(connection)
@@ -168,6 +170,7 @@ export async function instanceSettings(config: ServiceConfig) {
     loaded = true;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 
+  if (current.environment !== undefined) current.environment = environmentValue(current.environment);
   if (!loaded) credentials = { ...credentials, ...configuredTokenEnvs(current) };
   current = resolveConfiguredTokens(current);
   const assigned = assignCurrentRefs(current, credentials);
@@ -179,6 +182,38 @@ export async function instanceSettings(config: ServiceConfig) {
   if (loaded || hasDirectToken(current)) apply(current, credentials);
 
   const view = () => structuredClone(current);
+  function environmentValue(value: unknown): NativeRustEnvironment | null {
+    if (value === null) return null;
+    const item = object(value, 'rust_environment');
+    if (item.kind !== 'RUST_PROCESS' || Object.keys(item).some(k => !['kind','id','cargoBinary','manifestPath','packageName','features','backtestFactory','accountFactory'].includes(k))
+      || ['id','cargoBinary','manifestPath','packageName'].some(k => typeof item[k] !== 'string' || !(item[k] as string).trim())
+      || !isAbsolute(item.cargoBinary as string) || !isAbsolute(item.manifestPath as string)
+      || item.features !== undefined && (!Array.isArray(item.features) || item.features.some(f => typeof f !== 'string' || !f))) throw new Problem('rust_environment_invalid');
+    for (const field of ['backtestFactory','accountFactory']) if (item[field] !== undefined) publicRustPath(String(item[field]));
+    return structuredClone(item) as unknown as NativeRustEnvironment;
+  }
+  function saveEnvironment(value: unknown): Promise<InstanceSettingsView> {
+    const input = object(value);
+    if (Object.keys(input).some(k => !['expectedRevision','environment'].includes(k)) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 0 || !Object.hasOwn(input,'environment')) throw new Problem('instance_settings_invalid');
+    const environment = environmentValue(input.environment);
+    const pending = tail.then(async () => {
+      if (closing) throw new Problem('service_closing',503);
+      if (input.expectedRevision !== current.revision) {
+        if (canonical(environment as never) === canonical((current.environment ?? null) as never)) return view();
+        throw new Problem('instance_settings_revision_conflict',409);
+      }
+      if (current.revision === Number.MAX_SAFE_INTEGER) throw new Problem('instance_settings_revision_exhausted',409);
+      // Retain original HTTP configuration and credentials as migration facts, never relabel them.
+      const next = {...current, revision:current.revision+1, environment};
+      await persist(next,credentials); current=next; return view();
+    });
+    tail=pending.catch(()=>undefined); return pending;
+  }
+  async function inspectEnvironment() {
+    if (!current.environment) throw new Problem('rust_environment_not_configured',409);
+    const selected=structuredClone(current.environment);
+    return {environmentId:selected.id,revision:current.revision,discovery:await discoverRustEnvironment(selected),connected:false,strategyStarted:false};
+  }
   function save(value: unknown): Promise<InstanceSettingsView> {
     const raw = validate(value, 'expectedRevision') as InstanceSettingsUpdate;
     const input = resolveConfiguredTokens(raw);
@@ -203,10 +238,11 @@ export async function instanceSettings(config: ServiceConfig) {
     tail = pending.catch(() => undefined);
     return pending;
   }
-  return { view, save, async close() { closing = true; await tail; } };
+  return { view, save, saveEnvironment, inspectEnvironment, async close() { closing = true; await tail; } };
 }
 
 export function registerInstanceSettings(app: FastifyInstance, settings: Awaited<ReturnType<typeof instanceSettings>>) {
   app.get(`${API}/settings/instances`, settings.view);
-  app.put(`${API}/settings/instances`, request => settings.save(request.body));
+  app.put(`${API}/settings/instances`, request => settings.saveEnvironment(request.body));
+  app.post(`${API}/settings/instances/inspect`, () => settings.inspectEnvironment());
 }

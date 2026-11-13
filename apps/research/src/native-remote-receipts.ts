@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord';
 import type { ConversationId, Harness, JsonObject, Tx } from '@earendil-works/pi-durable';
 import { canonical } from './documents.ts';
-import { NativeRemoteUncertainty, remoteNativeExecutionStatus, validateRemoteTarget } from './native-execution.ts';
+import { NativeRemoteUncertainty, remoteNativeExecutionStatus, validateNativeTarget } from './native-execution.ts';
 
 export interface NativeRemoteTaskReference { id: number; conversationId: number }
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
@@ -10,7 +10,7 @@ const admissionRejected = (reference: JsonObject) => reference.status === 'REJEC
 const settled = (reference: JsonObject) => terminal.has(String(reference.status)) || admissionRejected(reference);
 function validReference(reference: JsonObject, taskId: number) {
   if (reference.taskId !== taskId || typeof reference.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(reference.requestId)) return false;
-  try { validateRemoteTarget(reference.target); return true; } catch { return false; }
+  try { validateNativeTarget(reference.target); return true; } catch { return false; }
 }
 
 /** Reconcile only existing original references by GET, with one total deadline.
@@ -29,7 +29,7 @@ export async function reconcileNativeRemoteTasks(harness: Pick<Harness, 'snapsho
       if (signal.aborted) return;
       if (settled(reference) || !validReference(reference, task.id)) continue;
       try {
-        const result = await remoteNativeExecutionStatus(validateRemoteTarget(reference.target), String(reference.requestId), signal);
+        const result = await remoteNativeExecutionStatus(validateNativeTarget(reference.target), String(reference.requestId), signal);
         if (!terminal.has(result.status)) continue;
         await harness.commit(async tx => {
           const current = await tx.doc(NativeRemoteUncertainty, task.conversationId as ConversationId, String(task.id), null);

@@ -189,6 +189,7 @@ export interface NautilusConnection {
   url: string; clientId: string; accountId: string; token?: string; tokenEnv?: string;
 }
 export interface InstanceSettingsView {
+  environment?: import('./nautilus.ts').NativeRustEnvironment | null;
   revision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
 export interface InstanceSettingsUpdate {
@@ -204,3 +205,5 @@ export interface UsageView { inputTokens: number | null; outputTokens: number | 
 
 export const API = '/api/v3';
 export type { ListPage, ListCriterion, ResearchListItem, FactorListItem, ListPerformance, PortfolioListItem, TickReplayListItem, AllocationListItem } from './lists.ts';
+
+export interface NativeEnvironmentSettingsUpdate { expectedRevision: number; environment: import('./nautilus.ts').NativeRustEnvironment | null }
