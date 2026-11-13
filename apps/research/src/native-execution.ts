@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
-import { runNativeProcess, cancelNativeProcess } from './native-process.ts';
+import { runNativeProcess, cancelNativeProcess, NativeProcessFailure, type NativeProcessFacts } from './native-process.ts';
 import { Readable } from 'node:stream';
 import { Agent, fetch } from 'undici';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
@@ -83,7 +83,7 @@ async function retainRemoteReference(reference: JsonObject, owner: { taskId: Tas
   await owner.runtime.commit(async tx => {
     const facts = await tx.doc(NativeRemoteUncertainty, owner.runtime.conversationId, String(owner.taskId), null);
     const existing = facts.requests.findIndex(item => item.requestId === reference.requestId);
-    const next = { ...reference, taskId: owner.taskId };
+    const next = { ...reference, taskId: owner.taskId, process: existing < 0 ? null : facts.requests[existing]?.process ?? null };
     if (existing < 0) facts.requests.push(next); else facts.requests[existing] = next;
     return undefined;
   }, withoutAbortSignal(owner.context));
@@ -334,7 +334,7 @@ export async function cancelUnsettledNativeExecutions(ownerTaskId: TaskId, runti
     }, withoutAbortSignal(context));
   }
 }
-async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTaskInput }, runtime: TaskRuntime<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson, object>, state: NativeExecutionReceipt, context: Context) {
+async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTaskInput }, runtime: TaskRuntime<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson, object>, state: NativeExecutionReceipt, context: Context, processFacts?: NativeProcessFacts) {
   const native = state.status === 'COMPLETED' ? await retainNativeEvidence({ value: state.result }, async (index, data) => {
     await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${index}`, null)).data = data; return undefined; }, context);
   }) : null;
@@ -345,13 +345,15 @@ async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTask
       error: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : null };
     const old = facts.requests.findIndex(item => item.requestId === state.requestId);
     const admissionRejection = facts.requests[old]?.admissionRejection;
+    const process = processFacts ?? facts.requests[old]?.process ?? null;
+    Object.assign(row, {process});
     if (old < 0) facts.requests.push(row); else facts.requests[old] = { ...row, ...(admissionRejection ? { admissionRejection } : {}) };
     if (state.status === 'RUNNING') {
       if (state.progress) (await tx.doc(NativeExecutionProgress, runtime.conversationId, String(task.id), null)).snapshots = state.progress.snapshots;
       return { status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'poll' } };
     }
     if (state.status === 'COMPLETED') return { status: 'terminal', outcome: { status: 'completed', result: { native: native! } } };
-    return { status: 'terminal', outcome: { status: 'failed', error: { message: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : 'nautilus_execution_cancelled', detail: { requestId: state.requestId, target: { ...task.input.target } } } } };
+    return { status: 'terminal', outcome: { status: 'failed', error: { message: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : 'nautilus_execution_cancelled', detail: { requestId: state.requestId, target: { ...task.input.target }, process } } } };
   }, context);
 }
 export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson>({
@@ -371,17 +373,19 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
         // Commit away from submit BEFORE spawn. Recovery polls UNKNOWN, never replays this process.
         await runtime.commit(() => ({status:'running',checkpoint:{phase:'poll'}}),context);
         let state: NativeExecutionReceipt;
+        let processFacts: NativeProcessFacts | undefined;
         try {
           const parser = tableCommands.has(task.input.command) ? tableReader({taskId:task.id,runtime,context}) : new JsonReader();
           const result = await runNativeProcess(request.requestId,target.binary,request.command,request.args,request.input,parser,runtime.signal);
           state={schemaVersion:1,requestId:request.requestId,status:'COMPLETED',result};
         } catch (error) {
+          if(error instanceof NativeProcessFailure)processFacts=error.processFacts;
           const diagnostic = error instanceof Error ? (error as Error & {nativeDiagnostic?:string}).nativeDiagnostic : undefined;
           if (diagnostic && !runtime.signal.aborted) await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart,runtime.conversationId,`${task.id}:private-native-stderr`,null)).data=diagnostic; return undefined; },context);
           if (runtime.signal.aborted) throw new Error('native_process_execution_interrupted');
           state={schemaVersion:1,requestId:request.requestId,status:'UNKNOWN',error:'native_process_original_outcome_unknown'};
         }
-        await recordExecution(task,runtime,state,context); return;
+        await recordExecution(task,runtime,state,context,processFacts); return;
       }
       // Historical HTTP tasks keep their original identity and may only observe
       // its receipt. A submit checkpoint is not permission to resend old work.
