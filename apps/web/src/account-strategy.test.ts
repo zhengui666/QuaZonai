@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 import type { ObservationView } from '../../../packages/contracts/src/index.ts';
-import AccountStrategy, { strategyResultText } from './account-strategy';
+import AccountStrategy, { strategyResultText, StrategyLifecycleNotice } from './account-strategy';
 
 const mocks=vi.hoisted(()=>({kind:'EMA_CROSS',submits:0,commands:[] as string[]}));
 vi.mock('./commands',()=>({readDraft:()=>undefined,saveDraft:()=>true,useCommand:(kind:string,_accepted:unknown,path:string)=>{mocks.commands.push(`${kind}:${path}`);return {pending:undefined,busy:false,submit:()=>{mocks.submits++;},values:undefined};}}));
@@ -38,4 +38,14 @@ it('shows the temporary live gate without claiming a strategy started or hiding 
  const paper=renderToStaticMarkup(createElement(AccountStrategy,{value:{...value,mode:'paper'}}));
  expect(paper).not.toContain('实盘启动暂不可用');
  expect(strategyResultText({requestId:'live',action:'START',status:'REJECTED',error:'hyperliquid_native_spot_free_required',receipt:null})).toContain('本次未连接或启动策略');
+});
+
+it('shows only observed current-session lifecycle facts, never treating declaration as certification',()=>{
+ const fact={supported:true,configuredKind:'REGISTERED',scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false,nativeSessionId:'original-session'};
+ const html=renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact}));
+ expect(html).toContain('最近一次读取到的原生会话报告');expect(html).toContain('缓存报告可能过时');expect(html).toContain('后台暂停轮询');expect(html).toContain('不证明会话持续在线');expect(html).toContain('已安装此策略的派发入口');expect(html).toContain('original-session');expect(html).toContain('不是认证');
+ for(const value of [undefined,{...fact,nativeSessionId:null},{...fact,strategyVerified:true},{...fact,supported:null}])expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value}))).toContain('未知：');
+ expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact,unavailable:true}))).toContain('未知：');
+ expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:{...fact,supported:false}}))).toContain('未报告此策略的派发入口可用');
+ expect(mocks.submits).toBe(0);
 });

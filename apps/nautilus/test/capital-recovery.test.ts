@@ -304,6 +304,7 @@ test('unpersisted legacy cancellation refusal stays uncertain without changing i
  const account=await openAccount(native,{...paperOptions,nativeStrategy:{instrument_id:instrumentId,strategy:{kind:'REGISTERED',name:'owner',config:{}}}});
  try{const value=(await account.call('GET','/capabilities')).nativeStrategy as Json;
  for(const [key,original]of Object.entries(facts))assert.equal(value[key],original);
+ assert.deepEqual((await account.call('GET','/strategy/config')).lifecycleCapability,facts);
  assert.equal(native.requests.filter(r=>r.operation==='STRATEGY_START'||r.operation==='CONTROL').length,0);
  }finally{await account.close();}
  });

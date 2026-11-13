@@ -244,6 +244,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   function strategyConfiguration() {
     return { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision,
       configuration: structuredClone(options.nativeStrategy), connected: runtime.isConnected?.() ?? null,
+      lifecycleCapability: runtime.strategyLifecycleCapability?.() ?? null,
       pendingConfigurationRequests: Object.entries(state.strategyCommands ?? {}).filter(([, value]) => value.original.action === 'CONFIGURE' && value.receipt.status !== 'COMPLETED').map(([requestId]) => requestId),
       runnerValidated: false, note: 'Configuration only. REGISTERED names require a user-built account runner; saving never connects or starts trading.' };
   }

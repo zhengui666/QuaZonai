@@ -26,12 +26,19 @@ export function strategyResultText(value: StrategyReceipt) {
     : value.status === 'REJECTED' ? '原生明确拒绝本次启动，未启动策略。'
     : '原命令尚未确定；这里只查询同一请求，不自动重发或用当前状态代替回执。';
 }
+interface LifecycleCapability {supported?:boolean|null;configuredKind?:string|null;scope?:string|null;strategyVerified?:boolean|null;nativeSessionId?:string|null}
+export function StrategyLifecycleNotice({value,unavailable=false}:{value?:LifecycleCapability|null;unavailable?:boolean}){
+ const observed=!unavailable&&value?.scope==='INSTALLED_DISPATCH_ONLY'&&value.strategyVerified===false&&!!value.nativeSessionId&&typeof value.supported==='boolean';
+ return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'未知：尚未取得当前会话的 BOOT 能力事实，或本次读取不可用。保存的配置和声明不能代替实际观测。':value.supported?'最近一次读取到的原生会话报告已安装此策略的派发入口。':'最近一次读取到的原生会话未报告此策略的派发入口可用。'}</p>
+ {observed&&<p>原生报告类型：{value.configuredKind??'未提供'}；原会话：{value.nativeSessionId}。</p>}
+ <p>前台约每 3 秒读取一次，后台暂停轮询；缓存报告可能过时，不证明会话持续在线。这里只显示接线事实，不验证用户工厂、策略兼容性或交易结果。可信代码声明不是认证，也不是交易许可；查看不连接、不启动策略，不改变原命令准入。</p></section>;
+}
 export default function AccountStrategy({ value, configured=false }: { value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
   const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
   const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
   const fence = useResource<{ accountSourceId: string; strategyRevision: string }>(`${path}/fence`, { poll: 3000 });
-  const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; connected: boolean | null; runnerValidated: boolean; pendingConfigurationRequests: string[] }>(`${path}/config`);
+  const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; connected: boolean | null; runnerValidated: boolean; lifecycleCapability?:LifecycleCapability|null; pendingConfigurationRequests: string[] }>(`${path}/config`,{poll:3000});
   const [edited, setEdited] = useState<string>();
   const [configurationError, setConfigurationError] = useState<unknown>();
   const [verifyingConfiguration, setVerifyingConfiguration] = useState(false);
@@ -52,6 +59,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
   const unsettled = !!requestId && (!receipt.data || ['PENDING', 'UNCERTAIN'].includes(receipt.data.status));
   return <section className="result-section"><h3>Nautilus 原生策略</h3>
     <p>保存配置、连接恢复、启动交易是三个独立操作。REGISTERED 指向已编入账户运行器的原生 Rust 策略；名称与 config 原样提交，不表示运行器已支持。未知名称不能回退到示例策略。不要在参数中填写私钥或密码。</p>
+    <StrategyLifecycleNotice value={configuration.data?.lifecycleCapability} unavailable={!!configuration.error}/>
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
       <p>保留此账户已绑定标的。自定义策略格式为 instrument_id 与 strategy: {`{kind: "REGISTERED", name: "已注册名称", config: 任意JSON}`}。新增 Rust 策略类型须先构建部署账户运行器；仅改 config 参数不需要重新编译。</p>
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
