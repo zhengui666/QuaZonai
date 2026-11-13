@@ -28,8 +28,6 @@ import { workbench } from './workbench.ts';
 import { eventStream } from './event-stream.ts';
 import { readResearchAdmissions } from './admissions.ts';
 import { listFactors, readFactor } from './factors.ts';
-import { portfolioCapacity } from './capacity.ts';
-import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
 import { accountKey, capitalStatus, capitalStatusForBinding, control, transportBindingKey } from './capital-exit.ts';
 import { createPmPlatform } from './pm-platform.ts';
@@ -242,10 +240,6 @@ export async function createService(options: ServiceOptions) {
   });
 
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/review`, async request => (await work.getPortfolio(request.params.id)).view.review ?? null);
-  app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
-    const assumptions = researchCapital(request.body);
-    return portfolioCapacity(await work.getPortfolio(request.params.id), config, context, assumptions);
-  });
   app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatusForBinding(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]), fact.connection) } }); }); });
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits`, request => capital.refreshCapital(request.params.id));
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/planning-context`, request => capital.planningContext(request.params.id));

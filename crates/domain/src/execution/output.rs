@@ -5,9 +5,8 @@ use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
-    portfolio::{AllocationResultV1, SolverStatus},
     runtime_jobs::{native_output_contract, RuntimeOutputV1},
-    science::{NativeBarSelectionV1, NativeForecastResultV1, NativeSimulationResultV1},
+    science::{NativeBarSelectionV1, NativeForecastResultV1},
 };
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,35 +19,7 @@ fn exact_native_versions(
     actual == expected
 }
 
-mod experiment;
-mod experiment_summary;
-mod strategy_summary;
-pub use experiment::binding as check_experiment_evaluation;
-pub use experiment_summary::experiment_summary;
-pub use strategy_summary::strategy_portfolio_summary;
 mod forecast;
-mod sealed;
-pub use sealed::{
-    binding as check_alpha_sealed, metrics as alpha_sealed_metrics, policy as alpha_sealed_policy,
-    request as alpha_sealed_request,
-};
-mod equity_curve;
-mod simulation;
-mod spot_cash_report;
-pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
-pub(crate) use simulation::binding as check_simulation;
-pub use simulation::metrics as portfolio_simulation_metrics;
-pub use simulation::observed_binding as check_observed_spot_simulation;
-pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
-mod study;
-pub use study::binding as check_portfolio_study;
-pub use study::observed_binding as check_observed_spot_study;
-mod validation;
-pub use validation::metrics as alpha_validation_metrics;
-pub use validation::policy as alpha_validation_policy;
-pub use validation::{
-    freeze_calibration as freeze_alpha_calibration, frozen_calibration as check_alpha_calibration,
-};
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_OUTPUT_CONTRACT_INVALID")
@@ -144,50 +115,6 @@ fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
     }
     Ok(())
 }
-fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
-    let success = matches!(
-        value.solver_status,
-        SolverStatus::Optimal | SolverStatus::AcceptableInaccurate
-    );
-    if value.objective_value.is_some_and(|n| !n.is_finite())
-        || value
-            .primal_residual
-            .is_some_and(|n| !n.is_finite() || n < 0.0)
-        || value
-            .dual_residual
-            .is_some_and(|n| !n.is_finite() || n < 0.0)
-        || success != value.targets.is_some()
-        || success != value.cash_weight.is_some()
-        || success == value.reason_code.is_some()
-    {
-        return Err(bad("native_output.allocation"));
-    }
-    if let Some(reason) = &value.reason_code {
-        text(reason, 1, 120, false)?;
-    }
-    if let Some(targets) = &value.targets {
-        if targets.is_empty()
-            || value.objective_value.is_none()
-            || value.primal_residual.is_none()
-            || value.dual_residual.is_none()
-        {
-            return Err(bad("native_output.allocation"));
-        }
-        let mut identities = BTreeSet::new();
-        for target in targets {
-            text(&target.instrument_id, 1, 200, false)?;
-            if !identities.insert(&target.instrument_id)
-                || !contracts::research_currency::supported(&target.currency)
-            {
-                return Err(bad("native_output.allocation_target"));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Public transport validation, without borrowing Operator or evaluator authority.
-/// Exact immutable task associations are additionally enforced by output_bindings.
 pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), DomainError> {
     let contract = native_output_contract(&output.schema.name, &output.schema.version)
         .ok_or_else(|| bad("native_output.schema"))?;
@@ -204,19 +131,6 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
-        "qz.experiment_evaluation" => experiment::shape(&decode(bytes)?),
-        "qz.strategy_portfolio" => {
-            let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
-                decode(bytes)?;
-            super::strategy_composition_result(&result.request, &result)
-        }
-        "qz.native_portfolio" => {
-            let result: contracts::science::NativePortfolioBuildResultV1 = decode(bytes)?;
-            allocation(&result.allocation)?;
-            crate::portfolio::allocation_result(&result.input, &result.allocation)
-        }
-        "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
-        "qz.portfolio_study" => study::shape(&decode(bytes)?),
         "qz.forward_evaluation" => crate::forward::evaluation::shape(&decode(bytes)?),
         "qz.portfolio_history" => contracts::portfolio_history::read(bytes)
             .map(|_| ())
@@ -315,24 +229,6 @@ pub fn output_bindings(
             )?;
         }
         NativeTaskParametersV1::ValidateData { .. } => {}
-        NativeTaskParametersV1::StudyPortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.portfolio_study")?.1)?;
-            study::binding(request, &result)?;
-            if let Some(simulation) = &result.simulation {
-                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
-            }
-            let original = contracts::portfolio_history::batch(request, &result)
-                .map_err(|_| bad("portfolio_history.source"))?;
-            let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
-                .map_err(|_| bad("portfolio_history.body"))?;
-            if actual != original {
-                return Err(bad("portfolio_history.binding"));
-            }
-        }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
         }
@@ -360,75 +256,17 @@ pub fn output_bindings(
         NativeTaskParametersV1::EvaluateAlpha { request, .. } => {
             forecast::binding(request, &decode(body("qz.native_forecast")?.1)?)?;
         }
-        NativeTaskParametersV1::EvaluateExperiment {
-            request,
-            dataset_revision_id,
-            model_artifact_id,
-            feature_artifact_ids,
-            ..
-        } => {
-            experiment::binding(
-                request,
-                *dataset_revision_id,
-                *model_artifact_id,
-                feature_artifact_ids,
-                &decode(body("qz.experiment_evaluation")?.1)?,
-            )?;
+        NativeTaskParametersV1::EvaluateExperiment { .. } => {
+            return Err(bad("native_output.retired_task"))
         }
-        NativeTaskParametersV1::ComposeStrategyTargets {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.strategy_portfolio")?.1)?;
-            super::strategy_composition_result(request, &result)?;
-            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay {
-                simulation,
-                ..
-            } = &result.outcome
-            {
-                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
-            }
-        }
-        NativeTaskParametersV1::BuildPortfolio { request, .. } => {
-            super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
-        }
-        NativeTaskParametersV1::SimulatePortfolio {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulateCandidate {
-            dataset_revision_id,
-            request,
-            ..
-        }
-        | NativeTaskParametersV1::SimulatePortfolioSequence {
-            dataset_revision_id,
-            request,
-            ..
-        } => {
-            let result = decode(body("qz.native_simulation")?.1)?;
-            simulation::binding(request, &result)?;
-            spot_cash_report::dataset(&result, *dataset_revision_id)?;
+        NativeTaskParametersV1::ComposeStrategyTargets { .. }
+        | NativeTaskParametersV1::BuildPortfolio { .. }
+        | NativeTaskParametersV1::StudyPortfolio { .. }
+        | NativeTaskParametersV1::SimulatePortfolio { .. }
+        | NativeTaskParametersV1::SimulateCandidate { .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { .. } => {
+            return Err(bad("native_output.retired_task"));
         }
     }
     Ok(())
-}
-
-// Benchmark adapters return explicit unavailable causes, not zero statistics.
-fn benchmark_unavailable(reason: Option<&str>) -> bool {
-    matches!(
-        reason,
-        Some(
-            "BENCHMARK_CURRENCY_MISMATCH"
-                | "BENCHMARK_WINDOW_MISMATCH"
-                | "BENCHMARK_RETURNS_INCOMPLETE"
-                | "BENCHMARK_SINGLE_SERIES_REQUIRED"
-                | "BENCHMARK_CATALOG_UNAVAILABLE"
-                | "BENCHMARK_CLOSE_CONVENTION_UNAVAILABLE"
-                | "BENCHMARK_PRICE_INVALID"
-                | "BENCHMARK_DUPLICATE_BOUNDARY"
-        )
-    )
 }

@@ -35,16 +35,16 @@ function PortfolioListProgress({ value }: { value: PortfolioListItem }) {
   return <span className="quiet">{progressLabels[phase] ?? '回测进行中'}{percentage !== undefined ? ` ${percentage.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : ''}</span>;
 }
 function PerformanceValue({ value, percent = false }: { value: number | null | undefined; percent?: boolean }) {
-  return <span>{value == null || !Number.isFinite(value) ? '—' : percent ? `${(value * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })}</span>;
+  return <span>{value == null || !Number.isFinite(value) ? '未提供' : percent ? `${(value * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })}</span>;
 }
 function PerformanceSummary({ value }: { value?: PortfolioPerformanceSummary }) {
   if (!value) return null;
   return <section className="result-section"><h3>回测表现</h3><Facts items={[
     ['Sharpe（夏普比率）', <PerformanceValue value={value.sharpe} />],
     ['年化收益率', <PerformanceValue value={value.annualizedReturn} percent />],
-    ['最大回撤（损失幅度）', <PerformanceValue value={value.maxDrawdown} percent />],
+    ['最大回撤（原始值）', <PerformanceValue value={value.maxDrawdown} percent />],
     ['年化天数', value.annualizationDays ?? '未记录'],
-  ]} /><p className="quiet">Sharpe 与最大回撤来自本次原生账户日收益；年化收益率来自完整 UTC 日的几何日收益。指标缺失时保留为空，完整口径见原始回测指标。</p><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', '完整 UTC 日的几何年化收益'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
+  ]} /><p className="quiet">Sharpe 与最大回撤来自本次原生账户日收益；年化收益率只读取上游原始 CAGR，不从日收益重新计算。指标缺失时保留为空，完整口径见原始回测指标。</p><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', value.basis.annualizedReturn === 'NATIVE_CAGR' ? '上游原始 CAGR' : '上游未提供'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
 }
 function StrategyPortfolios({ route }: { route: Route }) {
   const list = useListWorkspace<PortfolioListItem>(route, '/portfolios', 'createdAt');
@@ -64,8 +64,8 @@ function StrategyPortfolios({ route }: { route: Route }) {
       { title: <Tooltip title="该记录保存的原始成员数量。"><span>成员数</span></Tooltip>, key: 'memberCount', width: 80, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
       { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 140, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
       { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
-      { title: <Tooltip title="完整 UTC 日收益的几何年化收益率，沿用原回测年化天数。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
-      { title: <Tooltip title="本次原生账户日收益的最大回撤，显示正的损失幅度，越小越好。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
+      { title: <Tooltip title="只展示上游原始 CAGR；未提供时不自行年化。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
+      { title: <Tooltip title="本次原生账户日收益的最大回撤，保留原始负值，越接近 0 回撤越小。首次点击按原值降序排列，不重新计算。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
       { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
     ]} />}
   </section>;

@@ -32,7 +32,7 @@ export function useListWorkspace<T>(route: Route, collection: string, defaultSor
   useEffect(() => { if (query.data) restoreListNavigation(route, true); }, [query.data, route.page, params.toString()]);
   useEffect(() => { if (query.data && query.data.page !== Number(params.get('page') ?? 1)) update({ page: query.data.page }, false); }, [query.data, params.toString()]);
   const sortColumn = (key: string): Pick<TableColumnType<T>, 'key' | 'sorter' | 'sortOrder' | 'sortDirections'> => ({ key, sorter: true,
-    sortDirections: ['name', 'title', 'datasetName', 'maxDrawdown'].includes(key) ? ['ascend', 'descend'] : ['descend', 'ascend'],
+    sortDirections: ['name', 'title', 'datasetName'].includes(key) ? ['ascend', 'descend'] : ['descend', 'ascend'],
     sortOrder: (params.get('sort') ?? defaultSort) === key ? params.get('order') === 'asc' ? 'ascend' : 'descend' : null });
   const tableProps: TableProps<T> = {
     dataSource: query.data?.items ?? [], loading: query.isPending, className: 'workspace-table',

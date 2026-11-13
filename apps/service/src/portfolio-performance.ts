@@ -36,19 +36,15 @@ export function portfolioPerformance(fact: PortfolioFact): PortfolioPerformanceS
     const row = rows[0]!;
     return typeof row.value === 'number' && Number.isFinite(row.value) && !row.reason && (row.status === undefined || row.status === 'AVAILABLE') ? row.value : null;
   };
-  const periods = [252, 365].filter(days => source.some(row => row.key === `Sharpe Ratio (${days} days)`));
+  const periods = [252, 365].filter(days => source.some(row => row.key === `Sharpe Ratio (${days} days)` || row.key === `CAGR (${days} days)`));
   const annualizationDays = periods.length === 1 ? periods[0]! : null;
   const sharpe = annualizationDays === null ? null : value(`Sharpe Ratio (${annualizationDays} days)`);
-  const g = value('Calendar Geometric Daily Return');
   const expectedDays = value('Calendar Expected Days'); const observedDays = value('Calendar Observed Return Days');
-  let annualizedReturn: number | null = null;
-  if (annualizationDays !== null && g !== null && g >= -1 && expectedDays !== null && expectedDays > 0 && Number.isSafeInteger(expectedDays) && observedDays === expectedDays) {
-    const result = g === -1 ? -1 : Math.expm1(annualizationDays * Math.log1p(g));
-    if (Number.isFinite(result)) annualizedReturn = result;
-  }
+  const portfolioReturnSource = simulation.spot_cash_report != null || simulation.returns_kind === 'PORTFOLIO_DAILY';
+  const annualizedReturn = annualizationDays === null || !portfolioReturnSource ? null : value(`CAGR (${annualizationDays} days)`);
   const signedDrawdown = value('Max Drawdown');
-  return { sharpe, annualizedReturn, maxDrawdown: signedDrawdown !== null && signedDrawdown <= 0 && signedDrawdown >= -1 ? -signedDrawdown || 0 : null,
-    annualizationDays, basis: { sharpe: dailyBasis, maxDrawdown: dailyBasis, annualizedReturn: 'COMPLETE_UTC_DAYS_GEOMETRIC',
+  return { sharpe, annualizedReturn, maxDrawdown: signedDrawdown,
+    annualizationDays, basis: { sharpe: dailyBasis, maxDrawdown: dailyBasis, annualizedReturn: annualizedReturn === null ? 'NOT_PROVIDED' : 'NATIVE_CAGR',
       expectedDays, observedDays, partialDays: value('Calendar Partial Days'), startNs: typeof selection.event_start_ns === 'string' ? selection.event_start_ns : null,
       endNs: typeof selection.event_end_ns === 'string' ? selection.event_end_ns : null } };
 }

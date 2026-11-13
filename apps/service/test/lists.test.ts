@@ -82,7 +82,11 @@ test('portfolio summaries preserve source names, exact capital and native perfor
     assert.equal(first.facets.source[0].label, 'Frozen original source name'); assert.equal(first.items[0].datasetName, 'Frozen dataset');
     assert.equal((await get(state, 'portfolios/list?sort=sharpe&order=desc')).items[0].id, 'higher');
     assert.equal((await get(state, 'portfolios/list?sort=sharpe&order=asc')).items[0].id, 'lower');
-    assert.equal((await get(state, 'portfolios/list?sort=maxDrawdown&order=asc')).items[0].id, 'higher');
+    const drawdowns = (await get(state, 'portfolios/list?sort=maxDrawdown&order=asc')).items;
+    assert.equal(drawdowns[0].id, 'lower');
+    assert.equal(drawdowns[0].performance.maxDrawdown, -0.3, 'retain the original signed native statistic');
+    assert.equal(drawdowns[1].performance.maxDrawdown, -0.1);
+    assert.equal(drawdowns.at(-1).performance.maxDrawdown, null, 'missing native values remain missing');
     assert.equal((await get(state, 'portfolios/list?sort=sharpe&order=asc')).items.at(-1).id, 'missing');
     assert.equal((await get(state, 'portfolios/list?currency=USD&sort=capital&order=asc')).items[0].id, 'lower');
     assert.equal((await get(state, 'portfolios/list?currency=USD&capitalMin=9007199254740993.000000000000000002')).total, 1);

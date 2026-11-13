@@ -2,7 +2,7 @@ import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { counter, decimal, decimalUnits, json, nowNs, object, observation, Problem } from './facts.ts';
 import type { CapitalExitStatus } from '../../../packages/contracts/src/capital-exit.ts';
-import { accountKey, capitalStatusForBinding, control, moneyString, physicalCapitalState, transportBindingKey, transportCapability, transportControlFailure } from './capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, physicalCapitalState, transportBindingKey, transportCapability, transportControlFailure } from './capital-exit.ts';
 import { identity } from './pm-facts.ts';
 
 export interface CapturedAccount { basis: Pm.AccountBasis; evidence: Pm.EvidenceRef; artifact: JsonObject }
@@ -23,24 +23,6 @@ export function capitalExitTargetControl(status: CapitalExitStatus, capabilities
   const mode = modes.includes('NATURAL_RELEASE') ? 'NATURAL_RELEASE' : modes.includes('BOUNDED_LIMIT') ? 'BOUNDED_LIMIT' : 'CASH_ONLY';
   return json({ mode, transition: active.some(exit => exit.remaining_trading === 'FENCED_PENDING_TARGET'),
     controlRevision: status.controlRevision, exitIds: active.map(exit => exit.id).sort(), signalTarget, signalCapital });
-}
-
-/** Only reservations still inside the managed account reduce its observed NAV.
- * Staged transfers and withdrawals already left that NAV and are not deducted. */
-export function managedTradingBudget(equity: string, reserved: string, cashBuffer: string): string {
-  const values = [equity, reserved, cashBuffer].map(decimalUnits);
-  if (values[1]! < 0n || values[2]! < 0n) throw new Problem('account_reservation_invalid', 409);
-  const budget = values[0]! - values[1]! - values[2]!;
-  return moneyString(budget > 0n ? budget : 0n);
-}
-
-/** Legacy factor weights precede account sizing. Their original funding base is
- * the same size-account budget with R=0, including its existing buffer/capacity. */
-export function unreservedStrategyCapital(equity: string, cashBuffer: string, maximumCapital: string): string {
-  const budget = decimalUnits(managedTradingBudget(equity, '0', cashBuffer));
-  const maximum = decimalUnits(maximumCapital);
-  if (maximum < 0n) throw new Problem('account_capacity_invalid', 409);
-  return moneyString(budget < maximum ? budget : maximum);
 }
 
 export function captureAccount(application: { observations: Record<string, JsonObject>; accountControls?: Record<string, JsonObject> }, id: string, atNs = nowNs()): CapturedAccount {

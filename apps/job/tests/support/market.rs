@@ -169,38 +169,6 @@ fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRe
     (catalog, request, model)
 }
 
-pub fn calendar_schedule(request: &mut NativePortfolioStudyRequestV1) {
-    let mut cutoffs = domain::execution::portfolio_study_cutoffs(request).unwrap();
-    cutoffs[1] = count(cutoffs[1].get() - INTERVAL_NS);
-    let schedule = &mut request.mandate.rebalance_schedule;
-    schedule.kind = contracts::portfolio::RebalanceKind::CalendarSession;
-    schedule.interval_seconds = None;
-    schedule.calendar_ref = Some("SIM-SESSIONS".into());
-    schedule.session_offset_seconds = Some(-60);
-    schedule.target_ttl_seconds = 86_460;
-    request.calendar = Some(NativePortfolioCalendarV1 {
-        artifact_id: contracts::Id::new(),
-        calendar: NativeCalendarSessionsV1 {
-            schema_version: SchemaV1,
-            calendar_ref: "SIM-SESSIONS".into(),
-            calendar_version: "synthetic-sessions-1".into(),
-            timezone: schedule.timezone.clone(),
-            source_reference: "explicit synthetic calendar fixture; not an exchange calendar"
-                .into(),
-            available_at_ns: request.research_available_through_ns,
-            coverage_start_ns: request.source_selection.event_start_ns,
-            coverage_end_ns: count(request.source_selection.event_end_ns.get() + INTERVAL_NS),
-            sessions: cutoffs
-                .into_iter()
-                .map(|cutoff| NativeCalendarSessionV1 {
-                    open_ns: count(cutoff.get() - 4 * INTERVAL_NS),
-                    close_ns: count(cutoff.get() + INTERVAL_NS),
-                })
-                .collect(),
-        },
-    });
-}
-
 pub fn portfolio_from_market(
     (directory, simulation): (tempfile::TempDir, NativeSimulationRequestV1),
 ) -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {

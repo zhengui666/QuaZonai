@@ -13,7 +13,7 @@ async function transportProcess(directory: string) {
   const binary = join(directory, 'job.mjs');
   await writeFile(binary, `#!${process.execPath}
 const command = process.argv[2];
-if (command === 'simulate') {
+if (command === 'native-strategy-backtest') {
   let bytes = 0; let prefix = ''; let suffix = '';
   for await (const chunk of process.stdin) {
     bytes += chunk.length;
@@ -50,7 +50,7 @@ test('native transport sends the complete 64-market vector beyond one V8 string 
     const input: JsonObject = { target_points: Array(count).fill(frame), original_tail: 'unchanged' };
     const expected = Buffer.byteLength('{"target_points":[') + count * Buffer.byteLength(encoded) + count - 1 + Buffer.byteLength('],"original_tail":"unchanged"}');
     assert.ok(expected > constants.MAX_STRING_LENGTH);
-    const result = await executeNative(binary, 'simulate', input, [], directory, BACKGROUND_CONTEXT);
+    const result = await executeNative(binary, 'native-strategy-backtest', input, [], directory, BACKGROUND_CONTEXT);
     assert.equal(result.bytes, expected);
     assert.equal(result.prefix, ('{"target_points":[' + encoded).slice(0, 32));
     assert.equal(result.suffix, (encoded + '],"original_tail":"unchanged"}').slice(-32));

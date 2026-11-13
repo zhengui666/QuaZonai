@@ -52,7 +52,7 @@ test('Native capabilities and scientific execution interrupt a connected capabil
       });
       const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
       const operation = host.withNativeHost(() => helper === 'implementation' ? remoteNativeCapabilities(source.target, context.abortSignal)
-        : executeNative(source.target, 'size-account', {}, [], directory, context));
+        : executeNative(source.target, 'review-source', {}, [], directory, context));
       const settled = operation.then(() => ({ error: null }), error => ({ error }));
       try {
         await bounded(accepted.promise);
@@ -71,13 +71,13 @@ test('scientific execution forwards task abort and cancels only the accepted ori
   const accepted = signal(); const requests: string[] = []; const controller = new AbortController(); let original: NativeExecutionRequest | undefined;
   const source = await peer(async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['size-account'] });
+    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['review-source'] });
     if (request.method === 'POST') { original = await readRequest(request); accepted.resolve(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
     reply(response, { schemaVersion: 1, requestId: original!.requestId, status: 'CANCELLED' });
   });
   const host = await explicitHost(directory);
-  const operation = host.withNativeHost(() => executeNative(source.target, 'size-account', { amount: '9007199254740993.0001' }, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
+  const operation = host.withNativeHost(() => executeNative(source.target, 'review-source', { amount: '9007199254740993.0001' }, [], directory, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)));
   const settled = operation.then(() => ({ error: null }), error => ({ error }));
   try {
     await bounded(accepted.promise); controller.abort(new Error('owner_stop_capital_validation'));
@@ -86,7 +86,7 @@ test('scientific execution forwards task abort and cancels only the accepted ori
     assert.equal(requests.some(value => value.startsWith('DELETE')), false, 'an observer abort does not cancel owned work');
     const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0]!;
     await host.harness.abortTask(task.id, BACKGROUND_CONTEXT); await host.harness.waitForTask(task.id, BACKGROUND_CONTEXT);
-    assert.equal(original!.command, 'size-account');
+    assert.equal(original!.command, 'review-source');
     assert.deepEqual(original!.input, { amount: '9007199254740993.0001' });
     assert.deepEqual(requests, ['GET /v1/capabilities', 'POST /v1/execute', `DELETE /v1/executions/${original!.requestId}`]);
     assert.deepEqual(source.failures, []);
@@ -100,7 +100,7 @@ test('unanswered scientific cancellation retains the original reference through 
   const directory = await mkdtemp(join(tmpdir(), 'qz-capital-unknown-receipt-')); const accepted = signal();
   let original: NativeExecutionRequest | undefined; let posts = 0; let cancels = 0;
   const source = await peer(async (request, response) => {
-    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['size-account'] });
+    if (request.url === '/v1/capabilities') return reply(response, { schemaVersion: 1, implementationDigest: digest, commands: ['review-source'] });
     if (request.method === 'POST') { posts++; original = await readRequest(request); accepted.resolve(); return; }
     assert.equal(request.method, 'DELETE'); assert.equal(request.url, `/v1/executions/${original!.requestId}`); cancels++;
     // Never confirm cancellation. The helper must preserve the unknown identity.
@@ -110,7 +110,7 @@ test('unanswered scientific cancellation retains the original reference through 
     phases: { async validate(task, runtime, context) {
       try {
         await withNativeRemoteTracking(task.id, runtime, context,
-          () => executeNative(task.input.target, 'size-account', {}, [], directory, context));
+          () => executeNative(task.input.target, 'review-source', {}, [], directory, context));
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context);
       } catch (error) {
         await retainNativeRemoteUncertainty(error, task.id, runtime, context);

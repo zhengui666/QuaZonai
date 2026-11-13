@@ -1,7 +1,6 @@
 import { isNativeTable } from '../src/native-table.ts';
 import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
-import { nativeWalkForwardResult } from '../src/native-walk-forward-result.ts';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
 import { bool, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
 import { readFile } from 'node:fs/promises';
@@ -233,12 +232,17 @@ export const nativeStrategyBacktestTool = defineTool({
 export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
+    if (task.input.walkForward) {
+      await cancelUnsettledNativeExecutions(task.id, runtime, context);
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: 'qz_automatic_walk_forward_removed' } } }), context);
+      return;
+    }
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-strategy-'));
     try {
       const raw = await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(
-        task.input.target, task.input.walkForward ? 'native-walk-forward' : 'native-strategy-backtest', task.input.request,
+        task.input.target, 'native-strategy-backtest', task.input.request,
         ['--catalog', task.input.catalog], directory, context), task.input.scanContext);
-      const result = task.input.walkForward ? nativeWalkForwardResult(raw, task.input.request) : nativeStrategyResult(raw, task.input.request);
+      const result = nativeStrategyResult(raw, task.input.request);
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
     } catch (error) {
       await retainNativeRemoteUncertainty(error, task.id, runtime, context);

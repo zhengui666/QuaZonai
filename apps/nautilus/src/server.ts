@@ -17,9 +17,8 @@ type Active = { promise: Promise<StoredReceipt>; cancel: () => void; progressPat
 
 // The science /v1/executions allowlist exposes no broker, order or shell commands.
 // Explicitly configured /accounts owners use the separate closed account API.
-export const commands = ['review-source', 'simulate', 'native-strategy-backtest', 'native-walk-forward',
-  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit',
-  'capital-curve', 'compare-observed-spot', 'value-observed-spot',
+export const commands = ['review-source', 'native-strategy-backtest',
+  'validate-capital-exit',
   'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope'] as const;
 const scalarOptions = new Set(['--dataset-revision-id']);
 const catalogOptions = new Set(['--catalog']);
@@ -234,7 +233,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
           const tick = isTickNativeCommand(request.command);
           const selectedBinary = tick ? tickBinary : binary;
           const childArgs = [request.command, ...args];
-          if (request.command === 'simulate') execution.progressPath = join(directory, 'progress.ndjson');
           const temporary = join(receiptDirectory, 'receipt.next.json');
           await writeFile(temporary, JSON.stringify({ ...running, status: 'COMPLETED' }).slice(0, -1) + ',"result":', { mode: 0o600 });
           // Cancellation may arrive while the temporary receipt is being opened.

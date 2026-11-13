@@ -166,7 +166,7 @@ jobs:
           profile_args=()
           if [[ "$PROFILE" == release ]]; then profile_args+=(--release); fi
           python3 -I -B -m unittest discover -s runtimes/data -p test_cryptohftdata.py -v
-          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --bin market-history --test catalog --test catalog_prepare --test managed --test native_strategy --test native_walk_forward --test native_instrument_updates
+          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --bin market-history --test catalog --test catalog_prepare --test managed --test native_strategy --test native_instrument_updates
           cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib ticks::
           cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib catalog::currencies
           test -x "$RUNNER_TEMP/native-artifacts/job"

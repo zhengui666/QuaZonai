@@ -76,7 +76,7 @@ test('removed scientific commands are absent from capabilities and rejected befo
   const f = await fixture();
   try {
     const capabilities = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
-    for (const command of ['review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot', 'study-observed-spot', 'evaluate-experiment', 'replay-tick-economic']) {
+    for (const command of ['simulate', 'compare-observed-spot', 'value-observed-spot', 'review-science', 'review-allocate', 'fit-ensemble', 'apply-ensemble', 'freeze-ensemble-calibrations', 'simulate-indicator-strategy', 'simulate-indicator-strategy-batch', 'forecast', 'forecast-factor', 'allocate', 'study-portfolio', 'build-observed-spot', 'study-observed-spot', 'evaluate-experiment', 'replay-tick-economic']) {
       assert.equal(capabilities.commands.includes(command), false);
       const body = f.request({}); body.command = command;
       const { requestId: _previous, ...input } = body; body.requestId = executionId(input);
@@ -131,7 +131,7 @@ test('remote worker retains actual execution and original receipt across retries
     assert.equal((await fetch(`${f.url}/v1/capabilities`)).status, 401);
     const caps = await (await fetch(`${f.url}/v1/capabilities`, { headers: f.headers })).json();
     assert.match(caps.implementationDigest, /^sha256:[a-f0-9]{64}$/);
-    assert.ok(caps.commands.includes('simulate')); assert.ok(!caps.commands.includes('paper'));
+    assert.ok(caps.commands.includes('native-strategy-backtest')); assert.ok(!caps.commands.includes('paper'));
     const body = f.request({ decimal: '1.000000000000000001', ns: '1790000000000000000' },
       ['--catalog', f.catalog]);
     const responses = await Promise.all([f.post(body), f.post(body)]);
@@ -245,30 +245,6 @@ test('admission detaches from HTTP and only explicit cancellation stops the chil
   } finally { await f.cleanup(); }
 });
 
-
-test('running receipt exposes original snapshot previews without waiting for or repeating execution', async () => {
-  const f = await fixture();
-  try {
-    const snapshot = { ts_event: '1790000000000000001', total_equity: ['1000.000000000000000001 USD'] };
-    const body = f.request({ wait: true, progress: snapshot }); body.command = 'simulate';
-    const { requestId: _originalId, ...content } = body; body.requestId = executionId(content);
-    const pending = f.post(body);
-    let running: NativeExecutionReceipt | undefined;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const response = await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers });
-      if (response.ok) {
-        running = await response.json() as NativeExecutionReceipt;
-        if (running.status === 'RUNNING' && running.progress?.snapshots.length) break;
-      }
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    assert.equal(running?.status, 'RUNNING');
-    assert.deepEqual(running?.status === 'RUNNING' && running.progress?.snapshots, [snapshot], 'incomplete final line is ignored, decimals and clocks are preserved');
-    const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
-    assert.equal(cancelled.status, 'CANCELLED'); await pending;
-    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
-  } finally { await f.cleanup(); }
-});
 
 test('catalog coverage uses the existing read-only catalog execution route without rounding nanoseconds', async () => {
   const f = await fixture();

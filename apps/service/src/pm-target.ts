@@ -2,14 +2,12 @@ import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import { assessCapacityCurve } from '../../../packages/contracts/src/decision.ts';
-import { Application, decimalUnits, json, nowNs, nsTime, object, observation, Problem } from './facts.ts';
-import type { ObservationFact } from './facts.ts';
-import { accountKey, capitalStatusForBinding, control, transportCapability } from './capital-exit.ts';
+import { Application, json, nowNs, nsTime, object, observation, Problem } from './facts.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { digest } from './pm-facts.ts';
 import { PmDocument, pmRecord, pmState, revise } from './pm-facts.ts';
 import type { PmRecord } from './pm-facts.ts';
-import { capitalExitTargetControl, captureAccount, managedTradingBudget } from './pm-account.ts';
+import { captureAccount } from './pm-account.ts';
 import { downstream } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
@@ -29,44 +27,6 @@ export function pmTargetPayload(record: PmRecord, decision: Pm.PortfolioDecision
   const expected = decision.assetTargets.map(item => ({ instrument_id: item.instrumentId, currency: item.targetNotional.currency, weight: item.navWeight }));
   if (canonical(target.targets) !== canonical(expected) || typeof target.cash_weight !== 'string') throw new Problem('target_original_native_target_mismatch', 409);
   return json({ ...target, valid_until_ns: decision.validUntilNs });
-}
-
-/** Existing revisionBound allocation transport carries the original physical
- * account revision. Reported equity stays null when only inventory was valued. */
-export function pmTargetAllocation(record: PmRecord, decision: Pm.PortfolioDecision, source: ObservationFact, controls: Record<string, JsonObject> = {}): JsonObject {
-  const basis = decision.accountBasis; const capital = decision.capital;
-  if (!basis || !capital || basis.reserved === null) throw new Problem('target_account_allocation_basis_required', 409);
-  const original = control(controls[accountKey(source.connection, controls)]);
-  const capabilities = transportCapability(original, source.connection)?.document ?? {};
-  const capability = capabilities.automaticTargets;
-  if (!capability || object(capability).supported !== true || object(capability).revisionBound !== true) throw new Problem('target_revision_bound_transport_required', 409);
-  if (object(capability).snapshotBound !== true) throw new Problem('target_snapshot_bound_transport_required', 409);
-  for (const [field, value] of Object.entries({ clientId: source.connection.clientId, accountId: source.connection.accountId, mode: source.connection.mode, currency: basis.currency })) {
-    if (capabilities[field] !== value) throw new Problem('target_revision_bound_transport_identity_mismatch', 409);
-  }
-  const snapshot = object(source.snapshot, 'target_original_snapshot');
-  for (const [field, value] of Object.entries({ accountSourceId: basis.accountSourceId, observationId: basis.observationId,
-    sequence: basis.sequence, nativeClockNs: basis.observedAtNs, controlRevision: basis.controlRevision, currency: basis.currency })) {
-    if (snapshot[field] !== value) throw new Problem('target_account_allocation_basis_mismatch', 409);
-  }
-  if (Object.values(original.commands).some(command => ['PENDING', 'UNCERTAIN'].includes(command.state)
-    || command.state === 'ACCEPTED' && command.reserved !== '0')) throw new Problem('capital_exit_command_requires_reconciliation', 409);
-  const status = capitalStatusForBinding(original, source.connection);
-  // PM target weights are targetNotional / original NAV. Buffer and capacity
-  // already shaped that native decision; clipping its denominator again would
-  // manufacture an extra sale. Only the independent buy budget is reduced.
-  const exitControl = capitalExitTargetControl(status, capabilities, pmTargetPayload(record, decision), capital.equity.amount);
-  const managedBudget = managedTradingBudget(capital.equity.amount, basis.reserved.amount, capital.ownerLiquidityReserve.amount);
-  const budget = decimalUnits(managedBudget) < decimalUnits(capital.deployableBudget.amount) ? managedBudget : capital.deployableBudget.amount;
-  const committed = decimalUnits(budget) < decimalUnits(capital.committedCapital.amount) ? budget : capital.committedCapital.amount;
-  return json({ snapshotSequence: basis.sequence, nativeClockNs: basis.observedAtNs, accountSourceId: basis.accountSourceId,
-    observationId: basis.observationId, controlRevision: basis.controlRevision, reserved: basis.reserved.amount,
-    equity: basis.equity?.amount ?? null, validUntilNs: decision.validUntilNs,
-    budget, capital: committed, cashBuffer: capital.ownerLiquidityReserve.amount,
-    ...(exitControl ? { capitalExit: exitControl } : {}),
-    ...(basis.valuation ? { valuation: basis.valuation } : {}),
-    decisionId: decision.id, basisRevision: decision.basisRevision, policyRevisionId: decision.policyRevisionId,
-    positionsEvidenceRef: basis.positionsEvidenceRef, outstandingCommandsRef: basis.outstandingCommandsRef });
 }
 
 /** This validates an existing scientific decision; it cannot manufacture one. */

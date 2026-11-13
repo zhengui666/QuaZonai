@@ -1,4 +1,4 @@
-import { PmTargetTask, pmTargetPayload, pmTargetAllocation, targetEligibility } from '../src/pm-target.ts';
+import { PmTargetTask, pmTargetPayload, targetEligibility } from '../src/pm-target.ts';
 import { AdjustAccount } from '../src/automatic.ts';
 import { retainPmControlRecord } from './pm-account-fixture.ts';
 import assert from 'node:assert/strict';
@@ -207,7 +207,10 @@ async function delivered(f: Awaited<ReturnType<typeof fixture>>): Promise<Target
     const app = await tx.doc(Application), source = observation(app.observations[f.connection.id]);
     const decision = record.decisions[f.decisionId]!;
     const commandId = 'TEST_ONLY_ORIGINAL_REMOTE_COMMAND';
-    const target = pmTargetPayload(record, decision), allocation = pmTargetAllocation(record, decision, source, app.accountControls);
+    const target = pmTargetPayload(record, decision);
+    // Retained transport facts, not a recomputed allocation or a new target.
+    const allocation = { controlRevision: decision.accountBasis!.controlRevision,
+      snapshotSequence: decision.accountBasis!.sequence, accountSourceId: decision.accountBasis!.accountSourceId };
     const command: TargetCommand = { ...fact(commandId), decisionId: f.decisionId, idempotencyKey: commandId, accountBindingId: f.connection.id,
       basisRevision: decision.basisRevision, controlRevision: String(allocation.controlRevision), payloadEvidenceRef: 'retained-original-payload',
       validUntilNs: decision.validUntilNs!, state: 'UNCERTAIN', externalReceiptRef: null };

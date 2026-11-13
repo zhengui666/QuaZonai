@@ -2,14 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { CapitalExitStatus, CapitalExitView } from '../../../packages/contracts/src/capital-exit.ts';
-import type * as Pm from '../../../packages/contracts/src/pm.ts';
-import type { ObservationFact } from '../src/facts.ts';
 import { decimalUnits } from '../src/facts.ts';
 import { accountKey } from '../src/capital-exit.ts';
-import { capitalExitTargetControl, managedTradingBudget, unreservedStrategyCapital } from '../src/pm-account.ts';
-import { digest } from '../src/pm-facts.ts';
-import type { PmRecord } from '../src/pm-facts.ts';
-import { pmTargetAllocation, pmTargetPayload } from '../src/pm-target.ts';
+import { capitalExitTargetControl } from '../src/pm-account.ts';
 import { toNativeObservedSpotStart } from '../src/pm-account-native.ts';
 import { accountSourceFixture } from './pm-account-fixture.ts';
 
@@ -25,19 +20,6 @@ function status(kind: 'NATURAL_RELEASE' | 'BOUNDED_LIMIT' | 'CASH_ONLY', reserve
     exits: [{ id: 'exit', state: 'WAITING_CASH', remaining_trading: 'FENCED_PENDING_TARGET', policy: { kind } } as CapitalExitView] };
 }
 
-test('external staging does not deduct managed capital twice and release restores only the managed reservation', () => {
-  assert.equal(managedTradingBudget('1000', '300', '50'), '650.000000000000000000');
-  // The user moves 200 out of spot: observed spot equity and the spot reserve
-  // both fall by 200. The 200 staged outside this account is not deducted again.
-  assert.equal(managedTradingBudget('800', '100', '50'), '650.000000000000000000');
-  // Ending the remaining obligation does not bring staged funds back to spot.
-  assert.equal(managedTradingBudget('800', '0', '50'), '750.000000000000000000');
-  assert.equal(managedTradingBudget('0.000000000000000009', '0.000000000000000003', '0.000000000000000001'), '0.000000000000000005');
-  assert.equal(managedTradingBudget('5', '6', '0'), '0.000000000000000000');
-  assert.equal(unreservedStrategyCapital('1000', '50', '600'), '600.000000000000000000');
-  assert.equal(unreservedStrategyCapital('500', '50', '600'), '450.000000000000000000');
-});
-
 test('every active preparation mode retains the actual strategy signal and its unreserved denominator', () => {
   const original = structuredClone(signal);
   const control = capitalExitTargetControl(status('NATURAL_RELEASE'), capabilities, signal, '1000')!;
@@ -52,38 +34,6 @@ test('every active preparation mode retains the actual strategy signal and its u
     assert.equal(decimalUnits(String(active.signalCapital)) * decimalUnits('0.5') / (10n ** 18n), decimalUnits('500'),
       'The ordinary strategy notional remains 500 while the independent buy budget can be only 300.');
   }
-});
-
-test('PM target transport caps actual reserved funds without rewriting its original current native target', () => {
-  const connection = { id: 'binding', name: 'Account', url: 'http://127.0.0.1/', clientId: 'owner', accountId: 'account', mode: 'paper' as const };
-  const account = { accountBindingId: 'binding', accountSourceId: 'source', observationId: 'observation', sequence: '1', observedAtNs: '123',
-    controlRevision: '2', currency: 'USDC', equity: { amount: '1000', currency: 'USDC' }, reserved: { amount: '700', currency: 'USDC' },
-    positionsEvidenceRef: 'positions', outstandingCommandsRef: 'commands' };
-  const decision = { id: 'decision', basisRevision: 'basis', policyRevisionId: 'policy', validUntilNs: signal.valid_until_ns,
-    accountBasis: account, explanationFacts: { nativeTargetEvidenceRef: 'target-evidence' },
-    assetTargets: [{ instrumentId: 'BTC/USDC', targetNotional: { amount: '500', currency: 'USDC' }, navWeight: '0.5' }],
-    capital: { equity: { amount: '1000', currency: 'USDC' }, deployableBudget: { amount: '1000', currency: 'USDC' },
-      committedCapital: { amount: '500', currency: 'USDC' }, ownerLiquidityReserve: { amount: '0', currency: 'USDC' } } } as unknown as Pm.PortfolioDecision;
-  const record = { evidence: { 'target-evidence': { sourceKind: 'NATIVE_RESULT', contentDigest: digest(signal), sourceRevision: 'basis', objectKey: 'original-target', availableAtNs: '1' } },
-    artifacts: { 'original-target': signal } } as unknown as PmRecord;
-  const source = { connection, snapshot: { sequence: '1', nativeClockNs: '123', accountSourceId: 'source', observationId: 'observation', controlRevision: '2', currency: 'USDC' } } as unknown as ObservationFact;
-  const controls = { [accountKey(connection)]: { commands: {}, status: status('NATURAL_RELEASE'), capabilities } as unknown as JsonObject };
-  const payload = pmTargetPayload(record, decision);
-  const allocation = pmTargetAllocation(record, decision, source, controls);
-  assert.equal(allocation.reserved, '700'); assert.equal(allocation.budget, '300.000000000000000000'); assert.equal(allocation.capital, '300.000000000000000000');
-  assert.deepEqual((allocation.capitalExit as JsonObject).signalTarget, payload);
-  assert.equal((allocation.capitalExit as JsonObject).signalCapital, '1000', 'PM NAV weights must retain the original NAV denominator, not committed capital.');
-  for (const kind of ['BOUNDED_LIMIT', 'CASH_ONLY'] as const) {
-    (controls[accountKey(connection)]!.status as unknown as CapitalExitStatus).exits[0]!.policy = { kind } as CapitalExitView['policy'];
-    const active = pmTargetAllocation(record, decision, source, controls);
-    assert.deepEqual((active.capitalExit as JsonObject).signalTarget, payload);
-    assert.equal((active.capitalExit as JsonObject).signalCapital, '1000');
-    assert.equal(active.capital, '300.000000000000000000');
-    assert.equal(decimalUnits(String((active.capitalExit as JsonObject).signalCapital)) * decimalUnits('0.5') / (10n ** 18n), decimalUnits('500'));
-  }
-  assert.deepEqual(pmTargetPayload(record, decision), payload);
-  (controls[accountKey(connection)]!.commands as JsonObject).pending = { state: 'UNCERTAIN', reserved: '10' };
-  assert.throws(() => pmTargetAllocation(record, decision, source, controls), /requires_reconciliation/);
 });
 
 test('a managed reservation does not rewrite original native balances or erase open-order limitations in scientific input', () => {

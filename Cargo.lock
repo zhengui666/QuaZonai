@@ -2760,12 +2760,9 @@ dependencies = [
  "chrono-tz",
  "contracts",
  "iso_currency",
- "ndarray 0.17.1",
- "ndarray-stats",
  "oci-spec",
  "serde",
  "serde_json",
- "solow-cv",
  "thiserror",
 ]
 
@@ -3838,7 +3835,6 @@ dependencies = [
  "nautilus-serialization",
  "nautilus-system",
  "nautilus-trading",
- "ndarray 0.17.1",
  "num-bigint 0.4.8",
  "num-rational",
  "parquet",
@@ -4064,16 +4060,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "matrixmultiply"
-version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f607c237553f086e7043417a51df26b2eb899d3caff94e6a67592ff992fedc7"
-dependencies = [
- "autocfg",
- "rawpointer",
 ]
 
 [[package]]
@@ -4604,60 +4590,6 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "ustr",
-]
-
-[[package]]
-name = "ndarray"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
-]
-
-[[package]]
-name = "ndarray"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c7c9125e8f6f10c9da3aad044cc918cf8784fa34de857b1aa68038eb05a50a9"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
-]
-
-[[package]]
-name = "ndarray-stats"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b6e54a8b65764f71827a90ca1d56965ec0c67f069f996477bd493402a901d1f"
-dependencies = [
- "indexmap 2.14.2",
- "itertools 0.13.0",
- "ndarray 0.17.1",
- "noisy_float",
- "num-integer",
- "num-traits",
- "rand 0.8.8",
-]
-
-[[package]]
-name = "noisy_float"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c16843be85dd410c6a12251c4eca0dd1d3ee8c5725f746c4d5e0fdcec0a864b2"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
@@ -5347,12 +5279,6 @@ checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
 dependencies = [
  "bitflags",
 ]
-
-[[package]]
-name = "rawpointer"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
 name = "redox_syscall"
@@ -6133,28 +6059,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "webpki-roots 1.0.11",
-]
-
-[[package]]
-name = "solow-core"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32d5bbbc443117c5fe230c5cd3c0785ac9f1cd631b3279638fc01aaefa2142ea"
-dependencies = [
- "ndarray 0.16.1",
- "num-traits",
- "thiserror",
-]
-
-[[package]]
-name = "solow-cv"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b92238326e580318231eb1df0dab1f3a05b861bd95512ba208e95046a3e01400"
-dependencies = [
- "ndarray 0.16.1",
- "solow-core",
- "thiserror",
 ]
 
 [[package]]

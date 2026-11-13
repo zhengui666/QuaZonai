@@ -160,7 +160,7 @@ test('PM deletion retains unknown remote work across restart until GET confirms 
   const server = createServer((request, response) => { void (async () => {
     requests.push(`${request.method} ${request.url}`);
     const reply = (value: unknown) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value)); };
-    if (request.url === '/v1/capabilities') return reply({ schemaVersion: 1, implementationDigest: `sha256:${'d'.repeat(64)}`, commands: ['simulate'] });
+    if (request.url === '/v1/capabilities') return reply({ schemaVersion: 1, implementationDigest: `sha256:${'d'.repeat(64)}`, commands: ['native-strategy-backtest'] });
     if (request.method === 'POST' && request.url === '/v1/execute') {
       const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
       original = JSON.parse(Buffer.concat(chunks).toString('utf8')) as NativeExecutionRequest;
@@ -179,7 +179,7 @@ test('PM deletion retains unknown remote work across restart until GET confirms 
   const child = defineTask<{ mandateId: string }, { phase: 'compute' }, null>({ name: 'test.pm-delete-remote-child', version: 1,
     initial: () => ({ phase: 'compute' }), phases: { async compute(task, runtime, ctx) {
       try {
-        await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'simulate', {}, [], f.state.directory, ctx));
+        await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'native-strategy-backtest', {}, [], f.state.directory, ctx));
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
       } catch (error) { await retainNativeRemoteUncertainty(error, task.id, runtime, ctx); throw error; }
     } }, async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); } });
