@@ -1503,7 +1503,20 @@ fn trade_memory_limit() -> Result<()> {
     Ok(())
 }
 
+fn retired_cohort_mode(value: &std::ffi::OsStr) -> bool {
+    ["compose-cohorts", "--cohort-cache", "--cohort-flow-cache"]
+        .iter()
+        .any(|name| value == std::ffi::OsStr::new(name))
+}
+
 fn main() {
+    if std::env::args_os()
+        .skip(1)
+        .any(|arg| retired_cohort_mode(&arg))
+    {
+        eprintln!("QZ_DERIVED_TICK_COHORT_RETIRED: preserve original data; use import --trade-ticks for original Nautilus TradeTick records. Existing cohort files are not migrated or recomputed.");
+        std::process::exit(2);
+    }
     let result = match Arguments::parse().command {
         Command::PublishedBooks {
             instrument_ids,
@@ -1631,6 +1644,7 @@ mod tests {
     fn derived_cohort_commands_are_absent_while_native_trade_import_remains() {
         assert!(Arguments::try_parse_from(["market-history", "compose-cohorts"]).is_err());
         for retired in ["--cohort-cache", "--cohort-flow-cache"] {
+            assert!(retired_cohort_mode(std::ffi::OsStr::new(retired)));
             assert!(Arguments::try_parse_from([
                 "market-history",
                 "import",

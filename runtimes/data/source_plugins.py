@@ -194,6 +194,10 @@ def parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if any(value in ("--cohort-cache", "--cohort-flow-cache") for value in argv):
+        print("QZ_DERIVED_TICK_COHORT_RETIRED: use --trade-ticks for original Nautilus records; existing data is not migrated or recomputed", file=sys.stderr)
+        return 2
     args = parser().parse_args(argv)
     try:
         print(json.dumps(args.run(args), indent=2, allow_nan=False))

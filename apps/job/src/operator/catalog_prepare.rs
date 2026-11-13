@@ -302,6 +302,13 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 }
 
 pub fn run(argv: Vec<std::ffi::OsString>) {
+    if argv
+        .get(1)
+        .is_some_and(|arg| arg == std::ffi::OsStr::new("prepare-ticks"))
+    {
+        eprintln!("QZ_TICK_FACTOR_PREPARATION_RETIRED: preserve original data; use market-history import --trade-ticks for original Nautilus TradeTick records. Existing prepared data is not migrated or recomputed.");
+        std::process::exit(2);
+    }
     let result = prepare(&Arguments::parse_from(argv))
         .and_then(|metadata| Ok(serde_json::to_value(metadata)?));
     match result {
