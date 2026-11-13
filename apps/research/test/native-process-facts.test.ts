@@ -10,6 +10,7 @@ import {runNativeProcess,NativeProcessFailure} from '../src/native-process.ts';
 import {JsonReader} from '../src/native-json.ts';
 import {openResearch} from '../src/host.ts';
 import {NativeRemoteUncertainty} from '../src/native-execution.ts';
+import {nativeConfiguredResult} from '../plugins/native-strategy-backtest.ts';
 import {Study} from '../src/documents.ts';
 import {gunzipSync} from 'node:zlib';
 import {ResearchConfiguration} from '../src/research-configuration.ts';
@@ -39,10 +40,15 @@ test('real nonzero process exit and missing-launch evidence remain separate from
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
-for(const toolName of ['native_configured_backtest','native_strategy_backtest']) for(const mode of ['exit','missing','partial']) test(`original pending research displays UNKNOWN facts and refuses replacement (tool=${toolName}, mode=${mode})`,{timeout:15000},async()=>{
- const missing=mode==='missing',partial=mode==='partial';
+for(const toolName of ['native_configured_backtest','native_strategy_backtest']) for(const mode of (toolName==='native_configured_backtest'?['exit','missing','partial','complete-nonzero']:['exit','missing','partial'])) test(`original pending research displays UNKNOWN facts and refuses replacement (tool=${toolName}, mode=${mode})`,{timeout:15000},async()=>{
+ const missing=mode==='missing',partial=mode==='partial',complete=mode==='complete-nonzero';
  const dir=await mkdtemp(join(tmpdir(),'qz-exit-durable-')),binary=join(dir,'runner'),marker=join(dir,'launches');
- await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(marker)},'start\\n');for await(const c of process.stdin){};process.stderr.write('PRIVATE_OWNER_DIAGNOSTIC');if(${partial}){const rows=Array.from({length:1200},(_,index)=>({index,quantity:'0.000000000000000019',detail:'synthetic'.repeat(32)}));process.stdout.write('{\"schema_version\":1,\"canonical_result\":{\"orders\":'+JSON.stringify(rows),()=>process.exit(0));}else process.exit(9);`,{mode:0o755});
+ const request={schema_version:1,name:'owner',config:{}};
+ const rows=Array.from({length:1200},(_,index)=>({index,quantity:'0.000000000000000019',detail:'synthetic'.repeat(32)}));
+ const report={schema_version:1,request,native_version:'controlled',native_results:[{run_id:'synthetic'}],canonical_result:{schema:'nautilus-backtest-result/v1',orders:rows,fills:[],positions:[],accounts:[],portfolio_snapshots:[],position_snapshots:[],statistics:{}},canonical_unavailable_reason:null};
+ const wire=complete?JSON.stringify(report):'{"schema_version":1,"canonical_result":{"orders":'+JSON.stringify(rows);
+ if(complete)assert.deepEqual(nativeConfiguredResult(JSON.parse(wire),request),report,'complete payload passes the configured result contract before execution');
+ await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(marker)},'start\\n');for await(const c of process.stdin){};process.stderr.write('PRIVATE_OWNER_DIAGNOSTIC');if(${partial||complete}){process.stdout.write(${JSON.stringify(wire)},()=>process.exit(${partial?0:9}));}else process.exit(9);`,{mode:0o755});
  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled',binary:missing?join(dir,'not-installed'):binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
  faux.setResponses([fauxAssistantMessage(fauxToolCall(toolName,{}),{stopReason:'toolUse'})]);
@@ -60,8 +66,8 @@ for(const toolName of ['native_configured_backtest','native_strategy_backtest'])
   assert.equal((task.state.outcome as any).error.detail.process.cleanupSignalRequested,true);
   assert.equal((task.state.outcome as any).error.detail.process.terminationRequested,false);
   assert.equal((await host.harness.snapshot(Study,receipt.conversationId,context))!.final,null);
-  if(partial){
-   assert.equal((task.state.outcome as any).error.detail.process.errorCategory,'native_process_output_invalid');
+  if(partial||complete){
+   assert.equal((task.state.outcome as any).error.detail.process.errorCategory,partial?'native_process_output_invalid':'native_process_failed');
    const page=await host.harness.snapshot(NativeEvidencePart,task.conversationId,`${task.id}:table:["canonical_result","orders"]:0`,context);
    assert.ok(page?.data,'partial streamed table really reached durable storage');
    const rows=JSON.parse(gunzipSync(Buffer.from(page.data,'base64')).toString());
