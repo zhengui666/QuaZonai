@@ -128,7 +128,7 @@ test('capital workbench keeps unreadable alias failures local and cannot authori
     assert.notEqual(response.json().capability, 'SUPPORTED');
     const preview = await state.service.app.inject({ method: 'POST', url: `${url}/preview`, headers: state.headers,
       payload: { requestId: 'unreadable-preview', amount: '1', currency: 'USDC' } });
-    assert.equal(preview.statusCode, 409, preview.body); assert.deepEqual(remote.posts, []);
+    assert.equal(preview.statusCode, 404, preview.body); assert.deepEqual(remote.posts, []);
     const app = (await state.service.research.harness.snapshot(Application, context))!;
     assert.equal(captureAccount(app, remote.a.id).basis.reserved?.amount, '0.000000000000000000');
     assert.equal(captureAccount(app, remote.b.id).basis.reserved, null);

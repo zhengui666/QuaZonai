@@ -206,7 +206,7 @@ test('stopped PM SQLite and referenced artifact restore preserve original docume
   const shell = (body, backup = '') => spawnSync('bash', ['-c', `source "$1"
 ROOT=$2; QZ_WORK="$ROOT/work"
 qz_stop() { :; }; qz_idle() { :; }; qz_start() { :; }
-qz_compose() { return 1; }
+qz_compose() { echo app; }
 ${body}`, 'qz-pm-restore', fileURLToPath(new URL('./manage.sh', import.meta.url)), state.root, backup], { encoding: 'utf8', timeout: 20_000 });
   await requireIdle(state.config);
   let result = shell('qz_backup "$ROOT/installation.json"; printf %s "$QZ_BACKUP" > "$ROOT/selected-backup"');

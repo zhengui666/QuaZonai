@@ -397,7 +397,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   function account() {
     if (failure || !latest?.native_snapshot || !latest.ready || latest.recovery_required || typeof latest.native_version !== 'string') fail(reason() ?? 'account_native_observation_unavailable', 503);
     return { ...envelope(), accountSourceId: state.sourceId, observationId: latest.observation_id, controlRevision: state.revision,
-      sequence: latest.sequence, nativeClockNs: latest.native_snapshot.ts_event, equity: equity(), cash: spotCash(),
+      sequence: latest.sequence, nativeClockNs: latest.native_snapshot.ts_event, equity: equity(), cash: latest.cash ?? null,
       positions: latest.positions.map(position => ({ instrumentId: position.instrument_id, quantity: position.quantity, value: position.value, pnl: position.pnl })),
       nativeObservation: { schema_version: 1, binding: { schema_version: 1, project_id: state.sourceId, environment: options.mode === 'paper' ? 'PAPER' : 'LIVE',
         native_trader_id: latest.native_trader_id, native_session_id: latest.native_session_id, native_account_id: latest.native_account_id, native_version: latest.native_version },

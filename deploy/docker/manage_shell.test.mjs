@@ -46,7 +46,7 @@ test('stopped official storage inspection rejects unresolved native work, never 
   const readback = await openNodeSqliteStorage(database); assert.equal((await readback.task(id, context)).state.status, 'pending'); await readback.close(context);
 });
 
-for (const format of ['directory', 'tar']) test(`restore ${format}: an override-free backup preserves the newer override only in pre-restore recovery, including starting retry`, async (t) => {
+for (const format of ['directory', 'tar']) test(`restore ${format}: an override-free backup preserves the current owner override, including starting retry`, async (t) => {
   const root = await directory(t); const bundle = join(root, 'bundle');
   for (const name of ['data', 'work', 'bundle']) await mkdir(join(root, name));
   const image = `sha256:${'a'.repeat(64)}`;
@@ -66,7 +66,7 @@ cp() {
   command cp "$@"
 }
 qz_stop() { :; }; qz_idle() { :; }
-qz_compose() { return 1; }
+qz_compose() { echo app; }
 ${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.url)), root, backup], { encoding: 'utf8', timeout: 20_000 });
   let result = shell('qz_backup "$ROOT/installation.json"; printf %s "$QZ_BACKUP" > "$ROOT/selected-backup"');
   assert.equal(result.status, 0, result.stderr);
@@ -85,8 +85,8 @@ ${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.ur
   assert.equal(pending.phase, 'starting'); assert.equal(pending.source, selected);
   assert.equal(await readFile(join(pending.backup, 'compose.override.yaml'), 'utf8'), newerOverride);
   assert.equal(await readFile(join(pending.backup, 'data.original/original'), 'utf8'), 'pre-restore data');
-  await assert.rejects(readFile(join(root, 'compose.override.yaml')), { code: 'ENOENT' });
-  result = shell('qz_start() { [[ ! -e "$ROOT/compose.override.yaml" ]]; }; qz_restore "$ROOT" "$3"', selected);
+  assert.equal(await readFile(join(root, 'compose.override.yaml'), 'utf8'), newerOverride);
+  result = shell('qz_start() { [[ -e "$ROOT/compose.override.yaml" ]]; }; qz_restore "$ROOT" "$3"', selected);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(join(root, 'data/original'), 'utf8'), 'selected backup data');
   if (format === 'directory') {

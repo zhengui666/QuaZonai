@@ -9,7 +9,7 @@ export interface NativeAccountStrategyConfig { instrument_id: string; strategy: 
 export type AccountStrategyCommand = { requestId: string; action: 'STOP' } | { requestId: string; action: 'START' | 'RECOVER'; expectedAccountSourceId: string; expectedStrategyRevision: string };
 export interface NativeAccountStrategyStatus {
   strategy_id: string | null; state: string; recovery_only?: boolean; native_version: string; instrument_id: string; config: NativeCompiledStrategy;
-  restart_warmup: 'OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS' | 'UPSTREAM_STRATEGY_DEFINED'; default_start: 'PAUSED';
+  restart_warmup?: 'OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS' | 'UPSTREAM_STRATEGY_DEFINED'; default_start: 'PAUSED' | 'UNREGISTERED';
 }
 export function accountStrategyCommand(value: unknown): AccountStrategyCommand {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('strategy_command_required');

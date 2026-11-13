@@ -19,6 +19,8 @@ class PackageTests(unittest.TestCase):
         self.assertIn('app/apps/cli/src/main.ts', package.cli_members('linux-x86_64'))
         self.assertNotIn('runtime.sh', package.DEPLOY_FILES)
         self.assertNotIn('SHA256SUMS', package.REQUIRED_ASSETS)
+        self.assertNotIn('quazonai-image-runtime.tar.gz', package.REQUIRED_ASSETS)
+        self.assertIn('quazonai-image-application.tar.gz', package.REQUIRED_ASSETS)
 
     def test_release_readme_documents_docker_and_preserves_cli_clients(self):
         text = package.readme({'version': 'v3.0.0-doc-test', 'revision': 'abc123'})

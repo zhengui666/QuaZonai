@@ -1,3 +1,4 @@
+import type { NativeAccountStrategyStatus } from '../../../packages/contracts/src/account-strategy.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
@@ -13,11 +14,12 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
   const envelope = { clientId: source.connection.clientId, accountId: source.connection.accountId, currency: 'USDC', mode: 'paper' };
   const native = { strategy_id: 'EMACross-001', state: 'RUNNING', native_version: 'original-upstream', instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID',
     config: { kind: 'EMA_CROSS', trade_size: '1.000000000000000001', fast_period: 10, slow_period: 50 }, restart_warmup: 'OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS', default_start: 'PAUSED' };
+  const unregisteredStatus: NativeAccountStrategyStatus = { strategy_id: null, state: 'UNREGISTERED', recovery_only: true, default_start: 'UNREGISTERED', native_version: native.native_version, instrument_id: native.instrument_id, config: { kind: 'REGISTERED', name: 'user::strategy', config: null } };
   const configured = { instrument_id: 'TEST.SIM', strategy: { kind: 'REGISTERED', name: 'user::strategy', config: [null, '0.00001'] } };
   remote.get('/strategy/config', () => ({ ...envelope, accountSourceId: 'original-worker', strategyRevision: revision, configuration: configured, connected: false, runnerValidated: false }));
   remote.post('/strategy/config', request => { const body = request.body as Record<string, unknown>; assert.deepEqual(body.configuration, configured); return { ...envelope, requestId: body.requestId, configuration: configured, status: 'COMPLETED', connected: false, runnerValidated: false }; });
   remote.get('/strategy/fence', () => { fenceReads++; return { ...envelope, accountSourceId: 'original-worker', strategyRevision: revision }; });
-  remote.get('/strategy', () => ({ ...envelope, accountSourceId: 'original-worker', strategyRevision: revision, strategy: statusOverride ?? (unregistered ? { ...native, strategy_id: null, state: 'UNREGISTERED', recovery_only: true } : native) }));
+  remote.get('/strategy', () => ({ ...envelope, accountSourceId: 'original-worker', strategyRevision: revision, strategy: statusOverride ?? (unregistered ? unregisteredStatus : native) }));
   remote.post('/strategy/commands', (request, reply) => {
     const body = request.body as { requestId: string; action: string; clientId: string; accountId: string; expectedAccountSourceId?: string; expectedStrategyRevision?: string };
     assert.equal(body.clientId, envelope.clientId); assert.equal(body.accountId, envelope.accountId); calls.push(body.action);
@@ -101,7 +103,9 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     unregistered = true;
     const recoveryStatus = await state.service.app.inject({ method: 'GET', url, headers: state.headers });
     assert.equal(recoveryStatus.statusCode, 200); assert.equal(recoveryStatus.json().strategy.strategy_id, null);
-    assert.equal(recoveryStatus.json().strategy.state, 'UNREGISTERED'); assert.deepEqual(recoveryStatus.json().strategy.config, native.config);
+    assert.equal(recoveryStatus.json().strategy.state, 'UNREGISTERED'); assert.deepEqual(recoveryStatus.json().strategy.config, unregisteredStatus.config);
+    assert.equal(recoveryStatus.json().strategy.default_start, 'UNREGISTERED');
+    assert.equal(Object.hasOwn(recoveryStatus.json().strategy, 'restart_warmup'), false);
     for (const invalid of [
       {strategy_id:null,state:'RUNNING',recovery_only:true},
       {strategy_id:null,state:'UNREGISTERED',recovery_only:false},

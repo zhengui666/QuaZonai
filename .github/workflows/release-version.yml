@@ -47,41 +47,26 @@ jobs:
           ref: ${{ inputs.revision }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve successful exact-push CI and its native binaries
+      - name: Verify successful exact-push CI
         id: core
         run: |
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
-          python3 -B deploy/docker/release.py ci-run --revision "$REVISION"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: native-${{ inputs.revision }}
-          run-id: ${{ steps.core.outputs.ci_run_id }}
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/native-download
-      - name: Reuse exact-revision artifacts; no Cargo build/test here
-        run: |
-          mkdir -p "$RUNNER_TEMP/native-artifacts"
-          tar -xzf "$RUNNER_TEMP/native-download/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts"
-          test "$(cat "$RUNNER_TEMP/native-artifacts/tested-revision")" = "$REVISION"
       - uses: ./.github/actions/container
         id: images
         with:
           image: ${{ env.LOCAL_IMAGE }}
           revision: ${{ inputs.revision }}
           version: ${{ inputs.version }}
-          native-artifact-directory: ${{ runner.temp }}/native-artifacts
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the built images
-        env:
-          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime-image }}
+      - name: Publish the application image
         run: |
           python3 -B deploy/docker/release.py push-images --version "$VERSION" --revision "$REVISION" \
-            --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --output "$RUNNER_TEMP/release-assets"
+            --image "$LOCAL_IMAGE" --output "$RUNNER_TEMP/release-assets"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}

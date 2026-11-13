@@ -1,12 +1,9 @@
 //! Account execution adapter hosted by the existing remote worker. Business
 //! intents stay in TypeScript; every financial call below uses the official node.
 //!
-//! Current account strategy wiring: the upstream EMA_CROSS example only. The same
-//! registry constructs it for replay. BOOT parks it before live dispatch; explicit
-//! START uses upstream reset/start, so indicators cold-warm rather than retaining
-//! an arbitrary strategy's private state. STOP keeps upstream semantics.
-//! OrderBookImbalance is replay-only here: its on_stop closes positions, so parking
-//! it after LiveNode auto-start would violate the no-automatic-trading boot policy.
+//! BOOT connects for official cache/reconciliation with no signal strategy registered.
+//! Explicit START creates the configured native strategy, loads its official cache state,
+//! and starts it through the official Controller. Recovery never invokes signal callbacks.
 //!
 //! Capital exits use the controller's upstream HEDGING OMS and an explicit existing
 //! position ID, with reduce-only orders. Only a unique long position is supported;
@@ -17,9 +14,9 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
 use indexmap::IndexMap;
 use nautilus_common::{
-    actor::DataActor,
+    actor::{DataActor, DataActorNative},
     cache::CacheConfig,
-    component::{component_state, reset_component, stop_component},
+    component::{component_state, reset_component, Component},
     enums::{ComponentState, Environment},
     logging::logger::LoggerConfig,
     timer::TimeEvent,
@@ -123,6 +120,7 @@ impl AccountRiskConfig {
             "account_native_risk_instrument_scope"
         );
         let mut config = LiveRiskEngineConfig::default();
+        config.bypass = false;
         if let Some(rate) = &self.max_order_submit_rate {
             config.max_order_submit_rate = rate.clone();
         }
@@ -240,9 +238,42 @@ struct TargetAcceptance {
     submitted: Vec<String>,
     receipt: Option<Value>,
 }
+/// Static user-crate hook, invoked only by explicit strategy START after admission.
+/// The callback must register exactly one concrete upstream Strategy through `add`.
+pub type AccountStrategyRegistration =
+    fn(&mut AccountStrategyRegistrar<'_>, &str, &Value) -> Result<()>;
+
+/// Thin registration context over the existing official account Trader and Cache.
+/// User strategies retain upstream callbacks, parameters and order behavior.
+pub struct AccountStrategyRegistrar<'a> {
+    owner: &'a mut AccountController,
+}
+impl AccountStrategyRegistrar<'_> {
+    pub fn instrument_id(&self) -> Result<InstrumentId> {
+        Ok(self.owner.config.native_strategy.instrument_id.parse()?)
+    }
+    pub fn instruments(&self) -> &[InstrumentId] {
+        &self.owner.ids
+    }
+    pub fn add<T>(&mut self, strategy: T) -> Result<()>
+    where
+        T: Strategy + StrategyNative + DataActorNative + Component + std::fmt::Debug + 'static,
+    {
+        ensure!(
+            self.owner.signal_strategy_id.is_none(),
+            "account_native_strategy_already_registered"
+        );
+        self.owner.install_signal(strategy)
+    }
+}
+
 struct AccountController {
     core: StrategyCore,
     signal_strategy_id: Option<StrategyId>,
+    user_registration: Option<AccountStrategyRegistration>,
+    signal_restore_error: Option<String>,
+    native_cache: std::rc::Rc<std::cell::RefCell<nautilus_common::cache::Cache>>,
+    native_risk: std::rc::Rc<std::cell::RefCell<nautilus_risk::engine::RiskEngine>>,
     native_trader: std::rc::Rc<std::cell::RefCell<nautilus_system::trader::Trader>>,
     native_managed_stop: bool,
     config: AccountRuntimeConfig,
@@ -295,14 +326,10 @@ impl DataActor for AccountController {
         Ok(())
     }
     fn on_start(&mut self) -> Result<()> {
-        // Trader starts registered components synchronously before live data dispatch.
-        // The official signal strategy is registered first; park it before returning
-        // startup readiness. Only an explicit STRATEGY_START may resume it.
-        if let Some(id) = self.signal_strategy_id {
-            if component_state(&id.inner())? == ComponentState::Running {
-                stop_component(&id.inner())?;
-            }
-        }
+        // Recovery starts no signal strategy, including no signal on_load/on_start.
+        self.native_risk
+            .borrow_mut()
+            .set_trading_state(nautilus_model::enums::TradingState::Halted);
         let ids = self.ids.clone();
         self.subscribe_quotes(ids.clone(), Some(*HYPERLIQUID_CLIENT_ID), None);
         self.subscribe_book_at_interval(
@@ -325,7 +352,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION"}),
+                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none()}),
             ),
         );
         Ok(())
@@ -363,6 +390,93 @@ impl DataActor for AccountController {
     }
 }
 impl AccountController {
+    fn install_signal<T>(&mut self, strategy: T) -> Result<()>
+    where
+        T: Strategy + StrategyNative + DataActorNative + Component + std::fmt::Debug + 'static,
+    {
+        self.native_managed_stop = strategy.strategy_core().config.manage_stop;
+        let controller = nautilus_system::Controller::new(self.native_trader.clone(), None);
+        let id = controller.create_strategy(strategy, false)?;
+        self.signal_strategy_id = Some(id);
+        let restore = (|| -> Result<()> {
+            let state = self.native_cache.borrow().load_strategy_state(&id)?;
+            if let Some(state) = state.filter(|state| !state.is_empty()) {
+                let mut actor =
+                    nautilus_common::actor::registry::try_get_actor_unchecked::<T>(&id.inner())
+                        .ok_or_else(|| anyhow!("account_native_strategy_registration_missing"))?;
+                actor.on_load(state)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = restore {
+            self.signal_restore_error = Some(format!(
+                "account_native_strategy_state_restore_failed: {error:#}"
+            ));
+            return Err(error);
+        }
+        Ok(())
+    }
+    fn register_signal(&mut self) -> Result<()> {
+        let id: InstrumentId = self.config.native_strategy.instrument_id.parse()?;
+        ensure!(
+            self.ids.contains(&id),
+            "account_native_strategy_instrument_not_configured"
+        );
+        #[cfg(test)]
+        if self.config.client_id == "test-on-start" {
+            return self.install_signal(tests::OnStartSubmit {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("ONSTART-001")),
+                    order_id_tag: Some("001".into()),
+                    ..Default::default()
+                }),
+                instrument: id,
+                client: self.client,
+                trade_size: nautilus_model::types::Quantity::from("0.10"),
+            });
+        }
+        if let NativeCompiledStrategyV1::Registered { name, config } =
+            &self.config.native_strategy.strategy
+        {
+            let registration = self.user_registration.ok_or_else(|| {
+                anyhow!("NATIVE_REGISTERED_ACCOUNT_STRATEGY_REQUIRES_USER_RUNNER")
+            })?;
+            let name = name.clone();
+            let config = config.clone();
+            if let Err(error) = registration(
+                &mut AccountStrategyRegistrar { owner: self },
+                &name,
+                &config,
+            ) {
+                if self.signal_strategy_id.is_some() {
+                    self.signal_restore_error = Some(format!(
+                        "account_native_user_registration_failed: {error:#}"
+                    ));
+                }
+                return Err(error);
+            }
+            if let Some(error) = &self.signal_restore_error {
+                bail!("{error}");
+            }
+            ensure!(
+                self.signal_strategy_id.is_some(),
+                "NATIVE_ACCOUNT_REGISTRATION_DID_NOT_ADD_STRATEGY"
+            );
+            return Ok(());
+        }
+        match crate::native_strategy::registry::build_strategy(
+            id,
+            &self.config.native_strategy.strategy,
+        )? {
+            crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(s) => {
+                self.install_signal(s)
+            }
+            crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(s) => {
+                self.install_signal(s)
+            }
+            _ => bail!("account_native_strategy_account_lifecycle_not_integrated"),
+        }
+    }
     fn fence(&self, epoch: u64) -> Result<&Control> {
         ensure!(
             !self.cache_failed.load(Ordering::SeqCst),
@@ -513,6 +627,21 @@ impl AccountController {
                 Ok(json!({"sent":true}))
             }
             #[cfg(test)]
+            "TEST_BRACKET" => {
+                let instrument = self.ids[0];
+                let orders = self
+                    .order_factory()
+                    .bracket()
+                    .instrument_id(instrument)
+                    .order_side(OrderSide::Buy)
+                    .quantity(nautilus_model::types::Quantity::from("1.00"))
+                    .tp_price(Price::from("110.00"))
+                    .sl_trigger_price(Price::from("90.00"))
+                    .call();
+                self.submit_order_list(orders, None, Some(self.client), None)?;
+                Ok(json!({"sent":true}))
+            }
+            #[cfg(test)]
             "TEST_MODIFY_LIMIT" => {
                 self.modify_order(
                     ClientOrderId::from("fault-resting"),
@@ -533,6 +662,14 @@ impl AccountController {
                 )?;
                 Ok(json!({"sent":true}))
             }
+            "RECOVERY_STATUS" => Ok(json!({
+                "recovery_only":self.signal_strategy_id.is_none(),
+                "native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,
+                "ready":!self.cache_failed.load(Ordering::SeqCst),
+                "recovery_required":self.cache_failed.load(Ordering::SeqCst),
+                "signal_strategy_id":self.signal_strategy_id,
+                "trading_state":format!("{:?}",self.native_risk.borrow().trading_state()).to_ascii_uppercase()
+            })),
             "STRATEGY_STATUS" => self.strategy_status(),
             "STRATEGY_START" => {
                 let prepared = (|| -> Result<_> {
@@ -548,6 +685,12 @@ impl AccountController {
                         !self.cache_failed.load(Ordering::SeqCst),
                         "account_native_cache_write_failed"
                     );
+                    if let Some(error) = &self.signal_restore_error {
+                        bail!("{error}");
+                    }
+                    if self.signal_strategy_id.is_none() {
+                        self.register_signal()?;
+                    }
                     let id = self
                         .signal_strategy_id
                         .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
@@ -566,7 +709,18 @@ impl AccountController {
                     reset_component(&id.inner())?;
                 }
                 if state != ComponentState::Running {
-                    self.native_trader.borrow().start_strategy(&id)?;
+                    self.native_risk
+                        .borrow_mut()
+                        .set_trading_state(nautilus_model::enums::TradingState::Active);
+                    if let Err(error) =
+                        nautilus_system::Controller::new(self.native_trader.clone(), None)
+                            .start_strategy(&id)
+                    {
+                        self.native_risk
+                            .borrow_mut()
+                            .set_trading_state(nautilus_model::enums::TradingState::Halted);
+                        return Err(error);
+                    }
                 }
                 self.strategy_status()
             }
@@ -674,7 +828,9 @@ impl AccountController {
                 Ok(json!({"updated":true}))
             }
             "CONTROL" => self.apply_control(r),
-            "SLICE" => Ok(json!({"admission":"REJECTED","submitted":false,"reason":"capital_exit_planning_retired"})),
+            "SLICE" => Ok(
+                json!({"admission":"REJECTED","submitted":false,"reason":"capital_exit_planning_retired"}),
+            ),
             "TARGET" => bail!("account_native_target_execution_retired"),
             "TARGET_STATUS" => self.target_status(r),
             "CANCEL_EXIT" => self.cancel_exit(r),
@@ -688,14 +844,18 @@ impl AccountController {
         }
     }
     fn strategy_status(&self) -> Result<Value> {
-        let id = self
-            .signal_strategy_id
-            .ok_or_else(|| anyhow!("account_native_strategy_not_configured"))?;
+        let Some(id) = self.signal_strategy_id else {
+            return Ok(
+                json!({"strategy_id":null,"state":"UNREGISTERED","recovery_only":true,
+                "native_version":crate::NAUTILUS_VERSION,"instrument_id":self.config.native_strategy.instrument_id,
+                "config":self.config.native_strategy.strategy,"default_start":"UNREGISTERED"}),
+            );
+        };
         Ok(
-            json!({"strategy_id":id.to_string(),"state":format!("{:?}",component_state(&id.inner())?).to_ascii_uppercase(),
+            json!({"strategy_id":id.to_string(),"recovery_only":false,"state":format!("{:?}",component_state(&id.inner())?).to_ascii_uppercase(),
             "native_version":crate::NAUTILUS_VERSION,"instrument_id":self.config.native_strategy.instrument_id,
             "config":self.config.native_strategy.strategy,"default_start":"PAUSED",
-            "restart_warmup":"OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS","start_semantics":"UPSTREAM_RESET_THEN_START"}),
+            "restart_warmup":if matches!(self.config.native_strategy.strategy, NativeCompiledStrategyV1::Registered { .. }) { "UPSTREAM_STRATEGY_DEFINED" } else { "OFFICIAL_STRATEGY_REINITIALIZES_INDICATORS" },"start_semantics":"UPSTREAM_RESET_THEN_START"}),
         )
     }
     fn stop_signal_strategy(&self) -> Result<()> {
@@ -1075,13 +1235,48 @@ fn install_cache_failure_risk_fence(node: &LiveNode, failed: Arc<AtomicBool>) {
     );
 }
 
+// The upstream emulator reactivates persisted emulated orders on every node start.
+// Recovery is therefore supported only after the official, exclusively locked cache
+// is loaded and verified to contain no emulated orders. Never filter or delete them.
+async fn prepare_recovery_cache(node: &LiveNode) -> Result<()> {
+    ensure!(
+        node.kernel().cache().borrow().has_backing(),
+        "account_native_recovery_cache_backing_required"
+    );
+    node.kernel()
+        .exec_engine()
+        .borrow_mut()
+        .load_cache()
+        .await
+        .context("account_native_recovery_cache_load_failed")?;
+    let cache = node.kernel().cache();
+    let mut cache = cache.borrow_mut();
+    ensure!(
+        cache.check_integrity(),
+        "account_native_recovery_cache_integrity_failed"
+    );
+    ensure!(
+        cache.orders_emulated_count(None, None, None, None, None) == 0,
+        "account_native_recovery_emulated_orders_require_explicit_handling"
+    );
+    Ok(())
+}
+
 pub async fn run() -> Result<()> {
+    run_with_registration(None).await
+}
+
+/// Entry point for a statically linked user account runner. BOOT only recovers;
+/// it never invokes this callback or starts a user strategy.
+pub async fn run_with_registration(
+    registration: Option<AccountStrategyRegistration>,
+) -> Result<()> {
     let mut first = String::new();
     io::stdin().read_line(&mut first)?;
     let boot: Request = serde_json::from_str(&first)?;
     ensure!(boot.operation == "BOOT", "account_native_boot_required");
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
-    let result = run_config(config, boot.id.clone()).await;
+    let result = run_config_with_registration(config, boot.id.clone(), registration).await;
     if let Err(e) = &result {
         respond(&boot.id, Err(anyhow!(e.to_string())));
     }
@@ -1107,7 +1302,15 @@ fn execution_product_types(config: &AccountRuntimeConfig) -> Result<Vec<Hyperliq
     Ok(products)
 }
 
+#[cfg(test)]
 async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()> {
+    run_config_with_registration(config, boot_id, None).await
+}
+async fn run_config_with_registration(
+    config: AccountRuntimeConfig,
+    boot_id: String,
+    registration: Option<AccountStrategyRegistration>,
+) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
         "account_native_mode"
@@ -1137,7 +1340,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     ensure!(
         matches!(
             config.native_strategy.strategy,
-            NativeCompiledStrategyV1::EmaCross { .. }
+            NativeCompiledStrategyV1::EmaCross { .. } | NativeCompiledStrategyV1::Registered { .. }
         ),
         "account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance"
     );
@@ -1225,7 +1428,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
     .with_risk_engine_config(config.risk.native(&config.instruments)?)
     .with_reconciliation(true)
     .with_exec_engine_config(LiveExecutionEngineConfig {
-        load_cache: true,
+        load_cache: false,
         submission_recovery_policy: SubmissionRecoveryPolicy::RetainUnresolved,
         open_check_interval_secs: Some(10.0),
         position_check_interval_secs: Some(30.0),
@@ -1313,6 +1516,7 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
             cache_config,
         )
         .await?;
+    prepare_recovery_cache(&node).await?;
     install_cache_failure_risk_fence(&node, cache_failed.clone());
     let handle = node.handle();
     let session = node.instance_id().to_string();
@@ -1377,67 +1581,25 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         )?
         .saturating_add(60_000_000_000)
     };
-    let instrument_id: InstrumentId = config.native_strategy.instrument_id.parse()?;
-    ensure!(
-        ids.contains(&instrument_id),
-        "account_native_strategy_instrument_not_configured"
-    );
-    let compiled = crate::native_strategy::registry::build_strategy(
-        instrument_id,
-        &config.native_strategy.strategy,
-    )?;
-    let native_managed_stop = match &compiled {
-        crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(s) => {
-            s.strategy_core().config.manage_stop
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
-            anyhow::bail!(
-                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
-            )
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
-            anyhow::bail!(
-                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
-            )
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(s) => {
-            s.strategy_core().config.manage_stop
-        }
-    };
-    match compiled {
-        crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
-            node.add_strategy(strategy)?
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::HurstVpinDirectional(_) => {
-            anyhow::bail!(
-                "account_native_strategy_account_lifecycle_unsupported_for_hurst_vpin_directional"
-            )
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::GridMarketMaker(_) => {
-            anyhow::bail!(
-                "account_native_strategy_account_lifecycle_unsupported_for_grid_market_maker"
-            )
-        }
-        crate::native_strategy::registry::CompiledNativeStrategy::OrderBookImbalance(strategy) => {
-            node.add_strategy(strategy)?
-        }
-    }
-    let signal_strategy_id = *node
-        .kernel()
-        .trader
-        .borrow()
-        .strategy_ids()
-        .last()
-        .ok_or_else(|| anyhow!("account_native_strategy_registration_failed"))?;
+    // No signal instance is registered during recovery. Its persisted state and
+    // original order ownership stay in the official cache until explicit START.
+    node.kernel()
+        .risk_engine()
+        .borrow_mut()
+        .set_trading_state(nautilus_model::enums::TradingState::Halted);
     node.add_strategy(AccountController {
-        signal_strategy_id: Some(signal_strategy_id),
+        signal_strategy_id: None,
+        user_registration: registration,
+        signal_restore_error: None,
+        native_cache: node.kernel().cache(),
+        native_risk: node.kernel().risk_engine().clone(),
         native_trader: node.kernel().trader.clone(),
-        native_managed_stop,
+        native_managed_stop: false,
         core: StrategyCore::new(StrategyConfig {
-            // Sandbox dispatches execution events asynchronously. The official strategy
-            // manager reconciles OTO quantities after fills reach the shared cache.
-            // Do not double-manage Hyperliquid adapter-staged child orders.
-            manage_contingent_orders: config.mode == "paper",
+            // Recovery must not react to old contingent-order events with new commands.
+            // Original order facts remain in the official cache; explicit strategies
+            // retain their own upstream order-manager behavior when started.
+            manage_contingent_orders: false,
             strategy_id: Some(strategy_id),
             order_id_tag: Some("CONTROL".into()),
             // Explicit position IDs allow authorized exits to reduce the signal strategy
@@ -1630,6 +1792,34 @@ mod tests {
     };
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
+    #[derive(Debug)]
+    pub(super) struct OnStartSubmit {
+        pub(super) core: StrategyCore,
+        pub(super) instrument: InstrumentId,
+        pub(super) client: ClientId,
+        pub(super) trade_size: Quantity,
+    }
+    nautilus_strategy!(OnStartSubmit, {});
+    impl DataActor for OnStartSubmit {
+        fn on_start(&mut self) -> Result<()> {
+            let instrument = self.instrument;
+            let trade_size = self.trade_size;
+            let order = self.order_factory().market(
+                instrument,
+                OrderSide::Buy,
+                trade_size,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            self.submit_order(order, None, Some(self.client), None)
+        }
+    }
+
     type Replies = Rc<RefCell<BTreeMap<String, Value>>>;
     fn pair(id: &str, base: Currency) -> InstrumentAny {
         InstrumentAny::CurrencyPair(
@@ -1706,7 +1896,7 @@ mod tests {
             .with_cache_config(cache_config.clone())
             .with_reconciliation(true)
             .with_exec_engine_config(LiveExecutionEngineConfig {
-                load_cache: true,
+                load_cache: false,
                 ..Default::default()
             })
             .with_timeout_connection(2)
@@ -1739,28 +1929,20 @@ mod tests {
                 cache_config,
             )
             .await?;
+        prepare_recovery_cache(&node).await?;
         install_cache_failure_risk_fence(&node, factory.failed.clone());
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
-        let native_config = NativeCompiledStrategyV1::EmaCross {
-            trade_size: "1".into(),
-            fast_period: 2,
-            slow_period: 3,
-            base: None,
-        };
-        match crate::native_strategy::registry::build_strategy(ids[0], &native_config)? {
-            crate::native_strategy::registry::CompiledNativeStrategy::EmaCross(strategy) => {
-                node.add_strategy(strategy)?
-            }
-            _ => unreachable!(),
-        }
-        let signal_strategy_id = *node.kernel().trader.borrow().strategy_ids().last().unwrap();
         node.add_strategy(AccountController {
-            signal_strategy_id: Some(signal_strategy_id),
+            signal_strategy_id: None,
+            user_registration: None,
+            signal_restore_error: None,
+            native_cache: node.kernel().cache(),
+            native_risk: node.kernel().risk_engine().clone(),
             native_trader: node.kernel().trader.clone(),
             native_managed_stop: false,
             core: StrategyCore::new(StrategyConfig {
-                manage_contingent_orders: true,
+                manage_contingent_orders: false,
                 strategy_id: Some(StrategyId::from("QZ-ACCOUNT-OWNER-001")),
                 order_id_tag: Some("CONTROL".into()),
                 // Explicit position IDs allow authorized exits to reduce the signal strategy
@@ -1853,10 +2035,17 @@ mod tests {
         cache: &Rc<RefCell<nautilus_common::cache::Cache>>,
         price: &str,
     ) -> Result<()> {
+        publish_native_quote_size(cache, price, "1000.00")
+    }
+    fn publish_native_quote_size(
+        cache: &Rc<RefCell<nautilus_common::cache::Cache>>,
+        price: &str,
+        size: &str,
+    ) -> Result<()> {
         let now = UnixNanos::from(chrono::Utc::now().timestamp_nanos_opt().unwrap() as u64);
         let id = InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID");
         let price = Price::from_str(price).map_err(anyhow::Error::msg)?;
-        let size = Quantity::from("1000.00");
+        let size = Quantity::from_str(size).map_err(anyhow::Error::msg)?;
         let mut book = OrderBook::new(id, BookType::L2_MBP);
         book.add(BookOrder::new(OrderSide::Buy, price, size, 1), 0, 1, now);
         book.add(BookOrder::new(OrderSide::Sell, price, size, 2), 0, 2, now);
@@ -1864,6 +2053,330 @@ mod tests {
         get_data_event_sender().send(DataEvent::Data(Data::Quote(QuoteTick::new(
             id, price, price, size, size, now, now,
         ))))?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn registered_account_callback_parameters_are_used_only_on_explicit_start() -> Result<()>
+    {
+        fn register(
+            registrar: &mut AccountStrategyRegistrar<'_>,
+            name: &str,
+            config: &Value,
+        ) -> Result<()> {
+            ensure!(
+                name == "test.parameterized",
+                "TEST_ACCOUNT_STRATEGY_UNKNOWN"
+            );
+            let instrument = registrar.instrument_id()?;
+            let trade_size = Quantity::from_str(
+                config["trade_size"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("missing trade size"))?,
+            )
+            .map_err(anyhow::Error::msg)?;
+            registrar.add(OnStartSubmit {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("CUSTOM-001")),
+                    order_id_tag: Some("001".into()),
+                    ..Default::default()
+                }),
+                instrument,
+                client: ClientId::from("QZ-PAPER"),
+                trade_size,
+            })
+        }
+        for amount in ["0.10", "0.20"] {
+            let directory = tempfile::tempdir()?;
+            let (mut native, tx, replies) = node(directory.path()).await?;
+            let owner_id = *native
+                .kernel()
+                .trader
+                .borrow()
+                .strategy_ids()
+                .last()
+                .unwrap();
+            {
+                let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                    AccountController,
+                >(&owner_id.inner())
+                .unwrap();
+                owner.user_registration = Some(register);
+                owner.config.native_strategy.strategy = NativeCompiledStrategyV1::Registered {
+                    name: "test.parameterized".into(),
+                    config: json!({"trade_size":amount}),
+                };
+            }
+            let handle = native.handle();
+            let stop = handle.clone();
+            let cache = native.kernel().cache();
+            let drive = async {
+                while !handle.is_running() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                publish_native_quote(&cache, "100.00")?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                assert!(cache
+                    .borrow()
+                    .orders(None, None, None, None, None)
+                    .is_empty());
+                let mut normal = control("1", "NORMAL", "0");
+                normal["exit_ids"] = json!([]);
+                request(&tx, &replies, "CONTROL", normal).await?;
+                request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+                let status = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
+                assert_eq!(status["restart_warmup"], "UPSTREAM_STRATEGY_DEFINED");
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                ensure!(
+                    cache
+                        .borrow()
+                        .orders(None, None, None, None, None)
+                        .iter()
+                        .any(|o| o.strategy_id() == StrategyId::from("CUSTOM-001")
+                            && o.filled_qty() == Quantity::from_str(amount).unwrap()),
+                    "custom parameter not passed to native strategy"
+                );
+                stop.stop();
+                Ok::<_, anyhow::Error>(())
+            };
+            let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive);
+            run?;
+            result?;
+            native.dispose();
+        }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(directory.path()).await?;
+        {
+            let owner_id = *native
+                .kernel()
+                .trader
+                .borrow()
+                .strategy_ids()
+                .last()
+                .unwrap();
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.client_id = "test-on-start".into();
+        }
+        let handle = native.handle();
+        let stop = handle.clone();
+        let cache = native.kernel().cache();
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            assert!(cache
+                .borrow()
+                .orders(None, None, None, None, None)
+                .is_empty());
+            let status = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
+            assert_eq!(status["state"], "UNREGISTERED");
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            ensure!(
+                cache
+                    .borrow()
+                    .orders(None, None, None, None, None)
+                    .iter()
+                    .any(|o| o.strategy_id() == StrategyId::from("ONSTART-001")
+                        && o.filled_qty() > Quantity::zero(2)),
+                "explicit_start_did_not_run_native_callback"
+            );
+            stop.stop();
+            Ok::<_, anyhow::Error>(())
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive);
+        run?;
+        result?;
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recovery_preserves_native_bracket_without_automatic_commands() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut original = Vec::new();
+        for seed in [true, false] {
+            let (mut native, tx, replies) = node(directory.path()).await?;
+            let handle = native.handle();
+            let stop = handle.clone();
+            let cache = native.kernel().cache();
+            let execution = native.kernel().exec_engine().clone();
+            let risk = native.kernel().risk_engine().clone();
+            // Baseline before node.run: cover startup/reconciliation as well as quotes.
+            let before_execution = execution.borrow().command_count();
+            let before_risk = risk.borrow().command_count();
+            let drive = async {
+                while !handle.is_running() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                if seed {
+                    publish_native_quote_size(&cache, "100.00", "0.25")?;
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                    // Explicit test-only simulated submission. No real client is installed.
+                    risk.borrow_mut()
+                        .set_trading_state(nautilus_model::enums::TradingState::Active);
+                    request(&tx, &replies, "TEST_BRACKET", json!({})).await?;
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    ensure!(
+                        cache
+                            .borrow()
+                            .orders(None, None, None, None, None)
+                            .iter()
+                            .any(|o| o.filled_qty() > Quantity::zero(2)),
+                        "sandbox_bracket_no_fill"
+                    );
+                } else {
+                    let status = request(&tx, &replies, "RECOVERY_STATUS", json!({})).await?;
+                    ensure!(
+                        status["recovery_only"] == true && status["trading_state"] == "HALTED",
+                        "{status}"
+                    );
+                    publish_native_quote_size(&cache, "100.00", "0.25")?;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    assert_eq!(execution.borrow().command_count(), before_execution);
+                    assert_eq!(risk.borrow().command_count(), before_risk);
+                    let mut restored = cache
+                        .borrow()
+                        .orders(None, None, None, None, None)
+                        .iter()
+                        .map(|o| {
+                            (
+                                o.client_order_id().to_string(),
+                                o.strategy_id().to_string(),
+                                o.status().to_string(),
+                                o.quantity().to_string(),
+                                o.filled_qty().to_string(),
+                                o.events().len(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    restored.sort();
+                    assert_eq!(original, restored);
+                }
+                stop.stop();
+                Ok::<_, anyhow::Error>(())
+            };
+            let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive);
+            run?;
+            result?;
+            if seed {
+                original = cache
+                    .borrow()
+                    .orders(None, None, None, None, None)
+                    .iter()
+                    .map(|o| {
+                        (
+                            o.client_order_id().to_string(),
+                            o.strategy_id().to_string(),
+                            o.status().to_string(),
+                            o.quantity().to_string(),
+                            o.filled_qty().to_string(),
+                            o.events().len(),
+                        )
+                    })
+                    .collect();
+                original.sort();
+                ensure!(original.len() == 3, "sandbox_bracket_not_three_orders");
+            }
+            native.dispose();
+        }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recovery_rejects_persisted_emulated_bracket_before_node_start() -> Result<()> {
+        use nautilus_common::{clock::VirtualClock, factories::OrderFactory};
+        use nautilus_model::{enums::TriggerType, events::OrderCanceled};
+        let directory = tempfile::tempdir()?;
+        {
+            let (mut native, _, _) = node(directory.path()).await?;
+            assert!(!native.is_running());
+            let mut orders = OrderFactory::new(
+                TraderId::from("QZ-ACCOUNT-001"),
+                StrategyId::from("OLD-001"),
+                None,
+                None,
+                Rc::new(RefCell::new(VirtualClock::default())),
+                false,
+                true,
+            )
+            .bracket()
+            .instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+            .order_side(OrderSide::Buy)
+            .quantity(Quantity::from("1.00"))
+            .tp_price(Price::from("110.00"))
+            .sl_trigger_price(Price::from("90.00"))
+            .emulation_trigger(TriggerType::LastPrice)
+            .call();
+            let parent = &mut orders[0];
+            parent.apply(OrderEventAny::Canceled(OrderCanceled::new(
+                parent.trader_id(),
+                parent.strategy_id(),
+                parent.instrument_id(),
+                parent.client_order_id(),
+                UUID4::new(),
+                1.into(),
+                1.into(),
+                false,
+                None,
+                None,
+                None,
+            )))?;
+            assert!(parent.is_closed());
+            for order in orders {
+                native
+                    .kernel()
+                    .cache()
+                    .borrow_mut()
+                    .add_order(order, None, None, false)?;
+            }
+            assert!(
+                native
+                    .kernel()
+                    .cache()
+                    .borrow()
+                    .orders_emulated_count(None, None, None, None, None)
+                    > 0
+            );
+            native.dispose();
+        }
+        let path = directory.path().join("native-cache/orders");
+        let persisted = || -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+            let mut files = std::fs::read_dir(&path)?
+                .map(|e| e.map(|e| e.path()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            files.sort();
+            files
+                .into_iter()
+                .map(|p| Ok((p.clone(), std::fs::read(p)?)))
+                .collect()
+        };
+        let before = persisted()?;
+        let result = node(directory.path()).await;
+        let error = match result {
+            Ok(_) => bail!("emulated recovery unexpectedly started"),
+            Err(e) => e,
+        };
+        ensure!(
+            error
+                .to_string()
+                .contains("account_native_recovery_emulated_orders_require_explicit_handling"),
+            "{error:#}"
+        );
+        assert_eq!(before, persisted()?);
         Ok(())
     }
 
@@ -1961,8 +2474,8 @@ mod tests {
             ensure!(
                 exit["admission"] == "REJECTED"
                     && exit["submitted"] == false
-                    && exit["reason"] == "account_native_cache_write_failed",
-                "fault_did_not_reject_new_exit"
+                    && exit["reason"] == "capital_exit_planning_retired",
+                "retired_exit_was_not_rejected"
             );
             let stopped = request(&tx, &replies, "STRATEGY_STOP", json!({})).await?;
             ensure!(stopped["state"] == "STOPPED", "explicit_stop_unavailable");
@@ -1999,9 +2512,18 @@ mod tests {
                 while !handle.is_running() {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
+                let recovery = request(&tx, &replies, "RECOVERY_STATUS", json!({})).await?;
+                ensure!(
+                    recovery["recovery_only"] == true
+                        && recovery["signal_strategy_id"].is_null()
+                        && recovery["trading_state"] == "HALTED",
+                    "recovery_node_not_unregistered_and_halted: {recovery}"
+                );
                 let initial = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
                 ensure!(
-                    initial["state"] == "STOPPED",
+                    initial["state"] == "UNREGISTERED"
+                        && initial["strategy_id"].is_null()
+                        && initial["recovery_only"] == true,
                     "native_strategy_boot_not_paused: {initial}"
                 );
                 ensure!(
@@ -2135,7 +2657,9 @@ mod tests {
                         "remaining_cost_budget":"10","fee_rate_bound":"0.001","maximum_slice_notional":"25",
                         "maximum_participation":"0.1"})).await?;
                     ensure!(
-                        slice["submitted"] == false && slice["admission"] == "REJECTED" && slice["reason"] == "capital_exit_planning_retired",
+                        slice["submitted"] == false
+                            && slice["admission"] == "REJECTED"
+                            && slice["reason"] == "capital_exit_planning_retired",
                         "retired_capital_slice_was_admitted: {slice}"
                     );
                     tokio::time::sleep(Duration::from_millis(80)).await;
@@ -2178,5 +2702,4 @@ mod tests {
         }
         Ok(())
     }
-
 }

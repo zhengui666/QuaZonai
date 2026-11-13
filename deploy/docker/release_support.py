@@ -36,7 +36,7 @@ def validate_manifest(value: dict, *, published: bool = False) -> dict:
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")
-    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime")):
+    for field, repository in (("image", "quazonai"),):
         reference = value.get(field)
         # The pre-publication suite uses Docker's content-addressed IDs for its
         # already-built images. Public bundles contain only GHCR digests.

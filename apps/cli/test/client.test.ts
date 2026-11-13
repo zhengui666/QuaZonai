@@ -223,17 +223,18 @@ test('native research and account-control commands preserve original file bytes 
     await run(['research', 'start', '--file', file], () => {}); assert.equal(sent[0]!.bytes, bytes);
     const preview = '{ "requestId":"preview-original", "amount":"100.000000000000000001", "currency":"USD" }\n'; await writeFile(file, preview);
     await run(['capital', 'status', 'o-original'], () => {});
-    await run(['capital', 'context', 'o-original'], () => {});
+    const beforeContext = sent.length; await assert.rejects(run(['capital', 'context', 'o-original'], () => {}), /unknown_capital_command/); assert.equal(sent.length, beforeContext);
     await run(['capital', 'get', 'o-original', 'exit/original'], () => {});
     await assert.rejects(run(['capital', 'get', 'o-original'], () => {}), /resource_id_required/);
     await assert.rejects(run(['capital', 'get', 'o-original', 'exit-original', 'extra'], () => {}), /unexpected_argument/);
-    await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
-    const command = '{"requestId":"command-original","action":"START","previewId":"native-original"}\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
+    const beforePreview = sent.length; await assert.rejects(run(['capital', 'preview', 'o-original', '--file', file], () => {}), /unknown_capital_command/); assert.equal(sent.length, beforePreview);
+    const command = '{ "requestId":"command-original", "action":"CANCEL", "exitId":"native-original", "expectedRevision":"9007199254740993" }\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
+    await writeFile(file, '{"requestId":"retired-start","action":"START","previewId":"old"}'); const beforeStart = sent.length; await assert.rejects(run(['capital','command','o-original','--file',file],()=>{}), /capital_exit_planning_retired/); assert.equal(sent.length,beforeStart);
     const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); const sentBeforeRetired = sent.length; await assert.rejects(run(['observation', 'automatic', 'o-original', '--file', file], () => {}), /unknown_observation_command/); assert.equal(sent.length, sentBeforeRetired);
     assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
       ['GET', '/api/v3/observations/o-original/capital-exits'],
-      ['GET', '/api/v3/observations/o-original/capital-exits/planning-context'], ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
-      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'],
+      ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
+      ['POST', '/api/v3/observations/o-original/capital-exits/commands'],
     ]);
   } finally { await config.close(); await api.close(); }
 });
