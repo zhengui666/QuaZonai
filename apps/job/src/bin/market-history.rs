@@ -2246,8 +2246,7 @@ mod tests {
                     None,
                 )
                 .unwrap();
-            let ticks = nautilus_persistence::catalog::types::CatalogQuery::query::<TradeTick>(
-                &mut native,
+            let ticks = native.query::<TradeTick>(
                 None,
                 None,
                 None,
@@ -2336,8 +2335,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        let ticks = nautilus_persistence::catalog::types::CatalogQuery::query::<TradeTick>(
-            &mut native,
+        let ticks = native.query::<TradeTick>(
             None,
             None,
             None,

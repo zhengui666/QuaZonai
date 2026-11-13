@@ -312,7 +312,7 @@ mod tests {
         fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
         let output = directory.path().join("native");
         import(&source_path, &definitions, &output).unwrap();
-        let mut request = crate::ticks::tests::request();
+        let mut request = crate::ticks::economic::tests::request();
         request.input.instrument_ids = vec![instrument.id().to_string(), second.id().to_string()];
         let manifest = manifest(&output, &request).unwrap().unwrap();
         assert_eq!(manifest.source, source);
