@@ -3,7 +3,6 @@ import type { CapturedAccount } from './pm-account.ts';
 import type { PmRecord } from './pm-facts.ts';
 import { digest, fact, gap, identity } from './pm-facts.ts';
 import { json, nowNs, object, Problem } from './facts.ts';
-import { addDecimal, subtractDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { accountEventKey, projectAccountEvents } from './pm-account-events.ts';
 import type { AccountEventIdentity, CapturedAccountEvents } from './pm-account-events.ts';
 
@@ -120,7 +119,7 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
         calendarId: null, annualizationDays: null, horizonRef: 'OBSERVED_ACCOUNT_INTERVAL', requiredInputs: key === 'observed_equity' ? ['authoritative_account_equity'] : ['matched_original_equity_snapshots', 'source_confirmed_complete_external_cash_flows'] },
       status: value !== null ? 'AVAILABLE' : 'UNAVAILABLE', value, currency: account.basis.currency, reasonCodes: reasons, role: 'OBSERVED', interval,
       asOfNs: account.basis.observedAtNs, availableAtNs: account.basis.availableAtNs, origin: key === 'observed_equity' ? 'ACCOUNT' : 'DERIVED',
-      methodRef: key === 'observed_equity' ? null : 'qz.account-flow-adjusted-currency-delta/1', evidenceRefs: refs, sampleCount: null, expectedCount: null,
+      methodRef: null, evidenceRefs: refs, sampleCount: null, expectedCount: null,
       uncertainty: null, raw: null });
     const closingUnpriced = knownUnpricedSnapshot(account.artifact);
     const metric = makeMetric('observed_equity', 'Observed account equity', closingUnpriced ? null : account.basis.equity?.amount ?? null,
@@ -131,26 +130,11 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
     // Account-only metrics keep their original identity across receipt changes.
     // ACK/REJECTED cannot create another equity, execution or cash-flow fact.
     const normalizationRef = identity('cashflow-normalization', accountObservationId);
-    const coverage = !!events && events.complete.cashFlows && BigInt(events.interval.startNs) <= BigInt(original.observedAtNs) + 1n
-      && BigInt(events.interval.endExclusiveNs) >= BigInt(interval.endExclusiveNs);
-    const flows = events?.cashFlows.filter(flow => BigInt(flow.eventAtNs) > BigInt(original.observedAtNs) && BigInt(flow.eventAtNs) <= BigInt(account.basis.observedAtNs)) ?? [];
-    const priorEvidence = record.evidence[original.positionsEvidenceRef]; const priorArtifact = priorEvidence ? record.artifacts[priorEvidence.objectKey] : null;
-    const binding = (artifact: typeof account.artifact | null) => {
-      const snapshot = artifact?.snapshot && object(artifact.snapshot); const native = snapshot && snapshot.nativeObservation && object(snapshot.nativeObservation);
-      return native && native.binding ? object(native.binding) : null;
-    };
-    const beforeBinding = binding(priorArtifact ?? null); const afterBinding = binding(account.artifact);
-    const sameAccount = original.accountSourceId === account.basis.accountSourceId && original.accountBindingId === account.basis.accountBindingId
-      && beforeBinding !== null && afterBinding !== null && ['project_id', 'environment', 'native_account_id', 'native_trader_id'].every(key => beforeBinding[key] !== undefined && beforeBinding[key] === afterBinding[key]);
-    const currencyMatches = original.currency === account.basis.currency && flows.every(flow => flow.currency === account.basis.currency);
-    const pricingKnownInvalid = closingUnpriced || knownUnpricedSnapshot(priorArtifact ?? null);
-    const available = coverage && sameAccount && currencyMatches && !pricingKnownInvalid && original.equity !== null && account.basis.equity !== null;
-    const totalFlows = available ? flows.reduce((total, flow) => addDecimal(total, flow.amount), '0') : null;
-    const adjustedChange = available ? subtractDecimal(subtractDecimal(account.basis.equity!.amount, original.equity!.amount), totalFlows!) : null;
-    const normalizationReasons = available ? ['account_currency_delta_not_strategy_pnl_or_time_weighted_return']
-      : [!coverage ? 'complete_external_cashflow_coverage_unavailable' : !sameAccount ? 'matched_original_native_account_binding_unavailable' : pricingKnownInvalid ? 'native_account_valuation_stale_or_unpriced' : !currencyMatches ? 'cashflow_currency_conversion_unavailable' : 'matched_reported_equity_unavailable'];
+    const totalFlows = null;
+    const adjustedChange = null;
+    const normalizationReasons = ['upstream_cashflow_adjusted_equity_change_not_provided'];
     const refs = [original.positionsEvidenceRef, account.evidence.id, ...(events ? [events.evidence.id] : [])];
-    const normalization = json({ method: 'qz.account-flow-adjusted-currency-delta/1', interval, status: available ? 'AVAILABLE' : 'UNAVAILABLE',
+    const normalization = json({ method: null, interval, status: 'UNAVAILABLE',
       accountSourceId: account.basis.accountSourceId, sourceEvidenceRefs: refs, originalEquity: original.equity, closingEquity: account.basis.equity,
       externalNetCashFlow: totalFlows, adjustedEquityChange: adjustedChange, currency: account.basis.currency, reasonCodes: normalizationReasons,
       scope: 'WHOLE_ACCOUNT_NOT_STRATEGY_ATTRIBUTION', returnMethod: null });
@@ -181,7 +165,7 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
       scope: { ...comparison.scope, id: identity('observed-scope', id), interval, role: 'OBSERVED', capital: account.basis.equity },
       cashFlowNormalizationRef: normalizationRef, actualObservationRefs: [...refs, executionRef, ...(receiptObservationRef ? [receiptObservationRef] : [])], counterfactualEvidenceRefs: [],
       components: [{ kind: 'DATA', metric, identification: 'UNIDENTIFIED', methodRef: null },
-        { kind: 'CAPITAL', metric: adjusted, identification: 'UNIDENTIFIED', methodRef: 'qz.account-flow-adjusted-currency-delta/1' }],
+        { kind: 'CAPITAL', metric: adjusted, identification: 'UNIDENTIFIED', methodRef: null }],
       aggregation: 'NON_ADDITIVE_COUNTERFACTUAL', residual: null, limitations: reasons };
     else outcome.attributionEvidenceRef = null;
     record.outcomes[id] = outcome;

@@ -38,15 +38,19 @@ function fixture() {
 }
 const adjusted = (record: PmRecord) => Object.values(record.outcomes).at(-1)!.realizedMetrics.find(metric => metric.definition.key === 'account.external_flow_adjusted_equity_change')!;
 
-test('PM observed outcome: original 100 to 160 equity with complete deposit 50 yields account-only adjusted change 10', () => {
-  const f = fixture(); observePmOutcome(f.record, f.capture());
+test('PM observed outcome: original equity and deposits are preserved without a custom adjusted change', () => {
+  const f = fixture();
+  f.record.artifacts['historical-derived'] = { method: 'qz.account-flow-adjusted-currency-delta/1', adjustedEquityChange: '10' };
+  const originalEvidence = structuredClone(f.record.artifacts['historical-derived']);
+  observePmOutcome(f.record, f.capture());
+  assert.deepEqual(f.record.artifacts['historical-derived'], originalEvidence);
   const outcome = Object.values(f.record.outcomes)[0]!; const metric = adjusted(f.record);
-  assert.equal(metric.status, 'AVAILABLE', JSON.stringify({ metric, gaps: f.record.gaps })); assert.equal(metric.value, '10'); assert.equal(metric.currency, 'USDC');
+  assert.equal(metric.status, 'UNAVAILABLE'); assert.equal(metric.value, null); assert.equal(metric.currency, 'USDC');
   assert.equal(metric.role, 'OBSERVED'); assert.equal(metric.definition.direction, 'DIAGNOSTIC');
   assert.equal(outcome.receiptState, 'ACKNOWLEDGED'); assert.equal(outcome.reconciliationStatus, 'PARTIAL');
-  assert.ok(outcome.reasonCodes.includes('account_currency_delta_not_strategy_pnl_or_time_weighted_return'));
-  const normalizations = Object.values(f.record.artifacts).filter(item => item.method === 'qz.account-flow-adjusted-currency-delta/1');
-  assert.equal(normalizations.length, 1); assert.equal(normalizations[0]!.externalNetCashFlow, '50'); assert.equal(normalizations[0]!.returnMethod, null);
+  assert.ok(outcome.reasonCodes.includes('upstream_cashflow_adjusted_equity_change_not_provided'));
+  const normalizations = Object.values(f.record.artifacts).filter(item => item.scope === 'WHOLE_ACCOUNT_NOT_STRATEGY_ATTRIBUTION');
+  assert.equal(normalizations.length, 1); assert.equal(normalizations[0]!.externalNetCashFlow, null); assert.equal(normalizations[0]!.returnMethod, null);
   const executions = Object.values(f.record.artifacts).find(item => item.identification === 'REPORTED_TARGET_ID_ONLY_NOT_PNL_CAUSALITY')!;
   assert.deepEqual(executions.matchedExecutionIds, []); assert.deepEqual(executions.unmatchedExecutionIds, [], 'ACK cannot generate a fill.');
 });

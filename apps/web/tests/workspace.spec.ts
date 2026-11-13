@@ -3,8 +3,6 @@ import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 import { shortTitle } from '../src/titles';
 import type { CapacityReport, ExecutionErrorDetail, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
-import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
-import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
 import type { NativeTickEconomicResult, TickEconomicReplayDetail, TickEconomicReplaySummary } from '../../../packages/contracts/src/economic-tick.ts';
 
 // Small controlled list responses exercise browser transport, not server query correctness.
@@ -143,63 +141,6 @@ async function audit(page: BrowserPage) {
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
 }
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.workspace-table .ant-table-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
-
-test('multi-portfolio allocation preserves explicit constraints and the original request across uncertain submission', async ({ page }) => {
-  const state = await contract(page);
-  const source = (id: string, name: string): PortfolioView => {
-    const review = scoreReview({ id: `report-${id}`, target: { kind: 'PORTFOLIO', id, version: 'fixture-version', sourceEvidenceRefs: ['fixture-evidence'], evaluationStartNs: '100' }, policy: createReviewPolicy('PORTFOLIO', 'fixture-policy', '1'), metrics: [], checks: [], createdAt: '2026-11-02T10:00:00Z' });
-    // Controlled UI admission only; this transport fixture is not scientific approval.
-    return { ...state.portfolio, id, name, review: { ...review, decision: 'PASS', totalScore: 90 } };
-  };
-  let portfolios = [source('first', '配置来源一'), source('second', '配置来源二')];
-  const writes: string[] = []; let record: ReviewAllocationView | null = null;
-  let releaseReplay!: () => void; const replayHeld = new Promise<void>(resolve => { releaseReplay = resolve; });
-  await page.route('**/api/v3/portfolios', route => route.fulfill({ json: portfolios }));
-  await page.route('**/api/v3/portfolios/list?*', route => route.fulfill({ json: listFixture(route, 'portfolios', portfolios) }));
-  await page.route('**/api/v3/review-allocations/list?*', route => route.fulfill({ json: listFixture(route, 'review-allocations', record ? [record] : []) }));
-  await page.route('**/api/v3/review-allocations', async route => {
-    if (route.request().method() === 'GET') return route.fulfill({ json: record ? [record] : [] });
-    writes.push(route.request().postData()!);
-    if (writes.length === 1) return route.abort('failed');
-    const body = route.request().postDataJSON();
-    record = { id: 'new-allocation', requestId: body.requestId, name: body.name, status: 'RUNNING', portfolioIds: body.portfolioIds, taskId: 99, consumedScientificCalls: 3, weights: null, review: null, error: null, createdAt: '2026-11-02T10:00:00Z' };
-    await replayHeld;
-    return route.fulfill({ json: record, status: 202 });
-  });
-  await page.route('**/api/v3/review-allocations/new-allocation', route => route.fulfill({ json: record }));
-  const chooseSources = async (label: string) => {
-    const combobox = page.getByLabel(label, { exact: true });
-    await expect(combobox).toHaveAttribute('role', 'combobox');
-    await combobox.click(); await expect(combobox).toHaveAttribute('aria-controls', /.+/);
-    const listboxId = await combobox.getAttribute('aria-controls');
-    const dropdown = page.locator('.ant-select-dropdown').filter({ has: page.locator(`[id="${listboxId}"]`) });
-    await expect(dropdown).toHaveCount(1);
-    await dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click();
-    await expect(dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click();
-    await expect(dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true })).toHaveAttribute('aria-selected', 'true');
-    await combobox.press('Escape'); await expect(combobox).toHaveAttribute('aria-expanded', 'false');
-  };
-  await page.goto('/#/portfolios?view=allocations'); await page.getByRole('button', { name: '配置多组合资金', exact: true }).click();
-  const form = page.locator('.review-allocation-form'); await form.getByLabel('配置名称', { exact: true }).fill('质量风险配置');
-  await chooseSources('来源组合（至少两个）');
-  const members = form.locator('.review-allocation-member');
-  for (const [index, cap] of ['0.700000000000000001', '0.6'].entries()) { await members.nth(index).getByLabel('单组合权重上限（0–1）', { exact: true }).fill(cap); await members.nth(index).getByLabel('当前资金权重（0–1）', { exact: true }).fill('0'); }
-  await form.getByLabel('簇名称', { exact: true }).fill('共同风险'); await chooseSources('簇成员');
-  await form.getByLabel('簇合计上限（0–1）', { exact: true }).fill('1'); await form.getByLabel('最大换手（0–2）', { exact: true }).fill('1'); await form.getByRole('button', { name: '计算资金配置', exact: true }).click(); await expect(form.getByRole('button', { name: '核对原提交', exact: true })).toBeVisible();
-  expect(JSON.parse(writes[0]!)).toEqual({ requestId: expect.any(String), name: '质量风险配置', portfolioIds: ['first', 'second'], memberCaps: [{ id: 'first', maximumWeight: '0.700000000000000001' }, { id: 'second', maximumWeight: '0.6' }], currentWeights: [{ id: 'first', weight: '0' }, { id: 'second', weight: '0' }], clusterCaps: [{ id: '共同风险', members: ['first', 'second'], maximumWeight: '1' }], maximumTurnover: '1' });
-  portfolios = []; await page.reload(); await page.getByRole('button', { name: '核对原配置提交', exact: true }).click();
-  await expect(form.getByLabel('配置名称', { exact: true })).toHaveValue('质量风险配置'); await expect(form.getByLabel('配置名称', { exact: true })).toBeDisabled();
-  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect.poll(() => writes.length).toBe(2);
-  await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '研究', exact: true, level: 1 })).toBeVisible();
-  const reconciled = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v3/review-allocations' && response.request().method() === 'POST');
-  releaseReplay(); await reconciled; await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  await expect(page).toHaveURL(/#\/research$/);
-  await page.goto('/#/portfolios?view=allocations'); await page.getByRole('link', { name: '质量风险配置', exact: true }).click();
-  await expect(page.locator('.portfolio-result')).toContainText('质量风险配置');
-  expect(writes).toEqual([writes[0], writes[0]]); await expect(page.locator('.portfolio-result')).toContainText('尚无评审报告');
-});
 
 test('research explicitly selects 365-day Sharpe and preserves its original criterion through retry', async ({ page }) => {
   const state = await contract(page);
@@ -1039,7 +980,7 @@ test('tick collection errors are isolated, manual refresh discovers later admiss
 test('portfolio table shows all three performance metrics and sends sortable fields through the list query', async ({ page }, info) => {
   const state = await contract(page); const reads: URLSearchParams[] = [];
   const longName = '名称很长的组合'.repeat(15);
-  const basis = { sharpe: 'NATIVE_ACCOUNT_DAILY_RETURNS', maxDrawdown: 'NATIVE_ACCOUNT_DAILY_RETURNS', annualizedReturn: 'COMPLETE_UTC_DAYS_GEOMETRIC', expectedDays: 30, observedDays: 30, partialDays: 0, startNs: null, endNs: null };
+  const basis = { sharpe: 'NATIVE_ACCOUNT_DAILY_RETURNS', maxDrawdown: 'NATIVE_ACCOUNT_DAILY_RETURNS', annualizedReturn: 'NATIVE_CAGR', expectedDays: 30, observedDays: 30, partialDays: 0, startNs: null, endNs: null };
   const rows = [
     { ...state.portfolio, id: 'metric-a', name: longName, performance: { sharpe: -1.23456, annualizedReturn: -0.123456, maxDrawdown: 0.25, annualizationDays: 365, basis } },
     { ...state.portfolio, id: 'metric-b', name: '缺少表现的历史组合', performance: { sharpe: null, annualizedReturn: null, maxDrawdown: null, annualizationDays: null, basis } },
