@@ -31,7 +31,7 @@ export function verifyOwnerNativeResolution(owner: ResolvedMetadata, generated: 
 }
 
 export const nativeGlueFiles = [
-  'Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/src',
+  'Cargo.toml', 'Cargo.lock', 'apps/job/Cargo.toml', 'apps/job/build.rs', 'apps/job/src', 'apps/job/examples', 'apps/job/tests',
   'crates/contracts/Cargo.toml', 'crates/contracts/src', 'crates/domain/Cargo.toml', 'crates/domain/src',
 ] as const;
 
@@ -74,8 +74,11 @@ export async function buildRustLauncher(options: {
   const relativeTarget = relative(await realpath(discovery.workspaceRoot), targetDirectory);
   if (!relativeTarget || (!relativeTarget.startsWith(`..${sep}`) && relativeTarget !== '..' && !isAbsolute(relativeTarget))) throw new Error('rust_build_target_must_be_outside_user_workspace');
   const env = { ...process.env, CARGO_PROFILE_DEV_DEBUG: '0', CARGO_INCREMENTAL: '0', RUSTC: rustc, PATH: `${dirname(rustc)}${delimiter}${process.env.PATH ?? ''}`, CARGO_TARGET_DIR: targetDirectory, CARGO_NET_OFFLINE: 'true', QZ_NATIVE_BUILD_LOCK: join(directory, 'launcher/Cargo.lock') };
+  const compiler = await execute(rustc, ['-vV'], { env, signal: options.signal, maxBuffer: 64 * 1024 });
+  const host = /^host: (\S+)$/m.exec(compiler.stdout)?.[1];
+  if (!host) throw new Error('rust_build_compiler_host_missing');
   const metadata = async (manifest: string, locked: boolean, selectedFeatures: string[] = []) => {
-    const args = ['metadata', '--offline', ...(locked ? ['--locked'] : []), '--format-version', '1', '--manifest-path', manifest, ...(selectedFeatures.length ? ['--features', selectedFeatures.join(',')] : [])];
+    const args = ['metadata', '--offline', '--filter-platform', host, ...(locked ? ['--locked'] : []), '--format-version', '1', '--manifest-path', manifest, ...(selectedFeatures.length ? ['--features', selectedFeatures.join(',')] : [])];
     const { stdout } = await execute(discovery.source.cargoBinary, args, { cwd: dirname(manifest), env, signal: options.signal, maxBuffer: 32 * 1024 * 1024 });
     return JSON.parse(stdout) as ResolvedMetadata;
   };
@@ -92,7 +95,7 @@ export async function buildRustLauncher(options: {
   try {
     await new Promise<void>((resolve, reject) => {
       if (options.signal?.aborted) { reject(new Error('rust_build_interrupted_outcome_unknown')); return; }
-      const child = spawn(discovery.source.cargoBinary, ['build', '--frozen', '--manifest-path', materialized.manifestPath, '--bin', binaryName, '--jobs', '1'], {
+      const child = spawn(discovery.source.cargoBinary, ['build', '--frozen', '--target', host, '--manifest-path', materialized.manifestPath, '--bin', binaryName, '--jobs', '1'], {
         cwd: dirname(materialized.manifestPath), env, stdio: ['ignore', log.fd, log.fd],
       });
       let interrupted = false;
@@ -109,7 +112,7 @@ export async function buildRustLauncher(options: {
     });
   } finally { await log.close(); }
   if (!(await readFile(join(discovery.workspaceRoot, 'Cargo.lock'))).equals(originalLock)) throw new Error('rust_build_owner_lock_changed');
-  const built = await realpath(join(targetDirectory, 'debug', process.platform === 'win32' ? `${binaryName}.exe` : binaryName));
+  const built = await realpath(join(targetDirectory, host, 'debug', process.platform === 'win32' ? `${binaryName}.exe` : binaryName));
   await mkdir(join(directory, 'bin'));
   const executable = join(directory, 'bin', process.platform === 'win32' ? 'qz-owner-launcher.exe' : 'qz-owner-launcher');
   await copyFile(built, executable);

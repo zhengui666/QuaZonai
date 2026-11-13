@@ -303,3 +303,9 @@ output goes to that build's log rather than a bounded in-memory capture; disk
 write or build failures must be surfaced, and truncated diagnostics must not be
 presented as complete. Concurrent cache users receive distinct generated binary
 target names and isolated final artifact copies, never a shared executable name.
+
+The first launcher builder supports only the selected installed compiler's host
+target. It passes that exact target to both metadata filtering and Cargo build,
+and reads the target-specific artifact directory. It does not silently follow
+inherited cross-compilation settings; cross-compilation is not supported by this
+entry point. Target-specific dependency caches may require extra disk space.

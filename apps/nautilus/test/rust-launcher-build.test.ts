@@ -30,7 +30,7 @@ test('explicit build command pipeline is offline, keeps original lock and inspec
     await writeFile(manifestPath, 'owner manifest'); await writeFile(join(owner, 'Cargo.lock'), 'original lock');
     const glue = join(root, 'glue');
     for (const path of nativeGlueFiles) {
-      if (path.endsWith('/src')) { await mkdir(join(glue, path), { recursive: true }); await writeFile(join(glue, path, 'lib.rs'), ''); }
+      if (['/src', '/tests', '/examples'].some(suffix => path.endsWith(suffix))) { await mkdir(join(glue, path), { recursive: true }); await writeFile(join(glue, path, 'lib.rs'), ''); }
       else { await mkdir(dirname(join(glue, path)), { recursive: true }); await writeFile(join(glue, path), 'fixture'); }
     }
     await writeFile(join(glue, 'apps/job/src/native_runner.rs'), '// fixture, never executed');
@@ -38,13 +38,13 @@ test('explicit build command pipeline is offline, keeps original lock and inspec
     const discovery = { workspace_root: owner, packages: [{ name: 'owner', manifest_path: manifestPath, targets: [{ name: 'owner', kind: ['lib'] }], dependencies: [], features: {}, rust_version: null }] };
 
     const cargo = join(root, 'cargo');
-    await writeFile(join(root, 'rustc'), '#!/bin/sh\nexit 22\n', { mode: 0o755 });
+    await writeFile(join(root, 'rustc'), '#!/bin/sh\necho "host: x86_64-unknown-linux-gnu"\n', { mode: 0o755 });
     await writeFile(cargo, `#!/usr/bin/env node
 const fs=require('node:fs'),p=require('node:path');
 const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(root, 'calls'))},JSON.stringify(args)+'\\n');
 if(args[0]==='metadata') console.log(JSON.stringify(args.includes('--no-deps')?${JSON.stringify(discovery)}:${JSON.stringify(resolved())}));
 else if(args[0]==='build' && process.env.CARGO_TARGET_DIR.includes('interrupt-build')) { console.error('build-in-progress');setInterval(()=>{},1000); }
-else if(args[0]==='build') { const dest=p.join(process.env.CARGO_TARGET_DIR,'debug');fs.mkdirSync(dest,{recursive:true});const cap={...${JSON.stringify(caps)},compiledFrom:process.cwd()}; const text='#!/usr/bin/env node\\nif(process.argv[2]!=="capabilities")process.exit(22);console.log('+JSON.stringify(JSON.stringify(cap))+');'; fs.writeFileSync(p.join(dest,args[args.indexOf('--bin')+1]),text,{mode:0o755}); }
+else if(args[0]==='build') { const dest=p.join(process.env.CARGO_TARGET_DIR,args[args.indexOf('--target')+1],'debug');fs.mkdirSync(dest,{recursive:true});const cap={...${JSON.stringify(caps)},compiledFrom:process.cwd()}; const text='#!/usr/bin/env node\\nif(process.argv[2]!=="capabilities")process.exit(22);console.log('+JSON.stringify(JSON.stringify(cap))+');'; fs.writeFileSync(p.join(dest,args[args.indexOf('--bin')+1]),text,{mode:0o755}); }
 else process.exit(23);
 `, { mode: 0o755 });
     const result = await buildRustLauncher({ source: { cargoBinary: cargo, manifestPath, packageName: 'owner' }, factories: { backtestFactory: 'factory' }, glueSourceRoot: glue, directory: join(root, 'build') });
@@ -55,8 +55,10 @@ else process.exit(23);
     const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(line => JSON.parse(line) as string[]);
     assert.equal(calls.length, 4);
     assert.ok(calls.filter(a => a[0] === 'metadata').every(a => a.includes('--offline')));
+    assert.ok(calls.slice(1).filter(a => a[0] === 'metadata').every(a => a.includes('--filter-platform')));
     assert.ok(calls[1]!.includes('--locked'));
     assert.ok(calls[3]!.includes('--frozen'));
+    assert.equal(calls[3]![calls[3]!.indexOf('--target') + 1], 'x86_64-unknown-linux-gnu');
     assert.ok(!calls.flat().includes('run'));
     const controller = new AbortController();
     const interruptedDir = join(root, 'interrupt-build');
