@@ -1,3 +1,4 @@
+import {nativePreparationTools} from './native-preparation-tools.ts';
 import {processAccounts} from './process-accounts.ts';
 import {nativeEnvironmentBuild} from './native-environment-build.ts';
 import { researchTaskEvidence } from './research-assessments.ts';
@@ -47,12 +48,18 @@ export async function createService(options: ServiceOptions) {
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
   const nativeBuild = nativeEnvironmentBuild(config);
+  let preparationOperations!: Parameters<typeof nativePreparationTools>[0];
+  const preparation = nativePreparationTools({
+    configuration: () => preparationOperations.configuration(),
+    build: value => preparationOperations.build(value), read: id => preparationOperations.read(id), select: value => preparationOperations.select(value),
+    startResearch: value => preparationOperations.startResearch(value),
+  });
   let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension];
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -144,6 +151,14 @@ export async function createService(options: ServiceOptions) {
   app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); await accounts?.close(); });
   try {
   accounts = await processAccounts(config);
+  // All persisted preparation tools must resolve their service callbacks before resuming.
+  await research.harness.commit(async (tx) => {
+    const facts = await tx.doc(Application);
+    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
+  }, context);
+  const builds=nativeBuild.workbench(research,instances);
+  const work = workbench(research, config, builds.selectedTarget);
+  preparationOperations = { configuration: builds.configuration, build: builds.start, read: builds.read, select: builds.select, startResearch: work.startResearch };
   research.harness.resume();
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
@@ -158,11 +173,6 @@ export async function createService(options: ServiceOptions) {
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
   registerParameterScanRoutes(app, research, parameterScanWorkbench(research, config, scans.stopTask), eventStreams);
-  await research.harness.commit(async (tx) => {
-    const facts = await tx.doc(Application);
-    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
-  }, context);
-  const work = workbench(research, config);
   pm.connect({ host: research, work });
   registerPmRoutes(app, pm.work);
   for (const [path, remove] of [['research', (id: string) => work.removeResearch(Number(id))], ['factors', work.removeFactor], ['portfolios', work.removePortfolio], ['mandates', pm.work.delete]] as const) {
@@ -280,7 +290,6 @@ export async function createService(options: ServiceOptions) {
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,async(r,reply)=>reply.code(202).send(await configuredStrategies.command(r.params.id,r.body)));
   app.get<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/commands/:requestId`,r=>configuredStrategies.receipt(r.params.id,r.params.requestId));
   registerInstanceSettings(app, instances);
-  const builds=nativeBuild.workbench(research,instances);
   app.post(`${API}/settings/instances/build`,request=>builds.start(request.body));
   app.post(`${API}/settings/instances/import`,request=>builds.startImport(request.body));
   app.get<{Params:{requestId:string}}>(`${API}/settings/instances/build/:requestId`,request=>builds.read(request.params.requestId));

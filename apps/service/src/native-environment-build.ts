@@ -71,7 +71,21 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
    const target=validateNativeTarget(result.state.outcome.result.target) as ProcessNativeTarget;
    return settings.selectRunner(Number(body.expectedRevision),target);
   }
-  return {start:(value:unknown)=>start(value),startImport:(value:unknown)=>start(value,true),read,select};
+  async function selectedTarget(requestId:string, expectedRevision:number) {
+   const result=await read(requestId);const current=settings.view();
+   if(!Number.isSafeInteger(expectedRevision)||current.revision!==expectedRevision)throw new Problem('instance_settings_revision_conflict',409);
+   if(result.state.status!=='terminal'||result.state.outcome.status!=='completed')throw new Problem('native_build_not_completed',409);
+   const target=validateNativeTarget(result.state.outcome.result.target) as ProcessNativeTarget;
+   if(!current.runner||canonical(current.runner as never)!==canonical(target as never))throw new Problem('native_build_runner_not_selected',409);
+   if(!target.capabilities.research.configuredRunFactory)throw new Problem('native_runner_factory_not_available',409);
+   return target;
+  }
+  function configuration() {
+   const current=settings.view();const environment=current.environment;
+   return {revision:current.revision,environment:environment?{id:environment.id,packageName:environment.packageName,backtestFactory:environment.backtestFactory??null}:null,
+    selectedRunner:current.runner?{id:current.runner.id,capabilities:current.runner.capabilities}:null,connected:false,strategyStarted:false};
+  }
+  return {configuration,start:(value:unknown)=>start(value),startImport:(value:unknown)=>start(value,true),read,select,selectedTarget};
  }
  return {extension,workbench};
 }
