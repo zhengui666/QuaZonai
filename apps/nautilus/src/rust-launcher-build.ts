@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, relative, sep, join, delimiter } from 'n
 import { discoverRustEnvironment, materializeRustLauncher, renderRustLauncher, type RustEnvironmentSource, type RustFactoryModules } from './rust-environment.ts';
 
 import { pathToFileURL } from 'node:url';
-import { selectedCargoGraph, alignCopiedNativeManifest, type CargoResolvedMetadata } from './rust-native-dependencies.ts';
+import { selectedCargoGraph, alignCopiedNativeManifest, activeCopiedNativeManifest, type CargoResolvedMetadata } from './rust-native-dependencies.ts';
 const execute = promisify(execFile);
 type ResolvedMetadata = {
   packages: { id: string; name: string; version: string; source: string | null; manifest_path?: string }[];
@@ -92,9 +92,9 @@ export async function buildRustLauncher(options: {
   if (!ownerPackage) throw new Error('rust_build_owner_package_missing');
   const owner = selectedCargoGraph(ownerMetadata, ownerPackage.id);
   const copiedManifest = join(glue, 'apps/job/Cargo.toml');
-  await writeFile(copiedManifest, alignCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), owner));
   const features = options.factories.accountFactory ? ['account-runtime'] : [];
   if (nativeResolution(owner).find(p => p.name === 'nautilus-model')?.precision.includes('high-precision')) features.push('high-precision');
+  await writeFile(copiedManifest, alignCopiedNativeManifest(activeCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), features), owner));
   const dependencies = `job = { path = ${JSON.stringify(join(glue, 'apps/job'))}, default-features = false, features = ${JSON.stringify(features)} }\nanyhow = "1"\nserde_json = "1"`;
   const materialized = await materializeRustLauncher(discovery, join(directory, 'launcher'), main, dependencies, binaryName);
   const generatedMetadata = await metadata(materialized.manifestPath, false);

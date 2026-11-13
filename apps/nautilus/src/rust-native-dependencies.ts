@@ -20,6 +20,56 @@ export function selectedCargoGraph(metadata: CargoResolvedMetadata, packageId: s
   return { packages: metadata.packages.filter(p => selected.has(p.id)), resolve: { nodes: metadata.resolve.nodes.filter(n => selected.has(n.id)) } };
 }
 
+/** The generated artifact is a binary build, not the QZ workspace's test suite.
+ * Prune only QZ-owned inactive optional/dev declarations so Cargo need not resolve
+ * unrelated venue adapters from a local/registry environment. Kept flags are unchanged.
+ * This recognizes the shipped QZ manifest shape; Cargo still validates the result. */
+export function activeCopiedNativeManifest(manifest: string, requested: string[]): string {
+  const lines = manifest.split('\n'); const features = new Map<string, string[]>();
+  const optional = new Set<string>(); let section = '';
+  for (const line of lines) {
+    const header = /^\[(.+)\]$/.exec(line); if (header) { section = header[1]!; continue; }
+    if (section === 'features') {
+      const entry = /^([\w-]+) = (\[.*\])$/.exec(line);
+      if (entry) features.set(entry[1]!, JSON.parse(entry[2]!));
+      else if (line.trim() && !line.trim().startsWith('#')) throw new Error('rust_build_feature_declaration_shape_changed');
+    }
+    if (section === 'dependencies') {
+      const entry = /^([\w-]+) = \{.*optional = true.*\}$/.exec(line); if (entry) optional.add(entry[1]!);
+    }
+    const table = /^dependencies\.([\w-]+)$/.exec(section);
+    if (table && line === 'optional = true') optional.add(table[1]!);
+  }
+  const active = new Set<string>(); const dependencies = new Set<string>(); const pending = [...requested]; // Generated job dependency uses default-features = false.
+  while (pending.length) {
+    const name = pending.pop()!; if (active.has(name)) continue;
+    if (!features.has(name)) { if (optional.has(name)) { dependencies.add(name); continue; } throw new Error(`rust_build_feature_missing:${name}`); }
+    active.add(name);
+    for (const value of features.get(name)!) {
+      if (value.startsWith('dep:')) dependencies.add(value.slice(4));
+      else if (value.includes('/')) { const dependency = value.split('/')[0]!; if (!dependency.endsWith('?')) dependencies.add(dependency); }
+      else pending.push(value);
+    }
+  }
+  section = ''; const result: string[] = [];
+  const omittedSection = () => section === 'dev-dependencies' || section.startsWith('dev-dependencies.')
+    || (section.startsWith('dependencies.') && optional.has(section.slice(13)) && !dependencies.has(section.slice(13)));
+  for (const line of lines) {
+    const header = /^\[(.+)\]$/.exec(line); if (header) section = header[1]!;
+    if (omittedSection()) continue;
+    const entry = /^([\w-]+) = /.exec(line);
+    if (entry && section === 'features') {
+      if (!active.has(entry[1]!)) continue;
+      // Weak references must not point at optional declarations omitted above.
+      const values = features.get(entry[1]!)!.filter(value => !value.includes('?/') || dependencies.has(value.split('?/')[0]!));
+      result.push(`${entry[1]} = ${JSON.stringify(values)}`); continue;
+    }
+    if (entry && section === 'dependencies' && optional.has(entry[1]!) && !dependencies.has(entry[1]!)) continue;
+    result.push(line);
+  }
+  return result.join('\n');
+}
+
 /** Modify only the copied QZ manifest's known Nautilus dependency declarations.
  * Cargo remains the TOML parser/resolver and the actual Rust API compatibility test.
  * No user manifests, lockfiles, cached upstream sources, or dependency code are edited. */
