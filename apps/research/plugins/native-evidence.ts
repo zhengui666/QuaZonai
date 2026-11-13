@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { createGzip, createGunzip } from 'node:zlib';
 import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import { object } from '../src/trials.ts';
+import { NativeTableReader } from '../src/native-table.ts';
 
 // Persistent original-study facts, keyed by native child ID and part index in the same official store.
 export const NativeEvidencePart = defineDocFamily<{ data: string }, null>({
@@ -36,16 +37,16 @@ export async function retainNativeEvidence(evidence: JsonObject, save: (index: n
 }
 
 /** Owner-side read of the original native child; never model-facing final feedback. */
-export async function readNativeEvidence(reader: DocumentReader, conversationId: ConversationId, taskId: TaskId, native: JsonObject, context: Context): Promise<JsonObject> {
+export async function readNativeEvidence(reader: DocumentReader, conversationId: ConversationId, taskId: TaskId, native: JsonObject, context: Context, saveTable?: (key: string, data: string) => Promise<void>): Promise<JsonObject> {
   return readNativeEvidenceParts(native, async (index) => {
     const part = await reader.snapshot(NativeEvidencePart, conversationId, `${taskId}:${index}`, context);
     if (!part) throw new Error('native_evidence_part_missing');
     return part.data;
-  });
+  }, saveTable ? new NativeTableReader({ conversationId, taskId }, saveTable) : undefined);
 }
 
 /** The same decoder for an existing owner transaction's document reads. */
-export async function readNativeEvidenceParts(native: JsonObject, load: (index: number) => Promise<string>): Promise<JsonObject> {
+export async function readNativeEvidenceParts(native: JsonObject, load: (index: number) => Promise<string>, tableParser?: NativeTableReader): Promise<JsonObject> {
   if (native.format !== format) return native;
   const count = native.parts;
   const offset = native.partOffset ?? 0;
@@ -60,10 +61,10 @@ export async function readNativeEvidenceParts(native: JsonObject, load: (index: 
     }
   }
   const decoded = Readable.from(parts(count)).compose(createGunzip());
-  const parser = new JsonReader(); const decoder = new StringDecoder('utf8');
+  const parser = tableParser ?? new JsonReader(); const decoder = new StringDecoder('utf8');
   try {
-    for await (const chunk of decoded) parser.write(decoder.write(chunk as Buffer));
-    parser.write(decoder.end());
-    return object(parser.finish(), 'native_evidence');
+    for await (const chunk of decoded) await parser.write(decoder.write(chunk as Buffer));
+    await parser.write(decoder.end());
+    return object(await parser.finish(), 'native_evidence');
   } finally { decoded.destroy(); }
 }

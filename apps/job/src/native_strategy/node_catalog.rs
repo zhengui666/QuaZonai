@@ -566,15 +566,19 @@ mod tests {
             .end(5_000_000_000.into())
             .raise_exception(true)
             .dispose_on_completion(false)
-            .engine(BacktestEngineConfig {
-                logging: LoggerConfig::builder()
-                    .bypass_logging(true)
-                    .is_colored(false)
-                    .build()
-                    .unwrap(),
-                bypass_logging: true,
-                shutdown_on_error: true,
-                ..Default::default()
+            .engine({
+                let mut config = BacktestEngineConfig {
+                    logging: LoggerConfig::builder()
+                        .bypass_logging(true)
+                        .is_colored(false)
+                        .build()
+                        .unwrap(),
+                    bypass_logging: true,
+                    shutdown_on_error: true,
+                    ..Default::default()
+                };
+                super::super::configure_book_quotes(&mut config, &request);
+                config
             })
             .build()
             .unwrap();
@@ -1073,15 +1077,19 @@ mod tests {
             .id("prototype".into())
             .venues(vec![venue])
             .data(data)
-            .engine(BacktestEngineConfig {
-                logging: LoggerConfig::builder()
-                    .bypass_logging(true)
-                    .is_colored(false)
-                    .build()
-                    .unwrap(),
-                bypass_logging: true,
-                shutdown_on_error: true,
-                ..Default::default()
+            .engine({
+                let mut config = BacktestEngineConfig {
+                    logging: LoggerConfig::builder()
+                        .bypass_logging(true)
+                        .is_colored(false)
+                        .build()
+                        .unwrap(),
+                    bypass_logging: true,
+                    shutdown_on_error: true,
+                    ..Default::default()
+                };
+                super::super::configure_book_quotes(&mut config, &request);
+                config
             })
             .chunk_size(1)
             .maybe_start(request.available_start_ns.map(|v| v.get().into()))

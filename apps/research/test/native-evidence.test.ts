@@ -49,3 +49,47 @@ test('a late serialization failure in the compressed stream cannot publish a com
     get tail(): never { throw failure; } };
   await assert.rejects(retainNativeEvidence(native, async () => {}), failure);
 });
+
+test('native receipt tables retain original rows in bounded pages without duplicating them in the Task', async () => {
+  const { NativeTableReader, isNativeTable, nativeRowCount, readNativeTable } = await import('../src/native-table.ts');
+  const parts = new Map<string, string>();
+  const parser = new NativeTableReader({ conversationId, taskId }, async (key, data) => { parts.set(key, data); });
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ quantity: '0.12345678901234567890', index: i, detail: '原始盘口📈'.repeat(200) }));
+  const original = { status: 'COMPLETED', result: { canonical_result: { run: { outcome: 'completed' }, statistics: { returns: { Sharpe: null } }, fills: rows, accounts: [] } } };
+  const encoded = JSON.stringify(original);
+  for (let i = 0; i < encoded.length; i += 777) await parser.write(encoded.slice(i, i + 777));
+  const result = await parser.finish() as typeof original;
+  const table = result.result.canonical_result.fills;
+  assert.ok(isNativeTable(table));
+  assert.equal(nativeRowCount(table), rows.length);
+  assert.ok(JSON.stringify(result).length < 15000);
+  assert.deepEqual(result.result.canonical_result.accounts, []);
+  const restored: unknown[] = [];
+  for (let offset = 0; offset < rows.length;) {
+    const page = await readNativeTable(table, offset, 1000000, async key => parts.get(key)!);
+    assert.ok(page.length > 0 && page.length < rows.length);
+    restored.push(...page); offset += page.length;
+  }
+  assert.deepEqual(restored, rows);
+});
+
+
+test('canonical-table receiver consumes a 200 MB result under a 64 MB V8 heap', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const script = `import { NativeTableReader } from ${JSON.stringify(new URL('../src/native-table.ts', import.meta.url).href)};
+    let bytes=0, pages=0;
+    const {gunzipSync}=await import('node:zlib');
+    const parser = new NativeTableReader({taskId:1,conversationId:2}, async (_key,data)=>{bytes+=gunzipSync(Buffer.from(data,'base64')).length;pages++;});
+    await parser.write('{"result":{"canonical_result":{"orders":[');
+    const row=JSON.stringify({price:'123.45678901234567890',detail:'original'.repeat(128)});
+    for(let i=0;i<220000;i++) await parser.write((i?',':'')+row);
+    await parser.write(']}}}');
+    const result=await parser.finish();
+    if(bytes<200*1024*1024 || result.result.canonical_result.orders.rowCount!==220000) throw Error('incomplete');
+    console.log(JSON.stringify({bytes,pages,rows:result.result.canonical_result.orders.rowCount}));`;
+  const result = await run(process.execPath, ['--max-old-space-size=64', '--experimental-strip-types', '--input-type=module', '-e', script], { timeout: 120000 });
+  const observed = JSON.parse(result.stdout);
+  assert.ok(observed.bytes > 200 * 1024 * 1024); assert.equal(observed.rows, 220000);
+});

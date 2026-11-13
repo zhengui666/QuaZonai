@@ -1,3 +1,5 @@
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -39,6 +41,7 @@ const input=JSON.parse(text); const args=process.argv.slice(3);
 if(input.progress && process.env.QZ_PROGRESS_PATH) fs.writeFileSync(process.env.QZ_PROGRESS_PATH, JSON.stringify({snapshot:input.progress}) + '\\n' + '{\"snapshot\":');
 if(input.wait) { console.error('waiting'); setInterval(()=>{},1000); }
 else if(input.fail) { console.error('NATIVE_CONTROLLED_FAILURE'); process.exitCode=2; }
+else if(typeof input.rawOutput === 'string') { process.stdout.write(input.rawOutput); }
 else if(input.invalid) { console.log('invalid'); }
 else { const contents={}; for(let i=0;i<args.length;i++) if(['--model','--scope'].includes(args[i])) contents[args[i]]=fs.readFileSync(args[++i],'utf8');
 const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.readdirSync(args[objects+1]).sort();
@@ -342,4 +345,50 @@ test('catalog inspection forwards an empty read-only request only within the con
     assert.match(failure.error, /nautilus_catalog_outside_configured_roots/);
     assert.equal((await readFile(f.count, "utf8")).trim().split("\n").length, 1);
   } finally { await f.cleanup(); }
+});
+
+test('native stdout must contain exactly one complete JSON root', async () => {
+  const f = await fixture();
+  try {
+    for (const rawOutput of ['', ' \n\t', '{}{}', 'null true', '{', '[1,', 'true trailing']) {
+      const receipt = await (await f.post(f.request({ rawOutput }))).json();
+      assert.equal(receipt.status, 'FAILED', JSON.stringify(rawOutput));
+    }
+    for (const rawOutput of ['null', 'false', '0', '"value"', '{}', '[]', ' \n{ "nested": [1,true,null] }\t']) {
+      const receipt = await (await f.post(f.request({ rawOutput }))).json();
+      assert.equal(receipt.status, 'COMPLETED', JSON.stringify(rawOutput));
+      assert.deepEqual(receipt.result, JSON.parse(rawOutput));
+    }
+  } finally { await f.cleanup(); }
+});
+
+test('shutdown during temporary receipt opening does not spawn a cancelled child', async () => {
+  const f = await fixture();
+  const original = fsPromises.writeFile;
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const opened = new Promise<void>(resolve => { entered = resolve; });
+  fsPromises.writeFile = (async (...args: Parameters<typeof original>) => {
+    if (String(args[0]).endsWith('/receipt.next.json') && String(args[1]).endsWith(',"result":')) {
+      entered(); await gate;
+    }
+    return original(...args);
+  }) as typeof original;
+  syncBuiltinESMExports();
+  try {
+    const body = f.request({});
+    const admitted = fetch(`${f.url}/v1/execute`, { method: 'POST', headers: f.headers, body: JSON.stringify(body) });
+    await opened;
+    const closing = f.worker.close(); // synchronously marks every active execution cancelled
+    release();
+    await (await admitted).body?.cancel();
+    await closing;
+    const receipt = JSON.parse(await readFile(join(f.options.dataDir, 'executions', body.requestId, 'receipt.json'), 'utf8'));
+    assert.equal(receipt.status, 'CANCELLED');
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally {
+    release(); fsPromises.writeFile = original; syncBuiltinESMExports();
+    await rm(f.directory, { recursive: true, force: true });
+  }
 });

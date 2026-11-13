@@ -1,3 +1,5 @@
+import { isNativeTable, readNativeTable } from '../src/native-table.ts';
+import { NativeEvidencePart } from '../plugins/native-evidence.ts';
 import { Study } from '../src/documents.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -171,7 +173,10 @@ for (const behavior of ['recover', 'stop', 'tools', 'history', 'reviewed', 'chan
       const evidence = task.state.outcome.result.evidence as any;
       if (behavior === 'paged-large') {
         assert.equal((task.state.outcome.result.exposureReads as any[]).length, 2);
-        assert.equal(((await host.harness.getTask(validation!.taskIds[0]!, context))!.state.outcome as any).result.folds[0].test_result.canonical_result.positions.length, 1000);
+        const table = ((await host.harness.getTask(validation!.taskIds[0]!, context))!.state.outcome as any).result.folds[0].test_result.canonical_result.positions;
+        assert.ok(isNativeTable(table)); assert.equal(table.rowCount, 1000);
+        const original = await readNativeTable(table, 999, 1, async key => (await host.harness.snapshot(NativeEvidencePart, receipt.conversationId, key, context))!.data);
+        assert.equal((original[0] as JsonObject).quantity, '999');
       }
       if (behavior === 'paged') {
         const result = task.state.outcome.result;

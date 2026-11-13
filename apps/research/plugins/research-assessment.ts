@@ -1,3 +1,5 @@
+import { isNativeTable, nativeRowCount, readNativeTable } from '../src/native-table.ts';
+import { NativeEvidencePart } from './native-evidence.ts';
 import { nativeResultTables, nativeResultView, nativeToolText, nativeToolOutputLimits, nativeToolMaxBytes } from '../src/native-result-view.ts';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { nativeTargetForData } from '../src/native-execution.ts';
@@ -88,20 +90,20 @@ function exposureReferences(value: JsonValue): JsonObject[] {
   return Object.values(value).flatMap(exposureReferences);
 }
 /** A per-return byte allowance, not a total evidence cap or a token-count estimate. */
-export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; path: string; offset: number; pageSize: number; projection?: string }, contextWindow: number): JsonObject {
+export function nativeExposurePage(rows: JsonValue[], args: { taskId: number; path: string; offset: number; pageSize: number; projection?: string; baseOffset?: number }, contextWindow: number, metadataReserveBytes = 0): JsonObject {
   if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) throw new Error('assessment_evidence_model_context_unknown');
   // At most one UTF-8 byte per quarter of the advertised token window leaves room
   // for the manifest, previous pages and answer. Official Pi owns compaction.
   const maxPayloadBytes = Math.min(Math.floor(contextWindow / 4), nativeToolMaxBytes);
   const receipt = { taskId: args.taskId, path: args.path, offset: args.offset, totalRows: rows.length,
     scope: 'ROWS_READ_BY_TOOL_NOT_PROOF_OF_MODEL_DELIVERY_OR_REVIEW', maxPayloadBytes, ...(args.projection ? { projection: args.projection } : {}) };
-  let bytes = Buffer.byteLength(JSON.stringify({ ...receipt, endExclusive: Number.MAX_SAFE_INTEGER, rows: [], nextOffset: Number.MAX_SAFE_INTEGER }));
+  let bytes = Buffer.byteLength(JSON.stringify({ ...receipt, endExclusive: Number.MAX_SAFE_INTEGER, rows: [], nextOffset: Number.MAX_SAFE_INTEGER })) + metadataReserveBytes;
   if (bytes > maxPayloadBytes) throw new Error('assessment_evidence_page_metadata_exceeds_model_budget');
   const selected: JsonValue[] = []; let end = args.offset;
   while (end < rows.length && selected.length < args.pageSize) {
     const size = Buffer.byteLength(JSON.stringify(rows[end])) + (selected.length ? 1 : 0);
     if (bytes + size > maxPayloadBytes) {
-      if (!selected.length) throw new Error(`assessment_evidence_row_exceeds_model_page_budget: task=${args.taskId} path=${args.path} offset=${end}; row remains intact on original Task but cannot be read through this page tool; reducing pageSize cannot fix an oversized single row; record this row as unread and continue other evidence rather than retrying the same offset without progress`);
+      if (!selected.length) throw new Error(`assessment_evidence_row_exceeds_model_page_budget: task=${args.taskId} path=${args.path} offset=${end + (args.baseOffset ?? 0)}; row remains intact on original Task but cannot be read through this page tool; reducing pageSize cannot fix an oversized single row; record this row as unread and continue other evidence rather than retrying the same offset without progress`);
       break;
     }
     selected.push(rows[end]!); bytes += size; end++;
@@ -166,8 +168,22 @@ export const exposureReadTool = defineTool({
           rows = (rows as Record<string, JsonValue>)[key]!;
         }
       }
-      if (!Array.isArray(rows) || args.offset > rows.length) throw new Error('assessment_evidence_page_invalid');
-      const page = nativeExposurePage(rows, { ...args, ...(isSummary ? { projection: 'SUMMARY_FIELDS_NOT_ORIGINAL_ROWS' } : {}) }, model.contextWindow);
+      let page: JsonObject;
+      if (isNativeTable(rows)) {
+        const reference = rows;
+        if (reference.conversationId !== sourceConversation) throw new Error('assessment_evidence_task_unavailable');
+        const selected = await readNativeTable(reference, args.offset, args.pageSize, async key => {
+          const doc = await tx.doc(NativeEvidencePart, reference.conversationId, key, null);
+          if (!doc.data) throw new Error('native_evidence_part_missing');
+          return doc.data;
+        });
+        page = nativeExposurePage(selected, { ...args, offset: 0, baseOffset: args.offset }, model.contextWindow, 64);
+        const end = args.offset + Number(page.endExclusive);
+        page = { ...page, offset: args.offset, endExclusive: end, totalRows: reference.rowCount, nextOffset: end < reference.rowCount ? end : null };
+      } else {
+        if (!Array.isArray(rows) || args.offset > rows.length) throw new Error('assessment_evidence_page_invalid');
+        page = nativeExposurePage(rows, { ...args, ...(isSummary ? { projection: 'SUMMARY_FIELDS_NOT_ORIGINAL_ROWS' } : {}) }, model.contextWindow);
+      }
       const { rows: _rows, nextOffset: _next, ...receipt } = page;
       const log = await tx.doc(ExposureReads, api.conversationId);
       if (!log.pages.some(page => canonical(page) === canonical(receipt))) log.pages.push(receipt);
@@ -368,7 +384,7 @@ export const assessmentReportTool = defineTool({
               equityPerformance: fold.test_result === null ? null : nativeResultView(object(fold.test_result, 'walk_forward_test'), id, `$.folds[${fold.index}].test_result`).equity_performance!,
               instrumentDefinition: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').instrument_definition!,
               dataRowsByType: fold.test_result === null ? null : object(fold.test_result, 'walk_forward_test').data_rows_by_type!,
-              fills: fold.test_result === null ? null : (object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').fills as JsonValue[]).length })),
+              fills: fold.test_result === null ? null : nativeRowCount(object(object(fold.test_result, 'walk_forward_test').canonical_result, 'walk_forward_report').fills) })),
             logicCoverage: matchingLogic && logic!.id < task.id && reviewedCandidateMatch(object(logic!.input, 'logic_input'), object(result.request, 'walk_forward_request'))
               ? 'EXACT_CANDIDATES_REVIEWED_BEFORE_VALIDATION' : 'CANDIDATES_NOT_COVERED_BY_PRE_EXECUTION_LOGIC_REVIEW'  };
         }
@@ -400,7 +416,7 @@ export const assessmentReportTool = defineTool({
             const result = nativeStrategyResult(task.state.outcome.result, actual); const report = object(result.canonical_result, 'native_report');
             row.exposureEvidence = nativeExposureEvidence(result, item.taskId, '$');
             row.nativeStatistics = report.statistics!; row.nativeObjectiveValue = objective ? nativeResultObjective(result, objective) : null;
-            row.fills = (report.fills as JsonValue[]).length; row.nativeVersion = result.native_version!;
+            row.fills = nativeRowCount(report.fills); row.nativeVersion = result.native_version!;
             row.equityPerformance = nativeResultView(result, item.taskId).equity_performance!;
             row.instrumentDefinition = result.instrument_definition!;
             row.nativeOutcome = object(report.run, 'native_run').outcome!; row.notes = result.notes!; row.dataRowsByType = result.data_rows_by_type!;

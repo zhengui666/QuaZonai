@@ -128,3 +128,73 @@ test('parallel explicit service scopes keep two Harnesses isolated and reject an
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+test('large canonical receipt stays paged through official SQLite task settlement and reopen', { timeout: 120000 }, async () => {
+  if (!process.env.QZ_NATIVE_PAGED_CHILD) {
+    const { promisify } = await import('node:util'); const { execFile } = await import('node:child_process');
+    const env: NodeJS.ProcessEnv = { ...process.env, QZ_NATIVE_PAGED_CHILD: '1' }; delete env.NODE_TEST_CONTEXT;
+    const child = await promisify(execFile)(process.execPath, ['--max-old-space-size=160', '--experimental-strip-types', '--test', '--test-name-pattern=large canonical receipt stays paged', import.meta.filename], {
+      timeout: 115000, env, maxBuffer: 1024 * 1024,
+    }); assert.match(child.stdout, /pass 1|# pass 1/); return;
+  }
+  const { isNativeTable, readNativeTable } = await import('../src/native-table.ts');
+  const { NativeEvidencePart } = await import('../plugins/native-evidence.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-paged-'));
+  let posts = 0;
+  const server = createServer(async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: ['native-strategy-backtest'] })); return; }
+    if (request.method === 'POST') posts++;
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    const input = request.method === 'GET' ? { requestId: request.url!.split('/').at(-1) } : JSON.parse(Buffer.concat(chunks).toString());
+    response.write(`{"schemaVersion":1,"requestId":${JSON.stringify(input.requestId)},"status":"COMPLETED","result":{"canonical_result":{"orders":[`);
+    const row = JSON.stringify({ quantity: '0.12345678901234567890', detail: 'original'.repeat(128) });
+    for (let i = 0; i < 220000; i++) if (!response.write((i ? ',' : '') + row)) await new Promise<void>(resolve => response.once('drain', resolve));
+    response.end(']}}}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const target = { id: 'paged-native-receipt', url: `http://127.0.0.1:${address.port}` };
+  const models = createModels(); models.setProvider(fauxProvider().provider);
+  const options = { database: join(directory, 'research.sqlite'), models };
+  let host = await openResearch(options);
+  try {
+    const result = await host.withNativeHost(() => executeNativeValue(target, 'native-strategy-backtest', {}, [], directory, context)) as JsonObject;
+    const table = (result.canonical_result as JsonObject).orders;
+    assert.ok(isNativeTable(table)); assert.equal(table.rowCount, 220000);
+    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
+    assert.ok(JSON.stringify(tasks).length < 1024 * 1024);
+    await host.close(); host = await openResearch(options);
+    const last = await readNativeTable(table, 219999, 1, async key => (await host.harness.snapshot(NativeEvidencePart, table.conversationId, key, context))!.data);
+    assert.equal((last[0] as JsonObject).quantity, '0.12345678901234567890');
+    const { remoteNativeExecutionStatus } = await import('../src/native-execution.ts');
+    const status = await remoteNativeExecutionStatus(target, 'a'.repeat(64));
+    assert.equal(status.status, 'COMPLETED'); assert.equal(Object.hasOwn(status, 'result'), false);
+    assert.equal(posts, 1);
+  } finally {
+    await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('status-only receipts preserve original top-level result presence and complete JSON validation', async () => {
+  const { remoteNativeExecutionStatus } = await import('../src/native-execution.ts');
+  const requestId = 'b'.repeat(64);
+  let body = '';
+  const server = createServer((_request, response) => { response.setHeader('content-type', 'application/json'); response.end(body); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const target = { id: 'status-presence', url: `http://127.0.0.1:${address.port}` };
+  const prefix = `"schemaVersion":1,"requestId":"${requestId}"`;
+  try {
+    for (const content of [`{"result":null,${prefix},"status":"COMPLETED"}`, `{${prefix},"status":"COMPLETED","result":{"nested":[1,2]}}`]) {
+      body = content; const result = await remoteNativeExecutionStatus(target, requestId);
+      assert.equal(result.status, 'COMPLETED'); assert.equal(Object.hasOwn(result, 'result'), false);
+    }
+    for (const content of [`{${prefix},"status":"COMPLETED"}`, `{${prefix},"status":"COMPLETED","nested":{"result":{}}}`, `{${prefix},"status":"COMPLETED","result":{"rows":[1,2`]) {
+      body = content; await assert.rejects(remoteNativeExecutionStatus(target, requestId));
+    }
+    body = `{${prefix},"status":"CANCELLED"}`;
+    assert.equal((await remoteNativeExecutionStatus(target, requestId)).status, 'CANCELLED');
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
