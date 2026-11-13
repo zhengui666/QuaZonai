@@ -423,6 +423,18 @@ impl AccountController {
             "account_native_strategy_instrument_not_configured"
         );
         #[cfg(test)]
+        if self.config.client_id == "test-on-start-resting" {
+            return self.install_signal(tests::OnStartResting {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("RESTING-001")),
+                    order_id_tag: Some("001".into()),
+                    ..Default::default()
+                }),
+                instrument: id,
+                client: self.client,
+            });
+        }
+        #[cfg(test)]
         if self.config.client_id == "test-on-start" {
             return self.install_signal(tests::OnStartSubmit {
                 core: StrategyCore::new(StrategyConfig {
@@ -1866,6 +1878,38 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    pub(super) struct OnStartResting {
+        pub(super) core: StrategyCore,
+        pub(super) instrument: InstrumentId,
+        pub(super) client: ClientId,
+    }
+    nautilus_strategy!(OnStartResting, {});
+    impl DataActor for OnStartResting {
+        fn on_start(&mut self) -> Result<()> {
+            let instrument = self.instrument;
+            let order = self.order_factory().limit(
+                instrument,
+                OrderSide::Buy,
+                Quantity::from("1.00"),
+                Price::from("1.00"),
+                Some(TimeInForce::Gtc),
+                None,
+                Some(false),
+                Some(false),
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(ClientOrderId::from("signal-resting")),
+            );
+            self.submit_order(order, None, Some(self.client), None)
+        }
+    }
+
     type Replies = Rc<RefCell<BTreeMap<String, Value>>>;
     fn pair(id: &str, base: Currency) -> InstrumentAny {
         InstrumentAny::CurrencyPair(
@@ -2244,6 +2288,194 @@ mod tests {
             Ok::<_, anyhow::Error>(())
         };
         let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive);
+        run?;
+        result?;
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn queued_cancel_preserves_original_signal_identity() -> Result<()> {
+        use crate::account_queued_cancel::{dispatch_attempt, OriginalOrder};
+        let directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(directory.path()).await?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.client_id = "test-on-start-resting".into();
+        }
+        let handle = native.handle();
+        let stop = handle.clone();
+        let cache = native.kernel().cache();
+        let engine = native.kernel().exec_engine().clone();
+        let clock = native.kernel().clock();
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            publish_native_quote_size(&cache, "1.00", "0.25")?;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let order = cache
+                .borrow()
+                .order(&ClientOrderId::from("signal-resting"))
+                .unwrap()
+                .clone();
+            assert_ne!(order.strategy_id(), owner_id);
+            assert_eq!(
+                order.status(),
+                nautilus_model::enums::OrderStatus::PartiallyFilled
+            );
+            let mut original = OriginalOrder {
+                trader: order.trader_id(),
+                account: order.account_id().unwrap(),
+                strategy: owner_id,
+                instrument: order.instrument_id(),
+                client_order_id: order.client_order_id(),
+            };
+            let count = engine.borrow().command_count();
+            assert!(dispatch_attempt(&handle, &cache, &engine, &original, &clock).is_err());
+            assert_eq!(engine.borrow().command_count(), count);
+            original.strategy = order.strategy_id();
+            // A missing original client would normally fall back to the venue route.
+            // Prove the helper refuses this instead of dispatching to that fallback.
+            let original_client = *cache.borrow().client_id(&original.client_order_id).unwrap();
+            let missing = ClientId::from("UNREGISTERED-CLIENT");
+            cache
+                .borrow_mut()
+                .add_order(order.clone(), None, Some(missing), true)?;
+            let probe = nautilus_common::messages::execution::TradingCommand::CancelOrder(
+                nautilus_common::messages::execution::CancelOrder::new(
+                    order.trader_id(),
+                    Some(missing),
+                    order.strategy_id(),
+                    order.instrument_id(),
+                    order.client_order_id(),
+                    order.venue_order_id(),
+                    UUID4::new(),
+                    clock.borrow().timestamp_ns(),
+                    None,
+                    None,
+                ),
+            );
+            assert_eq!(
+                engine
+                    .borrow()
+                    .find_client_for_command(&probe)
+                    .unwrap()
+                    .client_id,
+                original_client
+            );
+            assert_eq!(
+                dispatch_attempt(&handle, &cache, &engine, &original, &clock)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_original_client_not_registered"
+            );
+            assert_eq!(engine.borrow().command_count(), count);
+            cache
+                .borrow_mut()
+                .add_order(order.clone(), None, Some(original_client), true)?;
+            let mut emulated = order.clone();
+            emulated.set_emulation_trigger(Some(nautilus_model::enums::TriggerType::BidAsk));
+            cache
+                .borrow_mut()
+                .add_order(emulated, None, Some(original_client), true)?;
+            assert_eq!(
+                dispatch_attempt(&handle, &cache, &engine, &original, &clock)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_requires_ordinary_venue_order"
+            );
+            assert_eq!(engine.borrow().command_count(), count);
+            cache
+                .borrow_mut()
+                .add_order(order.clone(), None, Some(original_client), true)?;
+            // Replay a controlled copy with an upstream algorithm annotation.
+            // This is a guard test, not an algorithm execution simulation.
+            let mut events = order
+                .events()
+                .iter()
+                .map(|event| (*event).clone())
+                .collect::<Vec<_>>();
+            if let OrderEventAny::Initialized(ref mut init) = events[0] {
+                init.exec_algorithm_id = Some(nautilus_model::identifiers::ExecAlgorithmId::from(
+                    "UNSUPPORTED-ALGO",
+                ));
+                init.exec_spawn_id = Some(init.client_order_id);
+            }
+            let algorithm = nautilus_model::orders::OrderAny::from_events(events)?;
+            cache
+                .borrow_mut()
+                .add_order(algorithm, None, Some(original_client), true)?;
+            assert_eq!(
+                dispatch_attempt(&handle, &cache, &engine, &original, &clock)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_requires_ordinary_venue_order"
+            );
+            let local = nautilus_model::orders::OrderAny::try_from(order.init_event().clone())?;
+            assert!(local.is_active_local());
+            cache
+                .borrow_mut()
+                .add_order(local, None, Some(original_client), true)?;
+            assert_eq!(
+                dispatch_attempt(&handle, &cache, &engine, &original, &clock)
+                    .unwrap_err()
+                    .to_string(),
+                "native_cancel_original_identity_mismatch"
+            );
+            // Initialized has no account: fail even before its active-local guard.
+            assert_eq!(engine.borrow().command_count(), count);
+            cache
+                .borrow_mut()
+                .add_order(order.clone(), None, Some(original_client), true)?;
+            let _attempt = dispatch_attempt(&handle, &cache, &engine, &original, &clock)?;
+            // The running official sender deferred delivery, with no manufactured PendingCancel.
+            assert_eq!(engine.borrow().command_count(), count);
+            assert_eq!(
+                cache
+                    .borrow()
+                    .order(&original.client_order_id)
+                    .unwrap()
+                    .status(),
+                order.status()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let after = cache
+                .borrow()
+                .order(&original.client_order_id)
+                .unwrap()
+                .clone();
+            assert_eq!(after.status(), nautilus_model::enums::OrderStatus::Canceled);
+            assert_eq!(after.strategy_id(), order.strategy_id());
+            assert_eq!(after.filled_qty(), order.filled_qty());
+            let count = engine.borrow().command_count();
+            assert!(dispatch_attempt(&handle, &cache, &engine, &original, &clock).is_err());
+            assert_eq!(engine.borrow().command_count(), count);
+            Ok::<_, anyhow::Error>(())
+        };
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
         run?;
         result?;
         native.dispose();
