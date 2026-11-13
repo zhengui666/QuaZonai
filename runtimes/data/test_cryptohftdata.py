@@ -256,7 +256,7 @@ class CryptoHFTDataTests(unittest.TestCase):
 
     def test_received_trade_modes_use_existing_native_flags(self):
         self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
-        for mode in ("--trade-ticks", "--cohort-cache", "--cohort-flow-cache"):
+        for mode in ("--trade-ticks",):
             with self.subTest(mode=mode):
                 output = self.root / mode[2:]
                 def run(args, argv, binary):
