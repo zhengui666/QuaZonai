@@ -110,6 +110,13 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     if ((native.recovery_only === true && !unregistered) || (!unregistered && typeof native.strategy_id !== 'string') || typeof native.state !== 'string' || typeof native.native_version !== 'string') throw new Problem('native_strategy_status_invalid');
     return result;
   }
+  async function spotObservation(id: string) {
+    const binding = await fact(id);
+    throwIfHistoricalHttp(binding.connection);
+    const result = await downstreamRequest(binding.connection, 'spot-balance-observation', 'GET');
+    assertEnvelope(binding.connection, result, binding.view.currency);
+    return result; // Separate original observation; never merge into Portfolio sequence.
+  }
   async function command(id: string, value: unknown) {
     let input; try { input = accountStrategyCommand(value); } catch (error) { throw new Problem((error as Error).message, 422); }
     const binding = await fact(id);
@@ -166,5 +173,5 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     assertEnvelope(binding.connection, result, binding.view.currency);
     return result;
   }
-  return { status, fence, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
+  return { status, fence, spotObservation, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
 }
