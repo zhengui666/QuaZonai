@@ -3,7 +3,7 @@ import type { ExecutionErrorCategory, ExecutionErrorDetail } from '../../../pack
 type ExecutionContext = { operation?: unknown; stage?: unknown };
 type Fallback = 'scientific_execution_failed' | 'backtest_failed' | 'operation_failed';
 const operations = new Set(['native-strategy-backtest', 'native-walk-forward', 'evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
-  'blend-targets', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest']);
+  'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest']);
 const stages = new Set(['compile', 'execute', 'decode', 'validate']);
 
 export function executionDiagnostic(error: unknown, fallback = 'scientific_execution_failed'): string {

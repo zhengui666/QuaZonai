@@ -7,7 +7,7 @@ use contracts::{
     runtime_jobs::{JobSpecV1, RuntimeInputV1},
     science::*,
     strategy_portfolio::*,
-    DbCounter, DecimalValue, Id, SchemaV1,
+    DbCounter, DecimalValue, Id,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -288,112 +288,6 @@ pub fn scoped_replay_end(request: &NativeSimulationRequestV1) -> Option<u64> {
                     end.max(point.valid_until_ns.get())
                 })
         })
-}
-
-/// Combine target weights and cash only; account equity is never an input.
-pub fn blend(
-    members: &[NativeStrategyMemberV1],
-    points: &[&NativeTargetPointV1],
-    ttl_seconds: u32,
-) -> Result<NativeTargetPointV1, DomainError> {
-    let member_weights: Vec<_> = members.iter().map(|m| &m.ensemble_weight).collect();
-    blend_weighted(&member_weights, points, Some(ttl_seconds))
-}
-
-/// Blend explicit member targets without source IDs, equity or an expiry refresh.
-pub fn blend_targets(
-    request: &NativeTargetBlendRequestV1,
-) -> Result<NativeTargetBlendResultV1, DomainError> {
-    if request.rows.is_empty() {
-        return Err(bad("strategy.target_rows"));
-    }
-    let member_weights: Vec<_> = request.weights.iter().collect();
-    let target_points = request
-        .rows
-        .iter()
-        .map(|row| {
-            if row.first().is_none_or(|point| point.targets.is_empty()) {
-                return Err(bad("strategy.target_rows"));
-            }
-            let points: Vec<_> = row.iter().collect();
-            blend_weighted(&member_weights, &points, None)
-        })
-        .collect::<Result<_, DomainError>>()?;
-    Ok(NativeTargetBlendResultV1 {
-        schema_version: SchemaV1,
-        target_points,
-    })
-}
-
-fn blend_weighted(
-    member_weights: &[&DecimalValue],
-    points: &[&NativeTargetPointV1],
-    ttl_seconds: Option<u32>,
-) -> Result<NativeTargetPointV1, DomainError> {
-    if member_weights.is_empty() || member_weights.len() != points.len() {
-        return Err(bad("strategy.target_members"));
-    }
-    weights(member_weights.iter().copied())?;
-    let first = points[0];
-    let mut until = match ttl_seconds {
-        Some(ttl) => first
-            .asof_ns
-            .get()
-            .checked_add(u64::from(ttl) * 1_000_000_000)
-            .ok_or_else(|| bad("strategy.target_clock"))?,
-        None => first.valid_until_ns.get(),
-    };
-    let mut assets = vec![BigDecimal::from(0); first.targets.len()];
-    let mut cash = BigDecimal::from(0);
-    for (weight, point) in member_weights.iter().zip(points) {
-        target_scope(point)?;
-        if point.asof_ns != first.asof_ns
-            || point.targets.len() != first.targets.len()
-            || point.rebalance_instrument_ids != first.rebalance_instrument_ids
-            || point.valid_until_ns <= point.asof_ns
-            || !point.cash_weight.is_fraction()
-        {
-            return Err(bad("strategy.target_alignment"));
-        }
-        let mut total = point.cash_weight.as_decimal().clone();
-        for ((sum, target), expected) in assets.iter_mut().zip(&point.targets).zip(&first.targets) {
-            if target.instrument_id != expected.instrument_id
-                || target.currency != expected.currency
-                || !target.weight.is_fraction()
-            {
-                return Err(bad("strategy.target_alignment"));
-            }
-            total += target.weight.as_decimal();
-            *sum += weight.as_decimal() * target.weight.as_decimal();
-        }
-        if total != BigDecimal::from(1) {
-            return Err(bad("strategy.target_sum"));
-        }
-        cash += weight.as_decimal() * point.cash_weight.as_decimal();
-        until = until.min(point.valid_until_ns.get());
-    }
-    if until <= first.asof_ns.get() {
-        return Err(bad("strategy.target_clock"));
-    }
-    Ok(NativeTargetPointV1 {
-        schema_version: SchemaV1,
-        asof_ns: first.asof_ns,
-        valid_until_ns: DbCounter::new(until).map_err(|_| bad("strategy.target_clock"))?,
-        rebalance_instrument_ids: first.rebalance_instrument_ids.clone(),
-        targets: first
-            .targets
-            .iter()
-            .zip(assets)
-            .map(|(target, weight)| {
-                Ok(contracts::portfolio::AllocationTargetV1 {
-                    instrument_id: target.instrument_id.clone(),
-                    currency: target.currency.clone(),
-                    weight: decimal(weight)?,
-                })
-            })
-            .collect::<Result<_, DomainError>>()?,
-        cash_weight: decimal(cash)?,
-    })
 }
 
 /// Enforce declared bounds against the actual account's current weights. Current

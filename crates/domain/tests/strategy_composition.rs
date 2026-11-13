@@ -2,49 +2,8 @@
 mod execution_models;
 #[path = "../../../tests/support/strategy_composition.rs"]
 mod fixture;
-use contracts::{strategy_portfolio::*, DecimalValue};
+use contracts::strategy_portfolio::*;
 use domain::execution::strategy;
-
-#[test]
-fn single_target_is_unchanged_and_two_members_blend_targets_and_cash() {
-    let report = fixture::current_report();
-    strategy::result(&report.request, &report).unwrap();
-    let StrategyCompositionOutcomeV1::CurrentDecision { target, .. } = &report.outcome else {
-        unreachable!()
-    };
-    let one = strategy::blend(&report.request.members, &[target], 10).unwrap();
-    assert_eq!(
-        serde_json::to_value(&one).unwrap(),
-        serde_json::to_value(target).unwrap()
-    );
-    let mut members = report.request.members.clone();
-    members[0].ensemble_weight = "0.25".parse().unwrap();
-    let mut second = members[0].clone();
-    second.alpha_version_id = contracts::Id::new();
-    second.ensemble_weight = "0.75".parse().unwrap();
-    members.push(second);
-    let mut other = target.clone();
-    other.targets[0].weight = "0.75".parse().unwrap();
-    other.cash_weight = "0.25".parse().unwrap();
-    other.valid_until_ns = fixture::count(target.asof_ns.get() + 5_000_000_000);
-    let combined = strategy::blend(&members, &[target, &other], 10).unwrap();
-    assert_eq!(
-        combined.targets[0].weight,
-        "0.625".parse::<DecimalValue>().unwrap()
-    );
-    assert_eq!(
-        combined.cash_weight,
-        "0.375".parse::<DecimalValue>().unwrap()
-    );
-    assert_eq!(combined.valid_until_ns, other.valid_until_ns);
-    members[0].ensemble_weight = "-0.25".parse().unwrap();
-    assert!(strategy::blend(&members, &[target, &other], 10).is_err());
-    members[0].ensemble_weight = "0.3".parse().unwrap();
-    assert!(strategy::blend(&members, &[target, &other], 10).is_err());
-    members[0].ensemble_weight = "0.25".parse().unwrap();
-    other.asof_ns = fixture::count(other.asof_ns.get() + 1);
-    assert!(strategy::blend(&members, &[target, &other], 10).is_err());
-}
 
 #[test]
 fn declared_constraints_use_actual_current_weights_instead_of_previous_target() {
@@ -122,72 +81,6 @@ fn current_strategy_unmetered_output_cannot_disguise_explicit_fuel_exhaustion() 
     strategy::result(&report.request, &report).unwrap();
     report.consumed_fuel = Some(contracts::DbCounter::new(1).unwrap());
     assert!(strategy::result(&report.request, &report).is_err());
-}
-
-fn scoped_point(scope: serde_json::Value) -> contracts::science::NativeTargetPointV1 {
-    serde_json::from_value(serde_json::json!({
-        "schema_version": 1, "asof_ns": "60000000000", "valid_until_ns": "120000000000",
-        "targets": [
-            {"instrument_id": "123.HYPERLIQUID", "currency": "USDC", "weight": "0.25"},
-            {"instrument_id": "456.HYPERLIQUID", "currency": "USDC", "weight": "0.5"}
-        ],
-        "cash_weight": "0.25", "rebalance_instrument_ids": scope
-    }))
-    .unwrap()
-}
-
-#[test]
-fn scoped_blend_preserves_scope_and_exact_full_account_weights() {
-    use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
-    let point = scoped_point(serde_json::json!(["123.HYPERLIQUID"]));
-    let mut other = point.clone();
-    other.targets[0].weight = "0.5".parse().unwrap();
-    other.cash_weight = "0".parse().unwrap();
-    other.valid_until_ns = fixture::count(90_000_000_000);
-    let result = strategy::blend_targets(&NativeTargetBlendRequestV1 {
-        schema_version: SchemaV1,
-        weights: vec!["0.25".parse().unwrap(), "0.75".parse().unwrap()],
-        rows: vec![vec![point, other]],
-    })
-    .unwrap();
-    let value = serde_json::to_value(&result.target_points[0]).unwrap();
-    assert_eq!(
-        value["rebalance_instrument_ids"],
-        serde_json::json!(["123.HYPERLIQUID"])
-    );
-    assert_eq!(value["targets"][0]["weight"], "0.4375");
-    assert_eq!(value["targets"][1]["weight"], "0.5");
-    assert_eq!(value["cash_weight"], "0.0625");
-    assert_eq!(value["valid_until_ns"], "90000000000");
-}
-
-#[test]
-fn scoped_blend_rejects_empty_duplicate_outside_mismatched_and_legacy_scopes() {
-    use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
-    let point = scoped_point(serde_json::json!(["123.HYPERLIQUID"]));
-    for scope in [
-        serde_json::json!([]),
-        serde_json::json!(["123.HYPERLIQUID", "123.HYPERLIQUID"]),
-        serde_json::json!(["789.HYPERLIQUID"]),
-        serde_json::json!(["456.HYPERLIQUID"]),
-        serde_json::Value::Null,
-    ] {
-        let other = scoped_point(scope);
-        assert!(strategy::blend_targets(&NativeTargetBlendRequestV1 {
-            schema_version: SchemaV1,
-            weights: vec!["0.5".parse().unwrap(); 2],
-            rows: vec![vec![point.clone(), other]],
-        })
-        .is_err());
-    }
-    let mut invalid = point.clone();
-    invalid.cash_weight = "0.250001".parse().unwrap();
-    assert!(strategy::blend_targets(&NativeTargetBlendRequestV1 {
-        schema_version: SchemaV1,
-        weights: vec!["1".parse().unwrap()],
-        rows: vec![vec![invalid]],
-    })
-    .is_err());
 }
 
 #[test]

@@ -19,7 +19,6 @@ pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
 pub mod bounded;
-pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod catalog_prefix;

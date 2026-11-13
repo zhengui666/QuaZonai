@@ -22,8 +22,8 @@ test('PM capabilities do not advertise removed project-specific fitting and scor
   assert.deepEqual(pmCapabilities(), []);
 });
 
-test('BAR capacity estimation and custom account sizing have no scientific execution entry', () => {
-  for (const operation of ['assess-capacity', 'size-account']) {
+test('retired custom calculations have no scientific execution entry', () => {
+  for (const operation of ['assess-capacity', 'size-account', 'blend-targets', 'capital-curve']) {
     assert.equal(nativeCommands.has(operation), false);
     assert.equal((commands as readonly string[]).includes(operation), false);
   }

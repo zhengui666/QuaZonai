@@ -49,15 +49,6 @@ enum Operation {
     },
     /// Validate original source-owner metadata; no inferred permission or PIT status.
     ReviewSource,
-    /// Plan capital points; the durable owner runs each as an independent native task.
-    CapitalCurve {
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long, value_parser = parse_id)]
-        dataset_revision_id: Option<contracts::Id>,
-    },
-    /// Blend explicit aligned native target rows using exact decimal member weights.
-    BlendTargets,
     /// Validate an original capital-exit V1 document; does not control an owner.
     ValidateCapitalExit,
     /// Exact native BAR identities for private exposure tracking; no observations.
@@ -80,10 +71,6 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
-}
-
-fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
-    contracts::Id::try_from(value.to_owned()).map_err(|_| "expected a canonical UUIDv7")
 }
 
 fn input<T: DeserializeOwned>() -> Result<T> {
@@ -121,18 +108,6 @@ fn run(operation: Operation) -> Result<()> {
             Ok(())
         }
         Operation::ReviewSource => output(&job::catalog::validate_source(&input()?)?),
-        Operation::CapitalCurve {
-            catalog,
-            dataset_revision_id,
-        } => {
-            let request = input()?;
-            output(&job::capital_curve::plan_only(
-                &catalog,
-                &request,
-                dataset_revision_id,
-            )?)
-        }
-        Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
         Operation::ValidateCapitalExit => output(&input::<
             contracts::capital_exit::NativeCapitalExitDocumentV1,
         >()?),
