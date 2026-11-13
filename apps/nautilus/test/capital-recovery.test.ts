@@ -31,7 +31,7 @@ class ControlledProtocol implements NativeAccountRuntime {
       observation_id: randomUUID(), native_session_id: 'controlled-original-session', native_trader_id: 'QZ-001', native_account_id: paperOptions.accountId,
       native_snapshot: { account_id: paperOptions.accountId, account_type: 'MARGIN', base_currency: null, balances: [], margins: [], unrealized_pnls: [], realized_pnls: [], total_equity: [],
         base_currency_equity: null, is_stale: false, stale_instruments: [], stale_currencies: [], unpriced_instruments: [], event_id: 'controlled-original-event', ts_event: ns, ts_init: ns },
-      positions: [{ instrument_id: instrumentId, quantity: '10', free_quantity: '10', value: '1000', pnl: null }],
+      positions: [{ instrument_id: instrumentId, quantity: '10', value: '1000', pnl: null }],
       instruments: [{ instrument_id: instrumentId, base_currency: 'HYPE', quote_currency: 'USDC', size_increment: '0.01', price_increment: '0.01',
         minimum_quantity: '0.01', minimum_notional: '10', taker_fee_rate: '0.001', bid: '100', ask: '100.1', bid_depth: [{ price: '100', quantity: '100' }], asof_ns: ns }],
       orders: [], fills: [], cash, equity: '1000', currency: 'USDC', currency_precision: 6 };
@@ -240,4 +240,16 @@ test('worker durable CAS rejects a delayed older START after STOP, across restar
     const replaced=await post({...command('other-worker','START'),expectedAccountSourceId:'wrong-source',expectedStrategyRevision:(await get('/strategy/fence')).strategyRevision});
     assert.equal(replaced.status,'REJECTED');
   } finally {release();server.close();await once(server,'close');await account.close();await rm(directory,{recursive:true,force:true});}
+});
+
+
+test('missing native position value remains null without a derived available quantity', async () => {
+  const native = new ControlledProtocol();
+  native.snapshot.positions[0]!.value = null;
+  const account = await openAccount(native);
+  try {
+    const result = await account.call('GET', '/account');
+    assert.deepEqual(result.positions, [{ instrumentId, quantity: '10', value: null, pnl: null }]);
+    assert.equal('free_quantity' in native.snapshot.positions[0]!, false);
+  } finally { await account.close(); }
 });

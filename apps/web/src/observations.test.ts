@@ -13,3 +13,9 @@ it('account binding never exposes retired target delivery even from an old portf
  expect(html).toContain('绑定已有账户');expect(html).toContain('不启动策略');
  expect(html).not.toContain('交付并观测');expect(html).not.toContain('按账户净值自动调整');expect(html).not.toContain('交付已有组合目标');
 });
+
+import { Exact } from './ui';
+it('missing position values display as not provided rather than zero',()=>{
+ const html=renderToStaticMarkup(createElement(Exact,{value:null}));
+ expect(html).toContain('未提供');expect(html).not.toContain('>0<');
+});

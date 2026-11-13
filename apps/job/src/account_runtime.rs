@@ -560,10 +560,8 @@ impl AccountController {
         }).collect();
         let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
             let quote=cache.quote(&p.instrument_id);
-            let value=quote.and_then(|q|p.quantity.as_decimal().checked_mul(q.bid_price.as_decimal()));
             let pnl=quote.and_then(|q|p.unrealized_pnl(q.bid_price).ok());
-            let sell_orders=orders.iter().filter(|o|!o.is_closed()&&o.instrument_id()==p.instrument_id&&o.order_side()==OrderSide::Sell).map(|o|o.leaves_qty().as_decimal()).sum::<Decimal>();
-            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"free_quantity":(p.quantity.as_decimal()-sell_orders).max(Decimal::ZERO).to_string(),"value":value.map(|v|v.to_string()),"pnl":pnl.map(|v|v.as_decimal().to_string())})
+            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"value":Value::Null,"pnl":pnl.map(|v|v.as_decimal().to_string())})
         }).collect();
         order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
         positions.sort_by_key(|v| v["instrument_id"].as_str().unwrap_or_default().to_owned());
@@ -1125,65 +1123,7 @@ impl AccountController {
         }
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
     }
-    fn spot_cash(&self) -> Result<Decimal> {
-        if self.config.mode == "live" {
-            let facts = self
-                .spot_facts
-                .as_ref()
-                .ok_or_else(|| anyhow!("account_native_spot_facts_required"))?;
-            let now = self.clock().timestamp_ns().as_u64();
-            ensure!(
-                facts.asof <= now && now < facts.valid_until,
-                "account_native_spot_facts_expired"
-            );
-            // A venue HTTP response can precede fills already queued in the
-            // native event thread. The fact timestamp is the HTTP request's
-            // start, so debit every subsequent native BUY fill conservatively.
-            // Sales are credited only by the next real spot balance response.
-            let mut spent = Decimal::ZERO;
-            for order in self
-                .cache()
-                .orders(None, None, None, Some(&self.account), None)
-            {
-                for event in order.events() {
-                    if let OrderEventAny::Filled(fill) = event {
-                        if fill.order_side == OrderSide::Buy && fill.ts_init.as_u64() >= facts.asof
-                        {
-                            let fee = fill.commission.ok_or_else(|| {
-                                anyhow!("account_native_buy_fee_evidence_required")
-                            })?;
-                            let debit = fill
-                                .last_qty
-                                .as_decimal()
-                                .checked_mul(fill.last_px.as_decimal())
-                                .and_then(|v| {
-                                    v.checked_add(if fee.currency == Currency::USDC() {
-                                        fee.as_decimal()
-                                    } else {
-                                        Decimal::ZERO
-                                    })
-                                })
-                                .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-                            spent = spent
-                                .checked_add(debit)
-                                .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-                        }
-                    }
-                }
-            }
-            return Ok((facts.free - spent).max(Decimal::ZERO));
-        }
-        self.cache()
-            .account(&self.account)
-            .and_then(|a| a.last_event())
-            .and_then(|a| {
-                a.balances
-                    .iter()
-                    .find(|b| b.free.currency == Currency::USDC())
-                    .map(|b| b.free.as_decimal())
-            })
-            .ok_or_else(|| anyhow!("account_native_cash_unavailable"))
-    }
+
 }
 fn exit_id(tags: Option<&[Ustr]>) -> Option<String> {
     tags?.iter().find_map(|t| {
@@ -2194,6 +2134,19 @@ mod tests {
                         && o.filled_qty() > Quantity::zero(2)),
                 "explicit_start_did_not_run_native_callback"
             );
+            // A position is not a currency balance or a QZ-computed available size.
+            // Preserve official position quantity/PnL and original order quantities.
+            let snapshot = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
+            let positions = snapshot["positions"].as_array().unwrap();
+            ensure!(!positions.is_empty(), "native_position_not_projected");
+            for row in positions {
+                ensure!(row.get("free_quantity").is_none(), "derived_free_quantity_retained");
+                ensure!(row["value"].is_null(), "derived_position_value_retained");
+                ensure!(cache.borrow().positions(None, None, None, None, None).iter().any(|p|
+                    p.instrument_id.to_string() == row["instrument_id"].as_str().unwrap()
+                    && p.signed_decimal_qty().to_string() == row["quantity"].as_str().unwrap()),
+                    "native_position_quantity_changed");
+            }
             stop.stop();
             Ok::<_, anyhow::Error>(())
         };

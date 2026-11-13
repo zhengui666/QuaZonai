@@ -1,22 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import { defineDocFamily, defineExtension, defineTask } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId, Tx, ConversationId } from '@earendil-works/pi-durable';
 import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
 import { CatalogScopeTask } from '../plugins/native-catalog-scope.ts';
 import { readNativeEvidence } from '../plugins/native-evidence.ts';
-import { NativeRemoteUncertainty, executeNativeValue, withNativeRemoteTracking, cancelUnsettledNativeExecutions } from '../src/native-execution.ts';
+import { NativeRemoteUncertainty, NativeExecutionTask, executeNativeValue, withNativeRemoteTracking, cancelUnsettledNativeExecutions } from '../src/native-execution.ts';
 import { reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
-import type { NativeExecutionRequest, NativeJson } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeExecutionRequest, NativeJson, RemoteNativeTarget, ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 
+import { canonicalJsonDigest } from '../src/native-json.ts';
+const Calls = defineDocFamily<any, null>({ kind: 'qz.native-call', version: 1, scope: 'task', family: true, initial: () => ({ taskId: null }), checkpointWhen: () => true });
+async function retain(tx: Tx, conversationId: ConversationId, owner: TaskId, target: RemoteNativeTarget, catalog: string, input: JsonObject, originals: NativeExecutionRequest[], command = 'native-strategy-backtest', status = 'UNKNOWN') {
+  const original: NativeExecutionRequest = { schemaVersion: 1, requestId: String(originals.length + 1).padStart(64, '0'), invocationId: `retained-scan-${originals.length + 1}`, implementationDigest, command, args: ['--catalog', catalog], input, files: {} }; originals.push(original);
+  const basis = canonicalJsonDigest({ target, command, input, args: original.args, files: {} });
+  const child = await tx.createTask(NativeExecutionTask, { target, requestId: original.requestId, basis, command, request: { request: original as unknown as JsonObject }, ownerTaskId: owner, receiptRequired: true }, { ownership: { kind: 'task', taskId: owner } });
+  (await tx.doc(Calls, owner, basis, null)).taskId = child;
+  (await tx.doc(NativeRemoteUncertainty, conversationId, String(owner), null)).requests.push({ taskId: owner, target, requestId: original.requestId, status, ...(status === 'REJECTED' ? { admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' } : {}) });
+}
 // These exercise the real Durable lifecycle and HTTP receipt protocol, not scientific results.
 const context = BACKGROUND_CONTEXT;
 const implementationDigest = `sha256:${'a'.repeat(64)}`;
@@ -44,19 +53,15 @@ async function waitingForOriginalReceipt(host: Awaited<ReturnType<typeof openRes
 
 for (const mode of ['native', 'large', 'scope'] as const) test(`scan ${mode} adopts an original UNKNOWN receipt after restart without repeating earlier calls`, { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-receipt-'));
-  const posts: NativeExecutionRequest[] = [];
+  const originals: NativeExecutionRequest[] = []; const reads: string[] = [];
   let completed = false;
   const uncertainCommand = mode === 'scope' ? 'catalog-factor-scope' : 'native-strategy-backtest';
   const value = (original: NativeExecutionRequest): NativeJson => original.command === 'catalog-factor-scope' ? ['TEST.SIM-1-MINUTE-LAST-EXTERNAL']
     : wireResult(original.input as JsonObject, mode === 'large');
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest', 'catalog-factor-scope'] })); return; }
-    let original: NativeExecutionRequest | undefined;
-    if (incoming.method === 'POST') {
-      let body = ''; for await (const chunk of incoming) body += chunk;
-      original = JSON.parse(body) as NativeExecutionRequest; posts.push(original);
-    } else original = posts.find(item => incoming.url === `/v1/executions/${item.requestId}`);
+    assert.equal(incoming.method, 'GET'); reads.push(incoming.url!);
+    const original = originals.find(item => incoming.url === `/v1/executions/${item.requestId}`);
     assert.ok(original);
     const unavailable = original.command === uncertainCommand && !completed;
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: unavailable ? 'UNKNOWN' : 'COMPLETED',
@@ -72,14 +77,15 @@ for (const mode of ['native', 'large', 'scope'] as const) test(`scan ${mode} ado
     const root = await host.harness.root(context);
     const data = { catalog: directory, request, nautilusTarget: target };
     const scanContext = { scanId: 'original-scan', ordinal: '0', implementationDigest };
-    const id = await root.commit(tx => mode === 'scope'
-      ? tx.createTask(CatalogScopeTask, { catalog: directory, binary: target, scanContext }, { ownership: { kind: 'conversation' } })
-      : tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target, scanContext }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(async tx => {
+      const id = mode === 'scope' ? await tx.createTask(CatalogScopeTask, { catalog: directory, binary: target, scanContext }, { ownership: { kind: 'conversation' } }) : await tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target, scanContext }, { ownership: { kind: 'conversation' } });
+      await retain(tx, root.id, id, target, directory, mode === 'scope' ? {} : request, originals, uncertainCommand); return id;
+    }, context);
     await waitingForOriginalReceipt(host, id);
     const before = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
     const uncertain = before.items.find(item => (item.input as JsonObject).command === uncertainCommand)!;
     assert.equal(uncertain.state.status, 'terminal'); assert.equal(uncertain.state.outcome!.status, 'failed');
-    const originalPosts = structuredClone(posts);
+    const originalRequests = structuredClone(originals);
     await host.close();
     completed = true;
     host = await openResearch({ ...options, deferResume: true });
@@ -101,11 +107,12 @@ for (const mode of ['native', 'large', 'scope'] as const) test(`scan ${mode} ado
         assert.deepEqual(output.request, request);
       }
     }
-    assert.deepEqual(posts, originalPosts, 'only GET observes the original invocation; completed preparation is reused');
+    assert.deepEqual(originals, originalRequests, 'only GET observes the original invocation; retained binding is reused');
     const after = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 100), context);
     assert.deepEqual(after.items.map(item => item.id), before.items.map(item => item.id));
+    assert.deepEqual(after.items.map(item => item.input), before.items.map(item => item.input));
     assert.deepEqual(after.items.find(item => item.id === uncertain.id)!.state, uncertain.state, 'the official terminal native task is never rewritten');
-    assert.equal(faux.state.callCount, 0);
+    assert.equal(faux.state.callCount, 0); assert.ok(reads.length > 0); assert.ok(reads.every(path => originals.some(original => path === `/v1/executions/${original.requestId}`)));
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
@@ -114,16 +121,11 @@ for (const mode of ['native', 'large', 'scope'] as const) test(`scan ${mode} ado
 
 for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a scan waiting for an UNKNOWN receipt records ${cancellation} without another POST`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-stop-'));
-  let original: NativeExecutionRequest | undefined; let posts = 0; let lateCompletion = false; const cancelled: string[] = [];
+  const originals: NativeExecutionRequest[] = []; let stopping = false; let lateCompletion = false; const reads: string[] = [];
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest'] })); return; }
-    if (incoming.method === 'POST') {
-      posts++; let body = ''; for await (const chunk of incoming) body += chunk; original = JSON.parse(body) as NativeExecutionRequest;
-    }
-    assert.ok(original);
-    if (incoming.method === 'DELETE') {
-      cancelled.push(incoming.url!);
+    const original = originals[0]!; assert.ok(original); assert.equal(incoming.method, 'GET'); assert.equal(incoming.url, `/v1/executions/${original.requestId}`); reads.push(incoming.url!);
+    if (stopping && !lateCompletion) {
       if (cancellation === 'missing') { response.statusCode = 404; response.end('{"error":"not_found"}'); return; }
       response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return;
     }
@@ -137,13 +139,13 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
   const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [] });
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target,
-      scanContext: { scanId: 'stopped-scan', ordinal: '0' } }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(async tx => { const id = await tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target, scanContext: { scanId: 'stopped-scan', ordinal: '0' } }, { ownership: { kind: 'conversation' } }); await retain(tx, root.id, id, target, directory, request, originals); return id; }, context);
     await waitingForOriginalReceipt(host, id);
     await host.harness.abortTask(id, context);
     const stopped = await host.harness.waitForTask(id, context);
     assert.equal(stopped.state.outcome.status, 'aborted');
-    assert.deepEqual(cancelled, [`/v1/executions/${original!.requestId}`]); assert.equal(posts, 1);
+    assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, 'UNKNOWN', 'local abort cannot confirm remote cancellation');
+    stopping = true; await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context);
     assert.equal(facts!.requests[0]!.status, cancellation === 'CANCELLED' ? 'CANCELLED' : 'UNKNOWN');
     if (cancellation === 'missing') {
@@ -151,7 +153,7 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
       await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
       assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, 'COMPLETED');
       assert.equal((await host.harness.getTask(id, context))!.state.outcome!.status, 'aborted', 'a late receipt settles facts without reopening stopped science');
-      assert.equal(posts, 1);
+      assert.equal(originals.length, 1);
     }
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
@@ -159,15 +161,12 @@ for (const cancellation of ['CANCELLED', 'missing'] as const) test(`stopping a s
   }
 });
 
-test('ordinary upstream strategy UNKNOWN retains its original receipt and scan implementation changes reject before POST', { timeout: 15_000 }, async () => {
+test('ordinary upstream strategy UNKNOWN retains its original receipt and scan implementation changes reject before process spawn', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-version-'));
-  let posts = 0;
-  const server = createServer(async (incoming, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest'] })); return; }
-    posts++; let body = ''; for await (const chunk of incoming) body += chunk;
-    const original = JSON.parse(body) as NativeExecutionRequest;
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'UNKNOWN', error: 'receipt_unavailable' }));
+  const originals: NativeExecutionRequest[] = []; let reads = 0;
+  const server = createServer((incoming, response) => {
+    const original = originals[0]!; assert.ok(original); assert.equal(incoming.method, 'GET'); assert.equal(incoming.url, `/v1/executions/${original.requestId}`); reads++;
+    response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'UNKNOWN', error: 'receipt_unavailable' }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -177,14 +176,17 @@ test('ordinary upstream strategy UNKNOWN retains its original receipt and scan i
   try {
     const root = await host.harness.root(context);
     const input = { request, catalog: directory, target };
-    const ordinary = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, input, { ownership: { kind: 'conversation' } }), context);
+    const ordinary = await root.commit(async tx => { const id = await tx.createTask(NativeStrategyBacktestTask, input, { ownership: { kind: 'conversation' } }); await retain(tx, root.id, id, target, directory, request, originals); return id; }, context);
     await waitingForOriginalReceipt(host, ordinary);
-    assert.equal(posts, 1);
-    const changed = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { ...input, scanContext: { scanId: 'changed-build', ordinal: '0', implementationDigest: 'unmatched-existing-build-identity' } }, { ownership: { kind: 'conversation' } }), context);
+    assert.ok(reads > 0);
+    const binary = join(directory, 'runner.mjs'), marker = join(directory, 'executed');
+    await writeFile(binary, `#!${process.execPath}\nimport{writeFileSync}from'node:fs';writeFileSync(${JSON.stringify(marker)},'unexpected');`, { mode: 0o755 });
+    const processTarget: ProcessNativeTarget = { kind:'RUST_PROCESS',id:'changed-process',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false} };
+    const changed = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { ...input, target: processTarget, scanContext: { scanId: 'changed-build', ordinal: '0', implementationDigest: 'unmatched-existing-build-identity' } }, { ownership: { kind: 'conversation' } }), context);
     const result = await host.harness.waitForTask(changed, context);
     assert.equal(result.state.outcome.status, 'failed');
     if (result.state.outcome.status === 'failed') assert.match(result.state.outcome.error.message, /nautilus_scan_implementation_changed/);
-    assert.equal(posts, 1, 'a scan does not start science on a changed implementation');
+    await assert.rejects(access(marker), /ENOENT/, 'changed implementation must not spawn'); assert.equal(originals.length, 1);
     await host.harness.abortTask(ordinary, context);
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
@@ -192,22 +194,14 @@ test('ordinary upstream strategy UNKNOWN retains its original receipt and scan i
   }
 });
 
-for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active native cancellation preserves its receipt requirement on DELETE 404`, { timeout: 15_000 }, async () => {
+for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active native cancellation preserves its receipt requirement on unavailable original GET`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-active-stop-'));
-  let original: NativeExecutionRequest | undefined; let posts = 0; let reads = 0; const cancelled: string[] = [];
-  const server = createServer(async (incoming, response) => {
+  const originals: NativeExecutionRequest[] = []; let reads = 0; let stopping = false;
+  const server = createServer((incoming, response) => {
+    const original = originals[0]!; assert.ok(original); assert.equal(incoming.method, 'GET'); assert.equal(incoming.url, `/v1/executions/${original.requestId}`); reads++;
+    assert.equal(Object.hasOwn(original, 'receiptRequired'), false, 'cancellation policy stays private Task input');
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest'] })); return; }
-    if (incoming.method === 'POST') {
-      posts++; let body = ''; for await (const chunk of incoming) body += chunk;
-      original = JSON.parse(body) as NativeExecutionRequest;
-      assert.equal(Object.hasOwn(original, 'receiptRequired'), false, 'cancellation policy is private Task input, not native Wire');
-    }
-    assert.ok(original);
-    if (incoming.method === 'DELETE') {
-      cancelled.push(incoming.url!); response.statusCode = 404; response.end('{"error":"not_found"}'); return;
-    }
-    if (incoming.method === 'GET') reads++;
+    if (stopping) { response.statusCode = 404; response.end('{"error":"not_found"}'); return; }
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'RUNNING' }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -217,8 +211,7 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
   const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [] });
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target,
-      ...(scan ? { scanContext: { scanId: 'active-stopped-scan', ordinal: '0' } } : {}) }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(async tx => { const id = await tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target, ...(scan ? { scanContext: { scanId: 'active-stopped-scan', ordinal: '0' } } : {}) }, { ownership: { kind: 'conversation' } }); await retain(tx, root.id, id, target, directory, request, originals); return id; }, context);
     const deadline = Date.now() + 5000;
     for (;;) {
       const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
@@ -230,16 +223,14 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
     }
     await host.harness.abortTask(id, context);
     assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
-    assert.ok(cancelled.length > 0);
-    assert.ok(cancelled.every(path => path === `/v1/executions/${original!.requestId}`));
-    assert.equal(posts, 1);
+    assert.equal(originals.length, 1); stopping = true; await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context);
     assert.equal(facts!.requests[0]!.status, 'UNKNOWN');
     {
       assert.equal(facts!.requests[0]!.error, 'nautilus_cancellation_unknown');
-      await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
+      stopping = false; await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
       assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, 'UNKNOWN', 'a still-running GET is not a cancellation confirmation');
-      assert.equal(posts, 1);
+      assert.equal(originals.length, 1);
     }
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
@@ -247,24 +238,10 @@ for (const scan of [true, false]) test(`${scan ? 'scan' : 'ordinary'} active nat
   }
 });
 
-for (const retrying of [false, true]) test(`economic replay capacity cancellation preserves ${retrying ? 'an in-flight retry' : 'explicit non-admission'}`, { timeout: 15_000 }, async () => {
+for (const retrying of [false, true]) test(`economic replay capacity cancellation preserves ${retrying ? 'retained unknown admission' : 'explicit non-admission'}`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-scan-capacity-stop-'));
-  let posts = 0; let deletes = 0;
-  const server = createServer(async (incoming, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest, commands: ['native-strategy-backtest'] })); return; }
-    if (incoming.method === 'POST') {
-      posts++; let body = ''; for await (const chunk of incoming) body += chunk;
-      const original = JSON.parse(body) as NativeExecutionRequest;
-      if (posts === 1) {
-        response.statusCode = 429;
-        response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' }));
-      }
-      return;
-    }
-    if (incoming.method === 'DELETE') deletes++;
-    response.statusCode = 404; response.end('{"error":"not_found"}');
-  });
+  const originals: NativeExecutionRequest[] = []; const methods: string[] = [];
+  const server = createServer((incoming, response) => { methods.push(incoming.method!); assert.equal(incoming.method, 'GET'); assert.equal(incoming.url, `/v1/executions/${originals[0]!.requestId}`); response.statusCode = 404; response.end('{"error":"not_found"}'); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'scan-capacity-stop-protocol', url: `http://127.0.0.1:${address.port}` };
@@ -280,26 +257,18 @@ for (const retrying of [false, true]) test(`economic replay capacity cancellatio
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx);
     },
   });
-  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [defineExtension({ name: 'scan-capacity-stop-protocol', tasks: [ReplayProbe] })] });
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, deferResume: true, extensions: [defineExtension({ name: 'scan-capacity-stop-protocol', tasks: [ReplayProbe] })] });
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(ReplayProbe, {}, { ownership: { kind: 'conversation' } }), context);
-    const deadline = Date.now() + 8000;
-    for (;;) {
-      const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
-      const native = tasks.items[0];
-      if (retrying ? posts === 2 : native?.state.status === 'sleeping') break;
-      assert.ok(Date.now() < deadline, 'original invocation did not reach capacity wait');
-      await delay(5);
-    }
+    const id = await root.commit(async tx => { const id = await tx.createTask(ReplayProbe, {}, { ownership: { kind: 'conversation' } }); await retain(tx, root.id, id, target, directory, {}, originals, 'native-strategy-backtest', retrying ? 'UNKNOWN' : 'REJECTED'); return id; }, context);
     await host.harness.abortTask(id, context);
     assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context);
     assert.equal(facts!.requests[0]!.status, retrying ? 'UNKNOWN' : 'REJECTED');
-    assert.equal(posts, retrying ? 2 : 1);
-    assert.equal(deletes === 0, !retrying);
+    assert.deepEqual(methods, [], 'local abort never sends retired HTTP control');
     await reconcileNativeRemoteTasks(host.harness, [{ id, conversationId: root.id }], context);
     assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), context))!.requests[0]!.status, retrying ? 'UNKNOWN' : 'REJECTED');
+    assert.deepEqual(methods, retrying ? ['GET'] : []); assert.equal(originals.length, 1);
   } finally {
     await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
