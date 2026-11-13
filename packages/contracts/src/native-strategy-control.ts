@@ -35,7 +35,13 @@ export function nativeStrategyControl(value: unknown): NativeStrategyControl {
     || command.schemaVersion !== 1 || !identity(command.requestId) || !identity(command.strategyId)
     || (command.action !== 'START' && command.action !== 'STOP')
     || bindingKeys.some(key => !identity(binding[key]))) throw new Error('native_strategy_control_invalid');
-  return structuredClone(value) as NativeStrategyControl;
+  // Pi documents can be proxy objects. Copy the validated primitive fields,
+  // not the proxy itself; preserve exact string values without normalization.
+  return { schemaVersion: 1, requestId: command.requestId as string, action: command.action as 'START' | 'STOP',
+    strategyId: command.strategyId as string, binding: {
+      sourceId: binding.sourceId as string, environmentId: binding.environmentId as string,
+      buildId: binding.buildId as string, nativeSessionId: binding.nativeSessionId as string,
+    } };
 }
 
 /** Used for both duplicate admission and reply matching against the ORIGINAL
