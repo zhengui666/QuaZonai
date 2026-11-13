@@ -26,7 +26,6 @@ mod fee_models;
 pub mod forward;
 pub mod managed;
 #[cfg(feature = "native-sandbox-test")]
-pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
 #[cfg(feature = "catalog-prepare")]

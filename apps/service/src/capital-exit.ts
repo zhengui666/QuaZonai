@@ -142,6 +142,9 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
   name: 'qz.capital-exit-command', version: 1, initial: input => ({ phase: input.reconcile ? 'reconcile' : 'deliver' }),
   phases: {
     async deliver(task, runtime, context) {
+      const retained=control((await runtime.snapshot(Application,context))?.accountControls?.[task.input.key]).commands[task.input.requestId];
+      // UNCERTAIN always keeps original receipt reconciliation. Never deliver an old pending planner after upgrade.
+      if(retained?.state==='PENDING'&&!['PAUSE','CANCEL'].includes(String(retained.original.action)))throw new Error('capital_exit_planning_retired_pending_intent_retained');
       let command: CapitalCommand | undefined;
       await runtime.commit(async tx => {
         const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); const current = state.commands[task.input.requestId]!;

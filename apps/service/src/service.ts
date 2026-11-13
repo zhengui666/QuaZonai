@@ -166,6 +166,10 @@ export async function createService(options: ServiceOptions) {
   const capital = capitalWorkbench(research, config);
   const strategies = accountStrategyWorkbench(research);
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/strategy`, request => strategies.status(request.params.id));
+  app.post<{ Params: { id: string; requestId: string } }>(`${API}/observations/:id/strategy/config/commands/:requestId/verify`, request => strategies.verifyConfiguration(request.params.id, request.params.requestId));
+  app.get<{ Params: { id: string } }>(`${API}/observations/:id/strategy/config`, request => strategies.configuration(request.params.id));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/strategy/config`, request => strategies.configuration(request.params.id, request.body));
+  app.get<{ Params: { id: string } }>(`${API}/observations/:id/strategy/fence`, request => strategies.fence(request.params.id));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/strategy/commands`, async (request, reply) => reply.code(202).send(await strategies.command(request.params.id, request.body)));
   app.get<{ Params: { id: string; requestId: string } }>(`${API}/observations/:id/strategy/commands/:requestId`, request => strategies.receipt(request.params.id, request.params.requestId));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/sizing/fixed-risk`, request => capital.previewFixedRisk(request.params.id, request.body));
@@ -242,9 +246,7 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/review`, async request => (await work.getPortfolio(request.params.id)).view.review ?? null);
   app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatusForBinding(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]), fact.connection) } }); }); });
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits`, request => capital.refreshCapital(request.params.id));
-  app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/planning-context`, request => capital.planningContext(request.params.id));
   app.get<{ Params: { id: string; exitId: string } }>(`${API}/observations/:id/capital-exits/:exitId`, request => capital.getCapitalExit(request.params.id, request.params.exitId));
-  app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/preview`, request => capital.previewCapital(request.params.id, request.body));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/commands`, async (request, reply) => reply.code(202).send(await capital.commandCapital(request.params.id, request.body)));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/automatic`, async request => observationView({ ...(await work.getObservation(request.params.id)), view: await work.configureAutomatic(request.params.id, request.body) }));
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/cancel-protection`, async request => cancelNativeProtection(await work.getObservation(request.params.id)));

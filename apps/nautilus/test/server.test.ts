@@ -48,7 +48,7 @@ const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.read
 console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN})); }
 `);
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-  const options: WorkerOptions = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token' };
+  const options: WorkerOptions = { binary, accountBinary: binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token' };
   let worker = await createNautilusWorker(options);
   async function listen() { worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening'); return `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`; }
   let url = await listen();
@@ -367,4 +367,79 @@ test('shutdown during temporary receipt opening does not spawn a cancelled child
     release(); fsPromises.writeFile = original; syncBuiltinESMExports();
     await rm(f.directory, { recursive: true, force: true });
   }
+});
+
+test('account configuration creation persists original identity without starting a native runtime', async () => {
+  const f = await fixture();
+  const creation = { requestId: 'create-original-account', configuration: {
+    id: 'configured-live', clientId: 'configured-client', accountId: 'HYPERLIQUID-001', mode: 'live',
+    accountAddress: '0x' + '1'.repeat(40), instruments: ['BTC-USDC-SPOT.HYPERLIQUID'],
+    nativeStrategy: { instrument_id: 'BTC-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'REGISTERED', name: 'owner::Native', config: { exact: '0.000000000000000001' } } },
+  } };
+  try {
+    const created = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify(creation) });
+    assert.equal(created.status, 201); const original = await created.json() as any;
+    assert.equal(original.connected, false); assert.equal(original.automaticConnection, false); assert.equal(original.runnerValidated, false);
+    assert.deepEqual(original.accountConfiguration, creation.configuration);
+    assert.equal(typeof original.accountSourceId, 'string');
+    const retry = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify(creation) });
+    assert.equal(retry.status, 201); assert.equal((await retry.json() as any).accountSourceId, original.accountSourceId);
+    const duplicate = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'different', configuration: { ...creation.configuration, id: 'other' } }) });
+    assert.equal(duplicate.status, 409);
+    const key = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'secret-not-accepted', configuration: { ...creation.configuration, privateKey: 'DO_NOT_STORE' } }) });
+    assert.equal(key.status, 422);
+    const badId = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ ...creation, configuration: { ...creation.configuration, id: 123 } }) });
+    assert.equal(badId.status, 422);
+    await f.restart();
+    const list = await fetch(f.url + '/accounts/configurations', { headers: f.headers });
+    const value = await list.json() as any;
+    assert.equal(value.accounts.length, 1); assert.equal(value.accounts[0].accountSourceId, original.accountSourceId); assert.equal(value.accounts[0].connected, false);
+    assert.equal(value.accounts[0].strategyRevision, original.strategyRevision);
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+
+test('account creation cannot overwrite existing receipts or retry a different configuration', async () => {
+  const f = await fixture();
+  const configuration = { id: 'paper-config', clientId: 'paper-client', accountId: 'PAPER-001', mode: 'paper', startingBalance: '1000', paperFeeRate: '0.0001', instruments: ['BTC-USDC-SPOT.HYPERLIQUID'], nativeStrategy: { instrument_id: 'BTC-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '0.001', fast_period: 2, slow_period: 3 } } };
+  const send = (requestId: string, config = configuration) => fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId, configuration: config }) });
+  try {
+    const directory = join(f.options.dataDir, 'accounts', configuration.id);
+    await mkdir(directory, { recursive: true }); await writeFile(join(directory, 'capital-receipts.json'), '{"original":"untouched"}');
+    assert.equal((await send('original')).status, 409);
+    assert.equal(await readFile(join(directory, 'capital-receipts.json'), 'utf8'), '{"original":"untouched"}');
+    const fresh = { ...configuration, id: 'new-paper' };
+    assert.equal((await send('new', fresh)).status, 201);
+    assert.equal((await send('new', { ...fresh, startingBalance: '2000' })).status, 409);
+    assert.equal((await send('new', { ...fresh, id: 'reused-request', accountId: 'PAPER-002' })).status, 409);
+    const retainedDirectory = join(f.options.dataDir, 'accounts', 'retained-physical-owner');
+    await mkdir(retainedDirectory, { recursive: true });
+    const retained = JSON.stringify({ sourceId: 'original-source', identity: { mode: 'paper', network: 'mainnet', accountId: 'RETAINED-001', currency: 'USDC' }, commands: { unknown: { state: 'UNCERTAIN' } } });
+    await writeFile(join(retainedDirectory, 'capital-receipts.json'), retained);
+    await f.restart();
+    assert.equal((await send('new-physical-owner', { ...fresh, id: 'duplicate-retained', accountId: 'RETAINED-001' })).status, 409);
+    assert.equal(await readFile(join(retainedDirectory, 'capital-receipts.json'), 'utf8'), retained);
+    const unauthenticated = await fetch(f.url + '/accounts/configurations'); assert.equal(unauthenticated.status, 401);
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+
+test('account creation failed publication never reports success and retries its persisted original intent', async () => {
+  const f = await fixture(); const originalRename = fsPromises.rename;
+  const creation = { requestId: 'durable-original', configuration: { id: 'durable-account', clientId: 'client', accountId: 'HYPERLIQUID-002', mode: 'live', accountAddress: '0x' + '2'.repeat(40), instruments: ['BTC-USDC-SPOT.HYPERLIQUID'], nativeStrategy: { instrument_id: 'BTC-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'REGISTERED', name: 'Owner', config: null } } } };
+  const post = (value = creation) => fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify(value) });
+  let fail = true;
+  fsPromises.rename = (async (...args: Parameters<typeof originalRename>) => {
+    const result = await originalRename(...args);
+    if (fail && String(args[1]).endsWith('/durable-account/configuration.json')) { fail = false; throw new Error('test_publication_interrupted_after_rename'); }
+    return result;
+  }) as typeof originalRename; syncBuiltinESMExports();
+  try {
+    const failed = await post(); assert.notEqual(failed.status, 201);
+    const conflicting = await post({ ...creation, configuration: { ...creation.configuration, accountId: 'OTHER' } }); assert.equal(conflicting.status, 409);
+    const retry = await post(); assert.equal(retry.status, 201); const result = await retry.json() as any;
+    await f.restart(); const read = await fetch(f.url + '/accounts/configurations', { headers: f.headers });
+    assert.equal((await read.json() as any).accounts[0].accountSourceId, result.accountSourceId);
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { fsPromises.rename = originalRename; syncBuiltinESMExports(); await f.cleanup(); }
 });

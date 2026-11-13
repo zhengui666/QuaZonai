@@ -20,7 +20,12 @@ else if(v.operation==='SHUTDOWN'){send({stopping:true});setTimeout(()=>process.e
   const previousProxy = process.env.HTTPS_PROXY; process.env.HTTPS_PROXY = 'http://configured-proxy.invalid:8080';
   const runtime = new AccountRuntime(binary, { id: 'paper', clientId: 'client', accountId: 'account', mode: 'paper', executionProductTypes: ['SPOT'], nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'], startingBalance: '100', paperFeeRate: '0.001' }, '01900000-0000-7000-8000-000000000001', directory);
   try {
-    await assert.rejects(runtime.request('SNAPSHOT'), /controlled_boot_rejected/);
+    await assert.rejects(runtime.request('SNAPSHOT'), /account_runtime_not_started/);
+    await assert.rejects(readFile(counter), /ENOENT/);
+    await assert.rejects(runtime.start(), /controlled_boot_rejected/);
+    await assert.rejects(runtime.request('SNAPSHOT'), /account_runtime_not_started/);
+    assert.equal(await readFile(counter, 'utf8'), '1', 'read after failure cannot restart the account');
+    await runtime.start();
     const snapshot = await runtime.request('SNAPSHOT');
     assert.equal(snapshot.generation, 2); assert.equal(snapshot.proxy, process.env.HTTPS_PROXY);
     assert.equal(await readFile(counter, 'utf8'), '2');
@@ -34,7 +39,7 @@ test('SHUTDOWN acknowledgement allows native cache drain before terminating the 
 lines.on('line',line=>{const v=JSON.parse(line);console.log(JSON.stringify({requestId:v.requestId,result:{applied:true}}));if(v.operation==='SHUTDOWN')setTimeout(()=>{fs.writeFileSync(${JSON.stringify(drained)},'native-cache-flushed');process.exit(0)},250)});`);
   await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, { mode: 0o700 });
   const runtime = new AccountRuntime(binary, { id: 'paper', clientId: 'client', accountId: 'account', mode: 'paper', nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'] }, '01900000-0000-7000-8000-000000000001', directory);
-  try { await runtime.request('SNAPSHOT'); await runtime.close(); assert.equal(await readFile(drained, 'utf8'), 'native-cache-flushed'); }
+  try { await runtime.start(); await runtime.request('SNAPSHOT'); await runtime.close(); assert.equal(await readFile(drained, 'utf8'), 'native-cache-flushed'); }
   finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -47,6 +52,7 @@ const lines=readline.createInterface({input:process.stdin});lines.on('line',line
   await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, { mode: 0o700 });
   const runtime = new AccountRuntime(binary, { id: 'paper', clientId: 'client', accountId: 'account', mode: 'paper', nativeStrategy: { instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'EMA_CROSS', trade_size: '1', fast_period: 10, slow_period: 50 } }, instruments: ['HYPE-USDC-SPOT.HYPERLIQUID'] }, '01900000-0000-7000-8000-000000000001', directory);
   try {
+    await runtime.start();
     for (const operation of ['TARGET', 'CONTROL', 'SHUTDOWN']) {
       const result = await runtime.request('FIXED_RISK_SIZE', { operation, equity: '1000.000000000000000001' });
       assert.equal(result.operation, 'FIXED_RISK_SIZE');

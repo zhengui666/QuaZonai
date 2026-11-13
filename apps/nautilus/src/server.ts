@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { appendFile, readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, readdir, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
@@ -10,6 +10,7 @@ import { JsonReader, JSONParser, jsonChunks, canonicalJsonDigest } from '../../r
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import { createCapitalAccount } from './capital-account.ts';
 import type { AccountOptions } from './account-runtime.ts';
+import { accountCreation, loadAccountConfigurations, physicalAccount, sameAccountCreation, saveAccountConfiguration } from './account-configurations.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
 type StoredReceipt = Receipt & { receiptFile?: string; progressFile?: string };
@@ -120,16 +121,76 @@ export async function createNautilusWorker(options: WorkerOptions) {
   await mkdir(receipts, { recursive: true }); await mkdir(scratch, { recursive: true });
   const roots = await Promise.all(options.catalogRoots.map(path => realpath(path)));
   const accounts = new Map<string, Awaited<ReturnType<typeof createCapitalAccount>>>();
-  const physicalAccounts = new Set<string>();
-  for (const account of options.accounts ?? []) {
-    const physical = JSON.stringify(account.mode === 'live' ? ['live', account.network ?? 'mainnet', account.accountAddress?.toLowerCase(), 'SPOT_CASH', 'USDC']
-      : ['paper', account.network ?? 'mainnet', account.accountId, 'SPOT_CASH', 'USDC']);
-    if (physicalAccounts.has(physical)) fail('account_physical_owner_already_configured');
-    physicalAccounts.add(physical);
+  const savedConfigurations = new Map((await loadAccountConfigurations(join(root, 'accounts'))).map(value => [value.configuration.id, value]));
+  const configuredAccounts = new Map<string, AccountOptions>();
+  const physicalAccounts = new Map<string, string>();
+  function reserveConfiguration(account: AccountOptions) {
+    const prior = configuredAccounts.get(account.id);
+    if (prior) fail('account_configuration_duplicate', 409);
+    const physical = physicalAccount(account);
+    if (physicalAccounts.has(physical)) fail('account_physical_owner_already_configured', 409);
+    physicalAccounts.set(physical, account.id); configuredAccounts.set(account.id, account);
   }
-  for (const account of options.accounts ?? []) {
-    if (accounts.has(account.id)) fail('account_configuration_duplicate');
-    accounts.set(account.id, await createCapitalAccount(account, join(root, 'accounts', account.id), options.accountBinary ?? join(dirname(binary), 'account-runtime')));
+  for (const account of options.accounts ?? []) reserveConfiguration(account);
+  for (const value of savedConfigurations.values()) reserveConfiguration(value.configuration);
+  async function openAccount(account: AccountOptions) {
+    if (!accounts.has(account.id)) accounts.set(account.id, await createCapitalAccount(structuredClone(account), join(root, 'accounts', account.id), options.accountBinary ?? join(dirname(binary), 'account-runtime')));
+  }
+  for (const account of configuredAccounts.values()) await openAccount(account);
+  // An account removed from process configuration may still own real receipts.
+  // Its original physical identity cannot be assigned to a new account directory.
+  for (const entry of await readdir(join(root, 'accounts'), { withFileTypes: true })) {
+    if (!entry.isDirectory() || configuredAccounts.has(entry.name)) continue;
+    let retained: { identity?: AccountOptions };
+    try { retained = JSON.parse(await readFile(join(root, 'accounts', entry.name, 'capital-receipts.json'), 'utf8')); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+    if (retained.identity && ['paper', 'live'].includes(retained.identity.mode)) {
+      const physical = physicalAccount(retained.identity);
+      if (physicalAccounts.has(physical)) fail('account_physical_owner_already_configured', 409);
+      physicalAccounts.set(physical, entry.name);
+    }
+  }
+
+  let configurationLane: Promise<unknown> = Promise.resolve();
+  async function configurationView(account: AccountOptions) {
+    const current = accounts.get(account.id);
+    const result = current ? await current.handle('/strategy/config', { method: 'GET', headers: { 'x-qz-client-id': account.clientId } } as unknown as IncomingMessage, async () => undefined) : { value: { accountSourceId: null, strategyRevision: null, connected: false, runnerValidated: false, initialization: 'INCOMPLETE_RETRY_ORIGINAL_CREATION' } };
+    return { id: account.id, accountConfiguration: structuredClone(account), ...(result.value as Record<string, unknown>),
+      configurationOnly: true, automaticConnection: false, automaticStrategyStart: false,
+      credentialSource: account.mode === 'paper' ? 'NOT_REQUIRED_PAPER' : account.network === 'testnet' ? 'WORKER_ENV_HYPERLIQUID_TESTNET_PK' : 'WORKER_ENV_HYPERLIQUID_PK' };
+  }
+  async function createConfiguration(value: unknown) {
+    const creation = accountCreation(value);
+    const run = configurationLane.then(async () => {
+      if (closing) fail('nautilus_worker_closing', 503);
+      const { configuration } = creation;
+      const original = savedConfigurations.get(configuration.id);
+      if (original) {
+        if (!sameAccountCreation(original, creation)) fail('account_configuration_conflict', 409);
+        await saveAccountConfiguration(join(root, 'accounts'), original);
+        await openAccount(configuredAccounts.get(configuration.id)!);
+        return configurationView(configuredAccounts.get(configuration.id)!);
+      }
+      if ([...savedConfigurations.values()].some(item => item.requestId === creation.requestId)) fail('account_creation_request_conflict', 409);
+      if (configuredAccounts.has(configuration.id)) fail('account_configuration_duplicate', 409);
+      if (physicalAccounts.has(physicalAccount(configuration))) fail('account_physical_owner_already_configured', 409);
+      // Persist intent before creating the original account receipts. A failed open
+      // retries the same ID; startup loads this same configuration, never a replacement.
+      try { await readFile(join(root, 'accounts', configuration.id, 'capital-receipts.json')); fail('account_existing_receipts_require_original_configuration', 409); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      try { await saveAccountConfiguration(join(root, 'accounts'), creation); }
+      catch (error) {
+        // Rename may have succeeded before directory sync failed. Preserve that
+        // exact intent in memory too, but never report this failed write as success.
+        const persisted = (await loadAccountConfigurations(join(root, 'accounts'))).find(item => item.configuration.id === configuration.id);
+        if (persisted) { savedConfigurations.set(configuration.id, persisted); reserveConfiguration(persisted.configuration); }
+        throw error;
+      }
+      savedConfigurations.set(configuration.id, creation); reserveConfiguration(configuration);
+      await openAccount(configuration);
+      return configurationView(configuration);
+    });
+    configurationLane = run.catch(() => {}); return run;
   }
   const active = new Map<string, Active>();
   const launching = new Map<string, Promise<Active>>();
@@ -338,6 +399,14 @@ export async function createNautilusWorker(options: WorkerOptions) {
     try {
       if (request.method === 'GET' && request.url === '/health') return await send(response, closing ? 503 : 200, { ready: !closing });
       if (!authorized(request, options.token)) return await send(response, 401, { error: 'nautilus_authentication_required' });
+      if (request.url === '/accounts/configurations') {
+        if (request.method === 'POST') return await send(response, 201, await createConfiguration(await body(request, options.maximumRequestBytes ?? 1_048_576)));
+        if (request.method === 'GET') {
+          await configurationLane;
+          return await send(response, 200, { accounts: await Promise.all([...configuredAccounts.values()].map(configurationView)) });
+        }
+        return await send(response, 405, { error: 'method_not_allowed' });
+      }
       const accountPath = /^\/accounts\/([^/?]+)(\/[^?]*)?(?:\?.*)?$/.exec(request.url ?? '');
       if (accountPath) {
         const account = accounts.get(decodeURIComponent(accountPath[1]!));
@@ -379,6 +448,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
     closing = true;
     const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     for (const execution of active.values()) execution.cancel();
+    await configurationLane;
     const accountStops = await Promise.allSettled([...accounts.values()].map(account => account.close()));
     await Promise.allSettled([...active.values()].map(execution => execution.promise));
     server.closeIdleConnections();

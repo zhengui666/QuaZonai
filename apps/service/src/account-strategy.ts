@@ -23,10 +23,12 @@ function accept(record: CommandRecord, value: JsonObject) {
     || !['UNCERTAIN', 'COMPLETED', 'REJECTED'].includes(String(value.status))) throw new Problem('strategy_receipt_identity_mismatch');
   if (value.persisted === false && value.status !== 'UNCERTAIN') throw new Problem('strategy_unrecorded_result_invalid');
   if (value.status === 'COMPLETED' || value.persisted === false && value.result !== null) { const result = object(value.result, 'strategy_native_result');
-    if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') throw new Problem('strategy_native_result_invalid');
+    if (value.action === 'RECOVER') {
+      if (result.recovery_only !== true || typeof result.native_version !== 'string' || typeof result.native_session_id !== 'string') throw new Problem('account_native_recovery_result_invalid');
+    } else if (typeof result.strategy_id !== 'string' || typeof result.state !== 'string' || typeof result.native_version !== 'string') throw new Problem('strategy_native_result_invalid');
   }
   if (value.status === 'REJECTED') { const result = object(value.result, 'strategy_native_rejection');
-    if (value.action !== 'START' || result.admission !== 'REJECTED' || result.started !== false || typeof result.reason !== 'string') throw new Problem('strategy_native_rejection_invalid');
+    if (!['START', 'RECOVER'].includes(String(value.action)) || result.admission !== 'REJECTED' || result.started !== false || typeof result.reason !== 'string') throw new Problem('strategy_native_rejection_invalid');
   }
   record.receipt = value; record.status = value.status as CommandRecord['status']; record.error = typeof value.error === 'string' ? value.error : null;
 }
@@ -89,12 +91,19 @@ export function accountStrategyWorkbench(host: ResearchHost) {
     const app = await host.harness.snapshot(Application, context); const value = app?.observations[id];
     if (!value) throw new Problem('observation_not_found', 404); return observation(value);
   }
+  async function fence(id: string) {
+    const binding = await fact(id); const result = await downstreamRequest(binding.connection, 'strategy/fence', 'GET');
+    assertEnvelope(binding.connection, result, binding.view.currency);
+    if (typeof result.accountSourceId !== 'string' || typeof result.strategyRevision !== 'string' || !/^\d+$/.test(result.strategyRevision)) throw new Problem('strategy_fence_invalid');
+    return result;
+  }
   async function status(id: string) {
     const binding = await fact(id); const result = await downstreamRequest(binding.connection, 'strategy', 'GET');
     assertEnvelope(binding.connection, result, binding.view.currency);
     if (typeof result.accountSourceId !== 'string' || typeof result.strategyRevision !== 'string' || !/^\d+$/.test(result.strategyRevision)) throw new Problem('strategy_fence_invalid');
     const native = object(result.strategy);
-    if (typeof native.strategy_id !== 'string' || typeof native.state !== 'string' || typeof native.native_version !== 'string') throw new Problem('native_strategy_status_invalid');
+    const unregistered = native.strategy_id === null && native.state === 'UNREGISTERED' && native.recovery_only === true;
+    if ((native.recovery_only === true && !unregistered) || (!unregistered && typeof native.strategy_id !== 'string') || typeof native.state !== 'string' || typeof native.native_version !== 'string') throw new Problem('native_strategy_status_invalid');
     return result;
   }
   async function command(id: string, value: unknown) {
@@ -136,5 +145,19 @@ export function accountStrategyWorkbench(host: ResearchHost) {
   }
   // Credentials and internal task metadata are not part of the public receipt.
   const view = (value: JsonObject) => { const record = commandRecord(value); return { ...record.original, status: record.status, receipt: record.receipt, error: record.error }; };
-  return { status, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
+  async function verifyConfiguration(id: string, requestId: string) {
+    const binding = await fact(id);
+    const result = await downstreamRequest(binding.connection, `strategy/config/commands/${encodeURIComponent(requestId)}/verify`, 'POST', { clientId: binding.connection.clientId, accountId: binding.connection.accountId });
+    assertEnvelope(binding.connection, result, binding.view.currency);
+    if (result.requestId !== requestId || result.action !== 'CONFIGURE') throw new Problem('account_configuration_receipt_mismatch');
+    return result;
+  }
+  async function configuration(id: string, value?: unknown) {
+    const binding = await fact(id);
+    const body = value === undefined ? undefined : object(value);
+    const result = await downstreamRequest(binding.connection, 'strategy/config', body ? 'POST' : 'GET', body ? { ...body, clientId: binding.connection.clientId, accountId: binding.connection.accountId } : undefined);
+    assertEnvelope(binding.connection, result, binding.view.currency);
+    return result;
+  }
+  return { status, fence, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
 }

@@ -262,7 +262,6 @@ struct AccountController {
     stamp: String,
     last_tick_ns: u64,
     last_slice_ns: u64,
-    submission_attempted: bool,
     cache_failed: Arc<AtomicBool>,
     spot_facts: Option<SpotFacts>,
     target_acceptances: BTreeMap<String, TargetAcceptance>,
@@ -675,16 +674,7 @@ impl AccountController {
                 Ok(json!({"updated":true}))
             }
             "CONTROL" => self.apply_control(r),
-            "SLICE" => {
-                self.submission_attempted = false;
-                match self.submit_slice(r) {
-                    Ok(v) => Ok(v),
-                    Err(e) if !self.submission_attempted => {
-                        Ok(json!({"admission":"REJECTED","submitted":false,"reason":e.to_string()}))
-                    }
-                    Err(_) => Err(anyhow!("account_native_submit_outcome_uncertain")),
-                }
-            }
+            "SLICE" => Ok(json!({"admission":"REJECTED","submitted":false,"reason":"capital_exit_planning_retired"})),
             "TARGET" => bail!("account_native_target_execution_retired"),
             "TARGET_STATUS" => self.target_status(r),
             "CANCEL_EXIT" => self.cancel_exit(r),
@@ -865,234 +855,6 @@ impl AccountController {
         });
         self.spot_facts = Some(facts);
         changed
-    }
-    fn quote_and_instrument(&self, id: InstrumentId) -> Result<(InstrumentAny, QuoteTick)> {
-        ensure!(
-            self.ids.contains(&id),
-            "account_native_instrument_out_of_scope"
-        );
-        let cache = self.cache();
-        let instrument = cache
-            .instrument(&id)
-            .ok_or_else(|| anyhow!("account_native_instrument_unavailable"))?;
-        ensure!(
-            matches!(&instrument, InstrumentAny::CurrencyPair(_))
-                && instrument.quote_currency() == Currency::USDC(),
-            "account_native_spot_usdc_required"
-        );
-        let quote = cache
-            .quote(&id)
-            .ok_or_else(|| anyhow!("account_native_quote_unavailable"))?;
-        let now = self.clock().timestamp_ns().as_u64();
-        ensure!(
-            quote.ts_init.as_u64() <= now && now - quote.ts_init.as_u64() <= 5_000_000_000,
-            "account_native_quote_stale"
-        );
-        Ok((instrument, quote))
-    }
-    fn submit_slice(&mut self, r: &Request) -> Result<Value> {
-        let epoch = r.text("epoch")?.parse()?;
-        let c = self.fence(epoch)?.clone();
-        ensure!(
-            c.mode == "BOUNDED_LIMIT"
-                && c.exits.iter().any(|e| e == r.text("exit_id").unwrap_or("")),
-            "account_native_exit_control_mismatch"
-        );
-        let now = self.clock().timestamp_ns().as_u64();
-        ensure!(
-            self.spot_cash()? < c.reserved + c.buffer,
-            "account_native_cash_goal_already_reached"
-        );
-        ensure!(
-            now < self.fee_valid_until_ns,
-            "account_native_spot_fee_evidence_expired"
-        );
-        let deadline = r
-            .value("deadline")
-            .as_str()
-            .map(deadline_ns)
-            .transpose()?
-            .into_iter()
-            .chain(c.deadline)
-            .min();
-        ensure!(
-            deadline.is_none_or(|d| now < d),
-            "account_native_exit_deadline"
-        );
-        let minimum_interval =
-            interval_ns(r.value("minimum_interval_seconds"))?.max(c.minimum_interval_ns);
-        ensure!(
-            now.saturating_sub(self.last_slice_ns) >= minimum_interval,
-            "account_native_exit_pacing"
-        );
-        let id = InstrumentId::from_str(r.text("instrument_id")?)?;
-        let client = ClientOrderId::new_checked(r.text("client_order_id")?)?;
-        if let Some(order) = self.cache().order(&client) {
-            return Ok(
-                json!({"submitted":false,"already_observed":true,"client_order_id":client.to_string(),"status":order.status().to_string()}),
-            );
-        }
-        ensure!(
-            !self
-                .cache()
-                .orders(None, None, None, Some(&self.account), None)
-                .iter()
-                .any(|o| !o.is_closed() && exit_id(o.tags()).is_some()),
-            "account_native_previous_exit_order_unsettled"
-        );
-        ensure!(
-            self.protection_orders(None).is_empty(),
-            "account_native_cancel_protection_before_exit"
-        );
-        let (instrument, quote) = self.quote_and_instrument(id)?;
-        let quantity = r.decimal("quantity")?;
-        let floor = r.decimal("minimum_price")?;
-        ensure!(
-            quantity > Decimal::ZERO
-                && floor > Decimal::ZERO
-                && quote.bid_price.as_decimal() >= floor,
-            "account_native_exit_price_or_quantity"
-        );
-        let (holding, position_id) = {
-            let cache = self.cache();
-            let positions = cache.positions(None, Some(&id), None, Some(&self.account), None);
-            let open = positions.iter().filter(|p| p.is_open()).collect::<Vec<_>>();
-            ensure!(
-                open.len() == 1 && open[0].is_long(),
-                "account_native_exit_position_selection_required"
-            );
-            (open[0].quantity.as_decimal(), open[0].id)
-        };
-        let sold_reserved = self
-            .cache()
-            .orders(
-                None,
-                Some(&id),
-                None,
-                Some(&self.account),
-                Some(OrderSide::Sell),
-            )
-            .iter()
-            .filter(|o| !o.is_closed())
-            .map(|o| o.leaves_qty().as_decimal())
-            .sum::<Decimal>();
-        ensure!(
-            quantity <= holding - sold_reserved,
-            "account_native_protective_or_inventory_overlap"
-        );
-        let qty = instrument.try_make_qty_from_decimal(quantity, Some(true))?;
-        ensure!(
-            qty.as_decimal() == quantity,
-            "account_native_quantity_precision"
-        );
-        let limit = valid_sell_floor(
-            floor,
-            instrument.price_precision(),
-            instrument.size_precision(),
-        )?;
-        let price = instrument.try_make_price_from_decimal(limit)?;
-        ensure!(
-            price.as_decimal() >= floor,
-            "account_native_price_precision"
-        );
-        ensure!(
-            quote.bid_price.as_decimal() >= price.as_decimal(),
-            "account_native_price_floor_unavailable"
-        );
-        let reference = r.decimal("reference_bid")?;
-        let remaining_cost = r.decimal("remaining_cost_budget")?;
-        let fee_bound = r.decimal("fee_rate_bound")?;
-        let slice_notional = r.decimal("maximum_slice_notional")?;
-        ensure!(
-            reference > Decimal::ZERO
-                && remaining_cost >= Decimal::ZERO
-                && fee_bound >= self.fee_rate
-                && fee_bound < Decimal::ONE
-                && slice_notional > Decimal::ZERO,
-            "account_native_cost_authorization_invalid_or_fee_changed"
-        );
-        let notional = quantity
-            .checked_mul(quote.bid_price.as_decimal())
-            .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-        ensure!(
-            notional <= slice_notional,
-            "account_native_slice_notional_limit"
-        );
-        let loss = maximum_slice_loss(
-            quantity,
-            reference,
-            price.as_decimal(),
-            fee_bound,
-            instrument.size_increment().as_decimal(),
-        )?;
-        ensure!(
-            loss.max(Decimal::ZERO) <= remaining_cost,
-            "account_native_remaining_cost_exceeded"
-        );
-        ensure!(
-            instrument.min_quantity().is_none_or(|min| qty >= min)
-                && instrument
-                    .min_notional()
-                    .is_none_or(|min| qty.as_decimal() * price.as_decimal() >= min.as_decimal()),
-            "account_native_minimum_trade_size"
-        );
-        let participation = r
-            .value("maximum_participation")
-            .as_str()
-            .map(Decimal::from_str)
-            .transpose()?
-            .unwrap_or(Decimal::new(1, 1));
-        ensure!(
-            participation > Decimal::ZERO && participation <= Decimal::ONE,
-            "account_native_participation"
-        );
-        let depth = {
-            let cache = self.cache();
-            let book = cache
-                .order_book(&id)
-                .ok_or_else(|| anyhow!("account_native_book_required"))?;
-            ensure!(
-                book.ts_last.as_u64() <= now && now - book.ts_last.as_u64() <= 5_000_000_000,
-                "account_native_book_stale"
-            );
-            book.bids(Some(20))
-                .filter(|l| l.price.value.as_decimal() >= price.as_decimal())
-                .map(|l| l.size_decimal())
-                .sum::<Decimal>()
-        };
-        ensure!(
-            quantity <= depth * participation,
-            "account_native_depth_participation"
-        );
-        self.fence(epoch)?;
-        let order = self.order_factory().limit(
-            id,
-            OrderSide::Sell,
-            qty,
-            price,
-            Some(TimeInForce::Ioc),
-            None,
-            Some(false),
-            Some(true),
-            Some(false),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(vec![Ustr::from(&format!(
-                "QZ-CAPITAL-EXIT:{}",
-                r.text("exit_id")?
-            ))]),
-            Some(client),
-        );
-        self.submission_attempted = true;
-        self.last_slice_ns = now;
-        self.submit_order(order, Some(position_id), Some(self.client), None)?;
-        self.stamp.clear();
-        Ok(
-            json!({"submitted":true,"client_order_id":client.to_string(),"epoch":epoch.to_string(),"acknowledgement":"NATIVE_SUBMIT_ONLY"}),
-        )
     }
     fn cancel_exit(&mut self, r: &Request) -> Result<Value> {
         let epoch = r.text("epoch")?.parse::<u64>()?;
@@ -1290,60 +1052,6 @@ fn interval_ns(value: &Value) -> Result<u64> {
     seconds
         .checked_mul(1_000_000_000)
         .ok_or_else(|| anyhow!("account_native_interval_range"))
-}
-fn valid_sell_floor(floor: Decimal, price_precision: u8, size_precision: u8) -> Result<Decimal> {
-    ensure!(floor > Decimal::ZERO, "account_native_price_positive");
-    if floor.fract().is_zero() {
-        return Ok(floor);
-    }
-    let magnitude = floor.mantissa().unsigned_abs().ilog10() as i32 - floor.scale() as i32;
-    let decimals = (4 - magnitude)
-        .min(i32::from(8_u8.saturating_sub(size_precision)))
-        .min(i32::from(price_precision));
-    let step = if decimals >= 0 {
-        Decimal::ONE / Decimal::from(10_u64.pow(decimals as u32))
-    } else {
-        Decimal::from(10_u64.pow((-decimals) as u32))
-    };
-    // The venue permits arbitrary significant digits for integer prices.
-    Ok(((floor / step).ceil() * step).min(floor.ceil()))
-}
-fn maximum_slice_loss(
-    quantity: Decimal,
-    reference: Decimal,
-    floor: Decimal,
-    fee_bound: Decimal,
-    size_increment: Decimal,
-) -> Result<Decimal> {
-    let net_floor = floor
-        .checked_mul(Decimal::ONE - fee_bound)
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-    let rounding = fee_rounding_reserve(quantity, fee_bound, size_increment)?;
-    quantity
-        .checked_mul(reference - net_floor)
-        .and_then(|v| v.checked_add(rounding))
-        .map(|v| v.max(Decimal::ZERO))
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))
-}
-fn half_fee_quantum(fee_bound: Decimal) -> Decimal {
-    if fee_bound.is_zero() {
-        Decimal::ZERO
-    } else {
-        Decimal::new(1, u32::from(Currency::USDC().precision)) / Decimal::from(2)
-    }
-}
-fn fee_rounding_reserve(
-    quantity: Decimal,
-    fee_bound: Decimal,
-    size_increment: Decimal,
-) -> Result<Decimal> {
-    let maximum_fills = quantity
-        .checked_div(size_increment)
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))?
-        .ceil();
-    half_fee_quantum(fee_bound)
-        .checked_mul(maximum_fills)
-        .ok_or_else(|| anyhow!("account_native_decimal_range"))
 }
 // Keep the official risk engine and queued dispatch. Cache persistence failures
 // are otherwise log-only upstream; halt at the execution boundary, not a timer.
@@ -1757,7 +1465,6 @@ async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()>
         stamp: String::new(),
         last_tick_ns: 0,
         last_slice_ns: 0,
-        submission_attempted: false,
         cache_failed,
         spot_facts: None,
         target_acceptances: BTreeMap::new(),
@@ -2105,7 +1812,6 @@ mod tests {
             stamp: String::new(),
             last_tick_ns: 0,
             last_slice_ns: 0,
-            submission_attempted: false,
             cache_failed: factory.failed.clone(),
             spot_facts: None,
             target_acceptances: BTreeMap::new(),
@@ -2429,8 +2135,8 @@ mod tests {
                         "remaining_cost_budget":"10","fee_rate_bound":"0.001","maximum_slice_notional":"25",
                         "maximum_participation":"0.1"})).await?;
                     ensure!(
-                        slice["submitted"] == true,
-                        "capital_slice_not_submitted: {slice}"
+                        slice["submitted"] == false && slice["admission"] == "REJECTED" && slice["reason"] == "capital_exit_planning_retired",
+                        "retired_capital_slice_was_admitted: {slice}"
                     );
                     tokio::time::sleep(Duration::from_millis(80)).await;
                     let positions = cache
@@ -2449,8 +2155,8 @@ mod tests {
                         .map(|p| p.2)
                         .sum::<Decimal>();
                     ensure!(
-                        after == before - Decimal::new(25, 2),
-                        "capital_slice_did_not_reduce_original_position: before={before} after={after} orders={:?}",
+                        after == before,
+                        "retired_capital_slice_changed_original_position: before={before} after={after} orders={:?}",
                         cache.borrow().orders(None, None, None, None, None)
                     );
                     prior_orders = cache.borrow().orders(None, None, None, None, None).len();
@@ -2473,53 +2179,4 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hyperliquid_floor_never_rounds_below_authorization() -> Result<()> {
-        for raw in ["0.0000123456", "1.2345678", "123.45678", "99999.9999"] {
-            let floor = Decimal::from_str(raw)?;
-            let price = valid_sell_floor(floor, 8, 2)?;
-            ensure!(price >= floor, "sell_floor_rounded_down");
-        }
-        ensure!(
-            valid_sell_floor(Decimal::from(100001), 8, 2)? == Decimal::from(100001),
-            "integer_price_exception_lost"
-        );
-        ensure!(
-            valid_sell_floor(Decimal::from_str("100000.1")?, 8, 2)? == Decimal::from(100001),
-            "integer_price_exception_not_nearest_floor"
-        );
-        ensure!(
-            maximum_slice_loss(
-                Decimal::ONE,
-                Decimal::from(100),
-                Decimal::from(100),
-                Decimal::ZERO,
-                Decimal::ONE
-            )?
-            .is_zero(),
-            "zero_fee_invented_rounding_cost"
-        );
-        ensure!(
-            maximum_slice_loss(
-                Decimal::ONE,
-                Decimal::from(100),
-                Decimal::from(101),
-                Decimal::new(1, 3),
-                Decimal::ONE
-            )?
-            .is_zero(),
-            "favorable_price_failed_to_cover_fee_rounding"
-        );
-        ensure!(
-            maximum_slice_loss(
-                Decimal::new(1, 1),
-                Decimal::from(100),
-                Decimal::from(100),
-                Decimal::new(1, 3),
-                Decimal::new(1, 2)
-            )? == Decimal::from_str("0.01000005")?,
-            "per_fill_rounding_cost_bound_incorrect"
-        );
-        Ok(())
-    }
 }

@@ -35,21 +35,23 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   account-strategy status OBSERVATION_ID | receipt OBSERVATION_ID ORIGINAL_REQUEST_ID
+  account-strategy fence OBSERVATION_ID
+  account-strategy recover OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
   account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
   account-strategy stop OBSERVATION_ID --request-id ORIGINAL_ID
     Read status first; copy its accountSourceId/strategyRevision unchanged. Stale START is rejected, never auto-refreshed.
     Explicit commands operate the configured native strategy (EMA_CROSS account wiring only); live START can place real orders.
   observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
-  capital status OBSERVATION_ID | context OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
+  capital status OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
   observation cancel-protection OBSERVATION_ID
-  capital preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
+  capital command OBSERVATION_ID --file STOP_REQUEST.json (PAUSE/CANCEL only)
   settings get | set --file SETTINGS.json | set --tick-book-cores COUNT
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
 Delete hides an inactive object; original evidence and receipts remain. It never cancels remote work or liquidates positions.
 For a user-compiled Rust backtest factory, research start may request the native_configured_backtest tool with its installed name and unchanged config. The factory owns official Nautilus run/node configuration, without a single-instrument template restriction. This runs historical research only, not account trading.
-Observation start only binds an account. Account-strategy start explicitly starts trading under the configured native strategy. 'client' is a thin alias.
+Observation start only binds an account. Account-strategy recover explicitly connects without loading a trading strategy; it does not cancel orders or certify reconciliation. Account-strategy start explicitly starts trading under the configured native strategy. 'client' is a thin alias.
 `;
 const options = {
   help: { type: 'boolean' as const, short: 'h' }, version: { type: 'boolean' as const },
@@ -219,18 +221,18 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else throw new CliError('unknown_observation_command');
   } else if (group === 'account-strategy') {
     path = `/observations/${resourceId(id)}/strategy`;
-    if (action === 'receipt') path += `/commands/${resourceId(exitId)}`;
-    else if (action === 'start' || action === 'stop') {
+    if (action === 'fence') path += '/fence';
+    else if (action === 'receipt') path += `/commands/${resourceId(exitId)}`;
+    else if (action === 'start' || action === 'stop' || action === 'recover') {
       if (!values['request-id']?.trim()) throw new CliError('original_request_id_required');
       method = 'POST'; path += '/commands';
-      body = JSON.stringify(accountStrategyCommand({ requestId: values['request-id'], action: action.toUpperCase(), ...(action === 'start' ? { expectedAccountSourceId: values['account-source-id'], expectedStrategyRevision: values['expected-revision'] } : {}) }));
+      body = JSON.stringify(accountStrategyCommand({ requestId: values['request-id'], action: action.toUpperCase(), ...(action === 'start' || action === 'recover' ? { expectedAccountSourceId: values['account-source-id'], expectedStrategyRevision: values['expected-revision'] } : {}) }));
     } else if (action !== 'status') throw new CliError('unknown_account_strategy_command');
   } else if (group === 'capital') {
     path = `/observations/${resourceId(id)}/capital-exits`;
-    if (action === 'context') path += '/planning-context';
-    else if (action === 'get') path += `/${resourceId(exitId)}`;
-    else if (action === 'preview' || action === 'command') {
-      const file = await fileBody(values.file); requestId(file.body, values['request-id']); body = file.bytes; method = 'POST'; path += action === 'preview' ? '/preview' : '/commands';
+    if (action === 'get') path += `/${resourceId(exitId)}`;
+    else if (action === 'command') {
+      const file = await fileBody(values.file); if(!['PAUSE','CANCEL'].includes(String(file.body.action)))throw new CliError('capital_exit_planning_retired'); requestId(file.body, values['request-id']); body = file.bytes; method = 'POST'; path += '/commands';
     } else if (action !== 'status') throw new CliError('unknown_capital_command');
   } else if (group === 'settings') {
     path = '/settings';

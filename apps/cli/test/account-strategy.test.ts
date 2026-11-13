@@ -39,5 +39,12 @@ test('native strategy CLI uses explicit command identity and read-only receipt r
     const file=join(directory,'old.json');await writeFile(file,JSON.stringify({requestId:'old',portfolioId:'p',mode:'paper'}));
     await assert.rejects(run(['observation','start','--file',file],()=>{}),/native_strategy_only_account_binding_required/);
     assert.equal(requests.length,4);
+    await run(['account-strategy','fence','account/a'],()=>{});
+    assert.equal(requests[4]!.method,'GET'); assert.equal(requests[4]!.path,'/api/v3/observations/account%2Fa/strategy/fence');
+    await run(['account-strategy','recover','account/a','--request-id','recover-original','--account-source-id','source-original','--expected-revision','7'],()=>{});
+    assert.equal(requests[5]!.method,'POST');
+    assert.deepEqual(JSON.parse(requests[5]!.body),{requestId:'recover-original',action:'RECOVER',expectedAccountSourceId:'source-original',expectedStrategyRevision:'7'});
+    await assert.rejects(run(['account-strategy','recover','account/a','--request-id','missing-fence'],()=>{}),/strategy_start_fence_required/);
+    assert.equal(requests.length,6,'Recovery requires an explicit command; validation never connects.');
   } finally {if(previous===undefined)delete process.env.XDG_CONFIG_HOME;else process.env.XDG_CONFIG_HOME=previous;server.close();await once(server,'close');await rm(directory,{recursive:true,force:true});}
 });
