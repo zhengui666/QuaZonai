@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AccountRuntime } from './account-runtime.ts';
 import type { AccountOptions, NativeAccountRuntime, NativeAccountSnapshot } from './account-runtime.ts';
-import { HyperliquidAccountReader, units, decimal } from './hyperliquid-account.ts';
+import { HyperliquidAccountReader, units } from './hyperliquid-account.ts';
 import type { HyperliquidAccountProof } from './hyperliquid-account.ts';
 import { validateCapitalDocument } from '../../../packages/contracts/src/capital-exit.ts';
 import type { CapitalExitView, CapitalExitPreview, CapitalExitPlanningContext } from '../../../packages/contracts/src/capital-exit.ts';
@@ -48,8 +48,12 @@ function id(): string {
   return `${time.slice(0, 8)}-${time.slice(8)}-7${random.slice(0, 3)}-${((parseInt(random[3]!, 16) & 3) | 8).toString(16)}${random.slice(4, 7)}-${random.slice(7, 19)}`;
 }
 const terminal = (status: string) => ['FILLED', 'CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED', 'DENIED'].includes(status.toUpperCase());
-const money = (amount: string) => ({ amount, currency: 'USDC' });
-const obligation = (exit: Exit) => units(exit.view.funds.reserved_amount.amount) + units(exit.view.funds.staged_for_withdrawal_amount.amount);
+// This is a per-field safety predicate, not a calculated account balance.
+const hasObligation = (exit: Exit) => ['reserved_amount', 'staged_for_withdrawal_amount'].some(key => {
+  const value = (exit.view.funds as unknown as Json)?.[key] as {amount?: unknown;currency?:unknown}|undefined;
+  if (value?.currency !== 'USDC' || typeof value.amount !== 'string') return true;
+  try { return units(value.amount) !== 0n; } catch { return true; }
+});
 
 /** Capital metadata stays beside existing worker receipts, never a second OMS. */
 export async function createCapitalAccount(options: AccountOptions, directory: string, binary: string,
@@ -81,7 +85,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       await rename(statePath + '.next', statePath); renamed = true; await syncDirectory(directory);
     } catch (error) { writeFailed = true; throw Object.assign(error instanceof Error ? error : new Error('account_receipts_write_failed'), { accountWriteRenamed: renamed }); }
   }
-  if(Object.values(state.exits).some(exit=>!['COMPLETED','CLOSED'].includes(exit.view.state)||obligation(exit)>0n)||Object.values(state.commands).some(command=>['PENDING','UNCERTAIN'].includes(command.state))){state.epoch=String(BigInt(state.epoch)+1n);state.revision=String(BigInt(state.revision)+1n);}
+  // Opening retained records never reinterprets their original control epoch.
   await save();
   if (state.strategyConfiguration) options.nativeStrategy = nativeAccountStrategyConfiguration(state.strategyConfiguration);
   const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory);
@@ -93,9 +97,6 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   let queue: Promise<unknown> = Promise.resolve();
   function serial<T>(operation: () => Promise<T>): Promise<T> { const result = queue.then(operation); queue = result.catch(() => {}); return result; }
   const envelope = () => ({ clientId: options.clientId, accountId: options.accountId, mode: options.mode, currency: 'USDC' });
-  // Retained safety accounting only: never recompute a slice, release funds, or infer tradable cash.
-  const reserved = () => Object.values(state.exits).reduce((sum, exit) => sum + units(exit.view.funds.reserved_amount.amount), 0n);
-  const cashBuffer = () => units(options.cashBuffer ?? '0');
   function reason(): string | null {
     if (writeFailed) return 'account_receipts_write_failed';
     if (pendingReverse || state.reverseTransferPending) return 'capital_external_reverse_transfer_requires_reconciliation';
@@ -104,7 +105,6 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     if (reader && (!proof || Date.parse(proof.valid_until) <= Date.now())) return 'hyperliquid_spot_evidence_unavailable';
     return proof?.reason_codes[0] ?? null;
   }
-  function spotCash() { return reader ? proof?.spot_free ?? null : latest?.cash ?? null; }
   function equity(): string | null { return latest?.equity ?? null; }
   function event(exit: Exit, kind: string, message: string, reference: string | null = null) {
     exit.view.revision = String(BigInt(exit.view.revision) + 1n); exit.view.updated_at = now();
@@ -114,8 +114,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
 
 
   function actions(exit: Exit) {
-    const stop=!['COMPLETED','CLOSED'].includes(exit.view.state);
-    exit.view.action_availability = Object.fromEntries(['PAUSE','CANCEL','RESUME','RELEASE_RESERVATION','RECONCILE_EXTERNAL_TRANSFER','RECONCILE_WITHDRAWAL'].map(action=>[action,{allowed:stop&&['PAUSE','CANCEL'].includes(action),reason:['PAUSE','CANCEL'].includes(action)?(stop?null:'capital_plan_closed'):'capital_exit_planning_retired'}])) as CapitalExitView['action_availability'];
+    exit.view.action_availability = Object.fromEntries(['PAUSE','CANCEL','RESUME','RELEASE_RESERVATION','RECONCILE_EXTERNAL_TRANSFER','RECONCILE_WITHDRAWAL'].map(action=>[action,{allowed:false,reason:['PAUSE','CANCEL'].includes(action)?'capital_original_control_evidence_unavailable':'capital_exit_planning_retired'}])) as CapitalExitView['action_availability'];
   }
   async function readNativeSnapshot(): Promise<NativeAccountSnapshot> {
     const value = await runtime.request('SNAPSHOT');
@@ -124,13 +123,12 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     return value as unknown as NativeAccountSnapshot;
   }
   async function applyControl() {
-    const candidates = Object.values(state.exits).filter(exit=>!['COMPLETED','CLOSED'].includes(exit.view.state)||obligation(exit)>0n);
-    const selected = candidates.find(exit => exit.view.policy.kind === 'NATURAL_RELEASE') ?? candidates.find(exit => exit.view.policy.kind === 'BOUNDED_LIMIT') ?? candidates[0];
-    const bounded = selected?.view.policy.kind === 'BOUNDED_LIMIT' ? selected.view.policy : null;
-    const result = await runtime.request('CONTROL', { epoch: state.epoch, revision: state.revision, reserved_amount: decimal(reserved()), cash_buffer: decimal(cashBuffer()),
-      mode: state.reverseTransferPending || candidates.length || Object.values(state.commands).some(command=>['PENDING','UNCERTAIN'].includes(command.state)) ? 'PAUSED' : 'NORMAL', exit_id: selected?.view.id ?? null,
-      exit_ids: candidates.map(exit => exit.view.id),
-      minimum_interval_seconds: bounded?.pacing.minimum_interval_seconds ?? null, deadline: selected?.view.policy.kind !== 'CASH_ONLY' ? selected?.view.policy.deadline ?? null : null,
+    // Only a fresh, explicitly requested START with individually proven zero
+    // obligations may establish this new epoch. This is not old CONTROL replay.
+    if (Object.values(state.exits).some(exit => !['COMPLETED','CLOSED'].includes(exit.view.state) || hasObligation(exit))
+      || state.reverseTransferPending || Object.values(state.commands).some(command => ['PENDING','UNCERTAIN'].includes(command.state))) fail('capital_original_control_evidence_unavailable');
+    const result = await runtime.request('CONTROL', { epoch: state.epoch, revision: state.revision, reserved_amount: '0', cash_buffer: options.cashBuffer ?? '0',
+      mode: 'NORMAL', exit_id: null, exit_ids: [], minimum_interval_seconds: null, deadline: null,
       taker_fee_rate: reader ? proof?.spot_taker_fee_rate ?? null : options.paperFeeRate ?? null,
       spot_free_cash: reader ? proof?.spot_free ?? null : latest?.cash ?? null, spot_total_cash: reader ? proof?.spot_total ?? null : latest?.cash ?? null,
       spot_balances: reader ? proof?.balances ?? null : null,
@@ -156,8 +154,6 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     })().finally(()=>{refreshInFlight=null;});
     return refreshInFlight;
   }
-  function bumpControl() { state.revision = String(BigInt(state.revision) + 1n); state.epoch = String(BigInt(state.epoch) + 1n);
-    for (const exit of Object.values(state.exits)) if (obligation(exit) > 0n) { exit.view.account_control_revision = state.revision; exit.view.remaining_trading = 'FENCED_PENDING_TARGET'; } }
   async function command(body: Json, exitId?: string) {
     const requestId=text(body.requestId,'request_id'),original={...body,...(exitId?{exitId}:{})};
     const previous=state.commands[requestId];
@@ -167,11 +163,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     validateCapitalDocument('ACTION',native);
     const exit=state.exits[exitId];if(!exit)fail('capital_exit_not_found',404);
     if(native.expected_revision!==exit.view.revision)fail('capital_exit_revision_conflict');
-    exit.view.state='CANCELLING_EXIT';exit.view.stop_action=native.action as 'PAUSE'|'CANCEL';
-    bumpControl();event(exit,String(native.action),'停止原计划；保留预留与历史金额，仅核对原订单。',requestId);
-    exit.view.command_id=requestId;
-    state.commands[requestId]={original,state:'PENDING',error:null,exitId};await save();
-    await settleControl(requestId);actions(exit);return commandReceipt(requestId);
+    fail('capital_original_control_evidence_unavailable', 409);
   }
   function commandReceipt(requestId: string) {
     const value = state.commands[requestId]; if (!value) fail('capital_command_not_found', 404);
@@ -184,23 +176,12 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       const requestId = text(body.requestId, 'request_id');
       if (!state.commands[requestId] && !writeFailed) {
         state.commands[requestId] = { original: { ...body, ...(exitId ? { exitId } : {}) }, state: 'REJECTED', error: error instanceof Error ? error.message : 'capital_native_admission_rejected', exitId: exitId ?? '' };
-        await save(); return commandReceipt(requestId);
+        try { await save(); }
+        catch { state.commands[requestId]!.state = 'UNCERTAIN'; state.commands[requestId]!.error = 'account_receipts_write_failed'; }
+        return commandReceipt(requestId);
       }
       throw error;
     }
-  }
-  async function settleControl(requestId: string) {
-    const command=state.commands[requestId]!;
-    // Never replay a retired START/RESUME or reinterpret its uncertain receipt as cancelled.
-    const action=record(record(command.original).command).action;
-    if(!['PAUSE','CANCEL'].includes(String(action)))return;
-    try{
-      await applyControl();
-      const result=await runtime.request('CANCEL_EXIT',{epoch:state.epoch,exit_id:command.exitId});
-      if(!Number.isSafeInteger(result.cancellation_requested)||Number(result.cancellation_requested)<0||typeof result.settled!=='boolean')fail('capital_native_cancel_unconfirmed');
-      command.state='ACCEPTED';command.error=null;
-    }catch(error){command.state='UNCERTAIN';command.error=error instanceof Error?error.message:'capital_native_control_uncertain';}
-    await save();
   }
   async function advance() {
     if(!latest?.ready||latest.recovery_required)return;
@@ -227,7 +208,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       if (result.acknowledged === true && result.target_id === targetId && result.epoch === target.epoch) {
         target.receipt.status = result.revoked === true ? 'REVOKED' : 'ACKNOWLEDGED'; target.receipt.acknowledgedAt ??= now(); delete target.receipt.error;
         if (result.native_protection != null) target.receipt.nativeProtection = result.native_protection;
-        if (state.epoch === target.epoch && result.revoked !== true) for (const exit of Object.values(state.exits)) if (obligation(exit) > 0n) exit.view.remaining_trading = 'BUDGET_AWARE';
+        if (state.epoch === target.epoch && result.revoked !== true) for (const exit of Object.values(state.exits)) if (hasObligation(exit)) exit.view.remaining_trading = 'BUDGET_AWARE';
         await save();
       } else if (result.acknowledged === false && result.target_id === targetId && result.admission === 'NOT_SUBMITTED'
         && (result.epoch === target.epoch || result.epoch === null && result.recovery === 'OFFICIAL_CACHE_AND_RECONCILIATION')) {
@@ -323,7 +304,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       if(Object.values(state.commands).some(command=>['PENDING','UNCERTAIN'].includes(command.state)))fail('capital_original_command_unsettled');
       if (writeFailed) fail('account_receipts_write_failed');
       if (pendingReverse || state.reverseTransferPending) fail('capital_external_reverse_transfer_requires_reconciliation');
-      if (reserved() !== 0n || Object.values(state.exits).some(exit => !['COMPLETED', 'CLOSED'].includes(exit.view.state))) fail('strategy_account_exit_unsettled');
+      if (Object.values(state.exits).some(exit => hasObligation(exit) || !['COMPLETED', 'CLOSED'].includes(exit.view.state))) fail('strategy_account_exit_unsettled');
       if (Object.values(state.targets).some(target => target.receipt.status === 'PENDING')) fail('strategy_original_target_unsettled');
     }
     if (command.action === 'START' || command.action === 'RECOVER') {
@@ -333,8 +314,22 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
       }
     }
+    // The Info payload only provides total/hold, not an authoritative native
+    // spot-free value. Never synthesize it or substitute merged account cash.
+    // This known unsupported capability is rejected before any BOOT or trading.
+    if (command.action === 'START' && options.mode === 'live') {
+      const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
+        result: { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' }, error: 'hyperliquid_native_spot_free_required' };
+      commands[command.requestId] = { original: structuredClone(body), receipt };
+      try { await save(); } catch {
+        receipt.status = 'UNCERTAIN'; receipt.result = null; receipt.persisted = false;
+        receipt.error = 'account_receipts_write_failed';
+      }
+      return structuredClone(receipt);
+    }
     // Worker-owned, persisted CAS fence; never infer order from Pi Task IDs.
     state.strategyRevision = String(BigInt(state.strategyRevision!) + 1n);
+    if (command.action === 'START') { state.epoch = String(BigInt(state.epoch) + 1n); state.revision = String(BigInt(state.revision) + 1n); }
     const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'UNCERTAIN', result: null, error: null };
     commands[command.requestId] = { original: structuredClone(body), receipt };
     // START must have a durable intent. An explicitly requested STOP must remain
@@ -391,7 +386,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   function status() {
     const blocked = reason(); for (const exit of Object.values(state.exits)) actions(exit);
     return { ...envelope(), accountSourceId: state.sourceId, observationId: latest?.observation_id ?? null, controlRevision: state.revision,
-      reserved: decimal(reserved()), blocked: !!blocked, reason: blocked, exits: Object.values(state.exits).map(exit => structuredClone(exit.view)),
+      reserved: null, blocked: !!blocked, reason: blocked, exits: Object.values(state.exits).map(exit => structuredClone(exit.view)),
       commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error })) };
   }
   function account() {
@@ -425,7 +420,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       return serial(async () => {
         if (method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
           recovery: { supported: true, action: 'RECOVER', automaticConnection: false, automaticStrategyStart: false },
-          capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_exit_planning_retired', policies: [], actions: ['PAUSE', 'CANCEL'] },
+          capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_original_control_evidence_unavailable', policies: [], actions: [] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
           nativeBrackets: { supported: false, reason: options.mode === 'paper' ? 'account_native_paper_bracket_recovery_unverified' : 'account_native_live_brackets_not_supported', defaultEnabled: false, scope: 'NEW_LONG_POSITION', cancellationPath: '/targets/<id>/cancel-protection', atomicOco: false },
           nativeStrategy: { version: 1, supported: options.nativeStrategy.strategy.kind === 'EMA_CROSS' && (!failure || failure === 'account_runtime_not_started'),

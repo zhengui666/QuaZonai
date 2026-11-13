@@ -2,7 +2,7 @@ import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import type { NativeOrderPreview } from '../../../packages/contracts/src/native-order-preview.ts';
 import { test } from 'node:test';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage } from 'node:http';
@@ -48,9 +48,11 @@ function accountProof(total = '1000', withdrawable = '0', abstraction = 'default
   return parseHyperliquidAccount(options.accountAddress!, { balances: [{ coin: 'USDC', total, hold: '0' }] },
     { assetPositions: [], crossMarginSummary: { totalMarginUsed: '0' }, withdrawable }, abstraction, { userSpotCrossRate: fee });
 }
-test('ordinary spot free cash and the current withdrawal path remain distinct', () => {
+test('raw spot totals and withdrawal stay distinct without deriving free cash', () => {
   const proof = accountProof('1000', '0');
-  assert.equal(proof.spot_free, '1000'); assert.equal(proof.withdrawable, '0');
+  assert.equal(proof.spot_free, null); assert.equal(proof.withdrawable, '0');
+  assert.equal(proof.spot_total, '1000'); assert.equal(proof.spot_hold, '0');
+  assert.deepEqual(proof.original.spot, { balances: [{ coin: 'USDC', total: '1000', hold: '0' }] });
   assert.equal(accountProof('1000', '0', 'unifiedAccount').reason_codes[0], 'hyperliquid_account_abstraction_unsupported');
   assert.equal(accountProof('1000', '0', 'default', null).spot_taker_fee_rate, null);
 });
@@ -221,13 +223,13 @@ test('native strategy control persists uncertain original commands without repla
     }
   }
   const native = new StrategyProtocol();
-  const reader = { account: async () => accountProof(), ledger: async () => [] };
-  let account = await createCapitalAccount(options, directory, '/unused', native, reader);
+  const paper = { ...options, mode: 'paper' as const, startingBalance: '1000', paperFeeRate: '0.001' };
+  let account = await createCapitalAccount(paper, directory, '/unused', native);
   const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   const body = { requestId: 'start-once', action: 'START', clientId: options.clientId, accountId: options.accountId };
   try {
     assert.equal((await call('POST', '/strategy/commands', body)).status, 'UNCERTAIN'); assert.equal(native.starts, 1);
-    await account.close(); account = await createCapitalAccount(options, directory, '/unused', native, reader);
+    await account.close(); account = await createCapitalAccount(paper, directory, '/unused', native);
     assert.equal((await call('POST', '/strategy/commands', body)).status, 'UNCERTAIN'); assert.equal(native.starts, 1);
     assert.equal((await call('GET', '/strategy/commands/start-once')).status, 'UNCERTAIN');
     await assert.rejects(call('POST', '/strategy/commands', { ...body, action: 'STOP' }), /strategy_request_id_conflict/);
@@ -237,4 +239,58 @@ test('native strategy control persists uncertain original commands without repla
     assert.equal(native.requests.some(row => row.operation === 'TARGET'), false);
     assert.deepEqual(native.snapshot.positions, []); assert.deepEqual(native.snapshot.orders, []);
   } finally { await account.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('live START without native spot-free capability is durably rejected before BOOT and replay never trades', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-live-unsupported-'));
+  const native = Object.assign(new NativeProtocol(), { async start() { throw new Error('BOOT_MUST_NOT_RUN'); } });
+  const reader = { async account() { return accountProof('1000'); }, async ledger() { return []; } };
+  let account = await createCapitalAccount(options, directory, '/unused', native, reader);
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  try {
+    const fence = await call('GET', '/strategy/fence');
+    const body = { requestId: 'live-start-original', action: 'START', clientId: options.clientId, accountId: options.accountId,
+      expectedAccountSourceId: fence.accountSourceId, expectedStrategyRevision: fence.strategyRevision };
+    const receipt = await call('POST', '/strategy/commands', body);
+    assert.equal(receipt.status, 'REJECTED');
+    assert.deepEqual(receipt.result, { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' });
+    assert.equal(native.requests.some(row => ['CONTROL', 'STRATEGY_START'].includes(row.operation)), false);
+    await account.close();account = await createCapitalAccount(options, directory, '/unused', native, reader);
+    assert.deepEqual(await call('POST', '/strategy/commands', body), receipt);
+    assert.deepEqual(await call('GET', '/strategy/commands/live-start-original'), receipt);
+    assert.equal(native.requests.some(row => ['CONTROL', 'STRATEGY_START'].includes(row.operation)), false);
+    const saved = JSON.parse(await readFile(join(directory, 'capital-receipts.json'), 'utf8'));
+    assert.deepEqual(saved.strategyCommands[body.requestId].original, body);
+    assert.equal(saved.strategyCommands[body.requestId].receipt.status, 'REJECTED');
+    // Retained unresolved live intent is not converted to a new rejection.
+    await account.close();
+    const old = { ...body, requestId: 'historical-live-unknown' };
+    saved.strategyCommands[old.requestId] = { original: old, receipt: { ...receipt, requestId: old.requestId, status: 'UNCERTAIN', result: null, error: 'original_response_lost' } };
+    await writeFile(join(directory, 'capital-receipts.json'), JSON.stringify(saved));
+    account = await createCapitalAccount(options, directory, '/unused', native, reader);
+    assert.deepEqual(await call('POST', '/strategy/commands', old), saved.strategyCommands[old.requestId].receipt);
+    assert.equal(native.requests.some(row => ['CONTROL', 'STRATEGY_START'].includes(row.operation)), false);
+  } finally { await account.close();await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('unrecorded live rejection remains uncertain and never launches a node', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-live-rejection-write-failed-'));
+  let starts = 0;
+  const native = Object.assign(new NativeProtocol(), { async start() { starts++; } });
+  const account = await createCapitalAccount(options, directory, '/unused', native,
+    { async account() { return accountProof(); }, async ledger() { return []; } });
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  try {
+    const fence = await call('GET', '/strategy/fence');
+    const body = { requestId: 'unrecorded-original', action: 'START', clientId: options.clientId, accountId: options.accountId,
+      expectedAccountSourceId: fence.accountSourceId, expectedStrategyRevision: fence.strategyRevision };
+    await mkdir(join(directory, 'capital-receipts.json.next'));
+    const first = await call('POST', '/strategy/commands', body);
+    assert.equal(first.status, 'UNCERTAIN'); assert.equal(first.persisted, false);
+    assert.deepEqual(await call('POST', '/strategy/commands', body), first);
+    assert.deepEqual(await call('GET', '/strategy/commands/unrecorded-original'), first);
+    assert.equal(starts, 0); assert.equal(native.requests.some(row => ['CONTROL', 'STRATEGY_START'].includes(row.operation)), false);
+  } finally { await account.close().catch(()=>{}); await rm(directory, { recursive: true, force: true }); }
 });

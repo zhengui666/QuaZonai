@@ -2,6 +2,8 @@ import type { NativeAccountStrategyConfig } from '../../../packages/contracts/sr
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, openSync, writeSync, ftruncateSync, closeSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../../packages/contracts/src/nautilus.ts';
 
 /** One configured physical account in the existing remote native worker. */
@@ -74,7 +76,14 @@ export class AccountRuntime implements NativeAccountRuntime {
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS']) if (process.env[key]) env[key] = process.env[key];
       // The scientific child environment remains isolated. Only this explicitly
       // configured account process receives its native venue credential names.
-      for (const key of ['HYPERLIQUID_PK', 'HYPERLIQUID_TESTNET_PK']) if (process.env[key]) env[key] = process.env[key];
+      if (this.options.mode === 'live') for (const key of ['HYPERLIQUID_PK', 'HYPERLIQUID_TESTNET_PK']) if (process.env[key]) env[key] = process.env[key];
+      // A private, per-process bounded tail, never a public receipt/error.
+      let diagnostic: number;
+      try {
+        mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
+        diagnostic = openSync(join(this.dataDir, `native-stderr-${randomUUID()}.log`), 'wx', 0o600);
+      } catch { throw new Error('account_runtime_not_started_diagnostic_unavailable'); }
+      let tail: Buffer = Buffer.alloc(0); let diagnosticOpen = true;
       const child = spawn(this.binary, ['account-runtime'], { env, stdio: ['pipe', 'pipe', 'pipe'] }); this.child = child;
       const failed = () => {
         // A superseded process can emit error and then exit after its successor
@@ -85,9 +94,14 @@ export class AccountRuntime implements NativeAccountRuntime {
         this.pending.clear();
       };
       child.once('error', failed); child.once('exit', failed);
-      // Native logging belongs on stderr. Do not relay credential-bearing SDK
-      // diagnostics into HTTP errors or user-visible receipts.
-      child.stderr.resume();
+      // Retain at most 64 KiB. SDK diagnostics never enter HTTP or receipts.
+      child.stderr.on('data', (chunk: Buffer) => {
+        tail = Buffer.from(Buffer.concat([tail, chunk.subarray(-65536)]).subarray(-65536));
+        if (!diagnosticOpen) return;
+        try { writeSync(diagnostic, tail, 0, tail.length, 0); ftruncateSync(diagnostic, tail.length); }
+        catch { /* A log write failure cannot change an unknown trading outcome. */ }
+      });
+      child.once('close', () => { if (diagnosticOpen) { diagnosticOpen = false; try { closeSync(diagnostic); } catch { /* Preserve process outcome. */ } } });
       const lines = createInterface({ input: child.stdout });
       lines.on('line', line => {
         let message: { requestId?: string; result?: Record<string, unknown>; error?: string; event?: string };

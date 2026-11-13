@@ -38,7 +38,10 @@ export function CapitalControls({ value }: { value: ObservationView }) {
   const path=`/observations/${encodeURIComponent(value.id)}/capital-exits`;
   const status=useResource<CapitalExitStatus>(path,{poll:5000});const confirm=useConfirm();
   const command=useCommand<{requestId:string;state:string}>(`capital:${value.id}`,()=>{void status.refetch();},`${path}/commands`);
-  return <section className="account-control-section"><h3>历史资金退出与原订单</h3><p>自研资金规划、费用估算、切片和恢复执行已退役。以下金额为保留记录，不是新核定可提资金；未决预留不会自动释放。</p>
+  return <section className="account-control-section"><h3>历史资金退出与原订单</h3><p>自研资金规划、费用估算、切片和恢复执行已退役。以下金额为保留记录，不是新核定可提资金；未决预留不会自动释放。旧资金计划暂停/取消暂不可用：缺少可验证的原 CONTROL 证据，不代表已取消任何订单；后续需要官方原订单 ID 取消接线验收。</p>
+    <p>下游原记录预留与本地原命令未决金额分列，不相加，也不表示新增可用资金。</p>
+    <Facts items={[["下游预留原记录（非官方余额）", <Exact value={(status.data??value.capitalExit)?.reserved??null}/>]]}/>
+    {((status.data??value.capitalExit)?.unsettledReservations??[]).map(fact=><div key={fact.requestId}><code>{fact.requestId}</code> <Status value={fact.state}/> <Exact value={fact.reserved}/></div>)}
     <ErrorNotice error={status.error}/><PendingCommand command={command}/>
     {(status.data?.exits??value.capitalExit?.exits??[]).map(exit=><article key={exit.id}><h4>{exit.id}</h4><Status value={exit.state}/><CapitalFundsSummary exit={exit}/>
       {(['PAUSE','CANCEL'] as const).map(action=><Button key={action} disabled={command.busy||!capitalAction(exit,action).allowed} onClick={()=>confirm('停止原资金计划？','只停止并核对原订单，保留资金预留，不创建新订单。',()=>{void command.submit({action,exitId:exit.id,expectedRevision:exit.revision});})}>{action==='PAUSE'?'暂停原计划':'取消并保留预留'}</Button>)}

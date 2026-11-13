@@ -30,3 +30,12 @@ it('does not equate a recovery connection receipt with reconciliation or trading
  expect(strategyResultText({requestId:'recovery',action:'RECOVER',status:'COMPLETED',receipt:{result:{recovery_only:true}},error:null})).toContain('不代表订单已对账');
  expect(strategyResultText({requestId:'recovery',action:'RECOVER',status:'UNCERTAIN',receipt:null,error:null})).toContain('不自动重连');
 });
+
+it('shows the temporary live gate without claiming a strategy started or hiding paper START',()=>{
+ const html=renderToStaticMarkup(createElement(AccountStrategy,{value}));
+ expect(html).toContain('实盘启动暂不可用');
+ expect(html).toMatch(/<button[^>]*disabled[^>]*>[\s\S]*?启动实盘策略/);
+ const paper=renderToStaticMarkup(createElement(AccountStrategy,{value:{...value,mode:'paper'}}));
+ expect(paper).not.toContain('实盘启动暂不可用');
+ expect(strategyResultText({requestId:'live',action:'START',status:'REJECTED',error:'hyperliquid_native_spot_free_required',receipt:null})).toContain('本次未连接或启动策略');
+});

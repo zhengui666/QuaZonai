@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { CapitalExitPlanningContext, CapitalExitPreview } from '../../../packages/contracts/src/capital-exit.ts';
 import { Application, json, nowNs, object } from '../src/facts.ts';
-import { accountKey, capitalCommandPermission, capitalStatusForBinding, CapitalExitCommand, capitalStatus, control, readCapitalControl, recordCapitalControl, transportCapability } from '../src/capital-exit.ts';
+import { accountKey, capitalCommandPermission, assertCapitalCommandPermission, capitalStatusForBinding, CapitalExitCommand, capitalStatus, control, readCapitalControl, recordCapitalControl, transportCapability } from '../src/capital-exit.ts';
 import { context, setup } from './support.ts';
 
 async function until(read: () => Promise<boolean>, message: string) {
@@ -171,13 +171,13 @@ test('a retired persisted pending START never POSTs or releases its original res
       { conversationId: conversation, ownership: { kind: 'conversation' }, background: true });
       state.commands[f.request.requestId] = { original: f.request, body: f.native, path: 'capital-exits', reserved: '10', state: 'PENDING', result: null, error: null, taskId: id, permissionBasis };
       state.conversationId = conversation; facts.accountControls![key] = json(state);
-      assert.equal(capitalStatus(state).reserved, '35.000000000000000000'); return id;
+      assert.equal(capitalStatus(state).reserved, '25'); assert.deepEqual(capitalStatus(state).unsettledReservations, [{requestId:f.request.requestId,state:'PENDING',reserved:'10'}]); return id;
     }, context);
     await f.state.service.research.harness.waitForTask(taskId as TaskId, context);
     const after = await f.read(), state = control(after.accountControls![accountKey(f.connection, after.accountControls)]), command = state.commands[f.request.requestId]!;
     assert.equal(f.posts.length, 0); assert.equal(command.state, 'PENDING'); assert.equal(command.reserved, '10');
     assert.equal(command.result, null, 'A local refusal is not a remote receipt.'); assert.equal(command.error, null); assert.deepEqual(command.original, f.request);
-    assert.equal(capitalStatus(state).reserved, '35.000000000000000000', 'The pre-existing native account reservation remains protected.');
+    assert.equal(capitalStatus(state).reserved, '25', 'The pre-existing native account reservation remains protected.');
   } finally { await f.cleanup(); }
 });
 
@@ -228,3 +228,32 @@ test('a retained pending CANCEL rechecks revoked transport permission before POS
     assert.equal(retained.status!.reserved, '25');
   } finally { await f.cleanup(); }
 });
+
+ test('native reserved and original local obligations remain separate and permission-bound', async()=>{
+  const f=await fixture();
+  try {
+   const app=await f.read(), state=control(app.accountControls![accountKey(f.connection,app.accountControls)]);
+   const original=capitalCommandPermission(state,f.connection,'CANCEL');
+   state.commands['original-unknown']={original:f.request,body:f.native,path:'capital-exits',reserved:'100',state:'UNCERTAIN',result:null,error:null,taskId:1};
+   assert.equal(capitalStatus(state).reserved,'25');
+   assert.deepEqual(capitalStatus(state).unsettledReservations,[{requestId:'original-unknown',state:'UNCERTAIN',reserved:'100'}]);
+   assert.throws(()=>assertCapitalCommandPermission(state,f.connection,original),/permission/);
+   assert.doesNotThrow(()=>assertCapitalCommandPermission(state,f.connection,original,'original-unknown'));
+   assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_reservation_unsettled/);
+   state.commands['original-unknown']!.reserved='0';
+   assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_reservation_unsettled/);
+   assert.equal(capitalCommandPermission(state,f.connection,'CANCEL').action,'CANCEL');
+   assert.equal(capitalStatus(state).unsettledReservations?.[0]?.reserved,'0');
+   state.commands['original-unknown']!.state='ACCEPTED'; state.commands['original-unknown']!.reserved='invalid';
+   assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_reservation_unsettled/);
+   assert.equal(capitalStatus(state).unsettledReservations?.[0]?.reserved,'invalid');
+   state.commands={};
+   for(const [aggregate,amounts] of [['0',['10']],['5',['5','5']]] as const){
+    state.status!.reserved=aggregate;
+    state.status!.exits=amounts.map((amount,index)=>({id:String(index),state:'CLOSED',funds:{reserved_amount:{amount,currency:'USDC'},staged_for_withdrawal_amount:{amount:'0',currency:'USDC'}}})) as never;
+    assert.throws(()=>capitalCommandPermission(state,f.connection,'START'),/original_exit_unsettled/);
+    assert.equal(capitalCommandPermission(state,f.connection,'CANCEL').action,'CANCEL');
+   }
+
+  }finally{await f.cleanup();}
+ });

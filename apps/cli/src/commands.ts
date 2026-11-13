@@ -40,7 +40,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   account-strategy start OBSERVATION_ID --request-id ORIGINAL_ID --account-source-id SOURCE --expected-revision REV
   account-strategy stop OBSERVATION_ID --request-id ORIGINAL_ID
     Read status first; copy its accountSourceId/strategyRevision unchanged. Stale START is rejected, never auto-refreshed.
-    Explicit commands operate the configured native strategy (EMA_CROSS account wiring only); live START can place real orders.
+    Explicit commands operate the configured native strategy. Live START is temporarily unavailable: hyperliquid_native_spot_free_required. Official spot balance and risk consistency validation is pending; rejected START does not connect or trade.
   observation size ID --file SCENARIO.json | preview-order ID --file ORDER.json (read-only; never submits orders)
   capital status OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
   observation cancel-protection OBSERVATION_ID
@@ -49,6 +49,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
+Legacy capital PAUSE/CANCEL may be unavailable (capital_original_control_evidence_unavailable); no order cancellation is implied. Original UNKNOWN receipts remain.
 Delete hides an inactive object; original evidence and receipts remain. It never cancels remote work or liquidates positions.
 For a user-compiled Rust backtest factory, research start may request the native_configured_backtest tool with its installed name and unchanged config. The factory owns official Nautilus run/node configuration, without a single-instrument template restriction. This runs historical research only, not account trading.
 Observation start only binds an account. Account-strategy recover explicitly connects without loading a trading strategy; it does not cancel orders or certify reconciliation. Account-strategy start explicitly starts trading under the configured native strategy. 'client' is a thin alias.

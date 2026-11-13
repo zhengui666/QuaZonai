@@ -183,6 +183,13 @@ struct Request {
     body: BTreeMap<String, Value>,
 }
 impl Request {
+    fn ensure_external(&self) -> Result<()> {
+        ensure!(
+            self.operation != "SPOT_BALANCE_REFRESH",
+            "account_native_internal_operation"
+        );
+        Ok(())
+    }
     fn value(&self, key: &str) -> &Value {
         self.body.get(key).unwrap_or(&Value::Null)
     }
@@ -295,6 +302,7 @@ struct AccountController {
     last_slice_ns: u64,
     cache_failed: Arc<AtomicBool>,
     spot_facts: Option<SpotFacts>,
+    spot_balance_observation: Option<Value>,
     target_acceptances: BTreeMap<String, TargetAcceptance>,
     #[cfg(test)]
     replies: Option<std::rc::Rc<std::cell::RefCell<BTreeMap<String, Value>>>>,
@@ -593,7 +601,7 @@ impl AccountController {
             "sequence":native.ts_init.as_u64().to_string(),"observed_at_ns":native.ts_init.as_u64().to_string(),"observation_id":Id::new().to_string(),
             "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"orders":order_rows,"fills":fills,"cash":cash,"equity":equity,"currency":"USDC",
             "native_version":crate::NAUTILUS_VERSION,"currency_precision":Currency::USDC().precision,"control_epoch":self.control.as_ref().map(|c|c.epoch.to_string()),"control_revision":self.control.as_ref().map(|c|c.revision.clone()),"fenced":self.control.as_ref().is_none_or(|c|c.mode=="PAUSED")||self.cache_failed.load(Ordering::SeqCst),
-            "remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
+            "spot_balance_observation":self.spot_balance_observation,"remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
         );
         self.stamp = stamp;
         Ok(())
@@ -814,6 +822,28 @@ impl AccountController {
                     frame["reason"] = json!("account_native_cache_write_failed");
                 }
                 Ok(frame)
+            }
+            "SPOT_BALANCE_REFRESH" => {
+                let observation = r.value("observation");
+                ensure!(
+                    self.config.mode == "live"
+                        && observation["account_id"].as_str()
+                            == Some(self.config.account_id.as_str())
+                        && observation["source_id"].as_str()
+                            == Some(self.config.source_id.as_str())
+                        && observation["account_address"].as_str()
+                            == self.config.account_address.as_deref()
+                        && observation["network"].as_str()
+                            == Some(if self.config.testnet {
+                                "testnet"
+                            } else {
+                                "mainnet"
+                            }),
+                    "account_native_spot_observation_binding_mismatch"
+                );
+                self.spot_balance_observation = Some(observation.clone());
+                self.stamp.clear();
+                Ok(json!({"updated":true,"trade_permission":false}))
             }
             "FEE_REFRESH" => {
                 let rate = r.decimal("rate")?;
@@ -1123,7 +1153,6 @@ impl AccountController {
         }
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
     }
-
 }
 fn exit_id(tags: Option<&[Ustr]>) -> Option<String> {
     tags?.iter().find_map(|t| {
@@ -1218,6 +1247,9 @@ pub async fn run_with_registration(
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
     let result = run_config_with_registration(config, boot.id.clone(), registration).await;
     if let Err(e) = &result {
+        // Full causal diagnostics stay on the private process stderr channel.
+        // The public protocol keeps its existing stable top-level error.
+        eprintln!("account native diagnostic: {e:#}");
         respond(&boot.id, Err(anyhow!(e.to_string())));
     }
     result
@@ -1464,13 +1496,30 @@ async fn run_config_with_registration(
     if config.mode == "live" {
         let address = config.account_address.clone().unwrap();
         let updates = sender.clone();
+        let spot_binding = crate::account_spot_observation::SpotObservationBinding {
+            account_id: config.account_id.clone(),
+            source_id: config.source_id.clone(),
+            address: address.clone(),
+            network: if config.testnet { "testnet" } else { "mainnet" },
+        };
         tokio::spawn(async move {
             let Ok(http) = HyperliquidHttpClient::new(environment, 20, None) else {
                 return;
             };
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                let Ok(source) = http.info_user_fees(&address).await else {
+                let (spot, fees) = tokio::join!(
+                    crate::account_spot_observation::read(&http, &spot_binding),
+                    http.info_user_fees(&address)
+                );
+                if let Ok(observation) = spot {
+                    let _ = updates.try_send(Request {
+                        id: String::new(),
+                        operation: "SPOT_BALANCE_REFRESH".into(),
+                        body: BTreeMap::from([("observation".into(), observation)]),
+                    });
+                }
+                let Ok(source) = fees else {
                     continue;
                 };
                 let Some(rate) = source["userSpotCrossRate"].as_str() else {
@@ -1500,6 +1549,10 @@ async fn run_config_with_registration(
                 match line {
                     Ok(line) => match serde_json::from_str::<Request>(&line) {
                         Ok(r) => {
+                            if let Err(error) = r.ensure_external() {
+                                respond(&r.id, Err(error));
+                                continue;
+                            }
                             if sender.send(r).is_err() {
                                 break;
                             }
@@ -1569,6 +1622,7 @@ async fn run_config_with_registration(
         last_slice_ns: 0,
         cache_failed,
         spot_facts: None,
+        spot_balance_observation: None,
         target_acceptances: BTreeMap::new(),
         #[cfg(test)]
         replies: None,
@@ -1936,6 +1990,7 @@ mod tests {
             last_slice_ns: 0,
             cache_failed: factory.failed.clone(),
             spot_facts: None,
+            spot_balance_observation: None,
             target_acceptances: BTreeMap::new(),
             replies: Some(replies.clone()),
         })?;
@@ -2087,6 +2142,83 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn spot_observation_external_stdin_operation_is_rejected() -> Result<()> {
+        let injected: Request = serde_json::from_str(
+            r#"{"requestId":"injected","operation":"SPOT_BALANCE_REFRESH","observation":{"balances":[]}}"#,
+        )?;
+        assert_eq!(
+            injected.ensure_external().unwrap_err().to_string(),
+            "account_native_internal_operation"
+        );
+        let snapshot: Request =
+            serde_json::from_str(r#"{"requestId":"read","operation":"SNAPSHOT"}"#)?;
+        snapshot.ensure_external()?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spot_observation_wrong_binding_and_full_queue_preserve_old_time() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        // Official Sandbox client only. This node is never run or connected.
+        let (mut native, tx, _replies) = node_with_scope(directory.path(), true).await?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let old = json!({"account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet","request_started_ns":"100","received_ns":"200",
+                "balances":[],"trade_permission":false});
+            let refresh = |value: Value| Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), value)]),
+            };
+            owner.process(&refresh(old.clone()))?;
+            for key in ["account_id", "source_id", "account_address", "network"] {
+                let mut invalid = old.clone();
+                invalid[key] = json!("wrong");
+                assert!(owner.process(&refresh(invalid)).is_err());
+                assert_eq!(owner.spot_balance_observation.as_ref(), Some(&old));
+            }
+            for _ in 0..64 {
+                tx.try_send(Request {
+                    id: String::new(),
+                    operation: "SNAPSHOT".into(),
+                    body: BTreeMap::new(),
+                })?;
+            }
+            let mut newer = old.clone();
+            newer["received_ns"] = json!("300");
+            assert!(matches!(
+                tx.try_send(refresh(newer)),
+                Err(mpsc::TrySendError::Full(_))
+            ));
+            assert_eq!(owner.spot_balance_observation.as_ref(), Some(&old));
+            assert_eq!(
+                owner.spot_balance_observation.as_ref().unwrap()["received_ns"],
+                "200",
+                "queue loss never relabels an old observation as fresh"
+            );
+            assert!(
+                owner.spot_facts.is_none(),
+                "observation cannot create trade evidence"
+            );
+            assert!(owner.control.is_none());
+        }
+        native.dispose();
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
         let directory = tempfile::tempdir()?;
@@ -2140,12 +2272,22 @@ mod tests {
             let positions = snapshot["positions"].as_array().unwrap();
             ensure!(!positions.is_empty(), "native_position_not_projected");
             for row in positions {
-                ensure!(row.get("free_quantity").is_none(), "derived_free_quantity_retained");
+                ensure!(
+                    row.get("free_quantity").is_none(),
+                    "derived_free_quantity_retained"
+                );
                 ensure!(row["value"].is_null(), "derived_position_value_retained");
-                ensure!(cache.borrow().positions(None, None, None, None, None).iter().any(|p|
-                    p.instrument_id.to_string() == row["instrument_id"].as_str().unwrap()
-                    && p.signed_decimal_qty().to_string() == row["quantity"].as_str().unwrap()),
-                    "native_position_quantity_changed");
+                ensure!(
+                    cache
+                        .borrow()
+                        .positions(None, None, None, None, None)
+                        .iter()
+                        .any(|p| p.instrument_id.to_string()
+                            == row["instrument_id"].as_str().unwrap()
+                            && p.signed_decimal_qty().to_string()
+                                == row["quantity"].as_str().unwrap()),
+                    "native_position_quantity_changed"
+                );
             }
             stop.stop();
             Ok::<_, anyhow::Error>(())

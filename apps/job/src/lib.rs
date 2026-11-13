@@ -19,6 +19,8 @@ mod account_order_preview;
 pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
+#[cfg(feature = "account-runtime")]
+mod account_spot_observation;
 pub mod bounded;
 pub mod capital_exit_gate;
 pub mod catalog;
@@ -36,7 +38,6 @@ pub use report::write_probe_report;
 pub mod source_market;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
-pub mod spot_fees;
 pub mod ticks;
 
 pub mod native_strategy;
