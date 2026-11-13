@@ -31,6 +31,29 @@ use std::{
     str::FromStr,
 };
 
+/// Configure only the official book-to-quote pipeline for the pure L2 OBI input.
+/// Existing source quotes/trades and quote-driven strategies keep their own semantics.
+fn configure_book_quotes(
+    config: &mut BacktestEngineConfig,
+    request: &NativeStrategyBacktestRequestV1,
+) -> bool {
+    let enabled = matches!(
+        request.strategy,
+        NativeCompiledStrategyV1::OrderBookImbalance { .. }
+    ) && !request.selectors.is_empty()
+        && request.selectors.iter().all(|selector| {
+            selector.data_type.parse::<NautilusDataType>().ok()
+                == Some(NautilusDataType::OrderBookDelta)
+        });
+    if enabled {
+        config
+            .data_engine
+            .get_or_insert_with(Default::default)
+            .emit_quotes_from_book = true;
+    }
+    enabled
+}
+
 pub fn run(
     root: &Path,
     request: NativeStrategyBacktestRequestV1,
@@ -269,19 +292,21 @@ pub fn run(
             venue.taker_fee.parse()?,
         )))
         .build()?;
+    let mut engine_config = BacktestEngineConfig {
+        logging: LoggerConfig::builder()
+            .bypass_logging(true)
+            .is_colored(false)
+            .build()?,
+        bypass_logging: true,
+        shutdown_on_error: true,
+        ..Default::default()
+    };
+    let book_quotes = configure_book_quotes(&mut engine_config, &request);
     let config = BacktestRunConfig::builder()
         .id("native-strategy".into())
         .venues(vec![venue_config])
         .data(data_configs)
-        .engine(BacktestEngineConfig {
-            logging: LoggerConfig::builder()
-                .bypass_logging(true)
-                .is_colored(false)
-                .build()?,
-            bypass_logging: true,
-            shutdown_on_error: true,
-            ..Default::default()
-        })
+        .engine(engine_config)
         .chunk_size(4096)
         // None must remain None: data availability filtering is not an explicit engine start.
         .maybe_start(request.available_start_ns.map(|v| v.get().into()))
@@ -321,6 +346,9 @@ pub fn run(
             .get_engine("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
         let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Compiled upstream strategy; not arbitrary Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
+        if book_quotes {
+            notes.push("OFFICIAL_BOOK_DERIVED_QUOTES: Nautilus DataEngine emit_quotes_from_book uses original L2 best bid/ask and size for quote cache/publication; these are not additional exchange observations or catalog QuoteTick rows. Original book events still drive matching. Native risk checks and stop-time market exits can change now that quotes exist; old unpriced results and new returns are not directly comparable.".into());
+        }
         notes.extend(node_catalog::row_count_notes(&counts, &replay_reads)?);
         Ok(NativeStrategyBacktestResultV1 {
             schema_version: SchemaV1,
@@ -335,4 +363,191 @@ pub fn run(
     })();
     node.dispose();
     result
+}
+
+#[cfg(test)]
+mod book_quote_tests {
+    use super::*;
+    use nautilus_model::{
+        data::BookOrder,
+        enums::{BookAction, OrderSide},
+        instruments::{stubs::crypto_perpetual_ethusdt, InstrumentAny},
+        types::{Price, Quantity},
+    };
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+    use serde_json::json;
+    const DAY: u64 = 86_400_000_000_000;
+    fn request(id: InstrumentId) -> NativeStrategyBacktestRequestV1 {
+        serde_json::from_value(json!({"schema_version":1,"instrument_id":id.to_string(),
+          "selectors":[{"data_type":"OrderBookDelta","identifier":id.to_string()}],
+          "event_start_ns":"1000000000","event_end_ns":(4*DAY).to_string(),"available_end_ns":(4*DAY).to_string(),
+          "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L2_MBP","starting_balances":["100000 USDT"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
+          "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false}
+        })).unwrap()
+    }
+    #[test]
+    fn official_book_quote_configuration_only_changes_pure_l2_obi() {
+        let mut request = request("ETHUSDT.BINANCE".parse().unwrap());
+        let mut config = BacktestEngineConfig::default();
+        assert!(configure_book_quotes(&mut config, &request));
+        assert!(config.data_engine.unwrap().emit_quotes_from_book);
+        for kind in ["QuoteTick", "TradeTick", "MarkPriceUpdate"] {
+            let mut mixed = request.clone();
+            mixed.selectors.push(
+                serde_json::from_value(
+                    json!({"data_type":kind,"identifier":request.instrument_id}),
+                )
+                .unwrap(),
+            );
+            let mut config = BacktestEngineConfig::default();
+            assert!(!configure_book_quotes(&mut config, &mixed));
+            assert!(config.data_engine.is_none());
+        }
+        request.strategy = serde_json::from_value(
+            json!({"kind":"EMA_CROSS","trade_size":"1.000","fast_period":2,"slow_period":3}),
+        )
+        .unwrap();
+        let mut config = BacktestEngineConfig::default();
+        assert!(!configure_book_quotes(&mut config, &request));
+        assert!(config.data_engine.is_none());
+    }
+    #[test]
+    fn official_book_quotes_price_l2_positions_and_restore_native_stop_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let instrument = InstrumentAny::CryptoPerpetual(crypto_perpetual_ethusdt());
+        let id = instrument.id();
+        crate::catalog::currencies::write(dir.path(), std::slice::from_ref(&instrument)).unwrap();
+        let catalog = ParquetDataCatalog::from_uri(
+            dir.path().to_str().unwrap(),
+            None,
+            Some(4096),
+            None,
+            None,
+        )
+        .unwrap();
+        catalog.write_instruments(vec![instrument]).unwrap();
+        let mut books = Vec::new();
+        for (index, time) in [1_000_000_000, DAY + 1_000_000_000, 2 * DAY + 1_000_000_000]
+            .into_iter()
+            .enumerate()
+        {
+            let init = time + 1;
+            let mut clear = OrderBookDelta::clear(id, index as u64, time.into(), init.into());
+            clear.order.price = Price::from("0.00");
+            clear.order.size = Quantity::from("0.000");
+            books.push(clear);
+            for (side, price, size, last) in [
+                (
+                    OrderSide::Buy,
+                    if index == 2 { "102.00" } else { "100.00" },
+                    if index == 0 { "10.000" } else { "1.000" },
+                    false,
+                ),
+                (
+                    OrderSide::Sell,
+                    if index == 2 { "103.00" } else { "101.00" },
+                    "1.000",
+                    true,
+                ),
+            ] {
+                books.push(OrderBookDelta::new(
+                    id,
+                    BookAction::Add,
+                    BookOrder::new(side, Price::from(price), Quantity::from(size), 0),
+                    RecordFlag::F_SNAPSHOT as u8 | if last { RecordFlag::F_LAST as u8 } else { 0 },
+                    index as u64,
+                    time.into(),
+                    init.into(),
+                ));
+            }
+        }
+        catalog.write_to_parquet(&books, None, None, None).unwrap();
+        let root = dir.path().to_path_buf();
+        let config = request(id);
+        let old = std::thread::spawn(move || {
+            super::preloaded_reference::run_with_quotes(&root, config, false).unwrap()
+        })
+        .join()
+        .unwrap();
+        let root = dir.path().to_path_buf();
+        let config = request(id);
+        let current = std::thread::spawn(move || super::run(&root, config).unwrap())
+            .join()
+            .unwrap();
+        assert_eq!(
+            old.equity_performance.reason.as_deref(),
+            Some("UNPRICED_PORTFOLIO_SNAPSHOTS")
+        );
+        assert_eq!(
+            current.equity_performance.unpriced_snapshot_count, "0",
+            "{:?}",
+            current.equity_performance
+        );
+        assert_eq!(
+            current.equity_performance.status, "AVAILABLE",
+            "{:?}",
+            current.equity_performance
+        );
+        assert_eq!(current.data_rows_by_type.len(), 1);
+        assert_eq!(current.data_rows_by_type["OrderBookDelta"].get(), 9);
+        assert!(current
+            .notes
+            .iter()
+            .any(|note| note.starts_with("OFFICIAL_BOOK_DERIVED_QUOTES:")));
+        let old_fills = old.canonical_result["fills"].as_array().unwrap();
+        let new_fills = current.canonical_result["fills"].as_array().unwrap();
+        assert_eq!(
+            old_fills.len(),
+            1,
+            "old no-quote path leaves only entry filled"
+        );
+        assert_eq!(
+            new_fills.len(),
+            2,
+            "official OBI stop now closes via native market order"
+        );
+        // The same book signal fills at the same economic terms; canonical event
+        // ordinals can differ because native valuation/account events now exist.
+        for field in [
+            "last_px",
+            "last_qty",
+            "commission",
+            "order_side",
+            "order_type",
+            "ts_event",
+            "ts_init",
+        ] {
+            assert_eq!(
+                new_fills[0]["event"]["Filled"][field], old_fills[0]["event"]["Filled"][field],
+                "{field}"
+            );
+        }
+        assert_eq!(new_fills[1]["event"]["Filled"]["order_side"], "SELL");
+        assert_eq!(new_fills[1]["event"]["Filled"]["order_type"], "MARKET");
+        assert_eq!(new_fills[1]["event"]["Filled"]["last_px"], "102.00");
+        assert_eq!(
+            new_fills[1]["event"]["Filled"]["ts_event"],
+            (4 * DAY).to_string()
+        );
+        assert!(
+            old.canonical_result["orders"]
+                .to_string()
+                .contains("MARKET_PRICE_UNAVAILABLE"),
+            "{}",
+            old.canonical_result["orders"]
+        );
+        let root = dir.path().to_path_buf();
+        let config = request(id);
+        let enabled_preloaded = std::thread::spawn(move || {
+            super::preloaded_reference::run_with_quotes(&root, config, true).unwrap()
+        })
+        .join()
+        .unwrap();
+        for field in ["fills", "orders", "positions"] {
+            assert_eq!(
+                current.canonical_result[field], enabled_preloaded.canonical_result[field],
+                "streaming and preloaded official quotes: {field}"
+            );
+        }
+    }
 }

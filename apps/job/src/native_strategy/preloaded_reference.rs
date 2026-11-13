@@ -28,6 +28,14 @@ pub fn run(
     root: &Path,
     request: NativeStrategyBacktestRequestV1,
 ) -> Result<NativeStrategyBacktestResultV1> {
+    run_with_quotes(root, request, true)
+}
+
+pub(super) fn run_with_quotes(
+    root: &Path,
+    request: NativeStrategyBacktestRequestV1,
+    quotes: bool,
+) -> Result<NativeStrategyBacktestResultV1> {
     ensure!(
         request.event_start_ns < request.event_end_ns,
         "NATIVE_STRATEGY_EVENT_RANGE"
@@ -106,7 +114,7 @@ pub fn run(
         }
         .into(),
     };
-    let config = BacktestEngineConfig {
+    let mut config = BacktestEngineConfig {
         logging: LoggerConfig::builder()
             .bypass_logging(true)
             .is_colored(false)
@@ -115,6 +123,9 @@ pub fn run(
         shutdown_on_error: true,
         ..Default::default()
     };
+    if quotes {
+        super::configure_book_quotes(&mut config, &request);
+    }
     let mut engine = BacktestEngine::new(config)?;
     let result = (|| -> Result<_> {
         let venue = &request.venue;

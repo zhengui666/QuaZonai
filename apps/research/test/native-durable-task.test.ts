@@ -176,3 +176,25 @@ test('large canonical receipt stays paged through official SQLite task settlemen
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('status-only receipts preserve original top-level result presence and complete JSON validation', async () => {
+  const { remoteNativeExecutionStatus } = await import('../src/native-execution.ts');
+  const requestId = 'b'.repeat(64);
+  let body = '';
+  const server = createServer((_request, response) => { response.setHeader('content-type', 'application/json'); response.end(body); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const target = { id: 'status-presence', url: `http://127.0.0.1:${address.port}` };
+  const prefix = `"schemaVersion":1,"requestId":"${requestId}"`;
+  try {
+    for (const content of [`{"result":null,${prefix},"status":"COMPLETED"}`, `{${prefix},"status":"COMPLETED","result":{"nested":[1,2]}}`]) {
+      body = content; const result = await remoteNativeExecutionStatus(target, requestId);
+      assert.equal(result.status, 'COMPLETED'); assert.equal(Object.hasOwn(result, 'result'), false);
+    }
+    for (const content of [`{${prefix},"status":"COMPLETED"}`, `{${prefix},"status":"COMPLETED","nested":{"result":{}}}`, `{${prefix},"status":"COMPLETED","result":{"rows":[1,2`]) {
+      body = content; await assert.rejects(remoteNativeExecutionStatus(target, requestId));
+    }
+    body = `{${prefix},"status":"CANCELLED"}`;
+    assert.equal((await remoteNativeExecutionStatus(target, requestId)).status, 'CANCELLED');
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});

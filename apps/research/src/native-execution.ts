@@ -1,3 +1,4 @@
+import { TokenType } from '@streamparser/json';
 import type { Context } from '@earendil-works/chord';
 import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -144,9 +145,31 @@ function tableReader(owner: TableOwner) {
 class ReceiptStatusReader {
   private parser = new JSONParser({ paths: ['$.schemaVersion', '$.requestId', '$.status', '$.error'], keepStack: false });
   private value: Record<string, NativeJson> = {};
-  constructor() { this.parser.onValue = ({ key, value }) => { this.value[String(key)] = value as NativeJson; }; }
+  private hasResult = false;
+  constructor() {
+    let depth = 0; let rootObject = false; let expectingKey = false;
+    // Observe only the root property name. Selecting $.result would retain its
+    // descendants; full JSON syntax validation remains the parser's job.
+    this.parser.onToken = ({ token, value }) => {
+      if (depth === 0 && token === TokenType.LEFT_BRACE) { rootObject = true; expectingKey = true; }
+      if (rootObject && depth === 1) {
+        if (token === TokenType.COMMA) expectingKey = true;
+        else if (token === TokenType.STRING && expectingKey) {
+          if (value === 'result') this.hasResult = true;
+          expectingKey = false;
+        }
+      }
+      if (token === TokenType.LEFT_BRACE || token === TokenType.LEFT_BRACKET) depth++;
+      else if (token === TokenType.RIGHT_BRACE || token === TokenType.RIGHT_BRACKET) depth--;
+    };
+    this.parser.onValue = ({ key, value }) => { this.value[String(key)] = value as NativeJson; };
+  }
   write(text: string) { this.parser.write(text); }
-  finish(): NativeJson { if (!this.parser.isEnded) this.parser.end(); return this.value; }
+  finish(): NativeJson {
+    if (!this.parser.isEnded) this.parser.end();
+    if (this.value.status === 'COMPLETED' && !this.hasResult) throw new Error('nautilus_receipt_invalid');
+    return this.value;
+  }
 }
 
 async function remoteRequest(target: RemoteNativeTarget, path: string, method: 'GET' | 'POST' | 'DELETE', body?: NativeJson, signal?: AbortSignal, tables?: TableOwner, statusOnly = false): Promise<NativeJson> {
