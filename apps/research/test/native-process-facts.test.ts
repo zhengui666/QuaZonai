@@ -10,6 +10,8 @@ import {runNativeProcess,NativeProcessFailure} from '../src/native-process.ts';
 import {JsonReader} from '../src/native-json.ts';
 import {openResearch} from '../src/host.ts';
 import {NativeRemoteUncertainty} from '../src/native-execution.ts';
+import {Study} from '../src/documents.ts';
+import {gunzipSync} from 'node:zlib';
 import {ResearchConfiguration} from '../src/research-configuration.ts';
 import {NativeEvidencePart} from '../plugins/native-evidence.ts';
 import type {ProcessNativeTarget} from '../../../packages/contracts/src/nautilus.ts';
@@ -37,9 +39,10 @@ test('real nonzero process exit and missing-launch evidence remain separate from
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
-for(const toolName of ['native_configured_backtest','native_strategy_backtest']) for(const missing of [false,true]) test(`original pending research displays UNKNOWN facts and refuses replacement (tool=${toolName}, missing=${missing})`,{timeout:15000},async()=>{
+for(const toolName of ['native_configured_backtest','native_strategy_backtest']) for(const mode of ['exit','missing','partial']) test(`original pending research displays UNKNOWN facts and refuses replacement (tool=${toolName}, mode=${mode})`,{timeout:15000},async()=>{
+ const missing=mode==='missing',partial=mode==='partial';
  const dir=await mkdtemp(join(tmpdir(),'qz-exit-durable-')),binary=join(dir,'runner'),marker=join(dir,'launches');
- await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(marker)},'start\\n');for await(const c of process.stdin){};process.stderr.write('PRIVATE_OWNER_DIAGNOSTIC');process.exit(9);`,{mode:0o755});
+ await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(marker)},'start\\n');for await(const c of process.stdin){};process.stderr.write('PRIVATE_OWNER_DIAGNOSTIC');if(${partial}){const rows=Array.from({length:1200},(_,index)=>({index,quantity:'0.000000000000000019',detail:'synthetic'.repeat(32)}));process.stdout.write('{\"schema_version\":1,\"canonical_result\":{\"orders\":'+JSON.stringify(rows),()=>process.exit(0));}else process.exit(9);`,{mode:0o755});
  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled',binary:missing?join(dir,'not-installed'):binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
  faux.setResponses([fauxAssistantMessage(fauxToolCall(toolName,{}),{stopReason:'toolUse'})]);
@@ -52,13 +55,21 @@ for(const toolName of ['native_configured_backtest','native_strategy_backtest'])
   const tasks=(await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},10),context)).items;assert.equal(tasks.length,1);
   const task=tasks[0]!;assert.equal(task.state.outcome?.status,'failed');
   assert.equal((task.state.outcome as any).error.message,'nautilus_execution_unknown');
-  assert.equal((task.state.outcome as any).error.detail.process.exitCode,missing?null:9);
+  assert.equal((task.state.outcome as any).error.detail.process.exitCode,missing?null:partial?0:9);
   assert.equal((task.state.outcome as any).error.detail.process.exitObserved,!missing);
   assert.equal((task.state.outcome as any).error.detail.process.cleanupSignalRequested,true);
   assert.equal((task.state.outcome as any).error.detail.process.terminationRequested,false);
+  assert.equal((await host.harness.snapshot(Study,receipt.conversationId,context))!.final,null);
+  if(partial){
+   assert.equal((task.state.outcome as any).error.detail.process.errorCategory,'native_process_output_invalid');
+   const page=await host.harness.snapshot(NativeEvidencePart,task.conversationId,`${task.id}:table:["canonical_result","orders"]:0`,context);
+   assert.ok(page?.data,'partial streamed table really reached durable storage');
+   const rows=JSON.parse(gunzipSync(Buffer.from(page.data,'base64')).toString());
+   assert.ok(rows.length>0);assert.equal(rows[0].quantity,'0.000000000000000019');
+  }
   const owner=(task.input as any).ownerTaskId;
   const uncertainty=await host.harness.snapshot(NativeRemoteUncertainty,task.conversationId,String(owner),context);
-  assert.equal(uncertainty!.requests[0]!.status,'UNKNOWN');assert.equal((uncertainty!.requests[0]!.process as any).exitCode,missing?null:9);
+  assert.equal(uncertainty!.requests[0]!.status,'UNKNOWN');assert.equal((uncertainty!.requests[0]!.process as any).exitCode,missing?null:partial?0:9);
   const beforeConfiguration=await host.harness.snapshot(ResearchConfiguration,receipt.conversationId,context);
   // A second official tool task must not replace the unresolved original binding.
   const retry=await host.harness.commit(async tx=>{
@@ -80,6 +91,7 @@ for(const toolName of ['native_configured_backtest','native_strategy_backtest'])
   await host.close();host=await openResearch(options);
   for(let i=0;i<40;i++){live=JSON.stringify(await host.harness.snapshot(LiveDoc,receipt.conversationId,context));if(live.includes('EXECUTION_RESULT_UNKNOWN'))break;await new Promise(r=>setTimeout(r,20));}
   assert.ok(live.includes('EXECUTION_RESULT_UNKNOWN'));if(missing)await assert.rejects(readFile(marker),{code:'ENOENT'});else assert.equal((await readFile(marker,'utf8')).trim(),'start');
+  assert.equal((await host.harness.snapshot(Study,receipt.conversationId,context))!.final,null);
   assert.deepEqual((await host.harness.getTask(task.id,context))!.state.outcome,task.state.outcome);
   assert.equal((await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},10),context)).items.length,1);
  }finally{await host.close();await rm(dir,{recursive:true,force:true});}
