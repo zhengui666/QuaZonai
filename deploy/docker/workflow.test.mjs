@@ -22,16 +22,12 @@ test('native source integration workflows install and cache both exporter depend
 
 const results = ['success', 'failure', 'cancelled', 'skipped'];
 
-test('pushes build revision-bound native artifacts without running science CI', async () => {
+test('push CI no longer packages an unused bundled native runtime; explicit science checks remain', async () => {
   const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-  const artifact = ci.split('\n  native-artifacts:\n')[1]?.split('\n  science-core:\n')[0];
+  assert.doesNotMatch(ci, /\n  native-artifacts:/);
   const science = ci.split('\n  science-core:\n')[1];
-  assert.match(artifact, /if: github\.event_name == 'push'/);
-  assert.match(artifact, /native-build\.sh "\$PROFILE" "\$RUNNER_TEMP\/native-artifacts"/);
-  assert.match(artifact, /git rev-parse HEAD > "\$RUNNER_TEMP\/native-artifacts\/tested-revision"/);
-  assert.match(artifact, /name: native-\$\{\{ env\.TEST_REVISION \}\}/);
   assert.match(science, /if: github\.event_name == 'workflow_dispatch'/);
-  assert.doesNotMatch(artifact, /check-science/);
+  assert.match(science, /native-build\.sh/);
 });
 
 test('CryptoHFTData conversion stays in the remote native image', async () => {
@@ -106,4 +102,11 @@ test('publish survives a skipped formal ancestor only after complete assets and 
     const needs = { assets: { result: assets }, regression: { result: 'skipped' } };
     assert.equal(evaluate(needs, () => cancelled), !cancelled && assets === 'success', `${assets}/cancelled=${cancelled}`);
   }
+});
+
+ test('default release builds and publishes only the application, not a native runtime', async () => {
+  const action = await readFile(new URL('../../.github/actions/container/action.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(action, /target: nautilus|native-build\.sh|runtime-image|rustup/);
+  assert.match(action, /target: application/);
+  assert.doesNotMatch(workflow, /native-artifact-directory|native-download|RUNTIME_IMAGE|--runtime-image/);
 });
