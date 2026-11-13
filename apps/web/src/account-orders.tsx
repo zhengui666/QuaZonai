@@ -10,19 +10,26 @@ export function cancellationInput(page:Page,order:Order){
  if(!page.available||page.mode!=='paper'||page.capability.supported!==true||!page.binding||!['ACCEPTED','PARTIALLY_FILLED'].includes(order.status)||!order.venue_order_id||order.is_active_local!==false||order.emulation_trigger!==null||order.exec_algorithm_id!==null)return null;
  try{const {requestId:_,...input}=nativeStrategyControl({schemaVersion:1,requestId:'validate-only',action:'CANCEL',strategyId:order.strategy_id,binding:page.binding,order:{traderId:order.trader_id,accountId:order.account_id,instrumentId:order.instrument_id,clientOrderId:order.client_order_id}});return input;}catch{return null;}
 }
+type CancelPersistence={persisted?:boolean;error?:string};
+export function cancellationPersistenceNotice(receipt:CancelPersistence|null|undefined){
+ return receipt?.persisted===false?'本次取消回执或观察尚未确认持久保存。保留原请求和 UNKNOWN，不代表取消未执行，也不清除已保存的历史；只核对原回执，不重新发送。':null;
+}
+function CancellationPersistenceNotice({receipt}:{receipt:CancelPersistence|null|undefined}){
+ const text=cancellationPersistenceNotice(receipt);return text?<p role="alert">{text}</p>:null;
+}
 export function CancelOrder({accountId,page,order}:{accountId:string;page:Page;order:Order}){
  const key=`strategy:configured:${accountId}:CANCEL:${page.binding!.nativeSessionId}:${order.client_order_id}` as const;
  const path=`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/commands`;
  const [last,setLast]=useState(()=>readDraft<string>(key));const confirm=useConfirm();
  const command=useCommand<{requestId:string}>(key,r=>{saveDraft(key,r.requestId);setLast(r.requestId);},path);
  const requestId=command.values?.requestId as string|undefined ??last;
- const receipt=useResource<{status:string;error:string|null;receipt:{orderObservation?:{status:string;filledQuantity:string};error?:string}|null}>(`${path}/${encodeURIComponent(requestId??'')}`,{enabled:!!requestId,poll:3000});
+ const receipt=useResource<{status:string;error:string|null;receipt:{orderObservation?:{status:string;filledQuantity:string};error?:string;persisted?:boolean}|null}>(`${path}/${encodeURIComponent(requestId??'')}`,{enabled:!!requestId,poll:3000});
  const input=cancellationInput(page,order);
  return <div><Button disabled={!input||!!requestId||command.busy||!!command.pending} onClick={()=>confirm('取消这笔原模拟订单？',`原订单 ${order.client_order_id}，策略 ${order.strategy_id}。只向当前原会话发送本单取消请求；成交可能先于取消，官方终态不等于该请求成功或资金释放。`,()=>{if(input)void command.submit(input);})}>请求取消原单</Button>
  {requestId&&<><p>原请求：{requestId}。只查询，不自动重发。</p>{receipt.data&&<p>请求状态：<Status value={receipt.data.status}/>；官方订单：{receipt.data.receipt?.orderObservation?.status??'未取得'}；已成交：{receipt.data.receipt?.orderObservation?.filledQuantity??'未知'}。保留原 UNKNOWN，不推断资金释放。</p>}<Button onClick={()=>void receipt.refetch()}>核对原回执</Button></>}
- {!input&&!requestId&&<small>当前原身份、会话或普通订单条件不足，不能取消。</small>}<ErrorNotice error={command.error??receipt.error}/></div>;
+ <CancellationPersistenceNotice receipt={receipt.data?.receipt}/>{!input&&!requestId&&<small>当前原身份、会话或普通订单条件不足，不能取消。</small>}<ErrorNotice error={command.error??receipt.error}/></div>;
 }
-type CancelReceipt={requestId:string;status:string;binding?:{nativeSessionId:string};order?:{clientOrderId:string};receipt?:{orderObservation?:{status:string;filledQuantity:string}}|null};
+type CancelReceipt={requestId:string;status:string;binding?:{nativeSessionId:string};order?:{clientOrderId:string};receipt?:{persisted?:boolean;error?:string;orderObservation?:{status:string;filledQuantity:string}}|null};
 export function CancellationHistory({accountId}:{accountId:string}){
  const [offset,setOffset]=useState(0);const [requestId,setRequestId]=useState('');const [query,setQuery]=useState('');
  const path=`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/commands`;
@@ -31,12 +38,12 @@ export function CancellationHistory({accountId}:{accountId:string}){
  return <section><h4>原取消请求与未决回执</h4><p>独立保留原请求，不依赖当前订单行或存活会话。官方订单终态不代表原请求已确认，更不代表资金释放。</p>
  <ErrorNotice error={history.error}/><Table<CancelReceipt> rowKey="requestId" pagination={false} dataSource={history.data?.items??[]} scroll={{x:600}} columns={[
  {title:'原请求',dataIndex:'requestId'},{title:'原会话',render:(_,r)=>r.binding?.nativeSessionId??'未提供'},{title:'原订单',render:(_,r)=>r.order?.clientOrderId??'未提供'},
- {title:'请求状态',dataIndex:'status',render:v=><Status value={v}/>},{title:'官方观察',render:(_,r)=>r.receipt?.orderObservation?.status??'未取得'},
+ {title:'请求状态',dataIndex:'status',render:v=><Status value={v}/>},{title:'官方观察',render:(_,r)=><>{r.receipt?.orderObservation?.status??'未取得'}<CancellationPersistenceNotice receipt={r.receipt}/></>},
  {title:'操作',render:(_,r)=><Button onClick={()=>setQuery(r.requestId)}>只读核对原回执</Button>}
  ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>较早记录</Button><Button disabled={!history.data||history.data.nextOffset===null} onClick={()=>setOffset(history.data!.nextOffset!)}>更多记录</Button>
  <Input aria-label="原取消请求 ID" value={requestId} onChange={e=>setRequestId(e.target.value)} placeholder="也可输入保留的原请求 ID"/><Button disabled={!requestId} onClick={()=>setQuery(requestId)}>只读查询</Button>
  {detail.data&&<p>原请求 {detail.data.requestId}：<Status value={detail.data.status}/>；官方订单 {detail.data.receipt?.orderObservation?.status??'未取得'}；已成交 {detail.data.receipt?.orderObservation?.filledQuantity??'未知'}。</p>}
- {!!query&&<Button onClick={()=>void detail.refetch()}>刷新原回执</Button>}<ErrorNotice error={detail.error}/></section>;
+ <CancellationPersistenceNotice receipt={detail.data?.receipt}/>{!!query&&<Button onClick={()=>void detail.refetch()}>刷新原回执</Button>}<ErrorNotice error={detail.error}/></section>;
 }
 export default function AccountOrders({accountId}:{accountId:string}){
  const [offset,setOffset]=useState(0);const page=useResource<Page>(`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/orders?offset=${offset}`,{poll:3000});
