@@ -1,3 +1,4 @@
+import {nativeEnvironmentBuild} from './native-environment-build.ts';
 import { researchTaskEvidence } from './research-assessments.ts';
 import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
@@ -44,11 +45,12 @@ export async function createService(options: ServiceOptions) {
   const config = structuredClone(options.config);
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
+  const nativeBuild = nativeEnvironmentBuild(config);
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension];
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -264,6 +266,10 @@ export async function createService(options: ServiceOptions) {
   });
   registerModels(app, research, work.getSettings);
   registerInstanceSettings(app, instances);
+  const builds=nativeBuild.workbench(research,instances);
+  app.post(`${API}/settings/instances/build`,request=>builds.start(request.body));
+  app.get<{Params:{requestId:string}}>(`${API}/settings/instances/build/:requestId`,request=>builds.read(request.params.requestId));
+  app.post(`${API}/settings/instances/select-runner`,request=>builds.select(request.body));
   registerDataSources(app, sources);
   app.get<{ Params: { name: string }; Querystring: { taskId?: string } }>(`${API}/data-sources/:name/events`, async (request, reply) => {
     const taskId = request.query.taskId === undefined ? undefined : Number(request.query.taskId);

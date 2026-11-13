@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { discoverRustEnvironment, publicRustPath } from '../../nautilus/src/rust-environment.ts';
-import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeRustEnvironment, ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { InstanceSettingsUpdate, InstanceSettingsView } from '../../../packages/contracts/src/index.ts';
@@ -10,7 +10,7 @@ import { bindScienceData, remoteNativeBinding, scienceDataWithoutBinding, valida
 import type { ConnectionConfig, ServiceConfig } from './config.ts';
 import { json, object, Problem } from './facts.ts';
 import { canonical } from '../../research/src/documents.ts';
-import { setRemoteNativeCredential } from '../../research/src/native-execution.ts';
+import { setRemoteNativeCredential, validateNativeTarget } from '../../research/src/native-execution.ts';
 
 interface CredentialState {
   backtestRef?: string;
@@ -28,7 +28,7 @@ function contents(value: Pick<InstanceSettingsView, 'backtest' | 'connections'>)
 
 function validate(value: unknown, revisionKey: 'revision' | 'expectedRevision'): InstanceSettingsView | InstanceSettingsUpdate {
   const body = object(value, 'instance_settings');
-  if (Object.keys(body).some(key => ![revisionKey, 'backtest', 'connections', 'environment'].includes(key))
+  if (Object.keys(body).some(key => ![revisionKey, 'backtest', 'connections', 'environment', 'runner'].includes(key))
     || !Number.isSafeInteger(body[revisionKey]) || Number(body[revisionKey]) < 0
     || !Object.hasOwn(body, 'backtest') || !Array.isArray(body.connections)) throw new Problem('instance_settings_invalid');
   if (body.connections.some(connection => !connection || typeof connection !== 'object' || Array.isArray(connection)
@@ -139,8 +139,10 @@ export async function instanceSettings(config: ServiceConfig) {
   function apply(value: InstanceSettingsView, state: CredentialState) {
     for (const [reference, token] of Object.entries(state.history)) setRemoteNativeCredential(reference, token);
     const backtest = value.backtest ? { ...value.backtest, ...(!Object.hasOwn(value.backtest, 'token') && state.backtestTokenEnv ? { tokenEnv: state.backtestTokenEnv } : {}) } : null;
-    const target = backtest ? remoteNativeBinding(backtest, state.backtestRef) : null;
-    config.nautilus = target ? { backtest: target } : {};
+    const historicalTarget = backtest ? remoteNativeBinding(backtest, state.backtestRef) : null;
+    config.nativeProcess = value.runner ?? undefined;
+    const target = config.nativeProcess ?? historicalTarget;
+    config.nautilus = historicalTarget ? { backtest: historicalTarget } : {};
     config.connections = value.connections.map(connection => {
       if (Object.hasOwn(connection, 'token')) {
         const { token, tokenEnv: _tokenEnv, ...safe } = connection;
@@ -170,6 +172,7 @@ export async function instanceSettings(config: ServiceConfig) {
     loaded = true;
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 
+  if (current.runner) { const checked=validateNativeTarget(current.runner); if(!('kind' in checked))throw new Error('native_process_target_required');current.runner=checked; }
   if (current.environment !== undefined) current.environment = environmentValue(current.environment);
   if (!loaded) credentials = { ...credentials, ...configuredTokenEnvs(current) };
   current = resolveConfiguredTokens(current);
@@ -204,10 +207,16 @@ export async function instanceSettings(config: ServiceConfig) {
       }
       if (current.revision === Number.MAX_SAFE_INTEGER) throw new Problem('instance_settings_revision_exhausted',409);
       // Retain original HTTP configuration and credentials as migration facts, never relabel them.
-      const next = {...current, revision:current.revision+1, environment};
-      await persist(next,credentials); current=next; return view();
+      const next = {...current, revision:current.revision+1, environment, runner:null};
+      await persist(next,credentials); current=next; apply(next,credentials); return view();
     });
     tail=pending.catch(()=>undefined); return pending;
+  }
+  function selectRunner(revision:number,target:ProcessNativeTarget) {
+    const pending=tail.then(async()=>{if(closing)throw new Problem('service_closing',503);if(current.runner&&canonical(current.runner as never)===canonical(target as never))return view();
+      if(current.revision!==revision||current.environment?.id!==target.id)throw new Problem('instance_settings_revision_conflict',409);
+      if(current.revision===Number.MAX_SAFE_INTEGER)throw new Problem('instance_settings_revision_exhausted',409);
+      const next={...current,revision:current.revision+1,runner:target};await persist(next,credentials);current=next;apply(next,credentials);return view();});tail=pending.catch(()=>undefined);return pending;
   }
   async function inspectEnvironment() {
     if (!current.environment) throw new Problem('rust_environment_not_configured',409);
@@ -238,7 +247,7 @@ export async function instanceSettings(config: ServiceConfig) {
     tail = pending.catch(() => undefined);
     return pending;
   }
-  return { view, save, saveEnvironment, inspectEnvironment, async close() { closing = true; await tail; } };
+  return { view, save, saveEnvironment, inspectEnvironment, selectRunner, async close() { closing = true; await tail; } };
 }
 
 export function registerInstanceSettings(app: FastifyInstance, settings: Awaited<ReturnType<typeof instanceSettings>>) {

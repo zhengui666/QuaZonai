@@ -11,10 +11,11 @@ const quote=(s:string)=>"'"+s.replaceAll("'","'\\''")+"'";
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 
 // Real process transport and persisted receipt ordering; no venue or market claims.
-test('queries and reopen never spawn; only fenced durable START launches the account',async()=>{
+test('direct account calls never spawn on queries/reopen; explicit START uses the single runner account-runtime mode',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-explicit-account-'));const marker=join(dir,'starts'),script=join(dir,'peer.mjs'),binary=join(dir,'peer');
  await writeFile(script,`import fs from 'node:fs';import readline from 'node:readline';
 const marker=${JSON.stringify(marker)},statePath=${JSON.stringify(join(dir,'capital-receipts.json'))};
+if(process.argv[2]!=='account-runtime')throw Error('single_runner_account_mode_required');
 fs.appendFileSync(marker,'spawn\\n');
 readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);let result={};
 if(v.operation==='BOOT'){const state=JSON.parse(fs.readFileSync(statePath));if(!Object.values(state.strategyCommands??{}).some(x=>x.original.action==='START'&&x.receipt.status==='UNCERTAIN'))throw Error('start_intent_not_persisted');result={ready:true};}
@@ -23,10 +24,12 @@ else if(v.operation==='CONTROL')result={applied:true};
 else if(v.operation==='STRATEGY_START'||v.operation==='STRATEGY_STATUS')result={strategy_id:'original-strategy',state:'Running',native_version:'protocol-only'};
 console.log(JSON.stringify({requestId:v.requestId,result}));if(v.operation==='SHUTDOWN')process.exit(0);
 });`);
- await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+ await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,{mode:0o700});
  let account=await createCapitalAccount(options,dir,binary);
- const call=(path:string,body?:Record<string,unknown>)=>account.handle(path,{method:body?'POST':'GET',headers:{'x-qz-client-id':'client'}} as unknown as IncomingMessage,async()=>body!);
+ const call=(path:string,body?:Record<string,unknown>)=>account.request(path,body?'POST':'GET','client',body);
  try{
+  await assert.rejects(account.request('/strategy/fence','GET','wrong-client'),/account_client_identity_mismatch/);
+  let readUnauthorizedBody=false;await assert.rejects(account.handle('/strategy/commands',{method:'POST',headers:{'x-qz-client-id':'wrong-client'}} as unknown as IncomingMessage,async()=>{readUnauthorizedBody=true;return {};}),/account_client_identity_mismatch/);assert.equal(readUnauthorizedBody,false);
   for(const path of ['/capabilities','/strategy/fence','/capital-exits'])assert.equal((await call(path)).status,200);
   await assert.rejects(call('/account'),/account_runtime_not_started/);
   await assert.rejects(call('/strategy'),/account_runtime_not_started/);

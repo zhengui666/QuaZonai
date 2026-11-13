@@ -75,7 +75,7 @@ export class AccountRuntime implements NativeAccountRuntime {
       // The scientific child environment remains isolated. Only this explicitly
       // configured account process receives its native venue credential names.
       for (const key of ['HYPERLIQUID_PK', 'HYPERLIQUID_TESTNET_PK']) if (process.env[key]) env[key] = process.env[key];
-      const child = spawn(this.binary, [], { env, stdio: ['pipe', 'pipe', 'pipe'] }); this.child = child;
+      const child = spawn(this.binary, ['account-runtime'], { env, stdio: ['pipe', 'pipe', 'pipe'] }); this.child = child;
       const failed = () => {
         // A superseded process can emit error and then exit after its successor
         // has started. It has no authority over that generation's requests.

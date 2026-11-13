@@ -5,7 +5,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { DatasetConfig } from './config.ts';
 import { bindScienceData, scienceDataWithoutBinding } from './config.ts';
-import { validateRemoteTarget } from '../../research/src/native-execution.ts';
+import { validateNativeTarget } from '../../research/src/native-execution.ts';
 import { counter, json, nowNs, object, Problem, text } from './facts.ts';
 import { digest } from './pm-facts.ts';
 
@@ -60,6 +60,6 @@ export async function readSourceRevision(configured: DatasetConfig): Promise<Sou
     for (const item of await readdir(directory)) await verifyCoverage(resolve(directory, item));
   }
   for (const catalog of catalogs) await verifyCoverage(catalog);
-  return { configured: { ...configured, data: configured.data.nautilusTarget ? bindScienceData(scienceDataWithoutBinding(resolved), validateRemoteTarget(configured.data.nautilusTarget)) : scienceDataWithoutBinding(resolved) }, sourceRevision, availableAtNs, contentDigest,
+  return { configured: { ...configured, data: configured.data.nautilusTarget ? bindScienceData(scienceDataWithoutBinding(resolved), validateNativeTarget(configured.data.nautilusTarget)) : scienceDataWithoutBinding(resolved) }, sourceRevision, availableAtNs, contentDigest,
     revisionKind: manifest.revisionKind as SourceRevision['revisionKind'], manifest };
 }

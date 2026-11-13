@@ -416,15 +416,14 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   // Owner clock notifications only refresh original observations; financial slicing is retired.
   const interval = setInterval(() => background(), 1_000); interval.unref();
   background();
-  return {
-    async handle(path: string, request: IncomingMessage, readBody: () => Promise<unknown>): Promise<{ status: number; value: unknown }> {
-      if (request.headers['x-qz-client-id'] !== options.clientId) fail('account_client_identity_mismatch', 403);
-      const body = request.method === 'POST' ? record(await readBody()) : null;
+  async function dispatch(path: string, method: 'GET' | 'POST', clientId: unknown, input?: unknown): Promise<{ status: number; value: unknown }> {
+      if (clientId !== options.clientId) fail('account_client_identity_mismatch', 403);
+      const body = method === 'POST' ? record(input) : null;
       if (body && (body.clientId !== options.clientId || body.accountId !== options.accountId)) fail('account_identity_mismatch');
-      if (request.method === 'GET' && ['/account'].includes(path)
-        || request.method === 'POST' && (path === '/strategy/commands' && body?.action === 'START')) await refresh();
+      if (method === 'GET' && ['/account'].includes(path)
+        || method === 'POST' && (path === '/strategy/commands' && body?.action === 'START')) await refresh();
       return serial(async () => {
-        if (request.method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
+        if (method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
           recovery: { supported: true, action: 'RECOVER', automaticConnection: false, automaticStrategyStart: false },
           capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_exit_planning_retired', policies: [], actions: ['PAUSE', 'CANCEL'] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
@@ -433,26 +432,26 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
             configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
             reason: options.nativeStrategy.strategy.kind === 'REGISTERED' ? 'account_registered_runner_support_unverified' : options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure === 'account_runtime_not_started' ? null : failure, defaultStart: 'NOT_STARTED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
           automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
-        if (request.method === 'GET' && path === '/strategy/config') return { status: 200, value: strategyConfiguration() };
+        if (method === 'GET' && path === '/strategy/config') return { status: 200, value: strategyConfiguration() };
         const verifyConfig = /^\/strategy\/config\/commands\/([^/]+)\/verify$/.exec(path);
-        if (request.method === 'POST' && verifyConfig) return { status: 200, value: await verifyConfiguration(decodeURIComponent(verifyConfig[1]!)) };
-        if (request.method === 'POST' && path === '/strategy/config') return { status: 200, value: await configureStrategy(body!) };
-        if (request.method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision } };
-        if (request.method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
+        if (method === 'POST' && verifyConfig) return { status: 200, value: await verifyConfiguration(decodeURIComponent(verifyConfig[1]!)) };
+        if (method === 'POST' && path === '/strategy/config') return { status: 200, value: await configureStrategy(body!) };
+        if (method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision } };
+        if (method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);
-        if (request.method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
-        if (request.method === 'GET' && path === '/account') return { status: 200, value: account() };
-        if (request.method === 'GET' && path === '/capital-exits') return { status: 200, value: status() };
+        if (method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
+        if (method === 'GET' && path === '/account') return { status: 200, value: account() };
+        if (method === 'GET' && path === '/capital-exits') return { status: 200, value: status() };
 
         const receipt = /^\/capital-exits\/commands\/([^/]+)$/.exec(path);
-        if (request.method === 'GET' && receipt) return { status: 200, value: commandReceipt(decodeURIComponent(receipt[1]!)) };
+        if (method === 'GET' && receipt) return { status: 200, value: commandReceipt(decodeURIComponent(receipt[1]!)) };
         const exitPath = /^\/capital-exits\/([^/]+)$/.exec(path);
-        if (request.method === 'GET' && exitPath) { const exit = state.exits[decodeURIComponent(exitPath[1]!)]; if (!exit) fail('capital_exit_not_found', 404); actions(exit); return { status: 200, value: { ...envelope(), exit: exit.view } }; }
+        if (method === 'GET' && exitPath) { const exit = state.exits[decodeURIComponent(exitPath[1]!)]; if (!exit) fail('capital_exit_not_found', 404); actions(exit); return { status: 200, value: { ...envelope(), exit: exit.view } }; }
         const protectionPath = /^\/targets\/([^/]+)\/cancel-protection$/.exec(path);
-        if (request.method === 'POST' && protectionPath) return { status: 200, value: await runtime.request('CANCEL_PROTECTION', { id: decodeURIComponent(protectionPath[1]!) }) };
+        if (method === 'POST' && protectionPath) return { status: 200, value: await runtime.request('CANCEL_PROTECTION', { id: decodeURIComponent(protectionPath[1]!) }) };
         const targetPath = /^\/targets\/([^/]+)$/.exec(path);
-        if (request.method === 'GET' && targetPath) { const targetId = decodeURIComponent(targetPath[1]!), stored = state.targets[targetId]; if (!stored) fail('target_receipt_not_found', 404); await settleTarget(targetId); return { status: 200, value: structuredClone(stored.receipt) }; }
-        if (request.method !== 'POST') return { status: 404, value: { error: 'not_found' } };
+        if (method === 'GET' && targetPath) { const targetId = decodeURIComponent(targetPath[1]!), stored = state.targets[targetId]; if (!stored) fail('target_receipt_not_found', 404); await settleTarget(targetId); return { status: 200, value: structuredClone(stored.receipt) }; }
+        if (method !== 'POST') return { status: 404, value: { error: 'not_found' } };
         if (path === '/sizing/fixed-risk') return { status: 200, value: { ...await runtime.request('FIXED_RISK_SIZE', { ...nativeFixedRiskSizing(body!.sizing) }), ...envelope() } };
         if (path === '/orders/preview') return { status: 200, value: { ...await runtime.request('ORDER_PREVIEW', { instrument_id: body!.instrument_id, order: body!.order }), ...envelope() } };
 
@@ -462,6 +461,13 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         if (path === '/strategy/commands') return { status: 202, value: await strategyCommand(body!) };
         return { status: 404, value: { error: 'not_found' } };
       });
+  }
+  return {
+    request: dispatch,
+    async handle(path: string, request: IncomingMessage, readBody: () => Promise<unknown>) {
+      if (request.headers['x-qz-client-id'] !== options.clientId) fail('account_client_identity_mismatch',403);
+      if (request.method !== 'GET' && request.method !== 'POST') return {status:405,value:{error:'method_not_allowed'}};
+      return dispatch(path,request.method,request.headers['x-qz-client-id'],request.method === 'POST' ? await readBody() : undefined);
     },
     async close() { stopped = true; clearInterval(interval); unsubscribe?.(); await queue; await runtime.close(); await save(); },
   };

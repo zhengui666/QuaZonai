@@ -189,6 +189,7 @@ export interface NautilusConnection {
   url: string; clientId: string; accountId: string; token?: string; tokenEnv?: string;
 }
 export interface InstanceSettingsView {
+  runner?: import('./nautilus.ts').ProcessNativeTarget | null;
   environment?: import('./nautilus.ts').NativeRustEnvironment | null;
   revision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
