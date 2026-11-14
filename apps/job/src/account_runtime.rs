@@ -2851,6 +2851,160 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn official_account_updates_and_spot_observations_keep_risk_halted() -> Result<()> {
+        use nautilus_hyperliquid::{
+            common::parse::parse_spot_account_balances, http::models::SpotClearinghouseState,
+        };
+        use nautilus_model::{enums::TradingState, events::AccountState, types::AccountBalance};
+
+        let directory = tempfile::tempdir()?;
+        // Only the existing Sandbox factory is installed. Never run/connect the node,
+        // start a strategy, send CONTROL or submit an order in this component test.
+        let (mut native, _tx, _replies) = node_with_scope(directory.path(), true).await?;
+        let cache = native.kernel().cache();
+        let portfolio = native.kernel().portfolio.clone();
+        let risk = native.kernel().risk_engine().clone();
+        let execution = native.kernel().exec_engine().clone();
+        risk.borrow_mut().set_trading_state(TradingState::Halted);
+        let risk_commands = risk.borrow().command_count();
+        let execution_commands = execution.borrow().command_count();
+        let account = AccountId::from("HYPERLIQUID-001");
+        let parse = |total: &str, hold: &str| -> Result<Vec<AccountBalance>> {
+            let state: SpotClearinghouseState = serde_json::from_value(json!({"balances":[{
+                "coin":"USDC","token":0,"total":total,"hold":hold,"entryNtl":"0"
+            }]}))?;
+            parse_spot_account_balances(&state)
+        };
+        let event = |balances, time: u64| {
+            AccountState::new(
+                account,
+                AccountType::Margin,
+                balances,
+                vec![],
+                true,
+                UUID4::new(),
+                time.into(),
+                time.into(),
+                None,
+            )
+        };
+        let initial = parse("100.25", "10")?;
+        assert_eq!(
+            initial,
+            vec![AccountBalance::new(
+                Money::from("100.25 USDC"),
+                Money::from("10 USDC"),
+                Money::from("90.25 USDC")
+            )]
+        );
+        // Official Portfolio -> Cache -> Account apply path, not QZ balance arithmetic.
+        portfolio
+            .borrow_mut()
+            .update_account(&event(initial.clone(), 100));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            initial[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            initial
+        );
+        let account_before = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let observation = json!({"account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet","request_started_ns":"200","received_ns":"300",
+                "balances":parse("800", "1")?,"trade_permission":false,"atomic_reservation":false});
+            owner.process(&Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), observation.clone())]),
+            })?;
+            assert_eq!(owner.spot_balance_observation.as_ref(), Some(&observation));
+            assert!(owner.spot_facts.is_none());
+            assert!(owner.control.is_none());
+        }
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            account_before
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            initial
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+
+        let updated = parse("50", "5")?;
+        portfolio
+            .borrow_mut()
+            .update_account(&event(updated.clone(), 400));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            updated[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            updated
+        );
+        // The spot-only parser omits zero tokens. Applying that empty update is
+        // not a zero-balance proof: official Account retains omitted currencies.
+        let zero = parse("0", "0")?;
+        assert!(zero.is_empty());
+        portfolio.borrow_mut().update_account(&event(zero, 500));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            updated[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            updated
+        );
+        let before_invalid = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        assert!(parse("invalid", "0").is_err());
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            before_invalid
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+        assert_eq!(risk.borrow().command_count(), risk_commands);
+        assert_eq!(execution.borrow().command_count(), execution_commands);
+        assert!(cache
+            .borrow()
+            .iter_client_order_ids(None, None, None, None)
+            .next()
+            .is_none());
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let (mut native, tx, replies) = node(directory.path()).await?;
