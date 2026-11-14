@@ -29,6 +29,12 @@ test('literature-only HTTP admission strips native bindings and durable tools re
     },
     transcript => {
       assert.ok(!JSON.stringify(transcript).includes('SEALED_SENTINEL'));
+      const result = transcript.messages.filter(message => message.role === 'toolResult').at(-1);
+      assert.ok(result?.role === 'toolResult');
+      const brief = result.content.filter(part => part.type === 'text').map(part => part.text).join('');
+      assert.match(brief, /LITERATURE_ONLY/);
+      assert.match(brief, /not verified training metadata or scientific admission/);
+      assert.doesNotMatch(brief, /research_trial|native_strategy_backtest|trial ledger/);
       return fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Discussion only' }), { stopReason: 'toolUse' });
     },
   ]);
@@ -54,6 +60,10 @@ test('literature-only HTTP admission strips native bindings and durable tools re
     assert.ok(!JSON.stringify(requests!.requests['request:literature-only']).includes('SEALED_SENTINEL'));
     const agent = await (await state.service.research.harness.conversation(receipt.conversationId, context))!.agent(context);
     assert.deepEqual(agent.tools.map(tool => tool.name).sort(), allowed);
+    const rendered = (await Promise.all(agent.sections.map(section => section.render({ conversationId: receipt.conversationId, agent, shown: {}, env: undefined, read: state.service.research.harness }, context)))).join('\n');
+    assert.match(rendered, /literature-only discussion, not an admitted scientific run/);
+    assert.doesNotMatch(rendered, /Use native_strategy_backtest|continue otherwise admitted science|continue an otherwise admitted testable hypothesis/);
+    assert.match(rendered, /public_queries_not_configured and continue discussion or finish/);
     assert.deepEqual(agent.callable.map(tool => tool.name).sort(), allowed);
     await state.restart();
     const reopened = await (await state.service.research.harness.conversation(receipt.conversationId, context))!.agent(context);
