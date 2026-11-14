@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-durable';
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { DatasetView, JsonObject, ModelRef, NautilusConnection, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
-import type { NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeTarget, RemoteNativeTarget, ProcessNativeTarget, NativeExecutionTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { setRemoteNativeCredential } from '../../research/src/native-execution.ts';
 
 import type { StrategyPolicy } from '../../research/src/strategy.ts';
@@ -19,7 +19,7 @@ export interface DatasetConfig extends DatasetView {
   /** Explicit source-owner metadata and grant files covered by revisionManifest. */
   reviewSourceEvidence?: import('../../../packages/contracts/src/review-source.ts').ReviewSourceFiles;
 }
-export type ConnectionConfig = NautilusConnection & { credentialRef?: string };
+export type ConnectionConfig = NautilusConnection & { credentialRef?: string; kind?: 'RUST_PROCESS'; processBinding?: { runner: ProcessNativeTarget; directory: string } };
 type BacktestConfig = RemoteNativeTarget & { token?: string };
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string; config?: JsonObject }
 export interface ServiceConfig {
@@ -28,6 +28,7 @@ export interface ServiceConfig {
   /** Runtime source snapshots for existing mandates; excluded from new admissions. */
   retainedDatasets?: DatasetConfig[];
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
+  nativeProcess?: ProcessNativeTarget;
   nautilus?: { backtest?: BacktestConfig };
   name: string; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; jobBinary: string;
   passwordHash?: string; secureCookies: boolean; staticDir?: string;
@@ -94,8 +95,8 @@ export function validateDatasetInput(dataset: DatasetConfig): void {
 }
 
 /** Backtest/PM computations and PAPER/LIVE transports have separate bindings. */
-export function scienceTarget(config: { nautilus?: ServiceConfig['nautilus']; jobBinary: NativeTarget }): NativeTarget {
-  return config.nautilus?.backtest ? remoteNativeBinding(config.nautilus.backtest) : config.jobBinary;
+export function scienceTarget(config: { nativeProcess?: ProcessNativeTarget; nautilus?: ServiceConfig['nautilus']; jobBinary: NativeTarget }): NativeTarget {
+  return config.nativeProcess ?? (config.nautilus?.backtest ? remoteNativeBinding(config.nautilus.backtest) : config.jobBinary);
 }
 
 /** Register the secret outside research facts and pass only its private reference onward. */
@@ -146,7 +147,7 @@ export function validateNautilusConfiguration(config: Pick<ServiceConfig, 'nauti
 }
 
 /** Freeze the transport identity with newly admitted data, never rewrite stored requests. */
-export function bindScienceData(data: JsonObject, target: RemoteNativeTarget): JsonObject {
+export function bindScienceData(data: JsonObject, target: NativeExecutionTarget): JsonObject {
   const bound: JsonObject = { ...data, nautilusTarget: { ...target } };
   if (data.sealed && typeof data.sealed === 'object' && !Array.isArray(data.sealed)) {
     bound.sealed = { ...data.sealed, nautilusTarget: { ...target } };

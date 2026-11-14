@@ -1,3 +1,7 @@
+import {randomUUID} from 'node:crypto';
+import type {FastifyInstance} from 'fastify';
+import type {ConnectionConfig} from '../src/config.ts';
+import {registerProcessAccount} from '../src/downstream.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { captureAccount } from '../src/pm-account.ts';
 import { accountKey } from '../src/capital-exit.ts';
@@ -87,4 +91,13 @@ export async function retainPmControlRecord(state: Awaited<ReturnType<typeof imp
     stored.mandates[id]!.campaigns[campaignId]!.runtime.taskId = monitorTaskId;
   }, context);
   return state.service.pm.get(id);
+}
+
+/** Controlled direct-handler boundary for service permissions/receipt tests.
+ * No HTTP listener, Nautilus engine or real child process is claimed here.
+ * Actual process lifecycle is covered by process-account-routes/explicit-start. */
+export async function directAccountProtocol(connection:ConnectionConfig,peer:FastifyInstance){
+ await peer.ready();
+ Object.assign(connection,{url:`rust-process://controlled/${randomUUID()}`,kind:'RUST_PROCESS',processBinding:{directory:'/controlled-no-account-files',runner:{kind:'RUST_PROCESS',id:'controlled',binary:'/controlled-not-executed',capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{testOnly:true},research:{singleStrategyRegistration:false,configuredRunFactory:false},account:{compiled:true,registration:true,command:'account-runtime',requiresExplicitStart:true},running:false}}}});
+ return registerProcessAccount(connection,async(path,method,clientId,input)=>{const result=await peer.inject({method,url:path,headers:{'x-qz-client-id':String(clientId)},...(input===undefined?{}:{payload:input as object})});return {status:result.statusCode,value:result.json()};});
 }

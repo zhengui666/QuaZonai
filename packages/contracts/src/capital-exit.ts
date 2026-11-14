@@ -58,6 +58,7 @@ export interface CapitalExitCommandReceipt { requestId: string; state: 'PENDING'
 export interface CapitalExitStatus {
   capability: CapitalExitCapability; reason: string | null; accountSourceId: string | null; observationId: string | null;
   controlRevision: string | null; reserved: string | null; exits: CapitalExitView[]; commands?: CapitalExitCommandReceipt[];
+  unsettledReservations?: { requestId: string; state: CapitalExitCommandReceipt['state']; reserved: string | null }[];
   supportedPolicies?: CapitalExitPolicy['kind'][]; availableActions?: CapitalExitAction[];
 }
 type ExistingCapitalExitCommand = { requestId: string; exitId: string; expectedRevision: string };

@@ -1,117 +1,125 @@
-import { Button, Form, Input, Select, Switch } from 'antd';
-import { ArrowClockwiseIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
-import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import type { InstanceSettingsUpdate, InstanceSettingsView, NautilusConnection } from '../../../packages/contracts/src/index.ts';
-import type { RemoteNativeInstance } from '../../../packages/contracts/src/nautilus.ts';
+import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
+import AccountConfiguration from './account-configuration';
+import { Button, Form, Input, Select } from 'antd';
+import { useEffect, useState } from 'react';
+import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
+import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
 import { ApiError, api } from './api';
-import { draftIsPersisted, readDraft, removeDraft, saveDraft } from './commands';
 import { useResource } from './data-hooks';
-import { DraftNotice, Empty, ErrorNotice, Loading } from './ui';
+import { ErrorNotice, Loading,useConfirm } from './ui';
 
-type Fields = { backtestEnabled: boolean; backtest?: RemoteNativeInstance; connections: NautilusConnection[] };
-type Draft = { revision: number; values: Fields; pending?: InstanceSettingsUpdate };
-const key = 'instance-settings';
-const fields = (value: InstanceSettingsView): Fields => ({ backtestEnabled: !!value.backtest, backtest: value.backtest ?? undefined, connections: value.connections });
-let memoryDraft: Draft | undefined;
-const optional = (value?: string) => value || undefined;
-function storeDraft(value: Draft) {
-  memoryDraft = value;
-  const { token: _backtestToken, ...backtest } = value.values.backtest ?? {};
-  const values = { ...value.values, backtest: value.values.backtest ? backtest as RemoteNativeInstance : undefined, connections: (value.values.connections ?? []).map(({ token: _token, ...connection }) => connection) };
-  const hasToken = !!value.pending?.backtest?.token || value.pending?.connections.some(connection => !!connection.token);
-  return saveDraft(key, { revision: value.revision, values, ...(!hasToken && value.pending ? { pending: value.pending } : {}) });
-}
-function clearDraft() { memoryDraft = undefined; removeDraft(key); }
-function content(value: Fields) {
-  return {
-    backtest: value.backtestEnabled ? { id: value.backtest?.id?.trim() ?? '', url: value.backtest?.url?.trim() ?? '', ...(optional(value.backtest?.token) ? { token: optional(value.backtest?.token) } : {}) } : null,
-    connections: (value.connections ?? []).map(connection => ({ id: connection.id.trim(), name: connection.name.trim(), mode: connection.mode, url: connection.url.trim(), clientId: connection.clientId.trim(), accountId: connection.accountId.trim(), ...(optional(connection.token) ? { token: optional(connection.token) } : {}) })),
+type Fields = Omit<NativeRustEnvironment, 'kind' | 'features'> & { featureNames?: string };
+export function environmentFromFields(values: Fields): NativeRustEnvironment {
+  const accountFactory=values.accountFactory?.trim();
+  if(values.accountCompatibility!==undefined && (values.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!accountFactory))throw new Error('兼容声明需要账户策略工厂；不声明时请清除此选项。');
+  return {kind:'RUST_PROCESS',id:values.id.trim(),cargoBinary:values.cargoBinary.trim(),manifestPath:values.manifestPath.trim(),packageName:values.packageName.trim(),
+    features:(values.featureNames??'').split(',').map(v=>v.trim()).filter(Boolean),
+    ...(values.backtestFactory?.trim()?{backtestFactory:values.backtestFactory.trim()}:{}),...(accountFactory?{accountFactory}:{}),
+    ...(values.accountCompatibility?{accountCompatibility:values.accountCompatibility}:{}),
   };
 }
+export function AccountCompatibilityNotice({declaration}:{declaration:unknown}) {
+  return <p>{declaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'此产物自报已声明可信策略单节点约定；这不是认证、验证或安全隔离。':'此产物未报告可信策略单节点声明；不会据保存配置补充声明。'} 这不证明账户取消当前可用；实际能力还取决于显式连接后原节点与会话。保存将清除当前产物选择，需重新显式选择；不会修改产物、连接账户或启动策略。</p>;
+}
+export function retryUncertainEnvironmentSave(status?: number) { return status === undefined || status >= 500; }
+type BuildRequest={requestId:string;expectedRevision:number;environmentId?:string;sourceExecutable?:string};
+type BuildView=PreparationView;
 const required = [{ required: true, whitespace: true, message: '请填写此项' }];
-const address = [...required, { validator: (_rule: unknown, value: string) => {
-  if (!value) return Promise.resolve();
-  try { const url = new URL(value.trim()); if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash) return Promise.resolve(); } catch { /* Form explains the accepted address. */ }
-  return Promise.reject(new Error('请填写 HTTP 或 HTTPS 地址，不含密码、查询参数或片段'));
-} }];
-
 export default function InstanceSettings() {
-  const query = useResource<InstanceSettingsView>('/settings/instances'); const cache = useQueryClient(); const [form] = Form.useForm<Fields>();
-  const current = Form.useWatch([], form) as Fields | undefined;
-  const [saved, setSaved] = useState<InstanceSettingsView>(); const [revision, setRevision] = useState<number>();
-  const [saving, setSaving] = useState(false); const [pending, setPending] = useState<InstanceSettingsUpdate>();
-  const [error, setError] = useState<unknown>(); const [notice, setNotice] = useState(''); const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted(key));
-  const initialized = useRef(false); const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const dirty = !!saved && !!current && JSON.stringify(content(current)) !== JSON.stringify({ backtest: saved.backtest, connections: saved.connections });
+  const query = useResource<InstanceSettingsView>('/settings/instances');
+  const confirm=useConfirm();
+  const [importId,setImportId]=useState(''),[importPath,setImportPath]=useState('');
+  const [form] = Form.useForm<Fields>();
+  const [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<InstanceSettingsView>();
+  const [pending, setPending] = useState<NativeEnvironmentSettingsUpdate>();
+  const [error, setError] = useState<unknown>(); const [notice, setNotice] = useState('');
+  const [discovery, setDiscovery] = useState<unknown>();
+  const [buildRequest,setBuildRequest]=useState<BuildRequest|undefined>(()=>{try{return JSON.parse(localStorage.getItem('qz-native-build-request')??'null')??undefined;}catch{return undefined;}});
+  const [build,setBuild]=useState<BuildView>();
   useEffect(() => {
-    const next = query.data; if (!next) return;
-    if (!initialized.current) {
-      initialized.current = true; const draft = memoryDraft ?? readDraft<Draft>(key);
-      const values = draft?.values;
-      if (values && !memoryDraft) {
-        if (values.backtest && values.backtest.id === next.backtest?.id && values.backtest.url === next.backtest.url) values.backtest.token = next.backtest.token;
-        values.connections = (values.connections ?? []).map(connection => ({ ...connection, token: next.connections.find(item => item.id === connection.id && item.url === connection.url)?.token }));
-      }
-      form.setFieldsValue(values ?? fields(next)); setRevision(draft?.revision ?? next.revision); setPending(draft?.pending);
-    } else if (saved && JSON.stringify(content(form.getFieldsValue())) === JSON.stringify({ backtest: saved.backtest, connections: saved.connections }) && !pending) {
-      form.resetFields(); form.setFieldsValue(fields(next)); setRevision(next.revision);
-    }
-    setSaved(next);
-  }, [query.data]);
-  const changed = () => { setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue() })); };
+    if (!query.data || loaded) return;
+    setSaved(query.data); form.setFieldsValue({ ...query.data.environment, featureNames: query.data.environment?.features?.join(',') }); setLoaded(true);
+  }, [query.data, loaded, form]);
   async function save() {
-    if (saving || revision === undefined) return;
-    const value = pending ?? { expectedRevision: revision, ...content(form.getFieldsValue()) };
-    setSaving(true); setPending(value); setError(undefined); setNotice(''); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue(), pending: value }));
+    if (!saved || busy) return;
+    setError(undefined); setNotice('');
     try {
-      const next = await api<InstanceSettingsView>('/settings/instances', { method: 'PUT', body: value });
-      await cache.cancelQueries({ queryKey: ['/settings/instances'] });
-      if (!mounted.current) { void cache.invalidateQueries({ queryKey: ['/settings/instances'] }); return; }
-      const latest = cache.setQueryData<InstanceSettingsView>(['/settings/instances'], known => known && known.revision > next.revision ? known : next)!;
-      void cache.invalidateQueries({ queryKey: ['/workspace'] }); void cache.invalidateQueries({ queryKey: ['/datasets'] });
-      form.resetFields(); form.setFieldsValue(fields(latest)); setSaved(latest); setRevision(latest.revision); setPending(undefined); clearDraft(); setDraftSaved(true); setNotice('已保存');
+      const values = pending ? null : await form.validateFields();
+      const request = pending ?? {expectedRevision:saved.revision,environment:environmentFromFields(values!)};
+      setBusy(true); setPending(request);
+      const result = await api<InstanceSettingsView>('/settings/instances',{method:'PUT',body:request});
+      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice('环境配置已保存，当前产物选择已清除，需重新显式选择。没有构建、连接账户或启动策略。');
     } catch (failure) {
-      if (!mounted.current) return; setError(failure);
-      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) { setPending(undefined); setDraftSaved(storeDraft({ revision: revision!, values: form.getFieldsValue() })); void query.refetch(); }
-    } finally { if (mounted.current) setSaving(false); }
+      setError(failure);
+      if (!retryUncertainEnvironmentSave(failure instanceof ApiError ? failure.status : undefined)) {
+        setPending(undefined);
+        if (failure instanceof ApiError && failure.status === 409) {
+          try { setSaved(await api<InstanceSettingsView>('/settings/instances')); } catch { /* Keep original revision until explicit refresh succeeds. */ }
+        }
+      }
+    } finally { setBusy(false); }
   }
-  const loadLatest = () => {
-    if (!query.data) return; form.resetFields(); form.setFieldsValue(fields(query.data)); setSaved(query.data); setRevision(query.data.revision); setPending(undefined); setError(undefined); setNotice(''); clearDraft(); setDraftSaved(true);
-  };
-  return <div className="settings-page instance-settings"><header className="page-heading"><h2>自管 Nautilus 运行环境与连接</h2><Button icon={<ArrowClockwiseIcon size={15} />} disabled={saving || !!pending} onClick={() => { void query.refetch(); }}>刷新配置</Button></header>
-    <p>选择并保存你已有的 Nautilus 运行环境连接。QuaZonai 部署不附带或自动启动 Nautilus；连接配置不是安装步骤，也不修改你的原生策略。</p>
-    <p>当前表单仅支持已经接通的兼容 HTTP 接口。Nautilus 的进程内 API、官方消息总线和远程 HTTP 不是同一种接口；本机或远程原生环境的直接接入仍待验证，不能只填任意地址就宣称已连接。已有 Rust 安装用于运行新节点，与接入正在运行的节点是两种能力；本页尚未提供对应原生探测入口，保存不会探测版本或证明运行能力。</p>
-    <p>官方 Redis 消息总线仅可读取节点已经配置并发布的流，不代表完整历史，也不自动提供启停或交易控制；本页尚未接入该只读来源。可执行文件路径也不是通用 Nautilus 接口，现有 runner 需要对应 JSON 协议，不能将任意 Rust 二进制视为可直接连接。</p>
-    <p>保存连接只保存地址和访问配置，不安装或启动服务，不连接交易账户，不启动策略。账户配置保存、恢复连接和交易启动均为独立明确操作。</p>
-    <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
-    {query.isPending ? <Loading /> : !saved ? null : <Form form={form} layout="vertical" disabled={saving || !!pending} onValuesChange={changed} onFinish={() => { void save(); }}>
-      <section className="settings-group instance-backtest"><header><h2>回测与研究</h2></header><div className="settings-group-body">
-        <Form.Item label="启用回测连接" name="backtestEnabled" valuePropName="checked"><Switch aria-label="启用回测连接" /></Form.Item>
-        {current?.backtestEnabled && <div className="instance-fields">
-          <Form.Item label="实例标识" name={['backtest', 'id']} rules={required}><Input autoComplete="off" /></Form.Item>
-          <Form.Item label="兼容适配器根地址" name={['backtest', 'url']} rules={address}><Input placeholder="https://adapter.example.com" autoComplete="off" /></Form.Item>
-          <Form.Item label="访问令牌" name={['backtest', 'token']} extra="直接填写访问令牌；无需凭据时留空。"><Input.Password autoComplete="new-password" /></Form.Item>
-        </div>}
-      </div></section>
-      <section className="settings-group"><header><h2>模拟盘与实盘</h2></header><div className="settings-group-body"><Form.List name="connections">{(items, { add, remove }) => <>
-        {!items.length && <Empty title="尚无实例连接" />}
-        {items.map(({ key: itemKey, name, ...rest }, index) => <section className="instance-card instance-connection" key={itemKey} aria-label={`账户连接 ${index + 1}`}>
-          <header><h3>连接 {index + 1}</h3><Button icon={<TrashIcon size={15} />} aria-label={`移除连接 ${index + 1}`} onClick={() => { remove(name); changed(); }}>移除连接</Button></header>
-          <Form.Item {...rest} label="名称" name={[name, 'name']} rules={required}><Input autoComplete="off" /></Form.Item>
-          <div className="instance-pair"><Form.Item {...rest} label="模式" name={[name, 'mode']} rules={[{ required: true, message: '请选择模式' }]}><Select options={[{ value: 'paper', label: '模拟盘' }, { value: 'live', label: '实盘' }]} /></Form.Item>
-          <Form.Item {...rest} label="实例标识" name={[name, 'id']} rules={required}><Input autoComplete="off" /></Form.Item></div>
-          <Form.Item {...rest} label="兼容适配器账户地址" name={[name, 'url']} rules={address}><Input placeholder="https://adapter.example.com/accounts/your-account" autoComplete="off" /></Form.Item>
-          <div className="instance-pair"><Form.Item {...rest} label="客户端标识" name={[name, 'clientId']} rules={required}><Input autoComplete="off" /></Form.Item>
-          <Form.Item {...rest} label="账户标识" name={[name, 'accountId']} rules={required}><Input autoComplete="off" /></Form.Item></div>
-          <Form.Item {...rest} label="访问令牌" name={[name, 'token']}><Input.Password autoComplete="new-password" /></Form.Item>
-        </section>)}
-        <Button icon={<PlusIcon size={15} />} onClick={() => { add({ id: crypto.randomUUID(), name: '', mode: 'paper', url: '', clientId: '', accountId: '' }); changed(); }}>添加连接</Button>
-      </>}</Form.List></div></section>
-      <p className="quiet">保存后用于新研究、回测及新观测。已有任务继续使用原连接。未保存的访问令牌仅保留在当前页面会话，刷新页面后需重新填写。</p>
-      {saved.revision !== revision && <div className="instance-conflict" role="status">配置已有更新。<Button disabled={saving || !!pending} onClick={loadLatest}>载入最新配置</Button><span className="quiet">将替换当前未保存内容</span></div>}
-      <ErrorNotice error={error} /><DraftNotice saved={draftSaved} /><div className="settings-save"><Button type="primary" htmlType={pending ? 'button' : 'submit'} loading={saving} disabled={!dirty && !pending} onClick={pending ? () => { void save(); } : undefined}>{saving ? '保存中' : pending ? '核对保存' : '保存实例连接'}</Button><span role="status" className="quiet">{notice || (pending ? '保存结果待核对' : dirty ? '未保存' : '')}</span></div>
-    </Form>}
+  async function inspect() {
+    if (busy || pending) return; setBusy(true); setError(undefined); setDiscovery(undefined);
+    try { setDiscovery(await api('/settings/instances/inspect',{method:'POST',body:{}})); }
+    catch (failure) { setError(failure); } finally { setBusy(false); }
+  }
+  async function buildEnvironment(){
+    if(busy||pending||!saved||(!saved.environment&&!buildRequest))return;setBusy(true);setError(undefined);
+    const request=buildRequest??{requestId:crypto.randomUUID(),expectedRevision:saved.revision};
+    setBuildRequest(request);localStorage.setItem('qz-native-build-request',JSON.stringify(request));
+    try{setBuild(await api<BuildView>(request.sourceExecutable?'/settings/instances/import':'/settings/instances/build',{method:'POST',body:request}));}
+    catch(failure){setError(failure);}finally{setBusy(false);}
+  }
+  async function importEnvironment(){
+    if(busy||pending||!saved)return;
+    const request:BuildRequest=buildRequest??{requestId:crypto.randomUUID(),expectedRevision:saved.revision,environmentId:saved.environment?.id??importId,sourceExecutable:importPath};
+    if(!request.sourceExecutable){setError(new Error('请先核实或结束原构建请求，再准备导入。'));return;}
+    setBusy(true);setError(undefined);setBuildRequest(request);localStorage.setItem('qz-native-build-request',JSON.stringify(request));
+    try{setBuild(await api<BuildView>('/settings/instances/import',{method:'POST',body:request}));}catch(failure){setError(failure);}finally{setBusy(false);}
+  }
+  async function readBuild(){if(!buildRequest||busy)return;setBusy(true);setError(undefined);try{setBuild(await api<BuildView>(`/settings/instances/build/${encodeURIComponent(buildRequest.requestId)}`));}catch(failure){setError(failure);}finally{setBusy(false);}}
+  async function selectRunner(){if(!buildRequest||!saved||busy)return;setBusy(true);setError(undefined);try{setSaved(await api<InstanceSettingsView>('/settings/instances/select-runner',{method:'POST',body:{requestId:buildRequest.requestId,expectedRevision:buildRequest.expectedRevision}}));setNotice('已选用已核实的启动器产物。尚未连接账户或启动策略。');}catch(failure){setError(failure);}finally{setBusy(false);}}
+  if (!loaded) return query.error ? <ErrorNotice error={query.error} /> : <Loading />;
+  return <div className="settings-page instance-settings"><header className="page-heading"><h2>Nautilus 原生 Rust 环境</h2></header>
+    <p>只有一种连接方式：通过同一进程连接查看与控制 Nautilus。可以使用已有 Rust 项目构建薄启动器，或显式导入已有兼容启动器；这只是两种产物准备方式，不是两种连接。QuaZonai 不随应用捆绑 Nautilus，不修改其源码，不要求预装常驻适配服务。</p>
+    <p>路径必须能被 QuaZonai 服务所在机器访问；默认容器没有 Cargo / rustc 或宿主项目挂载，不能直接填写宿主路径当作可用环境。容器需要所有者准备兼容的已有工具链、系统库和挂载，宿主与容器 glibc 不一致也可能无法运行。这里不会通过 SSH 自动访问远程机器，也不会接管已运行且未提供接口的节点。</p>
+    <p>保存配置、检查或构建环境、连接账户、启动交易是不同操作。单一环境可承载独立研究进程和显式账户进程，不代表只有一个操作系统进程；研究权限不是交易许可。</p>
+    {!!saved && (!!saved.backtest || saved.connections.length > 0) && <p>检测到旧 HTTP 配置，已作为迁移事实保留，不再提供新的 HTTP 配置入口。旧任务、账户及未决回执不会改写成新连接，UNKNOWN 不会自动重发或清除。</p>}
+    <Form form={form} layout="vertical" disabled={busy || !!pending}>
+      <Form.Item name="id" label="环境标识" rules={required}><Input /></Form.Item>
+      <Form.Item name="cargoBinary" label="已有 Cargo 可执行文件绝对路径" rules={required}><Input /></Form.Item>
+      <Form.Item name="manifestPath" label="已有 Cargo.toml 绝对路径" rules={required}><Input /></Form.Item>
+      <Form.Item name="packageName" label="策略库 package 名称" rules={required}><Input /></Form.Item>
+      <Form.Item name="featureNames" label="显式 features（逗号分隔）"><Input /></Form.Item>
+      <Form.Item name="backtestFactory" label="回测工厂公开模块（config / install）"><Input /></Form.Item>
+      <Form.Item name="accountFactory" label="账户策略工厂公开模块（strategy）"><Input /></Form.Item>
+      <Form.Item name="accountCompatibility" label="可选：账户工厂兼容声明（不是认证）" dependencies={['accountFactory']} rules={[({getFieldValue})=>({validator:async(_,value)=>{if(value && !getFieldValue('accountFactory')?.trim())throw new Error('请先填写账户策略工厂，或清除声明。');}})]}>
+        <Select allowClear placeholder="未声明（默认，不限制原有研究与策略运行）" options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:'我明确声明：可信策略，整个生命周期只使用此单节点'}]}/>
+      </Form.Item>
+      <p>只在你确认用户 Rust 代码的构造、加载、启动和所有后续回调始终只注册此节点的策略，且不创建第二节点、不替换线程全局发送器或消息端点时选择。QuaZonai 不验证或隔离这些代码。未声明不会封禁原有研究或策略运行，但不提供该声明所需的取消能力。此阶段只验证指定版本的模拟账户，不开放实盘。</p>
+    </Form>
+    {pending && <p>保存结果尚未确认。重试保留原配置与版本，不创建另一请求。</p>}
+    <Button onClick={()=>void save()} loading={busy}>{pending ? '核实原保存请求' : '仅保存环境配置'}</Button>{' '}
+    <Button onClick={()=>void inspect()} disabled={busy || !!pending || !saved?.environment}>显式检查已保存环境</Button>
+    <p>检查仅读取 Cargo 清单。显式构建会在独立目录执行你项目的 Rust / build.rs 代码，使用已有离线依赖，不下载或替换 Nautilus；路径、版本或精度不兼容会失败。当前源码构建胶水仅验证固定官方 git 634（0.69），同版本 registry/path 来源也可能不兼容，不能据此宣称任意版本支持。构建成功仍不代表已连接账户或可交易。</p>
+    <details><summary>显式导入已有兼容启动器（不需要应用内 Cargo）</summary>
+      <p>必须是当前应用容器能访问和执行的兼容产物，不是任意 Nautilus 可执行文件。将复制到独立产物目录，再在应用环境实际执行 capabilities；这是运行你信任的代码，不是静态安全扫描，也不是沙箱隔离。不会发送 BOOT 或启动策略。身份来自产物自报，不是源码真实性证明。</p>
+      <Input aria-label="导入环境标识" placeholder="没有源码环境时填写环境标识" value={saved?.environment?.id??importId} disabled={!!saved?.environment||!!buildRequest||busy} onChange={e=>setImportId(e.target.value)}/>
+      <Input aria-label="已有启动器绝对路径" placeholder="应用容器可访问的绝对路径" value={importPath} disabled={!!buildRequest||busy} onChange={e=>setImportPath(e.target.value)}/>
+      <Button disabled={busy||!!pending||(!buildRequest&&(!importPath||!(saved?.environment?.id??importId)))} onClick={()=>confirm('执行可信启动器的能力查询？','这将复制并运行所选二进制的 capabilities。任意用户代码可能产生副作用；不代表安全沙箱。不会主动 BOOT、连接账户或发起交易，选择产物仍需下一步明确操作。',()=>{void importEnvironment();})}>{buildRequest?.sourceExecutable?'核实原导入请求':'显式导入并执行能力查询'}</Button>
+    </details>
+    <Button onClick={()=>void buildEnvironment()} disabled={busy||!!pending||(!saved?.environment&&!buildRequest)}>{buildRequest?'核实原准备请求':'显式构建启动器'}</Button>{' '}
+    <Button onClick={()=>void readBuild()} disabled={busy||!buildRequest}>只读取原准备进度</Button>{' '}
+    <Button onClick={()=>void selectRunner()} disabled={busy||build?.state.outcome?.status!=='completed'}>选用已核实产物（不启动账户）</Button>
+    {(build?.state.status==='terminal'||(error instanceof ApiError&&error.status<500))&&<Button disabled={busy} onClick={()=>{setBuildRequest(undefined);setBuild(undefined);localStorage.removeItem('qz-native-build-request');}}>准备新的显式构建或导入请求</Button>}
+    {buildRequest&&<p>原产物准备请求：{buildRequest.requestId}。重开或查询不会重编或重新执行导入查询；结果不确定时保留原身份，不将它改称成功。本地任务取消或停止不证明任意二进制的后代进程已结束，也不证明没有外部副作用。</p>}
+    {build&&<PreparationStatus value={build}/>}
+    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><SelectedRunnerStatus runner={saved.runner}/></>}
+    <p>当前 QZ 账户接线仅支持 Hyperliquid、单账户中的一个 EMA 或已注册 Rust Strategy，最多 256 个标的，不等于任意官方 LiveNode 配置。账户工厂未编入时不能恢复账户；研究工厂可用不构成交易权限。连接与启动交易仍须账户页各自显式操作。</p>
+    <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
+    {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}
+    {discovery !== undefined && <pre>{JSON.stringify(discovery,null,2)}</pre>}
   </div>;
 }

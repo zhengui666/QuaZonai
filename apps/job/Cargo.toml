@@ -89,6 +89,7 @@ rustix = { version = "=1.1.4", features = ["fs", "process", "stdio"] }
 
 [build-dependencies]
 toml = "=1.1.8"
+serde_json.workspace = true
 
 [dev-dependencies]
 nautilus-system = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false }

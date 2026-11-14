@@ -1,6 +1,6 @@
 import { ensureCapitalWatch } from './capital-watch.ts';
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
-import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import type { ProcessNativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
@@ -49,7 +49,7 @@ function portfolioUsesFactor(fact: PortfolioFact, id: string): boolean {
     } catch { return true; }
   });
 }
-export function workbench(host: ResearchHost, config: ServiceConfig) {
+export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunner?: (requestId: string, revision: number) => Promise<ProcessNativeTarget>) {
   const snapshot = () => host.harness.snapshot(Application, context);
   const getSettings = async (): Promise<SettingsView> => settings((await snapshot())!.settings);
   const dataset = (id: string) => {
@@ -60,7 +60,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   };
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    if (Object.keys(body).some(key => !['requestId', 'input', 'goal', 'model', 'datasetId', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier'].includes(key))) throw new Problem('research_field_unsupported');
+    if (Object.keys(body).some(key => !['requestId', 'input', 'goal', 'model', 'datasetId', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
     const original = json(body); const old = (await readResearchAdmissions(host))[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
     const priorInput = (old?.input ?? nativeAdmission?.input) as NativeResearchInput | undefined;
@@ -69,6 +69,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
       return host.start(requestId, old.input as NativeResearchInput, undefined, old.sourceEvidence as unknown as CapturedReviewSource | undefined, nativeAdmission?.metadata);
+    }
+    let selectedTarget: ProcessNativeTarget | undefined;
+    if (body.runnerBuildRequestId !== undefined || body.expectedRunnerRevision !== undefined) {
+      if (!resolveRunner || typeof body.runnerBuildRequestId !== 'string' || !body.runnerBuildRequestId || !Number.isSafeInteger(body.expectedRunnerRevision) || retainedNautilusTarget) throw new Problem('research_runner_binding_invalid',422);
+      selectedTarget = await resolveRunner(body.runnerBuildRequestId, Number(body.expectedRunnerRevision));
     }
     const submission = body as unknown as ResearchStart;
     let input: ResearchInput;
@@ -111,6 +116,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
         policy: { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
+    if (selectedTarget) input.data = bindScienceData(scienceDataWithoutBinding(input.data), selectedTarget);
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
     const available = await host.availableModels(String(model.provider));
     const selectedModel = available.find(item => item.modelId === model.modelId);
@@ -140,6 +146,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (validated.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), validated.campaign.mandateRevisionId));
 
     }, context);
+    if (selectedTarget) {
+      const currentTarget = await resolveRunner!(String(body.runnerBuildRequestId), Number(body.expectedRunnerRevision));
+      if (canonical(json(currentTarget)) !== canonical(json(selectedTarget))) throw new Problem('research_runner_binding_changed',409);
+    }
     return host.start(requestId, validated, undefined, sourceEvidence ?? undefined,
       { original, ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) });
   }

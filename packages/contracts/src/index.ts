@@ -54,9 +54,10 @@ export interface ResearchSpecification {
   capital?: CapitalAssumptions;
 }
 export interface ResearchInput { goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
-export type ResearchStart = { requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
+export type ResearchRunnerBinding = { runnerBuildRequestId?: string; expectedRunnerRevision?: number };
+export type ResearchStart = ResearchRunnerBinding & ({ requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
   requestId: string; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string;
-};
+});
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
 export interface ResearchResume { submissionId: number; instruction?: string }
@@ -81,17 +82,22 @@ export interface DatasetPreparation {
   scientificQualification: 'UNVERIFIED' | 'NOT_ASSESSED';
 }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
-export interface ResearchMessage { entryId: number; text: string }
+export interface ResearchMessage { entryId: number; text: string; role?: 'user' | 'assistant'; submissionId?: number; requestId?: string }
+export interface ResearchMessagePage { messages: ResearchMessage[]; nextCursor: string | null }
 export interface ResearchAssessmentView {
   taskId: number; mode: 'LOGIC' | 'SYNTHESIS'; status: string;
   configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
   evidenceLinks: { taskId: number; href: string }[];
 }
 export interface ResearchDetail extends ResearchSummary {
+  /** Explicit unresolved original current evaluation receipts, not inferred from task activity. */
+  executionUncertain?: boolean;
+  executionUncertainty?: { taskId: number; reason: 'nautilus_execution_unknown' | 'nautilus_cancellation_unknown' } | null;
   /** Original official Pi assessment outcomes, never reconstructed from assistant prose. */
   assessments?: ResearchAssessmentView[];
-  /** Visible assistant text from the original Pi conversation, not model reasoning or tool payloads. */
+  /** Ordinary assistant text and verified original owner intents; never internal prompt or tool payloads. */
   messages?: ResearchMessage[];
+  messagesNextCursor?: string | null;
   reviews?: ReviewReport[];
   toolPolicy?: 'NAUTILUS_ONLY';
   previousNativeResults?: { previousSubmissionId: number; final: JsonObject }[];
@@ -189,6 +195,8 @@ export interface NautilusConnection {
   url: string; clientId: string; accountId: string; token?: string; tokenEnv?: string;
 }
 export interface InstanceSettingsView {
+  runner?: import('./nautilus.ts').ProcessNativeTarget | null;
+  environment?: import('./nautilus.ts').NativeRustEnvironment | null;
   revision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
 export interface InstanceSettingsUpdate {
@@ -204,3 +212,5 @@ export interface UsageView { inputTokens: number | null; outputTokens: number | 
 
 export const API = '/api/v3';
 export type { ListPage, ListCriterion, ResearchListItem, FactorListItem, ListPerformance, PortfolioListItem, TickReplayListItem, AllocationListItem } from './lists.ts';
+
+export interface NativeEnvironmentSettingsUpdate { expectedRevision: number; environment: import('./nautilus.ts').NativeRustEnvironment | null }

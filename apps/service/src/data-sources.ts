@@ -117,8 +117,8 @@ export async function dataSources(config: ServiceConfig) {
       if (ids.has(dataset.id)) throw new Problem('data_source_dataset_id_conflict', 409);
       ids.add(dataset.id);
     }
-    return result.map(dataset => ({ ...structuredClone(dataset), data: config.nautilus?.backtest
-      ? bindScienceData(scienceDataWithoutBinding(dataset.data), config.nautilus.backtest) : scienceDataWithoutBinding(dataset.data) }));
+    return result.map(dataset => ({ ...structuredClone(dataset), data: (config.nativeProcess ?? config.nautilus?.backtest)
+      ? bindScienceData(scienceDataWithoutBinding(dataset.data), (config.nativeProcess ?? config.nautilus?.backtest)!) : scienceDataWithoutBinding(dataset.data) }));
   }
   function apply() {
     config.datasets = merged();
@@ -126,8 +126,8 @@ export async function dataSources(config: ServiceConfig) {
     for (const source of [...Object.values(stored), ...sources.values()]) {
       for (const dataset of [...(source.retainedDatasets ?? []), ...source.datasets]) retained.set(dataset.id, dataset);
     }
-    config.retainedDatasets = [...retained.values()].map(dataset => ({ ...structuredClone(dataset), data: config.nautilus?.backtest
-      ? bindScienceData(scienceDataWithoutBinding(dataset.data), config.nautilus.backtest) : scienceDataWithoutBinding(dataset.data) }));
+    config.retainedDatasets = [...retained.values()].map(dataset => ({ ...structuredClone(dataset), data: (config.nativeProcess ?? config.nautilus?.backtest)
+      ? bindScienceData(scienceDataWithoutBinding(dataset.data), (config.nativeProcess ?? config.nautilus?.backtest)!) : scienceDataWithoutBinding(dataset.data) }));
   }
   apply();
   let host: ResearchHost | undefined;

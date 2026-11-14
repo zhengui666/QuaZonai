@@ -10,14 +10,50 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import type { JsonObject } from '@earendil-works/pi-durable';
+import { configure, defineDoc, defineDocFamily, defineExtension, wrapTool, type JsonObject, type Tx, type TaskId, type ConversationId, type ToolRegistration } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
+import nativeStrategyExtension, { NativeStrategyBacktestTask, nativeStrategyBacktestTool } from '../plugins/native-strategy-backtest.ts';
 import { NativeWalkForward } from '../plugins/native-walk-forward.ts';
-import { ResearchAssessment, nativeAssessmentMetric } from '../plugins/research-assessment.ts';
+import researchAssessmentExtension, { ResearchAssessment, nativeAssessmentMetric } from '../plugins/research-assessment.ts';
 import { nativeWalkForwardResult, walkForwardScope } from '../src/native-walk-forward-result.ts';
-import { nativeCommands, NativeRemoteUncertainty } from '../src/native-execution.ts';
-import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
+import { NativeExecutionTask, NativeRemoteUncertainty } from '../src/native-execution.ts';
+import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+
+import { reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
+import { canonicalJsonDigest } from '../src/native-json.ts';
+import { NativeSensitivity, nativeSensitivityTool } from '../plugins/native-sensitivity.ts';
+// Existing official Doc tokens and Tasks, populated before resuming the real tools.
+// Wrappers only restore historical state; they do not implement tool behavior.
+const Calls = defineDocFamily<any, null>({ kind: 'qz.native-call', version: 1, scope: 'task', family: true, initial: () => ({ taskId: null }), checkpointWhen: () => true });
+const StrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({ kind: 'qz.native-strategy-child', version: 1, scope: 'task', initial: () => ({ taskId: null }), checkpointWhen: (_v, _o, i) => i.deltasSinceBase >= 127 });
+async function retainTask(tx: Tx, conversationId: ConversationId, owner: TaskId | undefined, target: RemoteNativeTarget, catalog: string, request: JsonObject, originals: NativeExecutionRequest[]) {
+  const taskId = await tx.createTask(NativeStrategyBacktestTask, { request, catalog, target }, { ownership: owner ? { kind: 'task', taskId: owner } : { kind: 'conversation' } });
+  const original: NativeExecutionRequest = { schemaVersion: 1, requestId: String(originals.length + 1).padStart(64, '0'), invocationId: `retained-${originals.length + 1}`, implementationDigest: `sha256:${'a'.repeat(64)}`, command: 'native-strategy-backtest', args: ['--catalog', catalog], input: request, files: {} };
+  originals.push(original);
+  const basis = canonicalJsonDigest({ target, command: original.command, input: request, args: original.args, files: {} });
+  const child = await tx.createTask(NativeExecutionTask, { target, requestId: original.requestId, basis, command: original.command, request: { request: original as unknown as JsonObject }, ownerTaskId: taskId, receiptRequired: true }, { ownership: { kind: 'task', taskId } });
+  (await tx.doc(Calls, taskId, basis, null)).taskId = child;
+  (await tx.doc(NativeRemoteUncertainty, conversationId, String(taskId), null)).requests.push({ taskId, target, requestId: original.requestId, status: 'UNKNOWN', error: 'retained_outcome_unknown' });
+  return taskId;
+}
+function retainedTools(target: RemoteNativeTarget, catalog: string, originals: NativeExecutionRequest[]) {
+  return defineExtension<ToolRegistration>({ name: 'test.retained-native-history', wraps: [
+    wrapTool(nativeStrategyBacktestTool, tool => ({ ...tool, async execute(args, api, ctx) {
+      await api.commit(async tx => { const doc = await tx.doc(StrategyChild, api.taskId); if (!doc.taskId) doc.taskId = await retainTask(tx, api.conversationId, api.taskId, target, catalog, source, originals); }, ctx);
+      return tool.execute(args, api, ctx);
+    } })),
+    wrapTool(nativeSensitivityTool, tool => ({ ...tool, async execute(args, api, ctx) {
+      await api.commit(async tx => {
+        const doc = await tx.doc(NativeSensitivity, api.conversationId); if (doc.runs.some(run => run.toolTaskId === api.taskId)) return;
+        const neighbourStrategies = (args.neighbourStrategies ?? []) as JsonObject[], costs = (args.costs ?? []) as JsonObject[];
+        const cases = [{ role: 'BASELINE' as const, request: source }, ...neighbourStrategies.map(strategy => ({ role: 'PARAMETER_NEIGHBOUR' as const, request: { ...source, strategy } })), ...costs.map(cost => ({ role: 'COST' as const, request: { ...source, venue: { ...(source.venue as JsonObject), ...cost } } }))];
+        const tasks = []; for (const item of cases) tasks.push({ role: item.role, taskId: await retainTask(tx, api.conversationId, api.taskId, target, catalog, item.request, originals) });
+        doc.runs.push({ toolTaskId: api.taskId, sourceRequest: source, neighbourStrategies, costs, tasks });
+      }, ctx);
+      return tool.execute(args, api, ctx);
+    } })),
+  ] });
+}
 
 const source: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }],
   event_start_ns: '1790000000000000001', event_end_ns: '1790000000000000100', available_end_ns: '1790000000000000100',
@@ -78,28 +114,29 @@ test('assessment decodes only unambiguous finite original native metrics without
 for (const behavior of ['recover', 'cancel'] as const) test(`native sensitivity ${behavior} retains owned official Tasks and original receipts`, { timeout: 20_000 }, async () => {
   const { NativeSensitivity } = await import('../plugins/native-sensitivity.ts');
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-sensitivity-'));
-  const posts: NativeExecutionRequest[] = []; const cancelled: string[] = []; let complete = false;
+  const originals: NativeExecutionRequest[] = []; const reads: string[] = []; const cancelled: string[] = []; let complete = false;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
-    const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!;
+    assert.equal(incoming.method, 'GET', 'history cannot POST or DELETE'); reads.push(incoming.url!);
+    const original = originals.find(post => incoming.url === `/v1/executions/${post.requestId}`)!; assert.ok(original);
     assert.equal(original.command, 'native-strategy-backtest');
-    if (incoming.method === 'DELETE') { cancelled.push(original.requestId); response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'CANCELLED' })); return; }
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: complete ? 'COMPLETED' : 'UNKNOWN', ...(complete ? { result: { ...wire().folds[0]!.trials[0]!.result, request: original.input, instrument_definition: instrumentBasis(original.input as JsonObject), equity_performance: equityWire(), canonical_result: { ...wire().folds[0]!.trials[0]!.result!.canonical_result, run: { outcome: 'completed' } } } } : { error: 'original_native_work_unresolved' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies: [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }], costs: [{ maker_fee: '0', taker_fee: '0.002' }] }), { stopReason: 'toolUse' }), fauxAssistantMessage('Actual cases completed; no OOS claim.')]);
-  const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
+  let releaseModel!: () => void; const modelGate = new Promise<void>(resolve => { releaseModel = resolve; });
+  faux.setResponses([async () => { await modelGate; return fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies: [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }], costs: [{ maker_fee: '0', taker_fee: '0.002' }] }), { stopReason: 'toolUse' }); }, fauxAssistantMessage('Actual cases completed; no OOS claim.')]);
+  const target = { id: 'retained-protocol', url: `http://127.0.0.1:${address.port}` };
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [retainedTools(target, directory, originals)] }; let host = await openResearch(options);
   try {
-    const receipt = await host.start(`sensitivity-${behavior}`, { goal: 'Check real task lifecycle', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: { id: 'sensitivity-protocol', url: `http://127.0.0.1:${address.port}` }, native_strategy_backtest_request: source }, policy: {} });
+    const receipt = await host.start(`sensitivity-${behavior}`, { goal: 'Check real task lifecycle', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
+    await host.harness.commit(tx => configure(tx, receipt.conversationId, { extensions: [nativeStrategyExtension, researchAssessmentExtension, retainedTools(target, directory, originals)] }), context); releaseModel();
     let run;
     for (let tries = 0; ; tries++) {
       run = (await host.harness.snapshot(NativeSensitivity, receipt.conversationId, context))?.runs[0];
-      if (run && posts.length === 3 && (await Promise.all(run.tasks.map(item => host.harness.getTask(item.taskId, context)))).every(task => task?.state.status === 'sleeping')) break;
-      assert.ok(tries < 500); await delay(10);
+      if (run && originals.length === 3 && (await Promise.all(run.tasks.map(item => host.harness.getTask(item.taskId, context)))).every(task => task?.state.status === 'sleeping')) break;
+      assert.ok(tries < 500, 'original sensitivity tasks did not reach receipt waiting'); await delay(10);
     }
     const ids = run.tasks.map(item => item.taskId);
     if (behavior === 'recover') {
@@ -109,10 +146,21 @@ for (const behavior of ['recover', 'cancel'] as const) test(`native sensitivity 
     } else {
       await host.harness.abortTask(run.toolTaskId as typeof ids[number], context);
       for (const id of ids) assert.equal((await host.harness.waitForTask(id, context)).state.outcome.status, 'aborted');
-      assert.deepEqual([...new Set(cancelled)].sort(), posts.map(post => post.requestId).sort());
+      assert.deepEqual(cancelled, [], 'local abort cannot send retired DELETE');
+      for (const id of ids) assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, receipt.conversationId, String(id), context))!.requests[0]!.status, 'UNKNOWN');
+      await host.close(); host = await openResearch(options);
+      for (const id of ids) assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, receipt.conversationId, String(id), context))!.requests[0]!.status, 'UNKNOWN');
+      complete = true;
+      await reconcileNativeRemoteTasks(host.harness, ids.map(id => ({ id, conversationId: receipt.conversationId })), context);
+      for (const id of ids) {
+        assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, receipt.conversationId, String(id), context))!.requests[0]!.status, 'COMPLETED');
+        assert.equal((await host.harness.getTask(id, context))!.state.outcome!.status, 'aborted', 'late original receipt only settles facts, not aborted owner');
+      }
     }
-    assert.equal(posts.length, 3, 'restart/cancellation never posts replacement native work');
+    assert.equal(originals.length, 3, 'restart/cancellation never creates replacement native work');
     assert.deepEqual((await host.harness.snapshot(NativeSensitivity, receipt.conversationId, context))!.runs[0]!.tasks.map(item => item.taskId), ids);
+    assert.ok(reads.length > 0, 'history must really observe original HTTP receipts');
+    assert.ok(reads.every(path => originals.some(original => path === `/v1/executions/${original.requestId}`)));
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -120,27 +168,29 @@ for (const uncertain of [false, true]) test(`owner stop after historical result 
   const { NativeSensitivity } = await import('../plugins/native-sensitivity.ts');
   const { CampaignResearchDoc } = await import('../src/pm-campaign.ts');
   const directory = await mkdtemp(join(tmpdir(), 'qz-owner-native-continuation-'));
-  const posts: NativeExecutionRequest[] = []; let resolved = !uncertain; let stopping = false;
+  const originals: NativeExecutionRequest[] = []; const reads: string[] = []; let resolved = !uncertain; let stopping = false;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
-    const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!;
-    if (original === posts[0]) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'COMPLETED', result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } })); return; }
-    const cancelled = stopping && resolved && incoming.method !== 'POST';
+    assert.equal(incoming.method, 'GET', 'history cannot POST or DELETE'); reads.push(incoming.url!);
+    const original = originals.find(post => incoming.url === `/v1/executions/${post.requestId}`)!; assert.ok(original);
+    if (original === originals[0]) { response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: 'COMPLETED', result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } })); return; }
+    const cancelled = stopping && resolved;
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: cancelled ? 'CANCELLED' : 'UNKNOWN', ...(!cancelled ? { error: 'original_receipt_unresolved' } : {}) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }), fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies: [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }], costs: [{ maker_fee: '0', taker_fee: '0.002' }] }), { stopReason: 'toolUse' })]);
-  const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
+  let releaseModel!: () => void; const modelGate = new Promise<void>(resolve => { releaseModel = resolve; });
+  faux.setResponses([async () => { await modelGate; return fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }); }, fauxAssistantMessage(fauxToolCall('native_strategy_sensitivity', { neighbourStrategies: [{ ...(source.strategy as JsonObject), fast_period: 3, slow_period: 5 }], costs: [{ maker_fee: '0', taker_fee: '0.002' }] }), { stopReason: 'toolUse' })]);
+  const target = { id: 'retained-protocol', url: `http://127.0.0.1:${address.port}` };
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [retainedTools(target, directory, originals)] }; let host = await openResearch(options);
   try {
-    const receipt = await host.start(`stop-resume-${uncertain}`, { goal: 'Historical result then validation', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: { id: 'owner-native-protocol', url: `http://127.0.0.1:${address.port}` }, native_strategy_backtest_request: source }, policy: {} });
+    const receipt = await host.start(`stop-resume-${uncertain}`, { goal: 'Historical result then validation', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
+    await host.harness.commit(tx => configure(tx, receipt.conversationId, { extensions: [nativeStrategyExtension, researchAssessmentExtension, retainedTools(target, directory, originals)] }), context); releaseModel();
     let run;
     for (let tries = 0; ; tries++) {
       run = (await host.harness.snapshot(NativeSensitivity, receipt.conversationId, context))?.runs[0];
-      if (run && posts.length === 4 && (await Promise.all(run.tasks.map(item => host.harness.getTask(item.taskId, context)))).every(task => task?.state.status === 'sleeping')) break;
-      assert.ok(tries < 500); await delay(10);
+      if (run && originals.length === 4 && (await Promise.all(run.tasks.map(item => host.harness.getTask(item.taskId, context)))).every(task => task?.state.status === 'sleeping')) break;
+      assert.ok(tries < 500, 'original sensitivity tasks did not reach receipt waiting'); await delay(10);
     }
     stopping = true; await host.stop(receipt.conversationId);
     const stopped = (await host.harness.snapshot(Study, receipt.conversationId, context))!;
@@ -151,47 +201,50 @@ for (const uncertain of [false, true]) test(`owner stop after historical result 
     const instruction = 'Continue from retained evidence without repeating native runs.';
     if (uncertain) {
       await assert.rejects(host.resume(receipt.conversationId, receipt.submissionId, instruction), /native_remote_execution_unsettled/);
-      assert.equal(posts.length, 4); assert.deepEqual((await host.harness.snapshot(Study, receipt.conversationId, context))!.final, stopped.final);
+      assert.equal(originals.length, 4); assert.deepEqual((await host.harness.snapshot(Study, receipt.conversationId, context))!.final, stopped.final);
       resolved = true;
     }
     faux.setResponses([fauxAssistantMessage('Historical result retained; cancelled validation remains cancelled, not successful.')]);
     const resumed = await host.resume(receipt.conversationId, receipt.submissionId, instruction);
     await (await host.harness.submission(resumed.submissionId, context))!.wait(context);
     assert.deepEqual(await host.resume(receipt.conversationId, receipt.submissionId, instruction), resumed);
-    assert.equal(posts.length, 4, 'continuation and reconciliation never rePOST the stopped native attempts');
+    assert.equal(originals.length, 4, 'continuation and reconciliation never resubmit the stopped native attempts');
     const study = (await host.harness.snapshot(Study, receipt.conversationId, context))!;
     assert.equal(study.final, null); assert.deepEqual(study.previousNativeResults!.at(-1)!.final, stopped.final);
     for (const item of run.tasks) assert.equal((await host.harness.getTask(item.taskId, context))!.state.outcome!.status, 'aborted');
     assert.equal((await host.harness.snapshot(CampaignResearchDoc, receipt.conversationId, context))!.ownerStopTaskId, undefined);
     await host.stop(receipt.conversationId);
     assert.notEqual((await host.harness.snapshot(CampaignResearchDoc, receipt.conversationId, context))!.ownerStopTaskId, originalStop, 'later submissions receive their own stop task');
+    assert.ok(reads.length > 0, 'history must really observe original HTTP receipts');
+    assert.ok(reads.every(path => originals.some(original => path === `/v1/executions/${original.requestId}`)));
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 
 for (const uncertain of [false, true]) test(`model error after native result resumes original evidence only after receipts settle (unknown=${uncertain})`, { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-model-error-native-'));
-  const posts: NativeExecutionRequest[] = []; let resolved = false;
+  const originals: NativeExecutionRequest[] = []; const reads: string[] = []; let resolved = false;
   const server = createServer(async (incoming, response) => {
     response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    if (incoming.method === 'POST') { let body = ''; for await (const part of incoming) body += part; posts.push(JSON.parse(body)); }
-    const original = incoming.method === 'POST' ? posts.at(-1)! : posts.find(post => incoming.url?.endsWith(post.requestId))!;
-    response.end(JSON.stringify(original === posts[0] ? { schemaVersion: 1, requestId: original.requestId, status: 'COMPLETED', result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } }
+    assert.equal(incoming.method, 'GET', 'history cannot POST or DELETE'); reads.push(incoming.url!);
+    const original = originals.find(post => incoming.url === `/v1/executions/${post.requestId}`)!; assert.ok(original);
+    response.end(JSON.stringify(original === originals[0] ? { schemaVersion: 1, requestId: original.requestId, status: 'COMPLETED', result: { ...wire().folds[0]!.trials[0]!.result, request: original.input } }
       : { schemaVersion: 1, requestId: original.requestId, status: resolved ? 'CANCELLED' : 'UNKNOWN', ...(!resolved ? { error: 'original_receipt_unresolved' } : {}) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const target = { id: 'model-error-protocol', url: `http://127.0.0.1:${address.port}` };
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 unsupported response test-only' })]);
-  const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
+  let releaseModel!: () => void; const modelGate = new Promise<void>(resolve => { releaseModel = resolve; });
+  faux.setResponses([async () => { await modelGate; return fauxAssistantMessage(fauxToolCall('native_strategy_backtest', {}), { stopReason: 'toolUse' }); }, fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 unsupported response test-only' })]);
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [retainedTools(target, directory, originals)] }; let host = await openResearch(options);
   try {
     const receipt = await host.start(`model-failure-${uncertain}`, { goal: 'Continue validation after model failure', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target, native_strategy_backtest_request: source }, policy: {} });
+    await host.harness.commit(tx => configure(tx, receipt.conversationId, { extensions: [nativeStrategyExtension, researchAssessmentExtension, retainedTools(target, directory, originals)] }), context); releaseModel();
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const submission = await host.submission(receipt.submissionId); assert.equal(submission.status, 'unanswered'); assert.equal(submission.reason, 'model_error');
     const original = (await host.harness.snapshot(Study, receipt.conversationId, context))!.final!; assert.equal(original.status, 'COMPUTED');
     if (uncertain) {
       const conversation = await host.harness.conversation(receipt.conversationId, context);
-      const id = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: source, catalog: directory, target }, { ownership: { kind: 'conversation' } }), context);
+      const id = await conversation!.commit(tx => retainTask(tx, receipt.conversationId, undefined, target, directory, source, originals), context);
       for (let i = 0; ; i++) { const task = await host.harness.getTask(id, context); if (task?.state.status === 'sleeping') break; assert.ok(i < 500); await delay(10); }
       await host.harness.abortTask(id, context); await host.harness.waitForTask(id, context);
     }
@@ -201,14 +254,16 @@ for (const uncertain of [false, true]) test(`model error after native result res
       assert.deepEqual((await host.harness.snapshot(Study, receipt.conversationId, context))!.final, original);
       resolved = true;
     }
-    const originalPosts = structuredClone(posts);
+    const originalPosts = structuredClone(originals);
     faux.setResponses([fauxAssistantMessage('Continue using retained evidence, no repeated native execution.')]);
     const resumed = await host.resume(receipt.conversationId, receipt.submissionId);
     await (await host.harness.submission(resumed.submissionId, context))!.wait(context);
     assert.deepEqual(await host.resume(receipt.conversationId, receipt.submissionId), resumed);
-    assert.deepEqual(posts, originalPosts, 'resume only reconciles original receipts and never repeats native POST');
+    assert.deepEqual(originals, originalPosts, 'resume only reconciles original receipts and never repeats native execution');
     const study = (await host.harness.snapshot(Study, receipt.conversationId, context))!;
     assert.equal(study.final, null); assert.deepEqual(study.previousNativeResults!.at(-1)!.final, original);
     assert.equal((await host.submission(receipt.submissionId)).reason, 'model_error', 'original failed submission is not rewritten');
+    assert.ok(reads.length > 0, 'history must really observe original HTTP receipts');
+    assert.ok(reads.every(path => originals.some(original => path === `/v1/executions/${original.requestId}`)));
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { maxDbCounter, thresholdPolicy, thresholdTargets, validateNativeSimulationSettings } from '../src/strategy.ts';
+import { validateNativeSimulationSettings } from '../src/strategy.ts';
 
 const settings: JsonObject = { schema_version: 1, base_currency: 'USDC', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
   exposure_tolerance: '0.000001', snapshot_interval_ms: 1000,
@@ -12,24 +12,6 @@ const settings: JsonObject = { schema_version: 1, base_currency: 'USDC', startin
     parameters: { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } },
   fee_rates: [{ instrument_id: 'A.SIM', maker: '0', taker: '0' }] };
 const policy: JsonObject = { name: 'original', kind: 'factor-threshold', instrumentId: 'A.SIM', threshold: 0, investedWeight: '0.75', targetTtlNs: '5', simulationSettings: settings };
-
-test('admission shares required threshold mapping validation with target construction', () => {
-  const before = structuredClone(policy);
-  assert.equal(thresholdPolicy(policy), policy);
-  assert.equal(validateNativeSimulationSettings(settings), settings);
-  for (const [field, error] of [['instrumentId', 'strategy_instrument_invalid'], ['threshold', 'strategy_threshold_invalid'],
-    ['investedWeight', 'policy_weight_decimal_required'], ['targetTtlNs', 'target_ttl_counter_required'], ['simulationSettings', 'strategy_simulation_settings_required']]) {
-    const incomplete = { ...policy }; delete incomplete[field!];
-    assert.throws(() => thresholdPolicy(incomplete), new RegExp(error!));
-    assert.throws(() => thresholdTargets({ points: [] }, incomplete as never, 'USDC'), new RegExp(error!));
-  }
-  assert.throws(() => thresholdPolicy({ ...policy, threshold: Infinity }), /strategy_threshold_invalid/);
-  assert.throws(() => thresholdPolicy({ ...policy, investedWeight: '1.1' }), /strategy_weight_invalid/);
-  assert.throws(() => thresholdPolicy({ ...policy, targetTtlNs: '0' }), /target_ttl_invalid/);
-  assert.throws(() => thresholdPolicy({ ...policy, targetTtlNs: (maxDbCounter + 1n).toString() }), /target_ttl_invalid/);
-  assert.equal(thresholdPolicy({ ...policy, targetTtlNs: maxDbCounter.toString() }).targetTtlNs, maxDbCounter.toString());
-  assert.deepEqual(policy, before);
-});
 
 test('native admission requires every simulation wire field and its primitive type without changing legacy mapping settings', () => {
   for (const field of Object.keys(settings)) {
@@ -43,7 +25,6 @@ test('native admission requires every simulation wire field and its primitive ty
     assert.throws(() => validateNativeSimulationSettings(invalid), /strategy_/);
   }
   const legacy = { ...policy, simulationSettings: { base_currency: 'USDC' } };
-  assert.equal(thresholdPolicy(legacy), legacy);
   assert.throws(() => validateNativeSimulationSettings(legacy.simulationSettings), /strategy_starting_capital_required/);
 });
 

@@ -77,6 +77,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const priorControls = (await host.harness.snapshot(Application, context))?.accountControls;
     const existing = control(priorControls?.[accountKey(current.connection, priorControls)]).commands[requestId];
     if (existing) { if (canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return { requestId, state: existing.state, result: existing.result }; }
+    if (!('kind' in current.connection) || current.connection.kind !== 'RUST_PROCESS') throw new Problem('native_http_control_retired_migrate_to_rust_process', 410);
     if(!['PAUSE','CANCEL'].includes(String(original.action)))throw new Problem('capital_exit_planning_retired',410);
     const status = await refreshCapital(id); const controls = (await host.harness.snapshot(Application, context))?.accountControls; const key = accountKey(current.connection, controls);
     const action = text(original.action, 'action') as CapitalExitAction;

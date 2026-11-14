@@ -6,6 +6,7 @@ export async function eventStream(reply: FastifyReply, event: string, read: () =
   watches: Pick<WatchHandle<unknown>, 'start' | 'stop' | 'closed'>[], streams: Set<() => Promise<void>>) {
   let closed = false;
   let tail = Promise.resolve();
+  let queued = false;
   reply.hijack();
   reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
   async function close() {
@@ -23,7 +24,14 @@ export async function eventStream(reply: FastifyReply, event: string, read: () =
     });
   }
   function changed() {
-    tail = tail.then(publish).catch(() => { if (!closed) reply.raw.end(); });
+    // These are invalidations of a complete latest-state projection, not event
+    // records. Several watches often invalidate the same projection together.
+    // Keep one pending read; an invalidation during read/drain still queues the
+    // next read so it cannot disappear behind an older in-flight snapshot.
+    if (closed || queued) return tail;
+    queued = true;
+    tail = tail.then(async () => { queued = false; await publish(); })
+      .catch(() => { if (!closed) reply.raw.end(); });
     return tail;
   }
   streams.add(close);

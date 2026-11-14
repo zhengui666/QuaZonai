@@ -7,11 +7,12 @@ import { defineDocFamily, defineTask, type Harness, type ConversationId, type Js
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
+import { runNativeProcess, cancelNativeProcess, NativeProcessFailure, type NativeProcessFacts } from './native-process.ts';
 import { Readable } from 'node:stream';
 import { Agent, fetch } from 'undici';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
-import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget, NativeExecutionTarget, ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativeEvidenceParts } from '../plugins/native-evidence.ts';
 import { JSONParser, JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
@@ -46,7 +47,7 @@ export const NativeRemoteUncertainty = defineDocFamily<{ requests: JsonObject[] 
 });
 class RemoteUncertaintyError extends Error {
   readonly reference: JsonObject;
-  constructor(code: 'nautilus_execution_unknown' | 'nautilus_cancellation_unknown', requestId: string, target: RemoteNativeTarget, cause?: unknown, nativeTaskId?: TaskId) {
+  constructor(code: 'nautilus_execution_unknown' | 'nautilus_cancellation_unknown', requestId: string, target: NativeExecutionTarget, cause?: unknown, nativeTaskId?: TaskId) {
     super(`${code}:${requestId}`, { cause });
     this.reference = { requestId, target: { ...target }, error: code };
     if (nativeTaskId !== undefined) this.reference.nativeTaskId = nativeTaskId;
@@ -82,7 +83,7 @@ async function retainRemoteReference(reference: JsonObject, owner: { taskId: Tas
   await owner.runtime.commit(async tx => {
     const facts = await tx.doc(NativeRemoteUncertainty, owner.runtime.conversationId, String(owner.taskId), null);
     const existing = facts.requests.findIndex(item => item.requestId === reference.requestId);
-    const next = { ...reference, taskId: owner.taskId };
+    const next = { ...reference, taskId: owner.taskId, process: existing < 0 ? null : facts.requests[existing]?.process ?? null };
     if (existing < 0) facts.requests.push(next); else facts.requests[existing] = next;
     return undefined;
   }, withoutAbortSignal(owner.context));
@@ -118,6 +119,30 @@ export function validateRemoteTarget(value: unknown): RemoteNativeTarget {
   return { id: item.id, url: item.url, ...(typeof item.tokenEnv === 'string' ? { tokenEnv: item.tokenEnv } : {}), ...(typeof item.credentialRef === 'string' ? { credentialRef: item.credentialRef } : {}) };
 }
 
+export function isProcessNativeTarget(target: NativeExecutionTarget): target is ProcessNativeTarget { return 'kind' in target && target.kind === 'RUST_PROCESS'; }
+export function validateNativeTarget(value: unknown): NativeExecutionTarget {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || (value as {kind?:unknown}).kind !== 'RUST_PROCESS') return validateRemoteTarget(value);
+  const item = value as ProcessNativeTarget;
+  if (typeof item.id !== 'string' || !item.id.trim() || typeof item.binary !== 'string' || !isAbsolute(item.binary) || item.capabilities?.schemaVersion !== 1 || item.capabilities.protocol !== 'quazonai-native-process-v1' || item.capabilities.running !== false
+    || !item.capabilities.identity || typeof item.capabilities.research?.configuredRunFactory !== 'boolean' || typeof item.capabilities.research?.singleStrategyRegistration !== 'boolean'
+    || typeof item.capabilities.account?.compiled !== 'boolean' || typeof item.capabilities.account?.registration !== 'boolean' || item.capabilities.account.command !== 'account-runtime' || item.capabilities.account.requiresExplicitStart !== true) throw new Error('native_process_target_invalid');
+  const account=item.capabilities.account;
+  if ((account.compatibilityDeclaration!==undefined || account.compatibilityVerified!==undefined) &&
+    !((account.compatibilityDeclaration===null || account.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1') && account.compatibilityVerified===false)) throw new Error('native_process_target_invalid');
+  // Durable Docs expose JSON proxies, which structuredClone cannot clone. Copy
+  // the validated wire fields and materialize only the original JSON identity.
+  return {kind:'RUST_PROCESS',id:item.id,binary:item.binary,capabilities:{
+    schemaVersion:1,protocol:'quazonai-native-process-v1',running:false,
+    identity:JSON.parse(canonical(item.capabilities.identity as never)),
+    research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration},
+    account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
+  }};
+}
+function processCapabilities(target: ProcessNativeTarget): NativeCapabilities {
+  const commands = [...nativeCommands].filter(command => command !== 'native-configured-backtest' || target.capabilities.research.configuredRunFactory);
+  return {schemaVersion:1,implementationDigest:'rust-process:'+canonical(target.capabilities.identity as never),commands,buildIdentity:target.capabilities.identity};
+}
+
 /** Production sets only the remote binding. Explicit local executables remain
  * available to the separate worker/science test harness, never as a fallback. */
 export function defaultNativeTarget(): NativeTarget {
@@ -129,7 +154,7 @@ export function defaultNativeTarget(): NativeTarget {
 /** New admissions retain the instance in their original dataset facts, so a
  * later configuration change cannot redirect a resumed research trial. */
 export function nativeTargetForData(data: { [key: string]: unknown }): NativeTarget {
-  if (data.nautilusTarget !== undefined) return validateRemoteTarget(data.nautilusTarget);
+  if (data.nautilusTarget !== undefined) return validateNativeTarget(data.nautilusTarget);
   if (process.env.QZ_REQUIRE_REMOTE_NAUTILUS === '1') throw new Error('local_nautilus_target_disabled');
   return defaultNativeTarget();
 }
@@ -173,8 +198,18 @@ class ReceiptStatusReader {
   }
 }
 
-async function remoteRequest(target: RemoteNativeTarget, path: string, method: 'GET' | 'POST' | 'DELETE', body?: NativeJson, signal?: AbortSignal, tables?: TableOwner, statusOnly = false): Promise<NativeJson> {
+async function remoteRequest(target: NativeExecutionTarget, path: string, method: 'GET' | 'POST' | 'DELETE', body?: NativeJson, signal?: AbortSignal, tables?: TableOwner, statusOnly = false): Promise<NativeJson> {
+  if (isProcessNativeTarget(target)) {
+    validateNativeTarget(target);
+    if (path === 'v1/capabilities' && method === 'GET') return processCapabilities(target) as unknown as NativeJson;
+    const requestId = path.split('/').at(-1)!;
+    if (method === 'DELETE') { await cancelNativeProcess(requestId); return {schemaVersion:1,requestId,status:'UNKNOWN',error:'native_process_exit_does_not_prove_cancellation'}; }
+    // Only the original Pi Task can persist a successful process result. Lost handles never replay work.
+    return {schemaVersion:1,requestId,status:'UNKNOWN',error:'native_process_original_outcome_unknown'};
+  }
   target = validateRemoteTarget(target);
+  if (method === 'POST') throw new Error('native_http_execution_retired_migrate_to_rust_process');
+  if (method === 'DELETE') return {schemaVersion:1,requestId:path.split('/').at(-1)!,status:'UNKNOWN',error:'native_http_control_retired_original_outcome_unknown'};
   const url = new URL(target.url.endsWith('/') ? target.url : `${target.url}/`); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   const token = target.credentialRef ? instanceCredentials.get(target.credentialRef) : target.tokenEnv ? process.env[target.tokenEnv] : undefined;
@@ -184,40 +219,20 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
   try {
     const response = await fetch(url, { method, headers, ...(body === undefined ? {} : { body: Readable.from(jsonChunks(body)), duplex: 'half' as const }), signal, dispatcher, redirect: 'error' });
     if (!response.ok) {
-      // Only the original invocation's explicit pre-execution refusal settles
-      // non-execution. A proxy error or generic 4xx/5xx is not that evidence.
-      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && typeof body.command === 'string' && isTickNativeCommand(body.command)) {
-        let encoded = ''; let size = 0;
-        if (response.body) for await (const bytes of response.body) {
-          size += bytes.length;
-          if (size > 4096) break;
-          encoded += Buffer.from(bytes).toString('utf8');
-        }
-        if (size <= 4096) {
-          let value: unknown;
-          try { value = JSON.parse(encoded); } catch { /* Preserve ordinary HTTP failure below. */ }
-          const rejected = value as Partial<NativeExecutionRejection> | null;
-          const code = response.status === 429 ? 'nautilus_tick_capacity_exhausted' : 'nautilus_tick_resource_limits_unavailable';
-          if (rejected && typeof rejected === 'object' && !Array.isArray(rejected)
-            && Object.keys(rejected).every(key => ['schemaVersion', 'requestId', 'admission', 'error'].includes(key))
-            && rejected.schemaVersion === 1 && rejected.requestId === body.requestId && rejected.admission === 'REJECTED' && rejected.error === code) {
-            throw new RemoteAdmissionRejectedError(rejected as NativeExecutionRejection);
-          }
-        }
-      } else await response.body?.cancel();
+      await response.body?.cancel();
       throw new Error(`nautilus_http_${response.status}`);
     }
     if (!response.body) throw new Error('nautilus_response_missing');
     // Cancellation consumes status only; never materialize a raced completed result.
-    const parser = method === 'DELETE' || statusOnly ? new ReceiptStatusReader() : tables ? tableReader(tables) : new JsonReader(); const decoder = new TextDecoder();
+    const parser = statusOnly ? new ReceiptStatusReader() : tables ? tableReader(tables) : new JsonReader(); const decoder = new TextDecoder();
     for await (const bytes of response.body) await parser.write(decoder.decode(bytes, { stream: true }));
     await parser.write(decoder.decode()); return await parser.finish();
   } finally { await dispatcher.close(); }
 }
 
-export async function remoteNativeCapabilities(target: RemoteNativeTarget, signal?: AbortSignal): Promise<NativeCapabilities> {
+export async function remoteNativeCapabilities(target: NativeExecutionTarget, signal?: AbortSignal): Promise<NativeCapabilities> {
   const value = await remoteRequest(target, 'v1/capabilities', 'GET', undefined, signal) as unknown as NativeCapabilities;
-  if (value?.schemaVersion !== 1 || typeof value.implementationDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value.implementationDigest)
+  if (value?.schemaVersion !== 1 || typeof value.implementationDigest !== 'string' || !isProcessNativeTarget(target) && !/^sha256:[a-f0-9]{64}$/.test(value.implementationDigest)
     || !Array.isArray(value.commands) || !value.commands.every(command => typeof command === 'string')) throw new Error('nautilus_capabilities_invalid');
   return value;
 }
@@ -232,13 +247,13 @@ function receipt(value: NativeJson, requestId: string, statusOnly = false): Nati
 
 /** Read only the receipt for this original invocation and retained instance.
  * This does not submit or cancel any remote execution. */
-export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal, tables?: TableOwner): Promise<NativeExecutionReceipt> {
+export async function remoteNativeExecutionReceipt(target: NativeExecutionTarget, requestId: string, signal?: AbortSignal, tables?: TableOwner): Promise<NativeExecutionReceipt> {
   if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal, tables), requestId);
 }
 
 /** Metadata-only reconciliation: result is deliberately absent, never fabricated. */
-export async function remoteNativeExecutionStatus(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal): Promise<Pick<NativeExecutionReceipt, 'schemaVersion' | 'requestId' | 'status'> & { error?: string }> {
+export async function remoteNativeExecutionStatus(target: NativeExecutionTarget, requestId: string, signal?: AbortSignal): Promise<Pick<NativeExecutionReceipt, 'schemaVersion' | 'requestId' | 'status'> & { error?: string }> {
   if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal, undefined, true), requestId, true);
 }
@@ -261,7 +276,7 @@ const nativeBindings = new AsyncLocalStorage<{ harness: Harness; conversationId:
 export function withNativeExecutionHost<T>(harness: Harness, conversationId: ConversationId, operation: () => T): T {
   return nativeBindings.run({ harness, conversationId }, operation);
 }
-type RemoteTaskInput = { target: RemoteNativeTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
+type RemoteTaskInput = { target: NativeExecutionTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
 
 /** Recover the result of the same invocation after its technical Task settled UNKNOWN.
  * Ordinary deletion/stop reconciliation remains state-only. This is driven by a live science Task. */
@@ -307,7 +322,7 @@ export async function cancelUnsettledNativeExecutions(ownerTaskId: TaskId, runti
   const facts = await runtime.snapshot(NativeRemoteUncertainty, runtime.conversationId, String(ownerTaskId), withoutAbortSignal(context));
   for (const reference of facts?.requests ?? []) {
     if (['COMPLETED', 'FAILED', 'CANCELLED', 'REJECTED'].includes(String(reference.status))) continue;
-    const target = validateRemoteTarget(reference.target);
+    const target = validateNativeTarget(reference.target);
     const requestId = String(reference.requestId);
     let state: NativeExecutionReceipt;
     try { state = receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'DELETE', undefined, AbortSignal.timeout(15_000)), requestId, true); }
@@ -322,7 +337,7 @@ export async function cancelUnsettledNativeExecutions(ownerTaskId: TaskId, runti
     }, withoutAbortSignal(context));
   }
 }
-async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTaskInput }, runtime: TaskRuntime<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson, object>, state: NativeExecutionReceipt, context: Context) {
+async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTaskInput }, runtime: TaskRuntime<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson, object>, state: NativeExecutionReceipt, context: Context, processFacts?: NativeProcessFacts) {
   const native = state.status === 'COMPLETED' ? await retainNativeEvidence({ value: state.result }, async (index, data) => {
     await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${index}`, null)).data = data; return undefined; }, context);
   }) : null;
@@ -333,13 +348,15 @@ async function recordExecution(task: { id: TaskId<NativeJson>; input: RemoteTask
       error: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : null };
     const old = facts.requests.findIndex(item => item.requestId === state.requestId);
     const admissionRejection = facts.requests[old]?.admissionRejection;
+    const process = processFacts ?? facts.requests[old]?.process ?? null;
+    Object.assign(row, {process});
     if (old < 0) facts.requests.push(row); else facts.requests[old] = { ...row, ...(admissionRejection ? { admissionRejection } : {}) };
     if (state.status === 'RUNNING') {
       if (state.progress) (await tx.doc(NativeExecutionProgress, runtime.conversationId, String(task.id), null)).snapshots = state.progress.snapshots;
       return { status: 'sleeping', until: runtime.now() + 1000, checkpoint: { phase: 'poll' } };
     }
     if (state.status === 'COMPLETED') return { status: 'terminal', outcome: { status: 'completed', result: { native: native! } } };
-    return { status: 'terminal', outcome: { status: 'failed', error: { message: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : 'nautilus_execution_cancelled', detail: { requestId: state.requestId, target: { ...task.input.target } } } } };
+    return { status: 'terminal', outcome: { status: 'failed', error: { message: state.status === 'UNKNOWN' ? 'nautilus_execution_unknown' : state.status === 'FAILED' ? state.error : 'nautilus_execution_cancelled', detail: { requestId: state.requestId, target: { ...task.input.target }, process } } } };
   }, context);
 }
 export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit' | 'poll' }, NativeJson>({
@@ -353,32 +370,32 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
       });
       const request = stored.request as unknown as NativeExecutionRequest;
       if (request.requestId !== task.input.requestId || request.command !== task.input.command) throw new Error('native_request_identity_conflict');
-      // A retry can be admitted before its response arrives, so retire the prior refusal before sending it.
-      await runtime.commit(async tx => {
-        const facts = await tx.doc(NativeRemoteUncertainty, runtime.conversationId, String(task.input.ownerTaskId ?? task.id), null);
-        const prior = facts.requests.find(row => row.requestId === task.input.requestId);
-        if (prior?.status === 'REJECTED') { prior.status = 'PENDING'; prior.error = null; delete prior.admission; }
-        return undefined;
-      }, context);
-      let state: NativeExecutionReceipt;
-      try { state = receipt(await remoteRequest(task.input.target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined), task.input.requestId); }
-      catch (error) {
-        if (context.abortSignal?.aborted) throw error;
-        if (error instanceof RemoteAdmissionRejectedError) {
-          await runtime.commit(async tx => {
-            const ownerId = task.input.ownerTaskId ?? task.id;
-            const facts = await tx.doc(NativeRemoteUncertainty, runtime.conversationId, String(ownerId), null);
-            const prior = facts.requests.find(row => row.requestId === task.input.requestId);
-            const rejected = { requestId: task.input.requestId, target: { ...task.input.target }, taskId: ownerId, status: 'REJECTED', admission: 'REJECTED', error: error.rejection.error, admissionRejection: error.rejection.error };
-            if (prior) Object.assign(prior, rejected); else facts.requests.push(rejected);
-            if (error.rejection.error === 'nautilus_tick_capacity_exhausted') return { status: 'sleeping', until: runtime.now() + 5000, checkpoint: { phase: 'submit' } };
-            return { status: 'terminal', outcome: { status: 'failed', error: { message: error.rejection.error, detail: { admission: 'REJECTED' } } } };
-          }, context); return;
+      if (isProcessNativeTarget(task.input.target)) {
+        const target = validateNativeTarget(task.input.target) as ProcessNativeTarget;
+        if (request.implementationDigest !== processCapabilities(target).implementationDigest || !processCapabilities(target).commands.includes(request.command)) throw new Error('native_process_original_binding_conflict');
+        // Commit away from submit BEFORE spawn. Recovery polls UNKNOWN, never replays this process.
+        await runtime.commit(() => ({status:'running',checkpoint:{phase:'poll'}}),context);
+        let state: NativeExecutionReceipt;
+        let processFacts: NativeProcessFacts | undefined;
+        try {
+          const parser = tableCommands.has(task.input.command) ? tableReader({taskId:task.id,runtime,context}) : new JsonReader();
+          const result = await runNativeProcess(request.requestId,target.binary,request.command,request.args,request.input,parser,runtime.signal);
+          state={schemaVersion:1,requestId:request.requestId,status:'COMPLETED',result};
+        } catch (error) {
+          if(error instanceof NativeProcessFailure)processFacts=error.processFacts;
+          const diagnostic = error instanceof Error ? (error as Error & {nativeDiagnostic?:string}).nativeDiagnostic : undefined;
+          if (diagnostic && !runtime.signal.aborted) await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart,runtime.conversationId,`${task.id}:private-native-stderr`,null)).data=diagnostic; return undefined; },context);
+          if (runtime.signal.aborted) throw new Error('native_process_execution_interrupted');
+          state={schemaVersion:1,requestId:request.requestId,status:'UNKNOWN',error:'native_process_original_outcome_unknown'};
         }
-        try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined); }
-        catch { state = { schemaVersion: 1, requestId: task.input.requestId, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' }; }
+        await recordExecution(task,runtime,state,context,processFacts); return;
       }
-      await recordExecution(task, runtime, state, context);
+      // Historical HTTP tasks keep their original identity and may only observe
+      // its receipt. A submit checkpoint is not permission to resend old work.
+      let state: NativeExecutionReceipt;
+      try { state = await remoteNativeExecutionReceipt(task.input.target, task.input.requestId, context.abortSignal, tableCommands.has(task.input.command) ? { taskId: task.id, runtime, context } : undefined); }
+      catch { state = {schemaVersion:1,requestId:task.input.requestId,status:'UNKNOWN',error:'native_http_execution_retired_original_outcome_unknown'}; }
+      await recordExecution(task,runtime,state,context);
     },
     async poll(task, runtime, context) {
       let state: NativeExecutionReceipt;
@@ -416,7 +433,7 @@ export const NativeExecutionTask = defineTask<RemoteTaskInput, { phase: 'submit'
   },
 });
 
-async function executeRemote(target: RemoteNativeTarget, command: string, input: NativeJson, originalArgs: string[], context: Context): Promise<NativeJson> {
+async function executeRemote(target: NativeExecutionTarget, command: string, input: NativeJson, originalArgs: string[], context: Context): Promise<NativeJson> {
   const owner = tracking.getStore(); const nativeHost = nativeBindings.getStore();
   if (!owner && !nativeHost) throw new Error('native_harness_required');
   const artifacts = { args: [...originalArgs], files: {} as Record<string, string> };
@@ -432,6 +449,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       || canonicalJsonDigest(original.target as unknown as NativeJson) !== canonicalJsonDigest(target as unknown as NativeJson)) throw new Error('native_invocation_identity_conflict');
   }
   if (!taskId) {
+    if (!isProcessNativeTarget(target)) throw new Error('native_http_execution_retired_migrate_to_rust_process');
     const capability = await remoteNativeCapabilities(target, context.abortSignal);
     if (owner?.scanContext?.implementationDigest !== undefined && capability.implementationDigest !== owner.scanContext.implementationDigest) throw new Error('nautilus_scan_implementation_changed');
     if (!capability.commands.includes(command)) throw new Error('nautilus_command_unsupported');

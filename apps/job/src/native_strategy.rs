@@ -20,7 +20,7 @@ use nautilus_persistence::{
     config::{CatalogBackendType, DataCatalogConfig},
 };
 mod node_catalog;
-mod performance;
+pub(crate) mod performance;
 #[cfg(test)]
 mod preloaded_reference;
 pub mod registry;

@@ -12,7 +12,7 @@ import { readResearchAdmissions } from './admissions.ts';
 import { Application, decimalUnits, portfolio, Problem } from './facts.ts';
 import type { ResearchAdmissions } from './facts.ts';
 import { factorViews } from './factors.ts';
-import { metrics } from './projections.ts';
+import { metrics, researchExecutionUncertainty } from './projections.ts';
 import { portfolioPerformance } from './portfolio-performance.ts';
 import type { ServiceConfig } from './config.ts';
 
@@ -33,7 +33,7 @@ const sortKeys: Record<Collection, string[]> = {
   portfolios: ['name', 'datasetName', 'memberCount', 'capital', 'sharpe', 'annualizedReturn', 'maxDrawdown', 'createdAt'],
 };
 const labels: Record<string, string> = {
-  RUNNING: '进行中', STARTED: '计算中', QUEUED: '待执行', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', IDLE: '当前无执行',
+  UNKNOWN: '执行结果未确认', RUNNING: '进行中', STARTED: '计算中', QUEUED: '待执行', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', IDLE: '当前无执行',
   'single-factor': '单成员', ensemble: '多成员', BAR: 'K线', TRADE_TICK: '逐笔',
   independent: '独立评估', historical: '历史重评', component_only: '组合成员', validation_only: '仅验证集', unavailable: '无证据',
   met: '达到标准', not_met: '未达到标准', computed: '已计算（未设阈值）', insufficient: '证据不足', failed: '计算失败',
@@ -94,7 +94,7 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
         const kind = change.record.kind;
         if (kind === 'qz.application') appDirty = true;
         else if (kind === 'qz.research-requests') { requestsDirty = true; appDirty = true; }
-        else if (change.conversationId !== undefined && ['qz.study', 'qz.review-ledger'].includes(kind)) dirty.add(change.conversationId);
+        else if (change.conversationId !== undefined && ['qz.study', 'qz.review-ledger', 'qz.indicator-strategy-configuration', 'qz.native-remote-uncertainty'].includes(kind)) dirty.add(change.conversationId);
       }
     }
   }, end() {} });
@@ -159,7 +159,8 @@ export function listIndex(host: ResearchHost, config: Pick<ServiceConfig, 'datas
       const original = admission?.original as { datasetId?: string } | undefined;
       const spec = input.specification as ResearchSpecification | undefined;
       const criterion = final && final.status !== 'STARTED' ? shortCriterion(researchCriterion(spec, String(final.status), metrics(final.result))) : null;
-      const item: ResearchListItem = { id, title: spec?.name ?? input.goal, status: final ? String(final.status) : active.has(id) || ['queued', 'placed'].includes(view.submission?.status ?? '') ? 'RUNNING' : 'IDLE',
+      const uncertainty = await researchExecutionUncertainty(host, id);
+      const item: ResearchListItem = { id, title: spec?.name ?? input.goal, status: uncertainty ? 'UNKNOWN' : final ? String(final.status) : active.has(id) || ['queued', 'placed'].includes(view.submission?.status ?? '') ? 'RUNNING' : 'IDLE',
         trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`, datasetId: dataset?.id ?? original?.datasetId ?? null,
         datasetName: dataset?.name ?? null, scope: spec?.search.scope ?? null, modality: modality(input.data), criterion };
       research.set(id, { item, search: searchText(item.id, item.title, input.goal, spec?.question, spec?.rationale, item.datasetName, item.model),

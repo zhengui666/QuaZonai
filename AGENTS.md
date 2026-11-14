@@ -246,3 +246,68 @@ docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
 这只构建用户自管的协议适配器镜像，不部署、不连接交易所、不交易。自行运行时显式配置持久目录、catalog 根目录、worker token 和网络；应用中分别填写回测实例与账户实例，不能借用回测凭据作实盘。需要自定义策略时使用前述用户 Rust crate runner 接口，默认 runner 不包含用户策略。账户凭据由用户在其原生环境配置，勿写入策略 JSON 或聊天。账户连接、恢复与真实交易启动是独立显式步骤，不因应用更新或保存配置而执行。
 
 本部署调整不代表任意已有 Nautilus 环境已接入；Rust 原生环境直接接入仍须独立实现，不要求用户把预部署 QZ worker 当作最终通用接入的前提。上述源码适配器只是当前可用的一条显式路径，不引入 Python 策略执行环境。自动 `restore` 会替换应用专属 `data/`，保持当前 Compose override 不变；发现其他 Compose 服务、已知原生账户目录或检查失败时拒绝执行。原生环境数据应位于应用目录外；无法从 Compose 证明其他独立进程未共享该目录，混用数据目录必须单独制定有范围的恢复，不能把本工具称为所有原生数据的安全恢复器。
+
+
+## Approved owner Rust process integration: source delivery boundary
+
+This directory contains QuaZonai's own Rust integration source, not Nautilus,
+a native executable, a compiler, or a ready-to-run trading environment. The
+application release does not download or install those components.
+
+Source discovery, source generation, compilation, connection, and strategy
+start are different operations. Saving connection settings never performs a
+build or starts a node. Manifest discovery uses an explicitly selected installed
+Cargo executable with `metadata --no-deps --offline --locked`; it is not a
+compile, dependency-resolution, precision, or factory-visibility check.
+
+The owner project must provide a public Rust library and explicitly selected
+factory modules. Backtest modules expose `config` returning the official
+`BacktestRunConfig`, and `install` receiving the official `BacktestEngine`.
+Account modules expose `strategy(name, config, trader_id, account_id, execution_client_id, instrument_id, instruments)` using the official Nautilus identifier types and `&[InstrumentId]`, returning their concrete
+official Strategy type. The generated launcher adapts these entry points; the
+owner library does not need to depend on QuaZonai. Bin-only/private functions
+cannot be reflected into a library or automatically attached to an existing
+running process.
+
+Generate into a separate QZ-owned writable directory. Do not edit the owner's
+source or lockfile. A copied lockfile is only a starting point, not proof that
+new glue dependencies resolve. Dependencies, upstream source/revision, precision
+features and toolchain must be verified against the actual resulting build.
+The glue source currently references its tested upstream revision; do not
+silently change the user's Nautilus dependency to match it. Incompatible
+versions require an explicit compatible integration, not a successful label.
+No network dependency download or toolchain installation is implicit.
+
+## Container access is not host access
+
+The default app container only mounts the installation data directory at its
+same absolute path. It does not mount `/home`, host processes, Docker sockets,
+SSH agents, or arbitrary Cargo installations. A host path entered in a form is
+not automatically accessible. Even an accessible Cargo executable needs its
+Rust compiler, cached dependencies, linker, and compatible system libraries.
+Do not infer that an executable path alone makes this a build environment.
+
+The application itself does not install a toolchain, modify mounts, set up SSH,
+or launch a separate adapter server. If the configured environment is not
+reachable from the application process, report that specific missing path or
+capability. The default image is not claimed to build host projects out of the
+box. A validated build/connection is required before enabling runtime actions;
+source generation alone remains `SOURCE_ONLY_NOT_BUILT`.
+
+Explicit launcher builds execute owner and dependency build scripts. Cargo's
+`--offline`/`--frozen` restrict Cargo dependency resolution; they are not an OS
+network sandbox and do not prevent a build script from accessing the network.
+Build interruption is an unknown outcome for descendant processes, not proof of
+a safe stop. Preserve its directory and diagnostics until reconciled. Compiler
+output goes to that build's log rather than a bounded in-memory capture; disk
+write or build failures must be surfaced, and truncated diagnostics must not be
+presented as complete. Concurrent cache users receive distinct generated binary
+target names and isolated final artifact copies, never a shared executable name.
+
+The first launcher builder supports only the selected installed compiler's host
+target. It passes that exact target to both metadata filtering and Cargo build,
+and reads the target-specific artifact directory. It does not silently follow
+inherited cross-compilation settings; cross-compilation is not supported by this
+entry point. Target-specific dependency caches may require extra disk space.
+
+The account factory receives the original node/account/client identities and configured instrument IDs only at explicit START. These are routing context, not proof of connectivity, balances or trading permission. Older two-argument factories must update their signature and rebuild; source generation does not prove compilation or compatibility. User configuration is passed unchanged; no identity is injected into its JSON.

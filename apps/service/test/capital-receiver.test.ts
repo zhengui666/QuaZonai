@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import type { TaskId } from '@earendil-works/pi-durable';
 import { createCapitalAccount } from '../../nautilus/src/capital-account.ts';
 import { parseHyperliquidAccount } from '../../nautilus/src/hyperliquid-account.ts';
-import type { AccountOptions, NativeAccountRuntime, NativeAccountSnapshot } from '../../nautilus/src/account-runtime.ts';
+import type { AccountOptions, NativeAccountRuntime, NativeAccountSummary } from '../../nautilus/src/account-runtime.ts';
 import { capitalDecimalUnits, validateCapitalDocument } from '../../../packages/contracts/src/capital-exit.ts';
 import type { CapitalExitView } from '../../../packages/contracts/src/capital-exit.ts';
 import type { ConnectionConfig } from '../src/config.ts';
@@ -28,12 +28,13 @@ test('the real receiver rejects retired capital producers without sending contro
   // Only the external NDJSON transport is replaced. This test exercises real receiver/service business code,
   // HTTP and official Durable/SQLite; these protocol samples are not exchange or native financial evidence.
   const state = await setup(); const calls: { operation: string; payload: Record<string, unknown> }[] = [];
-  let sequence = 0n; let frame: NativeAccountSnapshot | null = null; let nativeEpoch: unknown = null;
+  let sequence = 0n; let frame: NativeAccountSummary | null = null; let nativeEpoch: unknown = null;
   const runtime: NativeAccountRuntime = {
+    accountObservationCapability:()=>({supported:true,nativeSessionId:'protocol-session'}),
     async request(operation, payload = {}) {
       calls.push({ operation, payload: structuredClone(payload) });
-      if (operation === 'SNAPSHOT' || operation === 'CONTROL' && payload.epoch !== nativeEpoch) {
-        if (operation === 'SNAPSHOT' && frame) return structuredClone(frame) as unknown as Record<string, unknown>;
+      if (operation === 'ACCOUNT_SUMMARY' || operation === 'CONTROL' && payload.epoch !== nativeEpoch) {
+        if (operation === 'ACCOUNT_SUMMARY' && frame) return structuredClone(frame) as unknown as Record<string, unknown>;
         if (operation === 'CONTROL') nativeEpoch = payload.epoch;
         const ns = nowNs(); sequence++;
         frame = {
@@ -43,9 +44,9 @@ test('the real receiver rejects retired capital producers without sending contro
             balances: [{ currency: 'USDC', total: '1000', locked: '0', free: '1000' }], margins: [], unrealized_pnls: [], realized_pnls: [],
             total_equity: [{ amount: '1000', currency: 'USDC' }], base_currency_equity: { amount: '1000', currency: 'USDC' },
             is_stale: false, stale_instruments: [], stale_currencies: [], unpriced_instruments: [], event_id: 'protocol-event-' + sequence, ts_event: ns, ts_init: ns },
-          positions: [], instruments: [], orders: [], fills: [], cash: '1000', equity: '1000', currency: 'USDC',
+          positions: [], instruments: [], official_node_order_activity:{open:false,inflight:false,active_local:false,emulated:false}, cash: '1000', equity: '1000', currency: 'USDC',
         };
-        if (operation === 'SNAPSHOT') return structuredClone(frame) as unknown as Record<string, unknown>;
+        if (operation === 'ACCOUNT_SUMMARY') return structuredClone(frame) as unknown as Record<string, unknown>;
       }
       if (operation === 'TARGET') return { acknowledged: true, target_id: payload.id, epoch: payload.epoch };
       assert.ok(['CONTROL', 'CANCEL_EXIT'].includes(operation), 'Capital preparation cannot request liquidation or transfers in this cash-only protocol test.');
@@ -106,14 +107,14 @@ test('the real receiver rejects retired capital producers without sending contro
     assert.equal(preview.statusCode, 404);
     for (const action of ['START','RESUME','RELEASE_RESERVATION']) {
       const response = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers, payload:{requestId:'retired-'+action,action} });
-      assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'capital_exit_planning_retired');
+      assert.equal(response.statusCode,410,response.body); assert.equal(response.json().error,'native_http_control_retired_migrate_to_rust_process');
     }
     const status = await state.service.app.inject({url:path,headers:state.headers});
-    assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,'0.000000000000000000');
+    assert.equal(status.statusCode,200,status.body); assert.equal(status.json().reserved,null, 'The worker no longer fabricates an aggregate reservation from legacy records.'); assert.deepEqual(status.json().unsettledReservations,[]);
     const refreshed=await state.service.app.inject({method:'POST',url:'/api/v3/observations/'+binding.json().id+'/refresh',headers:state.headers});
     assert.equal(refreshed.statusCode,200,refreshed.body);
     assert.ok((await state.service.research.harness.snapshot(Application,context))!.portfolios[sourceId]);
-    assert.ok(calls.length>0); assert.ok(calls.every(row=>row.operation==='SNAPSHOT'));
+    assert.ok(calls.length>0); assert.ok(calls.every(row=>row.operation==='ACCOUNT_SUMMARY'));
     assert.equal(responses.filter(row=>row.method==='POST').length,0,'Retired financial actions cannot reach the actual receiver.');
     const raw = async (method: string, path: string, body?: unknown, expected = 200) => {
       const response = await fetch(url + path, {method,headers:{'content-type':'application/json','x-qz-client-id':options.clientId},...(body ? {body:JSON.stringify(body)} : {})});
@@ -126,7 +127,7 @@ test('the real receiver rejects retired capital producers without sending contro
     await receiver.close(); receiver = await createCapitalAccount(options,receiverDir,'/missing-native-worker',runtime);
     assert.deepEqual(await raw('GET','/capital-exits/commands/historical-unknown'),originalReceipt);
     assert.deepEqual(JSON.parse(await readFile(join(receiverDir,'capital-receipts.json'),'utf8')).ledgerClaims,{original:'original-ledger'});
-    assert.ok(calls.every(row=>row.operation==='SNAPSHOT'),'Receipt retry and reopen do not issue controls.');
+    assert.ok(calls.every(row=>row.operation==='ACCOUNT_SUMMARY'),'Receipt retry and reopen do not issue controls.');
 
   } finally { await remote.close(); await receiver.close(); await state.cleanup(); }
 });
@@ -135,7 +136,7 @@ test('independent live proof never rewrites a native observation or automaticall
   // The actual receiver and Service run unchanged. This NDJSON protocol peer
   // models the official owner's CONTROL -> new Portfolio observation contract;
   // it does not claim exchange connectivity, a fill or scientific qualification.
-  const state = await setup(); let sequence = 0n; let economicKey = ''; let frame: NativeAccountSnapshot | null = null;
+  const state = await setup(); let sequence = 0n; let economicKey = ''; let frame: NativeAccountSummary | null = null;
   let spotTotal = '1000'; let proofReads = 0;
   const controls: Record<string, unknown>[] = [];
   const options: AccountOptions = { id: 'live-proof-protocol', clientId: 'live-proof-client', accountId: 'HYPERLIQUID-LIVE-PROTOCOL', mode: 'live',
@@ -147,9 +148,10 @@ test('independent live proof never rewrites a native observation or automaticall
       native_snapshot: { account_id: options.accountId, account_type: 'MARGIN', base_currency: null, balances: [], margins: [], unrealized_pnls: [], realized_pnls: [],
         total_equity: [], base_currency_equity: null, is_stale: false, stale_instruments: [], stale_currencies: [], unpriced_instruments: [],
         event_id: 'live-native-event-' + sequence, ts_event: ns, ts_init: ns },
-      positions: [], instruments: [], orders: [], fills: [], cash: null, equity: null, currency: 'USDC' };
+      positions: [], instruments: [], official_node_order_activity:{open:false,inflight:false,active_local:false,emulated:false}, cash: null, equity: null, currency: 'USDC' };
   }
   const runtime: NativeAccountRuntime = {
+    accountObservationCapability:()=>({supported:true,nativeSessionId:'live-native-session'}),
     async request(operation, payload = {}) {
       if (operation === 'CONTROL') {
         controls.push(structuredClone(payload));
@@ -157,7 +159,7 @@ test('independent live proof never rewrites a native observation or automaticall
         if (key !== economicKey) { economicKey = key; observe(); }
         return { applied: true };
       }
-      assert.equal(operation, 'SNAPSHOT', 'Read-only proof monitoring cannot request any financial operation.');
+      assert.equal(operation, 'ACCOUNT_SUMMARY', 'Read-only proof monitoring cannot request any financial operation.');
       if (!frame) observe(); return structuredClone(frame) as unknown as Record<string, unknown>;
     }, async close() {},
   };

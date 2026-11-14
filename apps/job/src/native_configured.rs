@@ -71,12 +71,29 @@ pub fn run(
                 })
                 .transpose()?
         };
+        let equity_unavailable = if omit_canonical {
+            Some("OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG")
+        } else if results.is_empty() {
+            Some("OFFICIAL_RUN_RESULT_UNAVAILABLE")
+        } else if node.get_engine(&id).is_none() {
+            Some("NATIVE_CONFIGURED_ENGINE_UNAVAILABLE")
+        } else {
+            None
+        };
+        let equity_performance = if equity_unavailable.is_none() {
+            node.get_engine(&id)
+                .map(crate::native_strategy::performance::from_engine)
+        } else {
+            None
+        };
         Ok(NativeConfiguredBacktestResultV1 {
             schema_version: SchemaV1,
             request,
             native_version: crate::NAUTILUS_VERSION.into(),
             native_results: serde_json::to_value(results)?,
             canonical_result,
+            equity_performance,
+            equity_performance_unavailable_reason: equity_unavailable.map(str::to_owned),
             canonical_unavailable_reason: omit_canonical
                 .then(|| "OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG".into()),
         })
@@ -157,7 +174,7 @@ mod tests {
                 Ok(())
             }
         }
-        fn factory(_: &Path, name: &str, _: &serde_json::Value) -> Result<ConfiguredNativeRun> {
+        fn factory(_: &Path, name: &str, value: &serde_json::Value) -> Result<ConfiguredNativeRun> {
             ensure!(name == "actor-owner", "OWNER_RUN_UNKNOWN");
             let venue = BacktestVenueConfig::builder()
                 .name("SIM")
@@ -173,7 +190,7 @@ mod tests {
                 .start(1u64.into())
                 .end(2u64.into())
                 .raise_exception(true)
-                .dispose_on_completion(false)
+                .dispose_on_completion(value["dispose"].as_bool().unwrap_or(false))
                 .build()?;
             Ok(ConfiguredNativeRun {
                 config,
@@ -201,6 +218,19 @@ mod tests {
         let result = run(root.path(), request.clone(), Some(factory)).unwrap();
         assert!(STARTED.load(Ordering::SeqCst));
         assert_eq!(result.native_results.as_array().unwrap().len(), 1);
+        let equity = result.equity_performance.as_ref().unwrap();
+        assert_eq!(equity.source, "NAUTILUS_PORTFOLIO_SNAPSHOTS");
+        assert!(equity.statistics.iter().all(|stat| stat.value.is_none()));
+        assert!(result.equity_performance_unavailable_reason.is_none());
+        let mut disposed_request = request.clone();
+        disposed_request.config = serde_json::json!({"dispose":true});
+        let disposed = run(root.path(), disposed_request, Some(factory)).unwrap();
+        assert!(disposed.canonical_result.is_none());
+        assert!(disposed.equity_performance.is_none());
+        assert_eq!(
+            disposed.equity_performance_unavailable_reason.as_deref(),
+            Some("OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG")
+        );
         let mut unknown = request;
         unknown.name = "unknown-owner".into();
         assert_eq!(

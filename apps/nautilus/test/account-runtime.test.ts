@@ -26,6 +26,7 @@ else if(v.operation==='SHUTDOWN'){send({stopping:true});setTimeout(()=>process.e
     await assert.rejects(runtime.request('SNAPSHOT'), /account_runtime_not_started/);
     assert.equal(await readFile(counter, 'utf8'), '1', 'read after failure cannot restart the account');
     await runtime.start();
+    assert.equal(runtime.strategyLifecycleCapability().supported,null, 'legacy BOOT must not infer support from selected EMA config');
     const snapshot = await runtime.request('SNAPSHOT');
     assert.equal(snapshot.generation, 2); assert.equal(snapshot.proxy, process.env.HTTPS_PROXY);
     assert.equal(await readFile(counter, 'utf8'), '2');
@@ -63,4 +64,105 @@ const lines=readline.createInterface({input:process.stdin});lines.on('line',line
     const result = await runtime.request('FIXED_RISK_SIZE', { requestId: 'attacker-selected', operation: 'TARGET' });
     assert.notEqual(result.requestId, 'attacker-selected'); assert.equal(result.operation, 'FIXED_RISK_SIZE');
   } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('native stderr stays private bounded and paper never receives signing credentials', async () => {
+  const { readdir, stat } = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-diagnostic-'));
+  const script = join(directory, 'protocol.mjs'), binary = join(directory, 'account-runtime');
+  await writeFile(script, `import readline from 'node:readline';
+const lines=readline.createInterface({input:process.stdin});lines.on('line',line=>{const v=JSON.parse(line);if(v.operation==='BOOT'){
+ if(process.env.HYPERLIQUID_PK||process.env.HYPERLIQUID_TESTNET_PK)throw Error('paper_received_signing_key');
+ process.stderr.write('x'.repeat(100000)+'PRIVATE_DIAGNOSTIC_END',()=>console.log(JSON.stringify({requestId:v.requestId,error:'account_native_node_run'})));
+}});`);
+  await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, { mode: 0o700 });
+  const prior = process.env.HYPERLIQUID_PK; process.env.HYPERLIQUID_PK = 'test-only-not-a-key';
+  const runtime = new AccountRuntime(binary, { id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:['HYPE-USDC-SPOT.HYPERLIQUID'] }, '01900000-0000-7000-8000-000000000001', directory);
+  try {
+    await assert.rejects(runtime.start(), error => error instanceof Error && error.message === 'account_native_node_run');
+    const names = (await readdir(directory)).filter(name => name.startsWith('native-stderr-'));
+    assert.equal(names.length, 1);
+    const path = join(directory, names[0]!); const content = await readFile(path);
+    assert.equal(content.length, 65536); assert.ok(content.toString().endsWith('PRIVATE_DIAGNOSTIC_END'));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+  } finally { if(prior===undefined)delete process.env.HYPERLIQUID_PK;else process.env.HYPERLIQUID_PK=prior;await runtime.close();await rm(directory,{recursive:true,force:true}); }
+});
+
+test('diagnostic creation failure explicitly reports no process started', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-diagnostic-prestart-'));
+  const blocked = join(directory, 'not-a-directory'), started = join(directory, 'started');
+  const binary = join(directory, 'native');
+  await writeFile(blocked, 'retain this file');
+  await writeFile(binary, `#!/bin/sh\nprintf started > ${quote(started)}\n`, { mode:0o700 });
+  const runtime = new AccountRuntime(binary, {id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:[]}, '01900000-0000-7000-8000-000000000001', blocked);
+  try {
+    await assert.rejects(runtime.start(), /^Error: account_runtime_not_started_diagnostic_unavailable$/);
+    assert.equal(runtime.isConnected(), false);
+    await assert.rejects(readFile(started), {code:'ENOENT'});
+    assert.equal(await readFile(blocked,'utf8'), 'retain this file');
+  } finally { await runtime.close(); await rm(directory,{recursive:true,force:true}); }
+});
+
+test('paper cancellation binding never follows a replacement process or boots on read', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-cancel-generation-'));
+  const script = join(directory, 'protocol.mjs'), binary = join(directory, 'runner'), counter = join(directory, 'starts');
+  await writeFile(script, `import fs from 'node:fs';import readline from 'node:readline';
+let n=1;try{n=Number(fs.readFileSync(${JSON.stringify(counter)},'utf8'))+1}catch{}fs.writeFileSync(${JSON.stringify(counter)},String(n));
+readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);const reply=result=>console.log(JSON.stringify({requestId:v.requestId,result}));
+if(v.operation==='BOOT')reply({native_session_id:'session-'+n,ordinary_venue_cancel:true,ordinary_venue_cancel_scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',account_compatibility_declaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',account_compatibility_verified:false});
+else if(v.operation==='EXIT')process.exit(0);
+else if(v.operation==='SHUTDOWN'){reply({});process.exit(0)}
+else reply({operation:v.operation,expected_native_session_id:v.expected_native_session_id});});`);
+  await writeFile(binary, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`, {mode:0o700});
+  const runtime = new AccountRuntime(binary, {id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'HYPE-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},instruments:[]}, 'source', directory);
+  try {
+    assert.throws(()=>runtime.bindPaperCancellationSession('session-1'), /original_session_unavailable/);
+    await assert.rejects(readFile(counter), /ENOENT/);
+    await runtime.start();
+    assert.throws(()=>runtime.bindPaperCancellationSession('wrong'), /original_session_unavailable/);
+    assert.deepEqual(runtime.paperCancellationCapability(),{supported:true,reason:null,scope:'DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false});
+    const bound=runtime.bindPaperCancellationSession('session-1');
+    assert.deepEqual(await bound.request('ORDER_OBSERVE',{expected_native_session_id:'wrong'}), {operation:'ORDER_OBSERVE',expected_native_session_id:'session-1'});
+    await assert.rejects(runtime.request('EXIT'), /outcome_uncertain/);
+    await assert.rejects(bound.request('ORDER_CANCEL_ATTEMPT',{}), /original_session_unavailable/);
+    assert.equal(runtime.paperCancellationCapability().scope,null);
+    assert.equal(await readFile(counter,'utf8'),'1');
+    await runtime.start(); // New explicit connection, never done by bound requests.
+    await assert.rejects(bound.request('ORDER_OBSERVE',{}), /original_session_unavailable/);
+    assert.equal(await readFile(counter,'utf8'),'2');
+    assert.equal((await runtime.bindPaperCancellationSession('session-2').request('ORDER_OBSERVE',{})).expected_native_session_id,'session-2');
+  } finally {await runtime.close();await rm(directory,{recursive:true,force:true});}
+});
+
+ test('strategy lifecycle is observed from current BOOT only, not config or cancellation declaration',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-lifecycle-'));
+ const script=join(directory,'protocol.mjs'),binary=join(directory,'runner');
+ const facts={configuredKind:'REGISTERED',supported:true,reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false};
+ await writeFile(script,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);if(v.operation==='EXIT')process.exit(0);console.log(JSON.stringify({requestId:v.requestId,result:v.operation==='BOOT'?{native_session_id:'original',strategy_lifecycle:${JSON.stringify(facts)}}:{}}));if(v.operation==='SHUTDOWN')process.exit(0);});`);
+ await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+ const runtime=new AccountRuntime(binary,{id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:{}}},instruments:[]},'source',directory);
+ try{
+ assert.equal(runtime.strategyLifecycleCapability().supported,null);
+ await runtime.start();assert.deepEqual(runtime.strategyLifecycleCapability(),{...facts,nativeSessionId:'original'});
+ assert.equal(runtime.paperCancellationCapability().supported,false);
+ await assert.rejects(runtime.request('EXIT'),/outcome_uncertain/);
+ assert.equal(runtime.strategyLifecycleCapability().supported,null);
+ }finally{await runtime.close();await rm(directory,{recursive:true,force:true});}
+ });
+
+test('mismatched, unbound or certified lifecycle claims remain unknown',async()=>{
+ const facts={configuredKind:'REGISTERED',supported:true,reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false};
+ for(const boot of [
+  {native_session_id:'original',strategy_lifecycle:{...facts,configuredKind:'EMA_CROSS'}},
+  {strategy_lifecycle:facts},
+  {native_session_id:'original',strategy_lifecycle:{...facts,strategyVerified:true}},
+ ]){
+ const directory=await mkdtemp(join(tmpdir(),'qz-lifecycle-invalid-'));
+ const script=join(directory,'protocol.mjs'),binary=join(directory,'runner');
+ await writeFile(script,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);console.log(JSON.stringify({requestId:v.requestId,result:v.operation==='BOOT'?${JSON.stringify(boot)}:{}}));if(v.operation==='SHUTDOWN')process.exit(0);});`);
+ await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+ const runtime=new AccountRuntime(binary,{id:'paper',clientId:'client',accountId:'account',mode:'paper',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:{}}},instruments:[]},'source',directory);
+ try{await runtime.start();assert.equal(runtime.strategyLifecycleCapability().supported,null);assert.equal(runtime.strategyLifecycleCapability().strategyVerified,null);}
+ finally{await runtime.close();await rm(directory,{recursive:true,force:true});}
+ }
 });

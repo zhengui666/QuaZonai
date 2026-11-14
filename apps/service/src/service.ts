@@ -1,9 +1,14 @@
+import {createAccountStrategyCommand} from './account-strategy.ts';
+import type {NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
+import {nativePreparationTools} from './native-preparation-tools.ts';
+import {processAccounts} from './process-accounts.ts';
+import {nativeEnvironmentBuild} from './native-environment-build.ts';
 import { researchTaskEvidence } from './research-assessments.ts';
 import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
-import staticPlugin from '@fastify/static';
+import { registerStaticWeb } from './static-web.ts';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boundScienceTarget } from './science-binding.ts';
@@ -23,7 +28,7 @@ import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
 import { DataSourceState, dataSources, registerDataSources } from './data-sources.ts';
-import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
+import { observationView, portfolioView, researchDetail, researchMessagePage, researchNativeRuns, researchSummary, researchExecutionUncertainty, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { eventStream } from './event-stream.ts';
 import { readResearchAdmissions } from './admissions.ts';
@@ -44,11 +49,25 @@ export async function createService(options: ServiceOptions) {
   const config = structuredClone(options.config);
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
+  const nativeBuild = nativeEnvironmentBuild(config);
+  let preparationOperations!: Parameters<typeof nativePreparationTools>[0];
+  const preparation = nativePreparationTools({
+    configuration: () => preparationOperations.configuration(),
+    build: value => preparationOperations.build(value), read: id => preparationOperations.read(id), select: value => preparationOperations.select(value),
+    startResearch: value => preparationOperations.startResearch(value),
+  });
+  let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
+  const nativeControlTransport:NativeStrategyControlTransport={
+    async send(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,true);},
+    async read(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,false);},
+  };
+  const accountCommandTask=createAccountStrategyCommand(nativeControlTransport);
+
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension];
+  const installed: Extension[] = [{...science,tasks:science.tasks?.map(task=>task.definition.name==='qz.account-strategy-command'?accountCommandTask:task)}, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -131,15 +150,24 @@ export async function createService(options: ServiceOptions) {
     return [...extensions.values()].map(item => ({ ...item, enabled: enabled[item.name] ?? defaults.get(item.name) ?? true,
       required: requiredExtensions.has(item.name), state: item.error ? 'error' : registry.extension(item.name) ? 'loaded' : 'disabled' }));
   }
-  research.harness.resume();
   const readTasks = researchTaskViews(research);
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const eventStreams = new Set<() => Promise<void>>();
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   app.addHook('onRequest', (_request, _reply, done) => research.withNativeHost(done));
   app.addHook('preClose', async () => { await Promise.all([...eventStreams].map(close => close())); await sources.close(); });
-  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); });
+  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); await accounts?.close(); });
   try {
+  accounts = await processAccounts(config);
+  // All persisted preparation tools must resolve their service callbacks before resuming.
+  await research.harness.commit(async (tx) => {
+    const facts = await tx.doc(Application);
+    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
+  }, context);
+  const builds=nativeBuild.workbench(research,instances);
+  const work = workbench(research, config, builds.selectedTarget);
+  preparationOperations = { configuration: builds.configuration, build: builds.start, read: builds.read, select: builds.select, startResearch: work.startResearch };
+  research.harness.resume();
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
@@ -153,11 +181,6 @@ export async function createService(options: ServiceOptions) {
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
   registerParameterScanRoutes(app, research, parameterScanWorkbench(research, config, scans.stopTask), eventStreams);
-  await research.harness.commit(async (tx) => {
-    const facts = await tx.doc(Application);
-    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
-  }, context);
-  const work = workbench(research, config);
   pm.connect({ host: research, work });
   registerPmRoutes(app, pm.work);
   for (const [path, remove] of [['research', (id: string) => work.removeResearch(Number(id))], ['factors', work.removeFactor], ['portfolios', work.removePortfolio], ['mandates', pm.work.delete]] as const) {
@@ -200,11 +223,13 @@ export async function createService(options: ServiceOptions) {
     const items: ResearchSummary[] = []; const active = new Set(inspection.tasks.map(task => task.record.conversationId));
     for (const row of page.items) {
       const state = await research.state(row.id);
-      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts, active.has(row.id)));
+      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts, active.has(row.id), (await researchExecutionUncertainty(research, row.id)) !== null));
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/messages`, request => researchMessagePage(research, Number(request.params.id), request.query.cursor));
+  app.get<{ Params: { id: string }; Querystring: { resultTaskId: string; offset?: string } }>(`${API}/research/:id/native-runs`, request => researchNativeRuns(research,Number(request.params.id),Number(request.query.resultTaskId),Number(request.query.offset??'0')));
   app.get<{ Params: { id: string; taskId: string } }>(`${API}/research/:id/evidence/:taskId`, request => researchTaskEvidence(research, Number(request.params.id), Number(request.params.taskId)));
   app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
     const id = Number(request.params.id);
@@ -263,7 +288,25 @@ export async function createService(options: ServiceOptions) {
     return observationView(await work.getObservation(id));
   });
   registerModels(app, research, work.getSettings);
+  app.get(`${API}/accounts/configurations`,()=>accounts!.list());
+  app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
+  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/legacy-snapshot`,r=>configuredStrategies.legacySnapshot(r.params.id,r.body));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/orders`,r=>configuredStrategies.orders(r.params.id,r.query.offset));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
+  app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id,r.body));
+  app.post<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/config/commands/:requestId/verify`,r=>configuredStrategies.verifyConfiguration(r.params.id,r.params.requestId));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,r=>configuredStrategies.history(r.params.id,r.query.offset));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,async(r,reply)=>reply.code(202).send(await configuredStrategies.command(r.params.id,r.body)));
+  app.get<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/commands/:requestId`,r=>configuredStrategies.receipt(r.params.id,r.params.requestId));
   registerInstanceSettings(app, instances);
+  app.post(`${API}/settings/instances/build`,request=>builds.start(request.body));
+  app.post(`${API}/settings/instances/import`,request=>builds.startImport(request.body));
+  app.get<{Params:{requestId:string}}>(`${API}/settings/instances/build/:requestId`,request=>builds.read(request.params.requestId));
+  app.post(`${API}/settings/instances/select-runner`,request=>builds.select(request.body));
   registerDataSources(app, sources);
   app.get<{ Params: { name: string }; Querystring: { taskId?: string } }>(`${API}/data-sources/:name/events`, async (request, reply) => {
     const taskId = request.query.taskId === undefined ? undefined : Number(request.query.taskId);
@@ -296,12 +339,11 @@ export async function createService(options: ServiceOptions) {
     return (await extensionViews()).find(item => item.name === found.name)!;
   });
   if (config.staticDir) {
-    await app.register(staticPlugin, { root: config.staticDir });
-    app.setNotFoundHandler((request, reply) => request.url.startsWith('/api/') ? reply.code(404).send({ error: 'not_found' }) : reply.sendFile('index.html'));
+    await registerStaticWeb(app, config.staticDir);
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
-  } catch (error) { await extensionWatch?.stop(); await research.close(); throw error; }
+  } catch (error) { await extensionWatch?.stop(); await research.close(); await accounts?.close(); throw error; }
 }
 export const buildService = createService;
 export type Service = Awaited<ReturnType<typeof createService>>;

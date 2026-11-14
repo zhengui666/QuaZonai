@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +31,7 @@ class ControlledProtocol implements NativeAccountRuntime {
       observation_id: randomUUID(), native_session_id: 'controlled-original-session', native_trader_id: 'QZ-001', native_account_id: paperOptions.accountId,
       native_snapshot: { account_id: paperOptions.accountId, account_type: 'MARGIN', base_currency: null, balances: [], margins: [], unrealized_pnls: [], realized_pnls: [], total_equity: [],
         base_currency_equity: null, is_stale: false, stale_instruments: [], stale_currencies: [], unpriced_instruments: [], event_id: 'controlled-original-event', ts_event: ns, ts_init: ns },
-      positions: [{ instrument_id: instrumentId, quantity: '10', free_quantity: '10', value: '1000', pnl: null }],
+      positions: [{ instrument_id: instrumentId, quantity: '10', value: '1000', pnl: null }],
       instruments: [{ instrument_id: instrumentId, base_currency: 'HYPE', quote_currency: 'USDC', size_increment: '0.01', price_increment: '0.01',
         minimum_quantity: '0.01', minimum_notional: '10', taker_fee_rate: '0.001', bid: '100', ask: '100.1', bid_depth: [{ price: '100', quantity: '100' }], asof_ns: ns }],
       orders: [], fills: [], cash, equity: '1000', currency: 'USDC', currency_precision: 6 };
@@ -45,7 +45,13 @@ class ControlledProtocol implements NativeAccountRuntime {
   }
   async request(operation: string, payload: Json = {}): Promise<Json> {
     this.requests.push({ operation, payload: structuredClone(payload) });
-    if (operation === 'SNAPSHOT') return structuredClone(this.snapshot) as unknown as Json;
+    if (operation === 'ACCOUNT_SUMMARY') {
+      const { orders, fills, ...summary } = structuredClone(this.snapshot);
+      return { ...summary, official_node_order_activity: {open:false,inflight:false,active_local:false,emulated:false} } as unknown as Record<string, unknown>;
+    }
+    if (operation === 'ORDER_STATUS') return { native_session_id: this.snapshot.native_session_id,
+      account_id: this.snapshot.native_account_id, client_order_id: payload.client_order_id,
+      status: this.snapshot.orders.find(order => order.client_order_id === payload.client_order_id)?.status ?? null };
     if (operation === 'QUANTIZE_MONEY') return { amount: payload.amount, precision: this.snapshot.currency_precision };
     if (operation === 'CONTROL') return { applied: true, epoch: payload.epoch, revision: payload.revision };
     if (operation === 'CANCEL_EXIT') return { applied: true, epoch: payload.epoch };
@@ -86,7 +92,7 @@ async function openAccount(native: ControlledProtocol, options = paperOptions, r
 }
 
 // Original persisted account facts only: no retired preview, START or slicing producer.
-for (const evidence of ['known_partial_fill', 'missing_original_fill', 'unknown_commission']) test(`retained ${evidence} survives cancellation and reopen without recalculating funds`, async () => {
+for (const evidence of ['known_partial_fill', 'missing_original_fill', 'unknown_commission']) test(`retained ${evidence} survives refused new cancellation and original pending cancellation reconciliation without recalculating funds`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-retained-cost-'));
   const native = new ControlledProtocol(); let settled = false;
   const original = native.request.bind(native);
@@ -98,7 +104,7 @@ for (const evidence of ['known_partial_fill', 'missing_original_fill', 'unknown_
   const progress = [{ instrument_id: instrumentId, filled_quantity: '0.5', execution_cost: evidence === 'known_partial_fill' ? { amount: '0.29975', currency: 'USDC' } : null }];
   const retained = { schema_version: 2, sourceId: 'original-source', identity: { mode: 'paper', network: 'mainnet', accountId: paperOptions.accountId, accountAddress: null, currency: 'USDC' }, epoch: '3', revision: '3', strategyRevision: '1', previews: {}, targets: {}, ledgerClaims: { original: 'proof-original' }, reverseTransferPending: false,
     commands: { unknown: { original: { requestId: 'unknown', command: { preview_id: 'old-preview' } }, state: 'UNCERTAIN', error: 'original_unknown', exitId: 'old-exit' } },
-    exits: { 'old-exit': { view: { id: 'old-exit', revision: '1', state: 'BLOCKED', policy: { kind: 'BOUNDED_LIMIT', pacing: { minimum_interval_seconds: 1 }, deadline: '2030-01-01T00:00:00Z' }, funds, progress, events: [], reason_codes: [evidence] }, childIds: ['original-order'], pendingSlice: { id: 'original-order' }, executionCost: '0.29975', fillCosts: { original: { cost: '0.29975' } } } } };
+    exits: { 'old-exit': { view: { id: 'old-exit', revision: '1', state: 'CANCELLING_EXIT', stop_action: 'CANCEL', policy: { kind: 'BOUNDED_LIMIT', pacing: { minimum_interval_seconds: 1 }, deadline: '2030-01-01T00:00:00Z' }, funds, progress, events: [], reason_codes: [evidence] }, childIds: ['original-order'], pendingSlice: { id: 'original-order' }, executionCost: '0.29975', fillCosts: { original: { cost: '0.29975' } } } } };
   await writeFile(join(directory, 'capital-receipts.json'), JSON.stringify(retained));
   let account = await createCapitalAccount(paperOptions, directory, '/unused', native);
   const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Json;
@@ -111,15 +117,58 @@ for (const evidence of ['known_partial_fill', 'missing_original_fill', 'unknown_
       assert.equal(receipt.status, 'REJECTED');
     }
     const stop = { requestId: 'cancel-original', clientId: paperOptions.clientId, accountId: paperOptions.accountId, command: { schema_version: 2, action: 'CANCEL', expected_revision: disk.exits['old-exit'].view.revision } };
-    await call('POST', '/capital-exits/old-exit/actions', stop); native.tick(); await delay(30);
-    disk = await saved(); assert.ok(disk.exits['old-exit'].pendingSlice); assert.equal(disk.commands.unknown.state, 'UNCERTAIN');
+    const rejected = await call('POST', '/capital-exits/old-exit/actions', stop);
+    assert.equal(rejected.status, 'REJECTED'); assert.equal(rejected.error, 'capital_original_control_evidence_unavailable');
+    assert.equal((await call('GET', '/capital-exits')).reserved, null);
+    native.tick(); await delay(30);
+    disk = await saved(); assert.equal(disk.epoch, '3'); assert.equal(disk.revision, '3'); assert.ok(disk.exits['old-exit'].pendingSlice); assert.equal(disk.commands.unknown.state, 'UNCERTAIN');
     await account.close(); account = await createCapitalAccount(paperOptions, directory, '/unused', native);
     assert.equal((await call('GET', '/capital-exits/commands/unknown')).status, 'UNCERTAIN');
+    // Original-ID observation faults must leave the obligation and UNKNOWN untouched.
+    const currentRequest = native.request.bind(native);
+    for (const fault of ['missing', 'wrong-session', 'wrong-account', 'wrong-id', 'unavailable', 'nonterminal']) {
+      native.request = async (op, payload = {}) => {
+        if (op !== 'ORDER_STATUS') return currentRequest(op, payload);
+        native.requests.push({operation: op, payload});
+        assert.equal(payload.client_order_id, 'original-order');
+        assert.equal(payload.expected_native_session_id, native.snapshot.native_session_id);
+        if (fault === 'unavailable') throw Error('original_read_unavailable');
+        return { native_session_id: fault === 'wrong-session' ? 'other' : native.snapshot.native_session_id,
+          account_id: fault === 'wrong-account' ? 'other' : paperOptions.accountId,
+          client_order_id: fault === 'wrong-id' ? 'other' : payload.client_order_id,
+          status: fault === 'missing' ? null : fault === 'nonterminal' ? 'ACCEPTED' : 'CANCELED' };
+      };
+      native.tick(); await delay(35); disk = await saved();
+      assert.equal(disk.exits['old-exit'].view.state, 'CANCELLING_EXIT', fault);
+      assert.ok(disk.exits['old-exit'].pendingSlice); assert.equal(disk.commands.unknown.state, 'UNCERTAIN');
+      assert.deepEqual(disk.exits['old-exit'].view.funds, funds);
+    }
+    native.request = currentRequest;
+    if (evidence === 'known_partial_fill') {
+      let entered = false;
+      let release!: () => void;
+      const blockedRead = new Promise<void>(resolve => {release = resolve;});
+      native.request = async (op, payload = {}) => {
+        if (op === 'ORDER_STATUS') { entered = true; await blockedRead; }
+        return currentRequest(op, payload);
+      };
+      try {
+        native.tick(); await eventually(async () => entered, Boolean, 'Original status read begins');
+        const stopWhileReading = await Promise.race([
+          call('POST', '/capital-exits/old-exit/actions', {...stop, requestId:'stop-during-read'}),
+          delay(500).then(() => {throw Error('read_blocked_explicit_stop');})
+        ]);
+        assert.equal(stopWhileReading.status, 'REJECTED');
+        assert.equal(stopWhileReading.error, 'capital_original_control_evidence_unavailable');
+      } finally { release(); native.request = currentRequest; }
+      await delay(30);
+    }
+    assert.equal(native.requests.some(row => row.operation === 'SNAPSHOT'), false);
     settled = true; native.snapshot.orders.push({ client_order_id: 'original-order', status: 'CANCELED' } as NativeAccountSnapshot['orders'][number]); native.tick(); disk = await eventually(saved, value => value.exits['old-exit'].view.state === 'CANCELLED_RESERVED', 'Original terminal order must settle without release');
     assert.equal(disk.exits['old-exit'].view.state, 'CANCELLED_RESERVED'); assert.deepEqual(disk.exits['old-exit'].view.funds, funds); assert.deepEqual(disk.exits['old-exit'].view.progress, progress);
     assert.equal(disk.exits['old-exit'].executionCost, '0.29975'); assert.deepEqual(disk.exits['old-exit'].fillCosts, retained.exits['old-exit'].fillCosts); assert.deepEqual(disk.ledgerClaims, retained.ledgerClaims);
     assert.equal(native.slices().length, 0); assert.equal(native.requests.filter(row => ['TARGET', 'STRATEGY_START'].includes(row.operation)).length, 0);
-    assert.ok(native.requests.filter(row => row.operation === 'CANCEL_EXIT').every(row => row.payload.exit_id === 'old-exit'));
+    assert.equal(native.requests.filter(row => ['CONTROL','CANCEL_EXIT'].includes(row.operation)).length, 0);
   } finally { await account.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -148,7 +197,7 @@ test('strategy admission rejection remains distinct from lost transport and is n
   } finally { await account.close(); }
 });
 
-test('native account capabilities do not advertise replay-only order-book strategy', async () => {
+test('unobserved native lifecycle remains unknown without advertising replay-only strategy', async () => {
   const native = new ControlledProtocol();
   const account = await openAccount(native, { ...paperOptions, nativeStrategy: { instrument_id: instrumentId, strategy: {
     kind: 'ORDER_BOOK_IMBALANCE', max_trade_size: '1', trigger_min_size: '1', trigger_imbalance_ratio: '0.2',
@@ -156,9 +205,9 @@ test('native account capabilities do not advertise replay-only order-book strate
   } } });
   try {
     const capabilities = await account.call('GET', '/capabilities');
-    assert.equal((capabilities.nativeStrategy as Json).supported, false);
-    assert.deepEqual((capabilities.nativeStrategy as Json).supportedKinds, ['EMA_CROSS']);
-    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance');
+    assert.equal((capabilities.nativeStrategy as Json).supported, null);
+    assert.equal((capabilities.nativeStrategy as Json).strategyVerified, null);
+    assert.equal((capabilities.nativeStrategy as Json).reason, 'account_native_strategy_capability_unobserved');
   } finally { await account.close(); }
 });
 
@@ -241,3 +290,67 @@ test('worker durable CAS rejects a delayed older START after STOP, across restar
     assert.equal(replaced.status,'REJECTED');
   } finally {release();server.close();await once(server,'close');await account.close();await rm(directory,{recursive:true,force:true});}
 });
+
+
+for (const quantity of ['10','-10']) for (const quote of ['available','missing','stale']) test(`controlled ${quantity} position keeps missing per-position valuation with ${quote} quote, without changing native aggregate`, async () => {
+  const native = new ControlledProtocol();
+  native.snapshot.positions[0] = { instrument_id: instrumentId, quantity, value: null, pnl: null };
+  if (quote === 'missing') { native.snapshot.instruments[0]!.bid = null; native.snapshot.instruments[0]!.ask = null; }
+  if (quote === 'stale') native.snapshot.instruments[0]!.asof_ns = '1';
+  const original = structuredClone(native.snapshot.native_snapshot);
+  const account = await openAccount(native);
+  try {
+    const result = await account.call('GET', '/account');
+    assert.deepEqual(result.positions, [{ instrumentId, quantity, value: null, pnl: null }]);
+    assert.deepEqual((result.nativeObservation as Json).snapshot, original);
+    assert.equal('free_quantity' in native.snapshot.positions[0]!, false);
+  } finally { await account.close(); }
+});
+
+test('terminal individually zero legacy obligations permit a new paper epoch without rewriting old facts',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-zero-obligation-'));const native=new ControlledProtocol();
+ let account=await createCapitalAccount(paperOptions,directory,'/unused',native);await account.close();
+ const path=join(directory,'capital-receipts.json');const disk=JSON.parse(await readFile(path,'utf8'));
+ disk.epoch='41';disk.revision='9';disk.exits.closed={view:{id:'closed',revision:'7',state:'CLOSED',funds:{reserved_amount:{amount:'0.000',currency:'USDC'},staged_for_withdrawal_amount:{amount:'0',currency:'USDC'}},events:[]},childIds:[],pendingSlice:null};
+ const original=structuredClone(disk.exits.closed);await writeFile(path,JSON.stringify(disk));
+ account=await createCapitalAccount({...paperOptions,cashBuffer:'0.000'},directory,'/unused',native);
+ const call=async(method:string,path:string,body:Json={})=>(await account.handle(path,request(method),async()=>body)).value as Json;
+ try{
+  assert.equal(JSON.parse(await readFile(path,'utf8')).epoch,'41');
+  const fence=await call('GET','/strategy/fence');
+  const body={requestId:'new-epoch',action:'START',clientId:paperOptions.clientId,accountId:paperOptions.accountId,expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision};
+  const receipt=await call('POST','/strategy/commands',body);assert.equal(receipt.status,'COMPLETED');
+  const control=native.requests.find(x=>x.operation==='CONTROL')!;assert.equal(control.payload.epoch,'42');assert.equal(control.payload.reserved_amount,'0');assert.equal(control.payload.cash_buffer,'0.000');
+  assert.deepEqual(await call('POST','/strategy/commands',body),receipt);assert.equal(native.requests.filter(x=>x.operation==='CONTROL').length,1);
+  const retained=JSON.parse(await readFile(path,'utf8'));assert.deepEqual(retained.exits.closed,original);
+ }finally{await account.close();await rm(directory,{recursive:true,force:true});}
+});
+
+
+test('unpersisted legacy cancellation refusal stays uncertain without changing its exit or sending CONTROL',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-refused-cancel-'));const native=new ControlledProtocol();
+ let account=await createCapitalAccount(paperOptions,directory,'/unused',native);await account.close();
+ const path=join(directory,'capital-receipts.json');const disk=JSON.parse(await readFile(path,'utf8'));
+ disk.epoch='13';disk.revision='6';disk.exits.old={view:{id:'old',revision:'2',state:'BLOCKED',funds:{reserved_amount:{amount:'10',currency:'USDC'},staged_for_withdrawal_amount:{amount:'3',currency:'USDC'}},events:[]},childIds:['original-order'],pendingSlice:null};
+ await writeFile(path,JSON.stringify(disk));account=await createCapitalAccount(paperOptions,directory,'/unused',native);
+ const call=async(method:string,path:string,body:Json={})=>(await account.handle(path,request(method),async()=>body)).value as Json;
+ try{
+  await mkdir(path+'.next');
+  const body={requestId:'new-refusal',clientId:paperOptions.clientId,accountId:paperOptions.accountId,command:{schema_version:2,action:'CANCEL',expected_revision:'2'}};
+  const reply=await call('POST','/capital-exits/old/actions',body);assert.equal(reply.status,'UNCERTAIN');assert.equal(reply.error,'account_receipts_write_failed');
+  assert.deepEqual(await call('POST','/capital-exits/old/actions',body),reply);assert.deepEqual(await call('GET','/capital-exits/commands/new-refusal'),reply);
+  assert.ok(native.requests.every(row=>row.operation==='ACCOUNT_SUMMARY'), 'Only existing read refreshes are allowed; no CONTROL, cancellation or strategy command.');const after=JSON.parse(await readFile(path,'utf8'));assert.equal(after.epoch,'13');assert.deepEqual(after.exits,disk.exits);
+ }finally{await account.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
+});
+
+ test('account capabilities preserve actual registered BOOT dispatch facts without certifying strategy',async()=>{
+ const native=new ControlledProtocol();
+ const facts={supported:true,configuredKind:'REGISTERED',reason:null,scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false,nativeSessionId:'original-session'};
+ Object.assign(native,{strategyLifecycleCapability:()=>structuredClone(facts)});
+ const account=await openAccount(native,{...paperOptions,nativeStrategy:{instrument_id:instrumentId,strategy:{kind:'REGISTERED',name:'owner',config:{}}}});
+ try{const value=(await account.call('GET','/capabilities')).nativeStrategy as Json;
+ for(const [key,original]of Object.entries(facts))assert.equal(value[key],original);
+ assert.deepEqual((await account.call('GET','/strategy/config')).lifecycleCapability,facts);
+ assert.equal(native.requests.filter(r=>r.operation==='STRATEGY_START'||r.operation==='CONTROL').length,0);
+ }finally{await account.close();}
+ });

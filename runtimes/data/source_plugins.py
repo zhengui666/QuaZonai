@@ -90,8 +90,6 @@ def cryptohftdata_options(parser, convert=False, plan=False):
         if convert:
             mode = parser.add_mutually_exclusive_group()
             mode.add_argument("--trade-ticks", action="store_true", help="native trade-only catalog")
-            mode.add_argument("--cohort-cache", action="store_true", help="derived trade cohort cache")
-            mode.add_argument("--cohort-flow-cache", action="store_true", help="derived trade cohort cache with aggressive flow")
             mode.add_argument("--context-prices", action="store_true", help="received-time oracle/mark economic sidecars")
             parser.add_argument("--research-source-revision", help="research revision bound to context-price sidecars")
             parser.add_argument("--received-time", action="store_true", help="select and group original collector receive times")
@@ -133,7 +131,7 @@ def cryptohftdata_convert(args):
     manifest = cryptohftdata_manifest(args)
     if args.context_prices and manifest["selection"]["streams"] != ["context"]:
         raise ValueError("context prices require --stream context only")
-    mode = next((name for name in ("trade_ticks", "cohort_cache", "cohort_flow_cache") if getattr(args, name)), None)
+    mode = next((name for name in ("trade_ticks",) if getattr(args, name)), None)
     if mode and manifest["selection"]["streams"] != ["trades"]:
         raise ValueError("trade/catalog cache mode requires --stream trades only")
     if (args.received_time and mode is None or args.received_time != (args.maximum_receive_delay_ns is not None)
@@ -196,6 +194,10 @@ def parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if any(value in ("--cohort-cache", "--cohort-flow-cache") for value in argv):
+        print("QZ_DERIVED_TICK_COHORT_RETIRED: use --trade-ticks for original Nautilus records; existing data is not migrated or recomputed", file=sys.stderr)
+        return 2
     args = parser().parse_args(argv)
     try:
         print(json.dumps(args.run(args), indent=2, allow_nan=False))

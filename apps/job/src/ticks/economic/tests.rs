@@ -1,10 +1,19 @@
 use super::*;
 use serde_json::json;
 
+pub(super) fn request() -> contracts::ticks::NativeTradeTickFactorEvaluationRequestV1 {
+    serde_json::from_value(json!({"schema_version":1,
+        "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],"event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+        "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+        "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+        "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+        "train_end_ns":"30","validation_end_ns":"50"})).unwrap()
+}
+
 #[test]
 fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     let dir = tempfile::tempdir().unwrap();
-    let request = crate::ticks::tests::request();
+    let request = request();
     assert!(funding_sources(dir.path(), &request).unwrap().is_empty());
     let quotes = dir.path().join("spot-valuation.jsonl");
     std::fs::write(&quotes, "{}\n").unwrap();

@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
 import { Application, json } from '../src/facts.ts';
-import { accountSourceFixture } from './pm-account-fixture.ts';
+import { accountSourceFixture,directAccountProtocol } from './pm-account-fixture.ts';
 import { context, setup } from './support.ts';
 
-test('native strategy commands retain exact identity across HTTP uncertainty and Durable restart without replay', async () => {
+test('native strategy commands retain exact identity across controlled direct-handler uncertainty and Durable restart without replay', async () => {
   const state = await setup(); const source = accountSourceFixture(); const remote = Fastify();
   let revision = '4', fenceReads = 0, unregistered = false;
   let statusOverride: Record<string, unknown> | null = null;
+  let detach:()=>void=()=>{};
   const calls: string[] = []; const receipts = new Map<string, object>();
   const envelope = { clientId: source.connection.clientId, accountId: source.connection.accountId, currency: 'USDC', mode: 'paper' };
   const native = { strategy_id: 'EMACross-001', state: 'RUNNING', native_version: 'original-upstream', instrument_id: 'HYPE-USDC-SPOT.HYPERLIQUID',
@@ -35,7 +36,7 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
   });
   remote.get<{ Params: { id: string } }>('/strategy/commands/:id', (request, reply) => receipts.get(request.params.id) ?? reply.code(404).send({ error: 'missing' }));
   try {
-    source.connection.url = await remote.listen({ host: '127.0.0.1', port: 0 });
+    detach=await directAccountProtocol(source.connection,remote);
     state.options.config.connections = [source.connection]; await state.restart();
     await state.service.research.harness.commit(async tx => {
       const app = await tx.doc(Application); app.observations[source.connection.id] = json({ ...source.observation, connection: source.connection });
@@ -126,5 +127,5 @@ test('native strategy commands retain exact identity across HTTP uncertainty and
     await state.restart(); await send('recover-once', 'RECOVER');
     assert.equal(calls.filter(action => action === 'RECOVER').length, 1, 'Durable replay never reconnects.');
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: { requestId: 'old-target', portfolioId: 'old', mode: 'paper' } })).statusCode, 410);
-  } finally { await state.cleanup(); await remote.close(); }
+  } finally { await state.cleanup(); detach(); await remote.close(); }
 });

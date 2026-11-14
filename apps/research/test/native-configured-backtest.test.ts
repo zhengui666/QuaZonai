@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -10,32 +9,25 @@ import { openResearch } from '../src/host.ts';
 import { Study } from '../src/documents.ts';
 import { ResearchConfiguration } from '../src/research-configuration.ts';
 import { nativeCommands } from '../src/native-execution.ts';
-import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
+import { isTickNativeCommand, type ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { isNativeTable, readNativeTable } from '../src/native-table.ts';
 import { NativeEvidencePart } from '../plugins/native-evidence.ts';
 import { nativeResultView } from '../src/native-result-view.ts';
 
-// Official Pi + HTTP protocol, not evidence that a custom Rust strategy was compiled or profitable.
+// Official Pi + real process protocol, not evidence that a custom Rust strategy was compiled or profitable.
 for (const retainCanonical of [false, true]) test(`typed Rust factory tool retains original results and reopens without rerunning (canonical=${retainCanonical})`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-configured-'));
   const request = { schema_version: 1, name: 'owner::MultiInstrument', config: { instruments: ['BTC.SIM', 'ETH.SIM'], exact: '0.000000000000000019', nested: [null, true] } };
   const report = { schema: 'nautilus-backtest-result/v1', orders: retainCanonical ? Array.from({ length: 1200 }, (_, i) => ({ index: i, quantity: '0.000000000000000019', detail: 'original'.repeat(32) })) : [], fills: [], positions: [], accounts: [], portfolio_snapshots: [], position_snapshots: [], statistics: {} };
   const result = { schema_version: 1, request, native_version: '0.69.0', native_results: [{ run_id: 'official-run', total_orders: 0 }], canonical_result: retainCanonical ? report : null, canonical_unavailable_reason: retainCanonical ? null : 'OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG' };
-  const posts: any[] = [];
-  const server = createServer(async (incoming, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (incoming.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    let body = ''; for await (const part of incoming) body += part;
-    const operation = JSON.parse(body); posts.push(operation);
-    response.end(JSON.stringify({ schemaVersion: 1, requestId: operation.requestId, status: 'COMPLETED', result }));
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const binary=join(directory,'controlled-native.mjs'),marker=join(directory,'calls.jsonl');
+  await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';let text='';for await(const part of process.stdin)text+=part;const input=JSON.parse(text);appendFileSync(${JSON.stringify(marker)},JSON.stringify({command:process.argv[2],args:process.argv.slice(3),input})+'\\n');process.stdout.write(${JSON.stringify(JSON.stringify(result))});`,{mode:0o755});
+  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled-process',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
   const models = createModels(), faux = fauxProvider(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_configured_backtest', { request, finishResearch: true }), { stopReason: 'toolUse' })]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
-  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: { id: 'factory', url: `http://127.0.0.1:${address.port}` } }, policy: {} };
+  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target }, policy: {} };
   try {
     const admission = await host.start('factory-protocol', input);
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
@@ -51,6 +43,7 @@ for (const retainCanonical of [false, true]) test(`typed Rust factory tool retai
       }
       assert.deepEqual(stored, { ...result, canonical_result: { ...report, orders: table } });
     } else assert.deepEqual(stored, result);
+    const posts=(await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
     assert.equal(posts.length, 1); assert.equal(posts[0].command, 'native-configured-backtest'); assert.deepEqual(posts[0].input, request); assert.deepEqual(posts[0].args, ['--catalog', directory]);
     assert.equal(isTickNativeCommand(posts[0].command), true); assert.equal(nativeCommands.has('native-walk-forward'), false);
     const executions = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
@@ -62,6 +55,6 @@ for (const retainCanonical of [false, true]) test(`typed Rust factory tool retai
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.start('factory-protocol', input), admission);
     assert.deepEqual((await host.harness.snapshot(Study, admission.conversationId, context))!.final?.result, stored);
-    assert.equal(posts.length, 1);
-  } finally { await host.close(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+    assert.deepEqual((await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line)),posts,'reopen never launches replacement process');
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -15,7 +15,7 @@ use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
 use indexmap::IndexMap;
 use nautilus_common::{
     actor::{DataActor, DataActorNative},
-    cache::CacheConfig,
+    cache::{Cache, CacheConfig},
     component::{component_state, reset_component, Component},
     enums::{ComponentState, Environment},
     logging::logger::LoggerConfig,
@@ -182,7 +182,22 @@ struct Request {
     #[serde(flatten)]
     body: BTreeMap<String, Value>,
 }
+// Official node-wide activity indices. No account filter: unassigned orders and
+// other strategies/accounts must conservatively prevent a zero-order proof.
+fn official_node_order_activity(cache: &Cache) -> Value {
+    json!({"open":cache.has_orders_open(None,None,None,None,None),
+        "inflight":cache.has_orders_inflight(None,None,None,None,None),
+        "active_local":cache.has_orders_active_local(None,None,None,None,None),
+        "emulated":cache.has_orders_emulated(None,None,None,None,None)})
+}
 impl Request {
+    fn ensure_external(&self) -> Result<()> {
+        ensure!(
+            self.operation != "SPOT_BALANCE_REFRESH",
+            "account_native_internal_operation"
+        );
+        Ok(())
+    }
     fn value(&self, key: &str) -> &Value {
         self.body.get(key).unwrap_or(&Value::Null)
     }
@@ -255,6 +270,19 @@ impl AccountStrategyRegistrar<'_> {
     pub fn instruments(&self) -> &[InstrumentId] {
         &self.owner.ids
     }
+    /// Original node trader identity; not a user-configured replacement.
+    pub fn trader_id(&self) -> TraderId {
+        self.owner.native_trader.borrow().trader_id
+    }
+    /// Original account identity used by this runtime.
+    pub fn account_id(&self) -> AccountId {
+        self.owner.account
+    }
+    /// Runtime execution client selected for this account. This is routing
+    /// context, not a connectivity, balance, or trading-permission assertion.
+    pub fn execution_client_id(&self) -> ClientId {
+        self.owner.client
+    }
     pub fn add<T>(&mut self, strategy: T) -> Result<()>
     where
         T: Strategy + StrategyNative + DataActorNative + Component + std::fmt::Debug + 'static,
@@ -269,6 +297,8 @@ impl AccountStrategyRegistrar<'_> {
 
 struct AccountController {
     core: StrategyCore,
+    cancel_node: Option<crate::account_queued_cancel::BoundCancelNode>,
+    compatibility: crate::native_runner::AccountCompatibility,
     signal_strategy_id: Option<StrategyId>,
     user_registration: Option<AccountStrategyRegistration>,
     signal_restore_error: Option<String>,
@@ -290,11 +320,11 @@ struct AccountController {
     fee_valid_until_ns: u64,
     control: Option<Control>,
     snapshot: Option<Value>,
-    stamp: String,
     last_tick_ns: u64,
     last_slice_ns: u64,
     cache_failed: Arc<AtomicBool>,
     spot_facts: Option<SpotFacts>,
+    spot_balance_observation: Option<Value>,
     target_acceptances: BTreeMap<String, TargetAcceptance>,
     #[cfg(test)]
     replies: Option<std::rc::Rc<std::cell::RefCell<BTreeMap<String, Value>>>>,
@@ -352,7 +382,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none()}),
+                json!({"account_summary_protocol":1,"strategy_lifecycle":self.strategy_lifecycle(),"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
             ),
         );
         Ok(())
@@ -389,6 +419,14 @@ impl DataActor for AccountController {
         Ok(())
     }
 }
+// Keep official integer tokens intact across JavaScript JSON parsing. This is
+// serialization only; legacy lastEvent remains for compatibility, not exact ns.
+// lastEventJson is official serde output, not exchange wire bytes. Already
+// persisted rounded objects are never upgraded or used to reconstruct it.
+fn official_order_event_json(event: &OrderEventAny) -> Result<String> {
+    Ok(serde_json::to_string(event)?)
+}
+
 impl AccountController {
     fn install_signal<T>(&mut self, strategy: T) -> Result<()>
     where
@@ -422,6 +460,18 @@ impl AccountController {
             self.ids.contains(&id),
             "account_native_strategy_instrument_not_configured"
         );
+        #[cfg(test)]
+        if self.config.client_id == "test-on-start-resting" {
+            return self.install_signal(tests::OnStartResting {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("RESTING-001")),
+                    order_id_tag: Some("001".into()),
+                    ..Default::default()
+                }),
+                instrument: id,
+                client: self.client,
+            });
+        }
         #[cfg(test)]
         if self.config.client_id == "test-on-start" {
             return self.install_signal(tests::OnStartSubmit {
@@ -492,35 +542,6 @@ impl AccountController {
     }
     fn refresh_snapshot(&mut self) -> Result<()> {
         let account = self.account;
-        let stamp = {
-            let cache = self.cache();
-            let account_event = cache
-                .account(&account)
-                .and_then(|v| v.last_event())
-                .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
-            let mut stamp = account_event.event_id.to_string();
-            for id in &self.ids {
-                if let Some(q) = cache.quote(id) {
-                    stamp.push_str(&format!(":{}:{}", id, q.ts_init));
-                }
-                if let Some(book) = cache.order_book(id) {
-                    stamp.push_str(&format!(":book:{}", book.ts_last));
-                }
-            }
-            let orders = cache.orders(None, None, None, Some(&account), None);
-            for o in &orders {
-                stamp.push_str(&format!(
-                    ":{}:{}:{}",
-                    o.client_order_id(),
-                    o.status(),
-                    o.filled_qty()
-                ));
-            }
-            stamp
-        };
-        if stamp == self.stamp {
-            return Ok(());
-        }
         let native = self
             .portfolio_rc()
             .try_borrow_mut()
@@ -546,33 +567,13 @@ impl AccountController {
                 "taker_fee_rate":if now<self.fee_valid_until_ns{Some(self.fee_rate.to_string())}else{None},"fee_source":self.fee_source,"fee_valid_until_ns":self.fee_valid_until_ns.to_string(),"bid":quote.bid_price.as_decimal().to_string(),"ask":quote.ask_price.as_decimal().to_string(),
                 "bid_depth":depth,"asof_ns":quote.ts_init.as_u64().to_string(),"book_asof_ns":book_ns.map(|v|v.to_string())}));
         }
-        let orders = cache.orders(None, None, None, Some(&account), None);
-        let mut fills = vec![];
-        let mut order_rows:Vec<_>=orders.iter().map(|o|{
-            for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
-            json!({"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
-                "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
-                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
-                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
-                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
-                "contingency_type":o.contingency_type().map(|v|v.to_string()),
-                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
+        let mut positions:Vec<_>=cache.positions_open(None,None,None,Some(&account),None).iter().map(|p|{
+            // Public per-position PnL requires a caller-selected price. The official
+            // Portfolio price/staleness selection is private and its public PnL is
+            // aggregate; do not recreate that policy or duplicate an aggregate here.
+            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"value":Value::Null,"pnl":Value::Null})
         }).collect();
-        let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
-            let quote=cache.quote(&p.instrument_id);
-            let value=quote.and_then(|q|p.quantity.as_decimal().checked_mul(q.bid_price.as_decimal()));
-            let pnl=quote.and_then(|q|p.unrealized_pnl(q.bid_price).ok());
-            let sell_orders=orders.iter().filter(|o|!o.is_closed()&&o.instrument_id()==p.instrument_id&&o.order_side()==OrderSide::Sell).map(|o|o.leaves_qty().as_decimal()).sum::<Decimal>();
-            json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"free_quantity":(p.quantity.as_decimal()-sell_orders).max(Decimal::ZERO).to_string(),"value":value.map(|v|v.to_string()),"pnl":pnl.map(|v|v.as_decimal().to_string())})
-        }).collect();
-        order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
         positions.sort_by_key(|v| v["instrument_id"].as_str().unwrap_or_default().to_owned());
-        fills.sort_by_key(|v| {
-            (
-                v["ts_event_ns"].as_str().unwrap_or_default().to_owned(),
-                v["trade_id"].as_str().unwrap_or_default().to_owned(),
-            )
-        });
         let cash = native
             .balances
             .iter()
@@ -593,15 +594,111 @@ impl AccountController {
         self.snapshot = Some(
             json!({"ready":fresh&&!native.is_stale,"recovery_required":false,"reason":if fresh {None}else{Some("account_native_market_data_stale_or_unavailable")},
             "sequence":native.ts_init.as_u64().to_string(),"observed_at_ns":native.ts_init.as_u64().to_string(),"observation_id":Id::new().to_string(),
-            "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"orders":order_rows,"fills":fills,"cash":cash,"equity":equity,"currency":"USDC",
+            "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"official_node_order_activity":official_node_order_activity(&self.native_cache.borrow()),"cash":cash,"equity":equity,"currency":"USDC",
             "native_version":crate::NAUTILUS_VERSION,"currency_precision":Currency::USDC().precision,"control_epoch":self.control.as_ref().map(|c|c.epoch.to_string()),"control_revision":self.control.as_ref().map(|c|c.revision.clone()),"fenced":self.control.as_ref().is_none_or(|c|c.mode=="PAUSED")||self.cache_failed.load(Ordering::SeqCst),
-            "remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
+            "spot_balance_observation":self.spot_balance_observation,"remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
         );
-        self.stamp = stamp;
         Ok(())
+    }
+    // Explicit legacy export only. Periodic observations never enumerate order history.
+    // This preserves full historical export semantics; it is not a bounded endpoint.
+    fn append_order_history(&self, frame: &mut Value) {
+        let account = self.account;
+        let cache = self.cache();
+        let orders = cache.orders(None, None, None, Some(&account), None);
+        let mut fills = vec![];
+        let mut order_rows:Vec<_>=orders.iter().map(|o|{
+            for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
+            json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),"is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string()),"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
+                "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
+                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
+                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
+                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
+                "contingency_type":o.contingency_type().map(|v|v.to_string()),
+                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
+        }).collect();
+        order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
+        fills.sort_by_key(|v| {
+            (
+                v["ts_event_ns"].as_str().unwrap_or_default().to_owned(),
+                v["trade_id"].as_str().unwrap_or_default().to_owned(),
+            )
+        });
+        frame["orders"] = json!(order_rows);
+        frame["fills"] = json!(fills);
+    }
+    // Installed only by the owned runtime's known official paper path. Public
+    // async/user-factory/live entry points cannot claim this node ownership.
+    fn cancel_order_operation(&self, r: &Request) -> Result<Value> {
+        use crate::account_queued_cancel::OriginalOrder;
+        let node = self
+            .cancel_node
+            .as_ref()
+            .ok_or_else(|| anyhow!("native_cancel_uninstalled"))?;
+        let expected = r
+            .body
+            .get("expected_native_session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("native_cancel_session_required"))?;
+        ensure!(
+            expected == self.session,
+            "native_cancel_node_binding_mismatch"
+        );
+        let command = r
+            .body
+            .get("command")
+            .ok_or_else(|| anyhow!("native_cancel_command_required"))?;
+        ensure!(
+            command["schemaVersion"] == 1
+                && command["action"] == "CANCEL"
+                && command["requestId"].as_str().is_some_and(|s| !s.is_empty()),
+            "native_cancel_command_invalid"
+        );
+        let binding = &command["binding"];
+        ensure!(
+            binding["nativeSessionId"] == expected
+                && binding["environmentId"] == "Sandbox"
+                && binding["sourceId"] == self.config.source_id
+                && binding["buildId"]
+                    == std::env::current_exe()?
+                        .canonicalize()?
+                        .to_string_lossy()
+                        .as_ref(),
+            "native_cancel_original_binding_mismatch"
+        );
+        let text = |key: &str| -> Result<&str> {
+            command["order"][key]
+                .as_str()
+                .ok_or_else(|| anyhow!("native_cancel_order_invalid"))
+        };
+        let original = OriginalOrder {
+            trader: text("traderId")?.parse()?,
+            account: text("accountId")?.parse()?,
+            strategy: command["strategyId"]
+                .as_str()
+                .ok_or_else(|| anyhow!("native_cancel_strategy_invalid"))?
+                .parse()?,
+            instrument: text("instrumentId")?.parse()?,
+            client_order_id: text("clientOrderId")?.parse()?,
+        };
+        let session = expected.parse().map_err(anyhow::Error::msg)?;
+        if r.operation == "ORDER_CANCEL_ATTEMPT" {
+            let id = node.dispatch_attempt(session, Environment::Sandbox, &original)?;
+            Ok(json!({"command":command,"status":"UNKNOWN","attemptId":id.to_string()}))
+        } else {
+            let order = node.observe_order(session, Environment::Sandbox, &original)?;
+            let event = order.last_event();
+            let event_json = official_order_event_json(event)?;
+            Ok(
+                json!({"command":command,"status":"UNKNOWN","orderObservation":{
+                "status":order.status().to_string(),"filledQuantity":order.filled_qty().to_string(),
+                "lastEvent":event,"lastEventJson":event_json}}),
+            )
+        }
     }
     fn process(&mut self, r: &Request) -> Result<Value> {
         match r.operation.as_str() {
+            "ORDER_CANCEL_ATTEMPT" | "ORDER_OBSERVE" => self.cancel_order_operation(r),
             #[cfg(test)]
             "TEST_RESTING_LIMIT" => {
                 let instrument = self.ids[0];
@@ -784,7 +881,56 @@ impl AccountController {
                     json!({"amount":money.as_decimal().to_string(),"precision":money.currency.precision}),
                 )
             }
-            "SNAPSHOT" => {
+            "ORDER_PAGE" => {
+                ensure!(r.text("expected_native_session_id")? == self.session, "native_order_session_changed");
+                let offset = r.value("offset").as_u64().ok_or_else(|| anyhow!("native_order_offset_invalid"))?;
+                let offset = usize::try_from(offset)?;
+                let cache = self.native_cache.borrow();
+                // Official lazy ID iterator: at most offset + 51 matching IDs yielded, only
+                // 50 borrowed orders projected, never clone orders or event histories.
+                // Cache iteration is live, not a stable historical snapshot.
+                let mut ids = cache.iter_client_order_ids(None, None, None, Some(&self.account)).skip(offset);
+                let mut items = Vec::with_capacity(50);
+                for id in ids.by_ref().take(50) {
+                    let o = cache.order_ref(&id).ok_or_else(|| anyhow!("native_order_missing"))?;
+                    items.push(json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),
+                        "client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),
+                        "status":o.status().to_string(),"quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),
+                        "is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string())}));
+                }
+                let next = if ids.next().is_some() {
+                    Some(
+                        offset
+                            .checked_add(50)
+                            .ok_or_else(|| anyhow!("native_order_offset_invalid"))?,
+                    )
+                } else {
+                    None
+                };
+                Ok(
+                    json!({"native_session_id":self.session,"observed_at_ns":self.clock().timestamp_ns().as_u64().to_string(),"items":items,"offset":offset,"nextOffset":next,"total":Value::Null}),
+                )
+            }
+            "ORDER_STATUS" => {
+                ensure!(
+                    r.text("expected_native_session_id")? == self.session,
+                    "native_order_session_changed"
+                );
+                let id: ClientOrderId = r.text("client_order_id")?.parse()?;
+                let cache = self.native_cache.borrow();
+                let order = cache.order_ref(&id);
+                if let Some(ref order) = order {
+                    ensure!(
+                        order.account_id() == Some(self.account)
+                            && order.trader_id() == self.trader.parse()?,
+                        "native_order_identity_mismatch"
+                    );
+                }
+                Ok(
+                    json!({"native_session_id":self.session,"account_id":self.account.to_string(),"client_order_id":id.to_string(),"status":order.map(|o|o.status().to_string())}),
+                )
+            }
+            "ACCOUNT_SUMMARY" | "SNAPSHOT" => {
                 self.refresh_snapshot()?;
                 let mut frame = self
                     .snapshot
@@ -815,7 +961,31 @@ impl AccountController {
                     frame["fenced"] = json!(true);
                     frame["reason"] = json!("account_native_cache_write_failed");
                 }
+                if r.operation == "SNAPSHOT" {
+                    self.append_order_history(&mut frame);
+                }
                 Ok(frame)
+            }
+            "SPOT_BALANCE_REFRESH" => {
+                let observation = r.value("observation");
+                ensure!(
+                    self.config.mode == "live"
+                        && observation["account_id"].as_str()
+                            == Some(self.config.account_id.as_str())
+                        && observation["source_id"].as_str()
+                            == Some(self.config.source_id.as_str())
+                        && observation["account_address"].as_str()
+                            == self.config.account_address.as_deref()
+                        && observation["network"].as_str()
+                            == Some(if self.config.testnet {
+                                "testnet"
+                            } else {
+                                "mainnet"
+                            }),
+                    "account_native_spot_observation_binding_mismatch"
+                );
+                self.spot_balance_observation = Some(observation.clone());
+                Ok(json!({"updated":true,"trade_permission":false}))
             }
             "FEE_REFRESH" => {
                 let rate = r.decimal("rate")?;
@@ -824,7 +994,6 @@ impl AccountController {
                 self.fee_source = r.value("source").clone();
                 let asof = r.text("asof_ns")?.parse::<u64>()?;
                 self.fee_valid_until_ns = asof.saturating_add(60_000_000_000);
-                self.stamp.clear();
                 Ok(json!({"updated":true}))
             }
             "CONTROL" => self.apply_control(r),
@@ -842,6 +1011,19 @@ impl AccountController {
             }
             _ => bail!("account_native_operation_unsupported"),
         }
+    }
+    // Reports installed dispatch paths only; never invokes or certifies owner code.
+    fn strategy_lifecycle(&self) -> Value {
+        let (kind, supported) = match &self.config.native_strategy.strategy {
+            NativeCompiledStrategyV1::EmaCross { .. } => ("EMA_CROSS", true),
+            NativeCompiledStrategyV1::Registered { .. } => {
+                ("REGISTERED", self.user_registration.is_some())
+            }
+            _ => ("UNSUPPORTED", false),
+        };
+        json!({"configuredKind":kind,"supported":supported,
+            "reason":if supported {None}else{Some("account_native_strategy_registration_unavailable")},
+            "scope":"INSTALLED_DISPATCH_ONLY","strategyVerified":false})
     }
     fn strategy_status(&self) -> Result<Value> {
         let Some(id) = self.signal_strategy_id else {
@@ -951,7 +1133,6 @@ impl AccountController {
                 );
                 let revision = old.revision.clone();
                 if self.update_spot_observation(spot_candidate) {
-                    self.stamp.clear();
                     self.refresh_snapshot()?;
                 }
                 return Ok(
@@ -981,26 +1162,28 @@ impl AccountController {
             minimum_interval_ns,
         });
         self.update_spot_observation(spot_candidate);
-        self.last_slice_ns = self.last_slice_ns.max(
-            self.cache()
-                .orders(None, None, None, Some(&self.account), None)
-                .iter()
+        let latest_exit_ns = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
                 .filter(|o| exit_id(o.tags()).is_some())
                 .map(|o| o.ts_submitted().unwrap_or(o.ts_init()).as_u64())
                 .max()
-                .unwrap_or(0),
-        );
-        let pending: Vec<_> = self
-            .cache()
-            .orders(None, None, None, Some(&self.account), None)
-            .iter()
-            .filter(|o| !o.is_closed() && o.order_side() == OrderSide::Buy)
-            .map(|o| o.client_order_id())
-            .collect();
+                .unwrap_or(0)
+        };
+        self.last_slice_ns = self.last_slice_ns.max(latest_exit_ns);
+        let mut pending: Vec<_> = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
+                .filter(|o| !o.is_closed() && o.order_side() == OrderSide::Buy)
+                .map(|o| o.client_order_id())
+                .collect()
+        };
+        pending.sort();
         for id in pending {
             self.cancel_order(id, Some(self.client), None)?;
         }
-        self.stamp.clear();
         self.refresh_snapshot()?;
         Ok(
             json!({"applied":true,"epoch":epoch.to_string(),"revision":r.text("revision")?,"remaining_trading":"PAUSED_NATIVE_STRATEGY","fenced_old_targets":true}),
@@ -1024,22 +1207,24 @@ impl AccountController {
             .ok_or_else(|| anyhow!("account_native_budget_fence_not_applied"))?;
         ensure!(c.epoch == epoch, "account_native_obsolete_control_epoch");
         let exit = r.text("exit_id")?;
-        let ids: Vec<_> = self
-            .cache()
-            .orders(None, None, None, Some(&self.account), None)
-            .iter()
-            .filter(|o| !o.is_closed() && exit_id(o.tags()).as_deref() == Some(exit))
-            .map(|o| o.client_order_id())
-            .collect();
+        let mut ids: Vec<_> = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
+                .filter(|o| !o.is_closed() && exit_id(o.tags()).as_deref() == Some(exit))
+                .map(|o| o.client_order_id())
+                .collect()
+        };
+        ids.sort();
         for id in &ids {
             self.cancel_order(*id, Some(self.client), None)?;
         }
         Ok(json!({"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
     fn protection_orders(&self, target: Option<&str>) -> Vec<ClientOrderId> {
-        self.cache()
-            .orders(None, None, None, None, None)
-            .iter()
+        let cache = self.native_cache.borrow();
+        let mut ids: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
+            .map(|id| required_order_ref(&cache, &id))
             .filter(|o| {
                 !o.is_closed()
                     && o.tags().is_some_and(|tags| {
@@ -1051,7 +1236,9 @@ impl AccountController {
                     })
             })
             .map(|o| o.client_order_id())
-            .collect()
+            .collect();
+        ids.sort();
+        ids
     }
     fn cancel_protection(&mut self, r: &Request) -> Result<Value> {
         let target = r.text("id")?;
@@ -1063,7 +1250,6 @@ impl AccountController {
         for id in &ids {
             self.cancel_order(*id, Some(self.client), None)?;
         }
-        self.stamp.clear();
         Ok(json!({"target_id":target,"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
     fn persist_acceptances(&self) -> Result<()> {
@@ -1125,66 +1311,12 @@ impl AccountController {
         }
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
     }
-    fn spot_cash(&self) -> Result<Decimal> {
-        if self.config.mode == "live" {
-            let facts = self
-                .spot_facts
-                .as_ref()
-                .ok_or_else(|| anyhow!("account_native_spot_facts_required"))?;
-            let now = self.clock().timestamp_ns().as_u64();
-            ensure!(
-                facts.asof <= now && now < facts.valid_until,
-                "account_native_spot_facts_expired"
-            );
-            // A venue HTTP response can precede fills already queued in the
-            // native event thread. The fact timestamp is the HTTP request's
-            // start, so debit every subsequent native BUY fill conservatively.
-            // Sales are credited only by the next real spot balance response.
-            let mut spent = Decimal::ZERO;
-            for order in self
-                .cache()
-                .orders(None, None, None, Some(&self.account), None)
-            {
-                for event in order.events() {
-                    if let OrderEventAny::Filled(fill) = event {
-                        if fill.order_side == OrderSide::Buy && fill.ts_init.as_u64() >= facts.asof
-                        {
-                            let fee = fill.commission.ok_or_else(|| {
-                                anyhow!("account_native_buy_fee_evidence_required")
-                            })?;
-                            let debit = fill
-                                .last_qty
-                                .as_decimal()
-                                .checked_mul(fill.last_px.as_decimal())
-                                .and_then(|v| {
-                                    v.checked_add(if fee.currency == Currency::USDC() {
-                                        fee.as_decimal()
-                                    } else {
-                                        Decimal::ZERO
-                                    })
-                                })
-                                .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-                            spent = spent
-                                .checked_add(debit)
-                                .ok_or_else(|| anyhow!("account_native_decimal_range"))?;
-                        }
-                    }
-                }
-            }
-            return Ok((facts.free - spent).max(Decimal::ZERO));
-        }
-        self.cache()
-            .account(&self.account)
-            .and_then(|a| a.last_event())
-            .and_then(|a| {
-                a.balances
-                    .iter()
-                    .find(|b| b.free.currency == Currency::USDC())
-                    .map(|b| b.free.as_decimal())
-            })
-            .ok_or_else(|| anyhow!("account_native_cash_unavailable"))
-    }
 }
+// Preserve the official Cache::orders failure for an inconsistent order index.
+fn required_order_ref<'a>(cache: &'a Cache, id: &ClientOrderId) -> nautilus_common::cache::OrderRef<'a> {
+    cache.order_ref(id).unwrap_or_else(|| panic!("Order {id} not found"))
+}
+
 fn exit_id(tags: Option<&[Ustr]>) -> Option<String> {
     tags?.iter().find_map(|t| {
         t.as_str()
@@ -1271,13 +1403,43 @@ pub async fn run() -> Result<()> {
 pub async fn run_with_registration(
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
+    // External callers may drive several nodes on one thread. No ownership claim.
+    run_input(
+        registration,
+        false,
+        crate::native_runner::AccountCompatibility::Unspecified,
+    )
+    .await
+}
+pub(crate) async fn run_owned_registration(
+    registration: Option<AccountStrategyRegistration>,
+    _owner: &crate::native_runner::OwnedAccountRuntime,
+    compatibility: crate::native_runner::AccountCompatibility,
+) -> Result<()> {
+    run_input(registration, true, compatibility).await
+}
+async fn run_input(
+    registration: Option<AccountStrategyRegistration>,
+    owned_runtime: bool,
+    compatibility: crate::native_runner::AccountCompatibility,
+) -> Result<()> {
     let mut first = String::new();
     io::stdin().read_line(&mut first)?;
     let boot: Request = serde_json::from_str(&first)?;
     ensure!(boot.operation == "BOOT", "account_native_boot_required");
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
-    let result = run_config_with_registration(config, boot.id.clone(), registration).await;
+    let result = run_config_owned(
+        config,
+        boot.id.clone(),
+        registration,
+        owned_runtime,
+        compatibility,
+    )
+    .await;
     if let Err(e) = &result {
+        // Full causal diagnostics stay on the private process stderr channel.
+        // The public protocol keeps its existing stable top-level error.
+        eprintln!("account native diagnostic: {e:#}");
         respond(&boot.id, Err(anyhow!(e.to_string())));
     }
     result
@@ -1306,10 +1468,38 @@ fn execution_product_types(config: &AccountRuntimeConfig) -> Result<Vec<Hyperliq
 async fn run_config(config: AccountRuntimeConfig, boot_id: String) -> Result<()> {
     run_config_with_registration(config, boot_id, None).await
 }
+#[cfg(test)]
 async fn run_config_with_registration(
     config: AccountRuntimeConfig,
     boot_id: String,
     registration: Option<AccountStrategyRegistration>,
+) -> Result<()> {
+    run_config_owned(
+        config,
+        boot_id,
+        registration,
+        false,
+        crate::native_runner::AccountCompatibility::Unspecified,
+    )
+    .await
+}
+fn ordinary_cancel_supported(
+    owned_runtime: bool,
+    mode: &str,
+    has_registration: bool,
+    strategy: &NativeCompiledStrategyV1,
+) -> bool {
+    owned_runtime
+        && mode == "paper"
+        && !has_registration
+        && matches!(strategy, NativeCompiledStrategyV1::EmaCross { .. })
+}
+async fn run_config_owned(
+    config: AccountRuntimeConfig,
+    boot_id: String,
+    registration: Option<AccountStrategyRegistration>,
+    owned_runtime: bool,
+    compatibility: crate::native_runner::AccountCompatibility,
 ) -> Result<()> {
     ensure!(
         ["paper", "live"].contains(&config.mode.as_str()),
@@ -1524,13 +1714,30 @@ async fn run_config_with_registration(
     if config.mode == "live" {
         let address = config.account_address.clone().unwrap();
         let updates = sender.clone();
+        let spot_binding = crate::account_spot_observation::SpotObservationBinding {
+            account_id: config.account_id.clone(),
+            source_id: config.source_id.clone(),
+            address: address.clone(),
+            network: if config.testnet { "testnet" } else { "mainnet" },
+        };
         tokio::spawn(async move {
             let Ok(http) = HyperliquidHttpClient::new(environment, 20, None) else {
                 return;
             };
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                let Ok(source) = http.info_user_fees(&address).await else {
+                let (spot, fees) = tokio::join!(
+                    crate::account_spot_observation::read(&http, &spot_binding),
+                    http.info_user_fees(&address)
+                );
+                if let Ok(observation) = spot {
+                    let _ = updates.try_send(Request {
+                        id: String::new(),
+                        operation: "SPOT_BALANCE_REFRESH".into(),
+                        body: BTreeMap::from([("observation".into(), observation)]),
+                    });
+                }
+                let Ok(source) = fees else {
                     continue;
                 };
                 let Some(rate) = source["userSpotCrossRate"].as_str() else {
@@ -1560,6 +1767,10 @@ async fn run_config_with_registration(
                 match line {
                     Ok(line) => match serde_json::from_str::<Request>(&line) {
                         Ok(r) => {
+                            if let Err(error) = r.ensure_external() {
+                                respond(&r.id, Err(error));
+                                continue;
+                            }
                             if sender.send(r).is_err() {
                                 break;
                             }
@@ -1588,6 +1799,16 @@ async fn run_config_with_registration(
         .borrow_mut()
         .set_trading_state(nautilus_model::enums::TradingState::Halted);
     node.add_strategy(AccountController {
+        compatibility,
+        cancel_node: (ordinary_cancel_supported(
+            owned_runtime,
+            &config.mode,
+            registration.is_some(),
+            &config.native_strategy.strategy,
+        ) || (owned_runtime && config.mode == "paper" && registration.is_some()
+            && compatibility == crate::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode
+            && matches!(config.native_strategy.strategy,NativeCompiledStrategyV1::Registered { .. })))
+        .then(|| crate::account_queued_cancel::BoundCancelNode::capture(&node)),
         signal_strategy_id: None,
         user_registration: registration,
         signal_restore_error: None,
@@ -1624,11 +1845,11 @@ async fn run_config_with_registration(
         fee_valid_until_ns,
         control: None,
         snapshot: None,
-        stamp: String::new(),
         last_tick_ns: 0,
         last_slice_ns: 0,
         cache_failed,
         spot_facts: None,
+        spot_balance_observation: None,
         target_acceptances: BTreeMap::new(),
         #[cfg(test)]
         replies: None,
@@ -1638,6 +1859,138 @@ async fn run_config_with_registration(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn official_event_json_keeps_adjacent_nanoseconds() -> Result<()> {
+        use nautilus_model::events::OrderCanceled;
+        let event = OrderEventAny::Canceled(OrderCanceled::new(
+            "T-001".parse()?, "S-001".parse()?, "TEST.SIM".parse()?, "original".parse()?,
+            UUID4::new(), 1794603862176207674_u64.into(), 1794603862176207675_u64.into(),
+            false, None, None, None,
+        ));
+        let raw = official_order_event_json(&event)?;
+        assert_eq!(raw, serde_json::to_string(&event)?);
+        assert!(raw.contains("1794603862176207674"));
+        assert!(raw.contains("1794603862176207675"));
+        let wire = json!({"lastEvent":event,"lastEventJson":raw});
+        let decoded: Value = serde_json::from_str(&serde_json::to_string(&wire)?)?;
+        assert_eq!(decoded["lastEventJson"].as_str(), Some(raw.as_str()));
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "Order MISSING not found")]
+    fn lazy_control_scan_preserves_missing_order_failure() {
+        let cache = Cache::default();
+        let _ = required_order_ref(&cache, &ClientOrderId::from("MISSING"));
+    }
+
+    #[test]
+    fn summary_activity_uses_official_node_indices_including_unassigned_orders() -> Result<()> {
+        use nautilus_model::{enums::{OrderType, LiquiditySide, TriggerType},
+            events::{OrderPendingCancel,OrderPendingUpdate,OrderEmulated,OrderReleased,OrderTriggered,OrderFilled},
+            identifiers::{VenueOrderId, TradeId}, orders::{builder::OrderTestBuilder,stubs::TestOrderEventStubs}};
+        let empty = json!({"open":false,"inflight":false,"active_local":false,"emulated":false});
+        for name in ["INITIALIZED","SUBMITTED","ACCEPTED","PENDING_CANCEL","PENDING_UPDATE","PARTIALLY_FILLED","EMULATED","RELEASED","TRIGGERED"] {
+            for suffix in ["001","002"] {
+                let mut cache=Cache::default();
+                let account=AccountId::from(format!("OTHER-{suffix}"));
+                let mut builder=OrderTestBuilder::new(OrderType::StopLimit);
+                builder.instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID")).side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}"))).quantity(Quantity::from("2.00"))
+                    .price(Price::from("100.00")).trigger_price(Price::from("101.00"));
+                if ["EMULATED","RELEASED"].contains(&name) {builder.emulation_trigger(TriggerType::LastPrice);}
+                let mut order=builder.build();
+                assert!(order.account_id().is_none());
+                cache.add_order(order.clone(),None,None,false)?;
+                assert_ne!(official_node_order_activity(&cache),empty,"unassigned initialized order");
+                let id=order.client_order_id();let trader=order.trader_id();let strategy=order.strategy_id();let instrument=order.instrument_id();
+                if ["EMULATED","RELEASED"].contains(&name) {
+                    order=cache.update_order(&OrderEventAny::Emulated(OrderEmulated::new(trader,strategy,instrument,id,UUID4::new(),1.into(),1.into())))?;
+                    if name=="RELEASED" {order=cache.update_order(&OrderEventAny::Released(OrderReleased::new(trader,strategy,instrument,id,Price::from("101.00"),UUID4::new(),2.into(),2.into())))?;}
+                } else if name!="INITIALIZED" {
+                    order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
+                    if name!="SUBMITTED" {
+                        order=cache.update_order(&TestOrderEventStubs::accepted(&order,account,VenueOrderId::from("V-1")))?;
+                        let event=match name {
+                            "PENDING_CANCEL"=>Some(OrderEventAny::PendingCancel(OrderPendingCancel::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
+                            "PENDING_UPDATE"=>Some(OrderEventAny::PendingUpdate(OrderPendingUpdate::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
+                            "TRIGGERED"=>Some(OrderEventAny::Triggered(OrderTriggered::new(trader,strategy,instrument,id,UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1")),Some(account)))),
+                            "PARTIALLY_FILLED"=>Some(OrderEventAny::Filled(OrderFilled::new(trader,strategy,instrument,id,VenueOrderId::from("V-1"),account,TradeId::from("T-1"),order.order_side(),order.order_type(),Quantity::from("1.00"),Price::from("100.00"),Currency::USDC(),LiquiditySide::Taker,UUID4::new(),3.into(),3.into(),false,None,None,None))),
+                            _=>None,
+                        };
+                        if let Some(event)=event {order=cache.update_order(&event)?;}
+                    }
+                }
+                assert_eq!(order.status().to_string(),name);
+                // The lazy scan must preserve the former account-filtered set,
+                // including the absence of an account on local orders.
+                for filter in [None, Some(&account)] {
+                    let former: Vec<_> = cache.orders(None, None, None, filter, None)
+                        .iter().map(|o| o.client_order_id().to_string()).collect();
+                    let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, filter)
+                        .filter_map(|id| cache.order_ref(&id))
+                        .map(|o| o.client_order_id().to_string()).collect();
+                    lazy.sort();
+                    assert_eq!(former, lazy, "lazy scan {name}/{suffix}");
+                }
+                assert_ne!(official_node_order_activity(&cache),empty,"{name}/{suffix}");
+                cache.clear_index();cache.build_index();
+                assert_ne!(official_node_order_activity(&cache),empty,"rebuilt {name}/{suffix}");
+                cache.update_order(&TestOrderEventStubs::canceled(&order,account,order.venue_order_id()))?;
+                assert_eq!(official_node_order_activity(&cache),empty,"closed {name}/{suffix}");
+            }
+        }
+        let mut cache=Cache::default();
+        let mut originals=vec![];
+        for suffix in ["001","002"] {
+            let order=OrderTestBuilder::new(OrderType::Limit).instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+                .side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}")))
+                .client_order_id(ClientOrderId::from(format!("ORIGINAL-{suffix}")))
+                .quantity(Quantity::from("2.00")).price(Price::from("100.00")).build();
+            cache.add_order(order.clone(),None,None,false)?;
+            let account=AccountId::from(format!("OTHER-{suffix}"));
+            let order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
+            originals.push((order,account));
+        }
+        let former: Vec<_> = cache.orders(None, None, None, None, None)
+            .iter().map(|o| o.client_order_id()).collect();
+        let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
+            .map(|id| required_order_ref(&cache, &id).client_order_id()).collect();
+        lazy.sort();
+        assert_eq!(former, lazy, "preserve official cancellation order");
+        for (index,(order,account)) in originals.iter().enumerate() {
+            assert_ne!(official_node_order_activity(&cache),empty);
+            cache.update_order(&TestOrderEventStubs::canceled(order,*account,None))?;
+            assert_eq!(official_node_order_activity(&cache)==empty,index==1,"other account/strategy still blocks zero");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_cancel_scope_does_not_claim_user_or_live_support() {
+        let builtin: NativeCompiledStrategyV1 = serde_json::from_value(
+            json!({"kind":"EMA_CROSS","trade_size":"1","fast_period":2,"slow_period":3}),
+        )
+        .unwrap();
+        assert!(ordinary_cancel_supported(true, "paper", false, &builtin));
+        assert!(!ordinary_cancel_supported(false, "paper", false, &builtin));
+        assert!(!ordinary_cancel_supported(true, "live", false, &builtin));
+        assert!(!ordinary_cancel_supported(true, "paper", true, &builtin));
+        let registered: NativeCompiledStrategyV1 = serde_json::from_value(
+            json!({"kind":"REGISTERED","name":"user.strategy","config":null}),
+        )
+        .unwrap();
+        assert!(!ordinary_cancel_supported(
+            true,
+            "paper",
+            false,
+            &registered
+        ));
+        let obi: NativeCompiledStrategyV1 = serde_json::from_value(json!({"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":1.0,"time_in_force":"IOC","dry_run":false})).unwrap();
+        assert!(
+            !ordinary_cancel_supported(true, "paper", false, &obi),
+            "existing account lifecycle rejects OBI before installation"
+        );
+    }
     #[test]
     fn native_risk_defaults_and_explicit_limits() {
         let defaults = super::AccountRiskConfig::default().native(&[]).unwrap();
@@ -1820,6 +2173,38 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    pub(super) struct OnStartResting {
+        pub(super) core: StrategyCore,
+        pub(super) instrument: InstrumentId,
+        pub(super) client: ClientId,
+    }
+    nautilus_strategy!(OnStartResting, {});
+    impl DataActor for OnStartResting {
+        fn on_start(&mut self) -> Result<()> {
+            let instrument = self.instrument;
+            let order = self.order_factory().limit(
+                instrument,
+                OrderSide::Buy,
+                Quantity::from("1.00"),
+                Price::from("1.00"),
+                Some(TimeInForce::Gtc),
+                None,
+                Some(false),
+                Some(false),
+                Some(false),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(ClientOrderId::from("signal-resting")),
+            );
+            self.submit_order(order, None, Some(self.client), None)
+        }
+    }
+
     type Replies = Rc<RefCell<BTreeMap<String, Value>>>;
     fn pair(id: &str, base: Currency) -> InstrumentAny {
         InstrumentAny::CurrencyPair(
@@ -1934,6 +2319,10 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(64);
         let replies = Rc::new(RefCell::new(BTreeMap::new()));
         node.add_strategy(AccountController {
+            compatibility: crate::native_runner::AccountCompatibility::Unspecified,
+            cancel_node: Some(crate::account_queued_cancel::BoundCancelNode::capture(
+                &node,
+            )),
             signal_strategy_id: None,
             user_registration: None,
             signal_restore_error: None,
@@ -1991,11 +2380,11 @@ mod tests {
             fee_valid_until_ns: u64::MAX,
             control: None,
             snapshot: None,
-            stamp: String::new(),
             last_tick_ns: 0,
             last_slice_ns: 0,
             cache_failed: factory.failed.clone(),
             spot_facts: None,
+            spot_balance_observation: None,
             target_acceptances: BTreeMap::new(),
             replies: Some(replies.clone()),
         })?;
@@ -2056,6 +2445,235 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[ignore = "explicit isolated Pi integration fixture"]
+    #[tokio::test(flavor = "current_thread")]
+    async fn pi_cancel_sandbox_transport_fixture() -> Result<()> {
+        let path = std::env::var("QZ_CANCEL_SANDBOX_FIXTURE")?;
+        let directory = std::path::PathBuf::from(path);
+        ensure!(directory.is_dir(), "test_directory_required");
+        let ndjson = std::env::var_os("QZ_CANCEL_NDJSON_FIXTURE").is_some();
+        let service_fixture = std::env::var_os("QZ_CANCEL_SERVICE_FIXTURE").is_some();
+        let boot: Option<Request> = if ndjson {
+            let line = io::stdin()
+                .lock()
+                .lines()
+                .next()
+                .ok_or_else(|| anyhow!("test_boot_required"))??;
+            let request: Request = serde_json::from_str(&line)?;
+            ensure!(request.operation == "BOOT", "test_boot_required");
+            Some(request)
+        } else {
+            None
+        };
+        let cache_directory = tempfile::tempdir()?;
+        let (mut native, tx, replies) = node(cache_directory.path()).await?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.client_id = "test-on-start-resting".into();
+            owner.config.source_id = "test-source".into();
+            if let Some(boot) = &boot {
+                ensure!(
+                    boot.value("config")["mode"] == "paper",
+                    "test_requires_paper"
+                );
+                if service_fixture {
+                    owner.config.source_id = boot.value("config")["source_id"]
+                        .as_str().ok_or_else(|| anyhow!("test_source_required"))?.to_owned();
+                } else {
+                    ensure!(boot.value("config")["source_id"] == "test-source", "test_source_required");
+                }
+                owner.boot_id = boot.id.clone();
+            }
+        }
+
+        let session = native.instance_id();
+        let environment = native.kernel().environment();
+        ensure!(environment == Environment::Sandbox, "test_requires_sandbox");
+        let handle = native.handle();
+        let stop = handle.clone();
+        let cache = native.kernel().cache();
+        let engine = native.kernel().exec_engine().clone();
+        if ndjson {
+            let input = tx.clone();
+            let closed = handle.clone();
+            std::thread::spawn(move || {
+                for line in io::stdin().lock().lines() {
+                    let Ok(line) = line else { break };
+                    let Ok(request) = serde_json::from_str::<Request>(&line) else {
+                        break;
+                    };
+                    if request.ensure_external().is_err() || input.send(request).is_err() {
+                        break;
+                    }
+                }
+                closed.stop();
+            });
+        }
+        let write = |name: &str, value: &Value| -> Result<()> {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let pending = directory.join(format!("{name}.pending"));
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&pending)?;
+            file.write_all(&serde_json::to_vec(value)?)?;
+            drop(file);
+            std::fs::rename(pending, directory.join(name))?;
+            Ok(())
+        };
+        let drive = async {
+            while !handle.is_running() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            publish_native_quote(&cache, "100.00")?;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if service_fixture {
+                ensure!(cache.borrow().orders(None, None, None, None, None).is_empty(), "test_boot_created_order");
+                write("boot-empty.json", &json!({"orders":0}))?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while !directory.join("explicit-test-start").exists() {
+                    ensure!(std::time::Instant::now() < deadline, "test_explicit_start_timeout");
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            let mut normal = control("1", "NORMAL", "0");
+            normal["exit_ids"] = json!([]);
+            request(&tx, &replies, "CONTROL", normal).await?;
+            request(&tx, &replies, "STRATEGY_START", json!({"epoch":"1"})).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            publish_native_quote_size(&cache, "1.00", "0.25")?;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let order = cache
+                .borrow()
+                .order(&ClientOrderId::from("signal-resting"))
+                .unwrap()
+                .clone();
+            ensure!(
+                order.status() == nautilus_model::enums::OrderStatus::PartiallyFilled,
+                "test_partial_fill_required"
+            );
+            let command = json!({"schemaVersion":1,"requestId":"sandbox-cancel-original","action":"CANCEL",
+                "strategyId":order.strategy_id().to_string(),"order":{"traderId":order.trader_id().to_string(),"accountId":order.account_id().unwrap().to_string(),"instrumentId":order.instrument_id().to_string(),"clientOrderId":order.client_order_id().to_string()},
+                "binding":{"sourceId":boot.as_ref().filter(|_| service_fixture).map(|b|b.value("config")["source_id"].clone()).unwrap_or(json!("test-source")),"buildId":std::env::current_exe()?.canonicalize()?.to_string_lossy(),"environmentId":"Sandbox","nativeSessionId":session.to_string()}});
+            let before = engine.borrow().command_count();
+            let wrong_session = request(
+                &tx,
+                &replies,
+                "ORDER_CANCEL_ATTEMPT",
+                json!({"expected_native_session_id":"wrong","command":command}),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                wrong_session.to_string(),
+                "native_cancel_node_binding_mismatch"
+            );
+            let mut wrong_source = command.clone();
+            wrong_source["binding"]["sourceId"] = json!("other");
+            assert_eq!(
+                request(
+                    &tx,
+                    &replies,
+                    "ORDER_CANCEL_ATTEMPT",
+                    json!({"expected_native_session_id":session.to_string(),"command":wrong_source})
+                )
+                .await
+                .unwrap_err()
+                .to_string(),
+                "native_cancel_original_binding_mismatch"
+            );
+            assert_eq!(engine.borrow().command_count(), before);
+            write(
+                "ready.json",
+                &json!({"command":command,"filledQuantity":order.filled_qty().to_string(),"commandCount":before}),
+            )?;
+            // Only this explicit ignored fixture creates the simulated test
+            // order; production BOOT remains unchanged and recovery-only.
+            if ndjson {
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while handle.is_running() {
+                    ensure!(std::time::Instant::now() < deadline, "test_ndjson_timeout");
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                return Ok::<_, anyhow::Error>(());
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            let mut sequence = 0;
+            loop {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "test_transport_timeout"
+                );
+                let name = format!("request-{sequence}.json");
+                let path = directory.join(&name);
+                if !path.exists() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    continue;
+                }
+                let bytes = std::fs::read(path)?;
+                ensure!(bytes.len() <= 16384, "test_request_too_large");
+                let input: Value = serde_json::from_slice(&bytes)?;
+                let op = input["op"].as_str().unwrap_or("");
+                let response = if input["command"] != command {
+                    json!({"error":"test_original_binding_mismatch"})
+                } else if op == "CANCEL" {
+                    let attempt = request(
+                        &tx,
+                        &replies,
+                        "ORDER_CANCEL_ATTEMPT",
+                        json!({"expected_native_session_id":session.to_string(),"command":command}),
+                    )
+                    .await?;
+                    // A void official queue send is attempted, not a durable receipt.
+                    attempt
+                } else if op == "READ" {
+                    let mut observed = request(
+                        &tx,
+                        &replies,
+                        "ORDER_OBSERVE",
+                        json!({"expected_native_session_id":session.to_string(),"command":command}),
+                    )
+                    .await?;
+                    observed["commandCount"] = json!(engine.borrow().command_count());
+                    observed
+                } else if op == "STOP_FIXTURE" {
+                    json!({"stopped":true})
+                } else {
+                    json!({"error":"test_operation_unsupported"})
+                };
+                write(&format!("response-{sequence}.json"), &response)?;
+                sequence += 1;
+                if op == "STOP_FIXTURE" && input["command"] == command {
+                    break;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let controlled = async {
+            let result = drive.await;
+            stop.stop();
+            result
+        };
+        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), controlled);
+        run?;
+        result?;
+        native.dispose();
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn registered_account_callback_parameters_are_used_only_on_explicit_start() -> Result<()>
     {
@@ -2069,6 +2687,10 @@ mod tests {
                 "TEST_ACCOUNT_STRATEGY_UNKNOWN"
             );
             let instrument = registrar.instrument_id()?;
+            assert_eq!(registrar.trader_id().to_string(), registrar.owner.trader);
+            assert_eq!(registrar.account_id(), registrar.owner.account);
+            assert_eq!(registrar.execution_client_id(), registrar.owner.client);
+            let client = registrar.execution_client_id();
             let trade_size = Quantity::from_str(
                 config["trade_size"]
                     .as_str()
@@ -2082,7 +2704,7 @@ mod tests {
                     ..Default::default()
                 }),
                 instrument,
-                client: ClientId::from("QZ-PAPER"),
+                client,
                 trade_size,
             })
         }
@@ -2096,7 +2718,7 @@ mod tests {
                 .strategy_ids()
                 .last()
                 .unwrap();
-            {
+            let (expected_trader, expected_account) = {
                 let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
                     AccountController,
                 >(&owner_id.inner())
@@ -2106,7 +2728,9 @@ mod tests {
                     name: "test.parameterized".into(),
                     config: json!({"trade_size":amount}),
                 };
-            }
+                let trader = owner.native_trader.borrow().trader_id;
+                (trader, owner.account)
+            };
             let handle = native.handle();
             let stop = handle.clone();
             let cache = native.kernel().cache();
@@ -2133,6 +2757,8 @@ mod tests {
                         .orders(None, None, None, None, None)
                         .iter()
                         .any(|o| o.strategy_id() == StrategyId::from("CUSTOM-001")
+                            && o.trader_id() == expected_trader
+                            && o.account_id() == Some(expected_account)
                             && o.filled_qty() == Quantity::from_str(amount).unwrap()),
                     "custom parameter not passed to native strategy"
                 );
@@ -2144,6 +2770,378 @@ mod tests {
             result?;
             native.dispose();
         }
+        Ok(())
+    }
+
+    #[test]
+    fn spot_observation_external_stdin_operation_is_rejected() -> Result<()> {
+        let injected: Request = serde_json::from_str(
+            r#"{"requestId":"injected","operation":"SPOT_BALANCE_REFRESH","observation":{"balances":[]}}"#,
+        )?;
+        assert_eq!(
+            injected.ensure_external().unwrap_err().to_string(),
+            "account_native_internal_operation"
+        );
+        let snapshot: Request =
+            serde_json::from_str(r#"{"requestId":"read","operation":"SNAPSHOT"}"#)?;
+        snapshot.ensure_external()?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spot_observation_wrong_binding_and_full_queue_preserve_old_time() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        // Official Sandbox client only. This node is never run or connected.
+        let (mut native, tx, _replies) = node_with_scope(directory.path(), true).await?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let old = json!({"account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet","request_started_ns":"100","received_ns":"200",
+                "balances":[],"trade_permission":false});
+            let refresh = |value: Value| Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), value)]),
+            };
+            owner.process(&refresh(old.clone()))?;
+            for key in ["account_id", "source_id", "account_address", "network"] {
+                let mut invalid = old.clone();
+                invalid[key] = json!("wrong");
+                assert!(owner.process(&refresh(invalid)).is_err());
+                assert_eq!(owner.spot_balance_observation.as_ref(), Some(&old));
+            }
+            for _ in 0..64 {
+                tx.try_send(Request {
+                    id: String::new(),
+                    operation: "SNAPSHOT".into(),
+                    body: BTreeMap::new(),
+                })?;
+            }
+            let mut newer = old.clone();
+            newer["received_ns"] = json!("300");
+            assert!(matches!(
+                tx.try_send(refresh(newer)),
+                Err(mpsc::TrySendError::Full(_))
+            ));
+            assert_eq!(owner.spot_balance_observation.as_ref(), Some(&old));
+            assert_eq!(
+                owner.spot_balance_observation.as_ref().unwrap()["received_ns"],
+                "200",
+                "queue loss never relabels an old observation as fresh"
+            );
+            assert!(
+                owner.spot_facts.is_none(),
+                "observation cannot create trade evidence"
+            );
+            assert!(owner.control.is_none());
+        }
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn official_account_updates_and_spot_observations_keep_risk_halted() -> Result<()> {
+        use nautilus_hyperliquid::{
+            common::parse::parse_spot_account_balances, http::models::SpotClearinghouseState,
+        };
+        use nautilus_model::{enums::TradingState, events::AccountState, types::AccountBalance};
+
+        let directory = tempfile::tempdir()?;
+        // Only the existing Sandbox factory is installed. Never run/connect the node,
+        // start a strategy, send CONTROL or submit an order in this component test.
+        let (mut native, _tx, _replies) = node_with_scope(directory.path(), true).await?;
+        let cache = native.kernel().cache();
+        let portfolio = native.kernel().portfolio.clone();
+        let risk = native.kernel().risk_engine().clone();
+        let execution = native.kernel().exec_engine().clone();
+        risk.borrow_mut().set_trading_state(TradingState::Halted);
+        let risk_commands = risk.borrow().command_count();
+        let execution_commands = execution.borrow().command_count();
+        let account = AccountId::from("HYPERLIQUID-001");
+        let parse = |total: &str, hold: &str| -> Result<Vec<AccountBalance>> {
+            let state: SpotClearinghouseState = serde_json::from_value(json!({"balances":[{
+                "coin":"USDC","token":0,"total":total,"hold":hold,"entryNtl":"0"
+            }]}))?;
+            parse_spot_account_balances(&state)
+        };
+        let event = |balances, time: u64| {
+            AccountState::new(
+                account,
+                AccountType::Margin,
+                balances,
+                vec![],
+                true,
+                UUID4::new(),
+                time.into(),
+                time.into(),
+                None,
+            )
+        };
+        let initial = parse("100.25", "10")?;
+        assert_eq!(
+            initial,
+            vec![AccountBalance::new(
+                Money::from("100.25 USDC"),
+                Money::from("10 USDC"),
+                Money::from("90.25 USDC")
+            )]
+        );
+        // Official Portfolio -> Cache -> Account apply path, not QZ balance arithmetic.
+        portfolio
+            .borrow_mut()
+            .update_account(&event(initial.clone(), 100));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            initial[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            initial
+        );
+        let account_before = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let observation = json!({"account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet","request_started_ns":"200","received_ns":"300",
+                "balances":parse("800", "1")?,"trade_permission":false,"atomic_reservation":false});
+            owner.process(&Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), observation.clone())]),
+            })?;
+            assert_eq!(owner.spot_balance_observation.as_ref(), Some(&observation));
+            assert!(owner.spot_facts.is_none());
+            assert!(owner.control.is_none());
+        }
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            account_before
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            initial
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+
+        let updated = parse("50", "5")?;
+        portfolio
+            .borrow_mut()
+            .update_account(&event(updated.clone(), 400));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            updated[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            updated
+        );
+        // The spot-only parser omits zero tokens. Applying that empty update is
+        // not a zero-balance proof: official Account retains omitted currencies.
+        let zero = parse("0", "0")?;
+        assert!(zero.is_empty());
+        portfolio.borrow_mut().update_account(&event(zero, 500));
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+            updated[0]
+        );
+        assert_eq!(
+            portfolio
+                .borrow_mut()
+                .build_snapshot(&account)
+                .unwrap()
+                .balances,
+            updated
+        );
+        let before_invalid = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        assert!(parse("invalid", "0").is_err());
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            before_invalid
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+        assert_eq!(risk.borrow().command_count(), risk_commands);
+        assert_eq!(execution.borrow().command_count(), execution_commands);
+        assert!(cache
+            .borrow()
+            .iter_client_order_ids(None, None, None, None)
+            .next()
+            .is_none());
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn official_combined_margin_updates_do_not_use_spot_observations() -> Result<()> {
+        use nautilus_hyperliquid::{
+            common::{
+                enums::HyperliquidAccountAbstraction as Abstraction,
+                parse::{parse_combined_account_balances_and_margins, parse_spot_account_balances},
+            },
+            http::models::{ClearinghouseState, SpotClearinghouseState},
+        };
+        use nautilus_model::{enums::TradingState, events::AccountState};
+        let directory = tempfile::tempdir()?;
+        // No node run/connect, strategy start, execution client or order invocation.
+        let (mut native, _, _) = node_with_scope(directory.path(), true).await?;
+        let cache = native.kernel().cache();
+        let portfolio = native.kernel().portfolio.clone();
+        let risk = native.kernel().risk_engine().clone();
+        let execution = native.kernel().exec_engine().clone();
+        risk.borrow_mut().set_trading_state(TradingState::Halted);
+        let counts = (
+            risk.borrow().command_count(),
+            execution.borrow().command_count(),
+        );
+        let account = AccountId::from("HYPERLIQUID-001");
+        let perp: ClearinghouseState = serde_json::from_value(json!({
+            "assetPositions":[], "crossMarginSummary":{"accountValue":"150",
+            "totalNtlPos":"0","totalRawUsd":"100","totalMarginUsed":"20"},
+            "withdrawable":"80", "time":1700000000000_u64
+        }))?;
+        let spot = |total: &str, hold: &str| -> Result<SpotClearinghouseState> {
+            Ok(serde_json::from_value(json!({"balances":[{
+                "coin":"USDC","token":0,"total":total,"hold":hold,"entryNtl":"0"
+            }]}))?)
+        };
+        let apply = |abstraction, state: &SpotClearinghouseState, time: u64| -> Result<()> {
+            let (balances, margins) =
+                parse_combined_account_balances_and_margins(&perp, state, abstraction)?;
+            portfolio.borrow_mut().update_account(&AccountState::new(
+                account,
+                AccountType::Margin,
+                balances.clone(),
+                margins,
+                true,
+                UUID4::new(),
+                time.into(),
+                time.into(),
+                None,
+            ));
+            assert_eq!(
+                portfolio
+                    .borrow_mut()
+                    .build_snapshot(&account)
+                    .unwrap()
+                    .balances,
+                balances
+            );
+            assert_eq!(
+                cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+                balances[0]
+            );
+            Ok(())
+        };
+        let raw_spot = spot("800", "1")?;
+        // Official Disabled mode reports the combined perp summary, not spot-only USDC.
+        apply(Abstraction::Disabled, &raw_spot, 100)?;
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].free,
+            Money::from("80 USDC")
+        );
+        assert_eq!(
+            parse_spot_account_balances(&raw_spot)?[0].free,
+            Money::from("799 USDC")
+        );
+        let before = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let observation = json!({
+                "account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet",
+                "request_started_ns":"200","received_ns":"300",
+                "balances":parse_spot_account_balances(&raw_spot)?,
+                "trade_permission":false,"atomic_reservation":false
+            });
+            owner.process(&Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), observation)]),
+            })?;
+            assert!(owner.spot_facts.is_none());
+            assert!(owner.control.is_none());
+        }
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            before
+        );
+        // Unified/portfolio modes select spot collateral through the official parser.
+        for (index, abstraction) in [Abstraction::UnifiedAccount, Abstraction::PortfolioMargin]
+            .into_iter()
+            .enumerate()
+        {
+            apply(abstraction, &raw_spot, 400 + index as u64)?;
+            assert_eq!(
+                cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].free,
+                Money::from("799 USDC")
+            );
+        }
+        // Unlike spot-only observation parsing, the combined path emits explicit zero.
+        apply(Abstraction::UnifiedAccount, &spot("0", "0")?, 500)?;
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].total,
+            Money::from("0 USDC")
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+        assert_eq!(
+            (
+                risk.borrow().command_count(),
+                execution.borrow().command_count()
+            ),
+            counts
+        );
+        assert!(
+            cache
+                .borrow()
+                .iter_client_order_ids(None, None, None, None)
+                .next()
+                .is_none()
+        );
+        native.dispose();
         Ok(())
     }
 
@@ -2194,6 +3192,54 @@ mod tests {
                         && o.filled_qty() > Quantity::zero(2)),
                 "explicit_start_did_not_run_native_callback"
             );
+            // A position is not a currency balance or a QZ-computed available size.
+            // Preserve official position quantities and original orders; no per-position valuation policy is recreated.
+            let snapshot = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
+            // Periodic payload excludes all historical orders/events; explicit export remains intact.
+            let summary = request(&tx, &replies, "ACCOUNT_SUMMARY", json!({})).await?;
+            assert!(summary.get("orders").is_none());
+            assert!(summary.get("fills").is_none());
+            assert_eq!(summary["official_node_order_activity"], json!({"open":false,"inflight":false,"active_local":false,"emulated":false}));
+            let row = snapshot["orders"].as_array().unwrap().first().unwrap();
+            let session = summary["native_session_id"].clone();
+            let status = request(&tx, &replies, "ORDER_STATUS", json!({"expected_native_session_id":session,"client_order_id":row["client_order_id"]})).await?;
+            assert_eq!(status["status"], row["status"]);
+            assert_eq!(status["account_id"], summary["native_account_id"]);
+            assert_eq!(status["client_order_id"], row["client_order_id"]);
+            assert_eq!(status["native_session_id"], session);
+            assert!(request(&tx, &replies, "ORDER_STATUS", json!({"expected_native_session_id":"other","client_order_id":row["client_order_id"]})).await.unwrap_err().to_string().contains("native_order_session_changed"));
+            let missing = request(
+                &tx,
+                &replies,
+                "ORDER_STATUS",
+                json!({"expected_native_session_id":session,"client_order_id":"absent-original"}),
+            )
+            .await?;
+            assert!(missing["status"].is_null());
+            let positions = snapshot["positions"].as_array().unwrap();
+            ensure!(!positions.is_empty(), "native_position_not_projected");
+            for row in positions {
+                ensure!(
+                    row.get("free_quantity").is_none(),
+                    "derived_free_quantity_retained"
+                );
+                ensure!(row["value"].is_null(), "derived_position_value_retained");
+                ensure!(
+                    row["pnl"].is_null(),
+                    "caller_selected_position_pnl_retained"
+                );
+                ensure!(
+                    cache
+                        .borrow()
+                        .positions(None, None, None, None, None)
+                        .iter()
+                        .any(|p| p.instrument_id.to_string()
+                            == row["instrument_id"].as_str().unwrap()
+                            && p.signed_decimal_qty().to_string()
+                                == row["quantity"].as_str().unwrap()),
+                    "native_position_quantity_changed"
+                );
+            }
             stop.stop();
             Ok::<_, anyhow::Error>(())
         };

@@ -78,7 +78,9 @@ impl AccountCacheFactory {
         if !root.exists() {
             return Ok(None);
         }
-        let stored = load_state(&root)?;
+        // Startup balances need only currencies and official account objects.
+        // Full installation still reads and validates every persisted record.
+        let stored = load_state_kinds(&root, Some(&["currencies", "accounts"]))?;
         ensure_current_pin(&stored)?;
         if let Some(currencies) = stored.records.get("currencies") {
             for value in currencies.values() {
@@ -215,6 +217,9 @@ struct AccountCache {
     failed: Arc<AtomicBool>,
 }
 fn load_state(path: &Path) -> Result<Stored> {
+    load_state_kinds(path, None)
+}
+fn load_state_kinds(path: &Path, kinds: Option<&[&str]>) -> Result<Stored> {
     let mut state: Stored = serde_json::from_slice(&fs::read(path.join("metadata.json"))?)?;
     state.records.clear();
     for kind in fs::read_dir(path)? {
@@ -226,6 +231,9 @@ fn load_state(path: &Path) -> Result<Stored> {
             .file_name()
             .into_string()
             .map_err(|_| anyhow!("account_native_cache_kind"))?;
+        if kinds.is_some_and(|kinds| !kinds.contains(&name.as_str())) {
+            continue;
+        }
         let rows = state.records.entry(name).or_default();
         for entry in fs::read_dir(kind.path())? {
             let entry = entry?;
@@ -318,8 +326,7 @@ impl AccountCache {
             .records
             .get(kind)
             .and_then(|rows| rows.get(key))
-            .cloned()
-            .map(serde_json::from_value)
+            .map(T::deserialize)
             .transpose()
             .map_err(Into::into)
     }
@@ -339,7 +346,7 @@ impl AccountCache {
             .map(|(k, v)| {
                 Ok((
                     serde_json::from_value(Value::String(k.clone()))?,
-                    serde_json::from_value(v.clone())?,
+                    T::deserialize(v)?,
                 ))
             })
             .collect()
@@ -725,6 +732,217 @@ mod order_list_tests {
         Ok(orders)
     }
 
+    #[test]
+    fn borrowed_cache_decode_matches_account_position_and_raw_values() -> Result<()> {
+        use nautilus_model::{
+            enums::AccountType, events::AccountState, identifiers::Symbol,
+            instruments::CurrencyPair, types::AccountBalance,
+        };
+        let directory = tempfile::tempdir()?;
+        let adapter = AccountCache {
+            path: directory.path().into(),
+            state: Mutex::new(Stored {
+                version: crate::NAUTILUS_VERSION.into(),
+                revision: crate::NAUTILUS_REVISION.into(),
+                trader: "RECOVERY-001".into(),
+                records: BTreeMap::new(),
+            }),
+            _lock: File::create(directory.path().join("test.lock"))?,
+            failed: Arc::new(AtomicBool::new(false)),
+        };
+        fn compare<T: DeserializeOwned + Serialize + std::fmt::Debug>(
+            adapter: &AccountCache,
+            value: Value,
+        ) -> Result<()> {
+            for value in [value, Value::Null, serde_json::json!({"invalid":true})] {
+                adapter.state.lock().unwrap().records.insert(
+                    "test".into(),
+                    BTreeMap::from([("original".into(), value.clone())]),
+                );
+                let owned = serde_json::from_value::<T>(value.clone());
+                let single = adapter.read::<T>("test", "original");
+                let all = adapter.all::<String, T>("test");
+                match owned {
+                    Ok(expected) => {
+                        assert_eq!(
+                            serde_json::to_value(&expected)?,
+                            serde_json::to_value(single?.unwrap())?
+                        );
+                        assert_eq!(
+                            serde_json::to_value(expected)?,
+                            serde_json::to_value(&all?["original"])?
+                        );
+                    }
+                    Err(error) => {
+                        assert_eq!(single.unwrap_err().to_string(), error.to_string());
+                        assert_eq!(all.unwrap_err().to_string(), error.to_string());
+                    }
+                }
+                assert_eq!(
+                    adapter.state.lock().unwrap().records["test"]["original"],
+                    value
+                );
+            }
+            Ok(())
+        }
+        let account = AccountAny::from(AccountState::new(
+            AccountId::from("HYPERLIQUID-001"),
+            AccountType::Cash,
+            vec![AccountBalance::new(
+                Money::from("9007199254.740993 USDC"),
+                Money::from("0.000001 USDC"),
+                Money::from("9007199254.740992 USDC"),
+            )],
+            vec![],
+            true,
+            UUID4::new(),
+            1.into(),
+            1.into(),
+            None,
+        ));
+        compare::<AccountAny>(&adapter, serde_json::to_value(account)?)?;
+        compare::<Currency>(&adapter, serde_json::to_value(Currency::USDC())?)?;
+        compare::<Bytes>(
+            &adapter,
+            serde_json::to_value(Bytes::from((0..=255).collect::<Vec<u8>>()))?,
+        )?;
+        let orders = partial_bracket()?;
+        let mut fill = orders[0]
+            .events()
+            .into_iter()
+            .find_map(|event| match event {
+                OrderEventAny::Filled(fill) => Some(fill.clone()),
+                _ => None,
+            })
+            .unwrap();
+        fill.position_id = Some(PositionId::from("POSITION-001"));
+        let instrument = InstrumentAny::CurrencyPair(
+            CurrencyPair::builder()
+                .instrument_id(fill.instrument_id)
+                .raw_symbol(Symbol::from("BTC-USDC-SPOT"))
+                .base_currency(Currency::BTC())
+                .quote_currency(Currency::USDC())
+                .price_precision(2)
+                .size_precision(2)
+                .price_increment(Price::from("0.01"))
+                .size_increment(Quantity::from("0.01"))
+                .ts_event(1.into())
+                .ts_init(1.into())
+                .build()?,
+        );
+        compare::<Position>(
+            &adapter,
+            serde_json::to_value(Position::new_checked(&instrument, fill)?)?,
+        )?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn borrowed_order_decode_preserves_official_events_and_backing() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let factory = AccountCacheFactory::new(directory.path().into());
+        let db = factory
+            .create(
+                TraderId::from("RECOVERY-001"),
+                UUID4::new(),
+                CacheConfig::default(),
+            )
+            .await?;
+        let mut orders = partial_bracket()?;
+        let mut factory_orders = OrderFactory::new(
+            TraderId::from("RECOVERY-001"),
+            StrategyId::from("BULK-002"),
+            None,
+            None,
+            Rc::new(RefCell::new(VirtualClock::default())),
+            false,
+            true,
+        );
+        for _ in 0..128 {
+            orders.extend(
+                factory_orders
+                    .bracket()
+                    .instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+                    .order_side(OrderSide::Buy)
+                    .quantity(Quantity::from("1.00"))
+                    .tp_price(Price::from("110.00"))
+                    .sl_trigger_price(Price::from("90.00"))
+                    .call(),
+            );
+        }
+        for order in &orders {
+            db.add_order(order, None)?;
+        }
+        let before = load_state(&directory.path().join("native-cache"))?;
+        let all = db.load_orders().await?;
+        assert_eq!(all.len(), orders.len());
+        for order in &orders {
+            let id = order.client_order_id();
+            let owned: OrderAny =
+                serde_json::from_value(before.records["orders"][id.as_str()].clone())?;
+            let single = db.load_order(&id).await?.unwrap();
+            assert_eq!(
+                serde_json::to_value(&owned)?,
+                serde_json::to_value(&single)?
+            );
+            assert_eq!(
+                serde_json::to_value(&owned)?,
+                serde_json::to_value(&all[&id])?
+            );
+            assert_eq!(serde_json::to_value(order)?, serde_json::to_value(&single)?);
+        }
+        assert!(
+            db.load_order(&ClientOrderId::from("MISSING"))
+                .await?
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::to_value(load_state(&directory.path().join("native-cache"))?)?,
+            serde_json::to_value(before)?
+        );
+        drop(db);
+        factory
+            .install(
+                Rc::new(RefCell::new(Cache::default())),
+                TraderId::from("RECOVERY-001"),
+                UUID4::new(),
+                CacheConfig::default(),
+            )
+            .await?;
+        // Malformed/null persisted values must fail both the previous owned decode
+        // and the new borrowed decode, without changing the stored JSON.
+        for value in [Value::Null, serde_json::json!({"type":"INVALID"})] {
+            let mut stored = load_state(&directory.path().join("native-cache"))?;
+            stored
+                .records
+                .get_mut("orders")
+                .unwrap()
+                .insert("BROKEN".into(), value.clone());
+            let adapter = AccountCache {
+                path: directory.path().join("native-cache"),
+                state: Mutex::new(stored),
+                _lock: File::open(directory.path().join("native-cache.lock"))?,
+                failed: Arc::new(AtomicBool::new(false)),
+            };
+            let old = serde_json::from_value::<OrderAny>(value.clone())
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                adapter
+                    .read::<OrderAny>("orders", "BROKEN")
+                    .unwrap_err()
+                    .to_string(),
+                old
+            );
+            assert!(adapter.all::<ClientOrderId, OrderAny>("orders").is_err());
+            assert_eq!(
+                adapter.state.lock().unwrap().records["orders"]["BROKEN"],
+                value
+            );
+        }
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn synchronous_official_restore_preserves_registered_clients_and_routes() -> Result<()> {
         use nautilus_model::identifiers::Venue;
@@ -996,6 +1214,65 @@ mod order_list_tests {
 #[cfg(test)]
 mod pin_guard_tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn balance_read_skips_history_but_full_install_still_rejects_corruption() -> Result<()> {
+        use nautilus_model::{enums::AccountType, events::AccountState, types::AccountBalance};
+        let dir = tempfile::tempdir()?;
+        let factory = AccountCacheFactory::new(dir.path().into());
+        let trader = TraderId::from("RECOVERY-001");
+        let id = AccountId::from("HYPERLIQUID-001");
+        let balance = AccountBalance::new(
+            Money::from("9007199254.740993 USDC"),
+            Money::from("0.000001 USDC"),
+            Money::from("9007199254.740992 USDC"),
+        );
+        let account = AccountAny::from(AccountState::new(
+            id,
+            AccountType::Cash,
+            vec![balance],
+            vec![],
+            true,
+            UUID4::new(),
+            1.into(),
+            1.into(),
+            None,
+        ));
+        let db = factory
+            .create(trader, UUID4::new(), CacheConfig::default())
+            .await?;
+        db.add_currency(&Currency::USDC())?;
+        db.add_account(&account)?;
+        drop(db);
+        let root = dir.path().join("native-cache");
+        let before = fs::read(root.join("metadata.json"))?;
+        fs::create_dir(root.join("orders"))?;
+        let bad = root.join("orders/broken.json");
+        fs::write(&bad, b"invalid json")?;
+        // This succeeds only if the balance-only read never parses order history.
+        assert_eq!(factory.restored_balances(&id)?, Some(vec![balance.total]));
+        assert_eq!(
+            factory.restored_balances(&AccountId::from("MISSING-001"))?,
+            None
+        );
+        let selected = load_state_kinds(&root, Some(&["currencies", "accounts"]))?;
+        assert!(!selected.records.contains_key("orders"));
+        assert!(load_state(&root).is_err());
+        let cache = Rc::new(RefCell::new(Cache::default()));
+        assert!(
+            factory
+                .install(cache.clone(), trader, UUID4::new(), CacheConfig::default())
+                .await
+                .is_err()
+        );
+        assert!(cache.borrow().account_ref(&id).is_none());
+        assert_eq!(fs::read(&bad)?, b"invalid json");
+        assert_eq!(fs::read(root.join("metadata.json"))?, before);
+        // Required currency/account records must still fail, rather than defaulting cash.
+        fs::write(root.join("accounts/broken.json"), b"invalid json")?;
+        assert!(factory.restored_balances(&id).is_err());
+        Ok(())
+    }
 
     #[test]
     fn old_pin_is_rejected_before_reading_balances_without_rewriting_metadata() -> Result<()> {

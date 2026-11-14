@@ -6,6 +6,7 @@ pub fn build_identity() -> serde_json::Value {
     serde_json::json!({
         "nautilusVersion": NAUTILUS_VERSION,
         "nautilusRevision": NAUTILUS_REVISION,
+        "nautilusSource": env!("QZ_NAUTILUS_SOURCE"),
         "precision": if cfg!(feature = "high-precision") { "high" } else { "standard" },
         "jobVersion": env!("CARGO_PKG_VERSION"),
     })
@@ -18,6 +19,8 @@ mod account_order_preview;
 pub mod account_runtime;
 #[cfg(feature = "account-runtime")]
 mod account_runtime_cache;
+#[cfg(feature = "account-runtime")]
+mod account_spot_observation;
 pub mod bounded;
 pub mod capital_exit_gate;
 pub mod catalog;
@@ -35,7 +38,6 @@ pub use report::write_probe_report;
 pub mod source_market;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
-pub mod spot_fees;
 pub mod ticks;
 
 pub mod native_strategy;
@@ -48,3 +50,8 @@ pub mod cli;
 mod native_stdout;
 
 pub mod native_configured;
+
+pub mod native_runner;
+
+#[cfg(feature = "account-runtime")]
+mod account_queued_cancel;

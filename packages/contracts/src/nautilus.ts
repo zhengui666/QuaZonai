@@ -3,7 +3,15 @@
 export type RemoteNativeTarget = { id: string; url: string; tokenEnv?: string; credentialRef?: string };
 /** Owner-configured instance. `tokenEnv` remains for older service files. */
 export type RemoteNativeInstance = { id: string; url: string; token?: string; tokenEnv?: string };
-export type NativeTarget = string | RemoteNativeTarget;
+export type ProcessNativeTarget = {
+  kind: 'RUST_PROCESS'; id: string; binary: string;
+  /** Exact result of the explicitly inspected user-built runner, not a claimed live state. */
+  capabilities: { schemaVersion: 1; protocol: 'quazonai-native-process-v1'; identity: NativeJson;
+    research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
+    account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
+}
+export type NativeExecutionTarget = RemoteNativeTarget | ProcessNativeTarget;
+export type NativeTarget = string | NativeExecutionTarget;
 
 export type NativeJson = null | boolean | number | string | NativeJson[] | { [key: string]: NativeJson };
 export interface NativeCapabilities {
@@ -86,4 +94,23 @@ export function nativeFixedRiskSizing(value: unknown): NativeFixedRiskSizingRequ
     || input.hard_limit != null && (typeof input.hard_limit !== 'string' || input.hard_limit === '')) throw new Error('native_sizing_string_required');
   return Object.fromEntries([...required.map(key => [key, input[key]]),
     ...(input.hard_limit == null ? [] : [['hard_limit', input.hard_limit]])]) as NativeFixedRiskSizingRequest['sizing'];
+}
+
+/** Owner's existing Rust environment. Saving this source never builds or connects. */
+export interface NativeRustEnvironment {
+  kind: 'RUST_PROCESS'; id: string; cargoBinary: string; manifestPath: string; packageName: string;
+  features?: string[]; backtestFactory?: string; accountFactory?: string;
+  /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
+  accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
+}
+
+/** Read-only selected capability facts retained in the original account binding.
+ * No executable/source paths, credentials or current-session certification. */
+export interface SavedAccountRunnerReport {
+ source:'SAVED_ACCOUNT_BINDING';
+ nautilusVersion:string|null;
+ nautilusRevision:string|null;
+ precision:'standard'|'high'|null;
+ compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'|null;
+ compatibilityVerified:false|null;
 }

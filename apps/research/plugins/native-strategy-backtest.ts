@@ -1,13 +1,13 @@
 import { isNativeTable } from '../src/native-table.ts';
 import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
-import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
+import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { bool, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
 import { readFile } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint } from '../src/native-execution.ts';
+import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import { validateNumbers } from '../src/input.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
@@ -235,6 +235,23 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
 });
 
+/** Show committed uncertainty while the original task keeps waiting; never infer
+ * business failure/rollback from a local process exit or private stderr. */
+async function waitForBacktest(id: TaskId<JsonObject>, api: ToolExecutionApi, context: Parameters<ToolExecutionApi['waitForTask']>[1]) {
+  await api.commit(async tx => { await tx.doc(NativeRemoteUncertainty,api.conversationId,String(id),null); },context);
+  const watch=await api.watchDoc(NativeRemoteUncertainty,api.conversationId,String(id),context);
+  let previous='';
+  watch?.start(async call=>{
+    if(call.kind!=='value'||!call.value)return;
+    for(const row of call.value.requests)if(row.status==='UNKNOWN'){
+      const text=JSON.stringify({status:'EXECUTION_RESULT_UNKNOWN',taskId:id,requestId:row.requestId,
+        process:row.process??null,message:'Original execution result is unknown. Waiting for original evidence, not still claiming computation. No automatic resubmission; process exit does not establish rollback or absence of side effects.'});
+      if(text!==previous){previous=text;api.output(text+'\n');}
+    }
+  });
+  try{return await api.waitForTask(id,context);}finally{await watch?.stop();}
+}
+
 export const nativeStrategyBacktestTool = defineTool({
   name: 'native_strategy_backtest', outputLimits: nativeToolOutputLimits,
   description: 'Run the exact historical data.native_strategy_backtest_request on its registered catalog using the compiled upstream Nautilus strategy. EMA_CROSS and GRID_MARKET_MAKER consume QuoteTick; ORDER_BOOK_IMBALANCE consumes L2 order book data. HURST_VPIN_DIRECTIONAL uses official BAR/QuoteTick/TradeTick subscriptions; non-time external bars require explicit venue.bar_execution=false with quotes/trades for execution. Venue fees and balances are explicit simulation assumptions. No inferred data range, custom factor, scoring, optimizer, live deployment or trading permission. This historical result does not imply paper/live deployment of the same strategy. By default retain the historical result and continue the Pi tool loop for requested validation; finishResearch=true explicitly ends an independent one-backtest submission. For a two-lane study, read native_strategy_brief and record logic review with the intended validation method BEFORE this execution.',
@@ -247,6 +264,7 @@ export const nativeStrategyBacktestTool = defineTool({
       const study = await tx.doc(Study, api.conversationId);
       if (study.trials.length || study.final && study.final.taskId !== api.taskId) throw new Error('research_already_final');
       const binding = await tx.doc(NativeStrategyChild, api.taskId);
+      if (!binding.taskId) await assertResearchRunSettled(tx, api.conversationId);
       if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
         request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
       }, { ownership: { kind: 'task', taskId: api.taskId } });
@@ -257,7 +275,7 @@ export const nativeStrategyBacktestTool = defineTool({
       }
       return binding.taskId;
     }, context);
-    const settled = await api.waitForTask(id, context);
+    const settled = await waitForBacktest(id, api, context);
     if (settled.state.outcome.status !== 'completed') {
       const outcome = settled.state.outcome;
       throw new Error('error' in outcome && outcome.error ? outcome.error.message : 'native_strategy_backtest_aborted');
@@ -299,7 +317,7 @@ export const nativeConfiguredBacktestTool = defineTool({
       }
       return binding.taskId;
     }, context);
-    const settled = await api.waitForTask(id, context);
+    const settled = await waitForBacktest(id, api, context);
     if (settled.state.outcome.status !== 'completed') {
       const outcome = settled.state.outcome;
       throw new Error('error' in outcome && outcome.error ? outcome.error.message : 'native_strategy_backtest_aborted');

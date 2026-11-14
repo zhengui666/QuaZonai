@@ -28,6 +28,9 @@ RUN --mount=type=cache,target=/root/.npm --mount=type=secret,id=proxy_ca \
 # Explicit modes also support checkouts created under a private umask.
 FROM scratch AS application-source
 COPY --chmod=755 apps/service/src /opt/quazonai/apps/service/src
+# QZ-only process/build glue; no HTTP server entry or Nautilus binary is bundled.
+COPY --chmod=644 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
+COPY --chmod=644 apps/nautilus/src/rust-environment.ts apps/nautilus/src/rust-launcher-build.ts apps/nautilus/src/rust-native-dependencies.ts apps/nautilus/src/rust-launcher-import.ts apps/nautilus/src/account-runtime.ts apps/nautilus/src/account-configurations.ts apps/nautilus/src/capital-account.ts apps/nautilus/src/hyperliquid-account.ts /opt/quazonai/apps/nautilus/src/
 COPY --chmod=755 apps/research/src /opt/quazonai/apps/research/src
 COPY --chmod=755 apps/research/plugins /opt/quazonai/apps/research/plugins
 COPY --chmod=755 apps/cli/src /opt/quazonai/apps/cli/src
@@ -36,6 +39,19 @@ COPY --chmod=755 contracts/generated /opt/quazonai/contracts/generated
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 COPY --chmod=755 deploy/docker/configure.mjs deploy/docker/maintenance.mjs /opt/quazonai/deploy/docker/
 COPY --chmod=755 runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py /opt/quazonai/operator/
+
+# QZ-owned source glue only: no Cargo toolchain, upstream checkout, vendored
+# dependencies or native executable. Building is a separate explicit owner action.
+COPY --chmod=644 Cargo.toml Cargo.lock /opt/quazonai/native-glue/
+COPY --chmod=644 apps/job/Cargo.toml apps/job/build.rs apps/job/build_identity.rs /opt/quazonai/native-glue/apps/job/
+COPY --chmod=755 apps/job/src /opt/quazonai/native-glue/apps/job/src
+COPY --chmod=755 apps/job/examples /opt/quazonai/native-glue/apps/job/examples
+COPY --chmod=755 apps/job/tests /opt/quazonai/native-glue/apps/job/tests
+COPY --chmod=644 crates/contracts/Cargo.toml /opt/quazonai/native-glue/crates/contracts/
+COPY --chmod=755 crates/contracts/src /opt/quazonai/native-glue/crates/contracts/src
+COPY --chmod=644 crates/domain/Cargo.toml /opt/quazonai/native-glue/crates/domain/
+COPY --chmod=755 crates/domain/src /opt/quazonai/native-glue/crates/domain/src
+COPY --chmod=644 AGENTS.md /opt/quazonai/native-glue/README.md
 
 FROM application-source AS nautilus-source
 COPY --chmod=755 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
@@ -86,6 +102,9 @@ FROM execution-base AS application
 COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 COPY --from=application-source / /
 COPY --from=web /build/apps/web/dist/ ./web/
+# COPY file modes also affect newly created destination directories.
+RUN find native-glue apps/nautilus -type d -exec chmod 755 {} + \
+ && find native-glue apps/nautilus -type f -exec chmod 644 {} +
 ARG VERSION=development
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="QuaZonai" \

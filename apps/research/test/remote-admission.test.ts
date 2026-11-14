@@ -1,4 +1,3 @@
-import { obj } from '@earendil-works/pi-schema';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -8,85 +7,65 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
+import { createModels, fauxProvider } from '@earendil-works/pi-ai';
+import { defineDocFamily, type JsonObject } from '@earendil-works/pi-durable';
+import { canonicalJsonDigest } from '../src/native-json.ts';
 import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import { NativeStrategyBacktestTask } from '../plugins/native-strategy-backtest.ts';
-import { NativeRemoteUncertainty, executeNativeValue, remoteNativeExecutionReceipt, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { NativeExecutionTask, NativeRemoteUncertainty, executeNativeValue, remoteNativeExecutionReceipt } from '../src/native-execution.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
-test('untrusted 429 and 501 responses never prove native upstream strategy non-execution', { timeout: 15_000 }, async () => {
-  for (const command of ['native-strategy-backtest']) for (const status of [429, 501]) for (const mode of ['generic', 'wrong-id'] as const) {
+const Calls = defineDocFamily<any, null>({ kind: 'qz.native-call', version: 1, scope: 'task', family: true, initial: () => ({ taskId: null }), checkpointWhen: () => true });
+// Seed the existing official Pi task/receipt identity. New HTTP admission is retired.
+// These are protocol/history tests, not measured scientific backtests.
+test('retained UNKNOWN survives untrusted 429/501 and wrong-id GET replies; explicit historical refusal remains settled', { timeout: 20_000 }, async () => {
+  for (const status of [429, 501]) for (const mode of ['generic', 'wrong-id', 'explicit'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
-    let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
-    const server = createServer(async (request, response) => {
-      response.setHeader('content-type', 'application/json');
-      if (request.url === '/v1/capabilities') {
-        response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return;
-      }
-      if (request.method === 'POST') {
-        posts++; let data = ''; for await (const chunk of request) data += chunk;
-        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
-        response.statusCode = status;
-        response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
-          schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
-          admission: 'REJECTED', error: status === 501 ? 'nautilus_tick_resource_limits_unavailable' : 'nautilus_tick_capacity_exhausted',
-        })); return;
-      }
-      reads++; response.statusCode = 404; response.end(JSON.stringify({ error: 'nautilus_execution_not_found' }));
+    const original: NativeExecutionRequest = { schemaVersion: 1, requestId: 'b'.repeat(64), invocationId: 'retained-original', implementationDigest: `sha256:${'a'.repeat(64)}`, command: 'native-strategy-backtest', args: [], input: { quantity: '0.000000000000000001' }, files: {} };
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${request.method} ${request.url}`);
+      assert.equal(request.method, 'GET'); assert.equal(request.url, `/v1/executions/${original.requestId}`);
+      response.setHeader('content-type', 'application/json'); response.statusCode = status;
+      response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
+        schemaVersion: 1, requestId: '0'.repeat(64), admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted',
+      }));
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const target = { id: 'controlled-pre-admission', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
-    const Compute = defineTask<{}, { phase: 'compute' }, null>({
-      name: 'test.remote-admission.compute', version: 1, initial: () => ({ phase: 'compute' }),
-      phases: { async compute(task, runtime, context) {
-        try {
-          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, command, {}, [], directory, context));
-          assert.fail('controlled endpoint rejected admission');
-        } catch (error) {
-          await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: String(error) } } }), context);
-        }
-      } },
-      async abort(_task, runtime, context) {
-        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
-      },
-    });
-    const extension = defineExtension({ name: 'qz.research', tasks: [Compute], tools: [defineTool({
-      name: 'compute', description: 'Controlled remote admission protocol', parameters: obj({}), replay: 'safe',
-      async execute(_args, api, context) {
-        const id = await api.commit(tx => tx.createTask(Compute, {}, { ownership: { kind: 'task', taskId: api.taskId } }), context);
-        await api.waitForTask(id, context);
-        return { output: [{ type: 'text', text: 'Controlled admission finished.' }], control: { terminate: true } };
-      },
-    })] });
-    const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage(fauxToolCall('compute', {}), { stopReason: 'toolUse' })]);
-    const options = { database: join(directory, 'research.sqlite'), models, extensions: [extension] };
+    const target = { id: 'original-admission', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+    const models = createModels(); models.setProvider(fauxProvider().provider);
+    const options = { database: join(directory, 'research.sqlite'), models, deferResume: true };
     let host = await openResearch(options);
     try {
-      const receipt = await host.start(`original-${mode}`, { goal: 'Verify admission evidence only', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });
-      await (await host.harness.submission(receipt.submissionId, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT);
-      const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'test.remote-admission.compute' }, 10), BACKGROUND_CONTEXT)).items[0]!;
-      assert.equal(task.state.outcome?.status, 'failed');
-      const facts = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-      assert.equal(facts?.requests.length, 1);
-      const reference = facts!.requests[0]!;
-      assert.equal(reference.requestId, original!.requestId);
-      assert.equal(reference.status, 'UNKNOWN');
-      await assert.rejects(host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, task.conversationId, task.id), BACKGROUND_CONTEXT), /native_remote_execution_unsettled/);
+      const root = await host.harness.root(BACKGROUND_CONTEXT);
+      const id = await root.commit(async tx => {
+        const taskId = await tx.createTask(NativeExecutionTask, { target, requestId: original.requestId, basis: 'retained-basis', command: original.command, request: { request: original as unknown as JsonObject }, receiptRequired: true }, { ownership: { kind: 'conversation' } });
+        const reference: JsonObject = { taskId, target, requestId: original.requestId, status: mode === 'explicit' ? 'REJECTED' : 'UNKNOWN', error: mode === 'explicit' ? (status === 429 ? 'nautilus_tick_capacity_exhausted' : 'nautilus_tick_resource_limits_unavailable') : `retained_http_${status}` };
+        if (mode === 'explicit') reference.admission = 'REJECTED';
+        (await tx.doc(NativeRemoteUncertainty, root.id, String(taskId), null)).requests.push(reference);
+        return taskId;
+      }, BACKGROUND_CONTEXT);
+      const task = (await host.harness.getTask(id, BACKGROUND_CONTEXT))!;
+      const before = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), BACKGROUND_CONTEXT);
+      if (mode === 'explicit') await host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, root.id, id), BACKGROUND_CONTEXT);
+      else await assert.rejects(host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, root.id, id), BACKGROUND_CONTEXT), /native_remote_execution_unsettled/);
       await reconcileNativeRemoteTasks(host.harness, [task], BACKGROUND_CONTEXT);
-      assert.equal((await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT))!.requests[0]!.status, 'UNKNOWN');
+      assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), BACKGROUND_CONTEXT), before);
+      assert.deepEqual(requests, mode === 'explicit' ? [] : [`GET /v1/executions/${original.requestId}`]);
       await host.close(); host = await openResearch(options);
-      assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), facts);
-      assert.equal(posts, 1, 'reopening never resubmits rejected or uncertain work');
-    } finally {
-      await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
+      assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), BACKGROUND_CONTEXT), before);
+      assert.deepEqual((await host.harness.getTask(id, BACKGROUND_CONTEXT))!.input, task.input);
+      if (mode === 'explicit') await host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, root.id, id), BACKGROUND_CONTEXT);
+      else await assert.rejects(host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, root.id, id), BACKGROUND_CONTEXT), /native_remote_execution_unsettled/);
+      assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items.length, 1);
+      const beforeCalls = [...requests];
+      await assert.rejects(host.withNativeHost(() => executeNativeValue(target, original.command, original.input, original.args, directory, BACKGROUND_CONTEXT)), /native_http_execution_retired/);
+      assert.deepEqual(requests, beforeCalls, 'new execution cannot retry the old refused or unknown invocation');
+      assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items.length, 1);
+    } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
   }
 });
-
 
 test('receipt observation is a single read; durable tasks own waiting and a cancelled read never sends a POST', async () => {
   const requestId = 'b'.repeat(64); let mode = 'RUNNING'; let reads = 0; let writes = 0;
@@ -116,177 +95,48 @@ test('receipt observation is a single read; durable tasks own waiting and a canc
 
 test('native upstream strategy HTTP capacity response keeps its original invocation across restart without an unproven retry', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-capacity-'));
-  const requests: NativeExecutionRequest[] = []; let completed = false; let reads = 0;
+  const requests: string[] = []; let completed = false; let reads = 0;
+  const request: JsonObject = { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }], event_start_ns: '0', event_end_ns: '20', available_end_ns: '20', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS', trade_size: '0.01', fast_period: 2, slow_period: 3 } };
+  const original: NativeExecutionRequest = { schemaVersion: 1, requestId: 'b'.repeat(64), invocationId: 'retained-capacity', implementationDigest: `sha256:${'a'.repeat(64)}`, command: 'native-strategy-backtest', args: ['--catalog', directory], input: request, files: {} };
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/v1/capabilities') { response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return; }
-    if (request.method === 'POST') {
-      let data = ''; for await (const chunk of request) data += chunk;
-      const value = JSON.parse(data) as NativeExecutionRequest; requests.push(value);
-      response.statusCode = 429; response.end(JSON.stringify({ error: 'too_many_requests' })); return;
-    }
-    reads++; const original = requests[0]!;
-    assert.equal(request.url, `/v1/executions/${original.requestId}`);
+    requests.push(`${request.method} ${request.url}`); assert.equal(request.method, 'GET');
+    reads++; assert.equal(request.url, `/v1/executions/${original.requestId}`);
     response.end(JSON.stringify({ schemaVersion: 1, requestId: original.requestId, status: completed ? 'COMPLETED' : 'UNKNOWN',
       ...(completed ? { result: { protocolOnly: true } } : { error: 'receipt_unavailable' }) }));
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const target = { id: 'controlled-capacity', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
   const models = createModels(); models.setProvider(fauxProvider().provider);
-  const options = { database: join(directory, 'research.sqlite'), models }; let host = await openResearch(options);
+  const options = { database: join(directory, 'research.sqlite'), models, deferResume: true }; let host = await openResearch(options);
   try {
     const root = await host.harness.root(BACKGROUND_CONTEXT);
-    const id = await root.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: { schema_version: 1, instrument_id: 'TEST.SIM', selectors: [{ data_type: 'QuoteTick', identifier: 'TEST.SIM' }], event_start_ns: '0', event_end_ns: '20', available_end_ns: '20', venue: { base_currency: null }, strategy: { kind: 'EMA_CROSS', trade_size: '0.01', fast_period: 2, slow_period: 3 } }, catalog: directory, target }, { ownership: { kind: 'conversation' } }), BACKGROUND_CONTEXT);
+    const id = await root.commit(async tx => {
+      const owner = await tx.createTask(NativeStrategyBacktestTask, { request, catalog: directory, target }, { ownership: { kind: 'conversation' } });
+      const basis = canonicalJsonDigest({ target, command: original.command, input: request, args: original.args, files: {} });
+      const child = await tx.createTask(NativeExecutionTask, { target, requestId: original.requestId, basis, command: original.command, request: { request: original as unknown as JsonObject }, ownerTaskId: owner, receiptRequired: true }, { ownership: { kind: 'task', taskId: owner } });
+      (await tx.doc(Calls, owner, basis, null)).taskId = child;
+      (await tx.doc(NativeRemoteUncertainty, root.id, String(owner), null)).requests.push({ taskId: owner, target, requestId: original.requestId, status: 'UNKNOWN', error: 'retained_http_429' });
+      return owner;
+    }, BACKGROUND_CONTEXT);
+    host.harness.resume();
     const deadline = Date.now() + 5000;
     for (;;) {
       const task = await host.harness.getTask(id, BACKGROUND_CONTEXT);
       if (task?.state.status === 'sleeping' && (task.state.checkpoint as { phase: string }).phase === 'reconcile') break;
       assert.notEqual(task?.state.status, 'terminal'); assert.ok(Date.now() < deadline); await delay(5);
     }
-    assert.equal(requests.length, 1); const original = structuredClone(requests[0]);
-    await host.close(); completed = true; host = await openResearch(options);
+    assert.ok(requests.length > 0);
+    await assert.rejects(host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, root.id, id), BACKGROUND_CONTEXT), /native_remote_execution_unsettled/);
+    await host.close(); completed = true; host = await openResearch(options); host.harness.resume();
     const settled = await host.harness.waitForTask(id, BACKGROUND_CONTEXT);
     // Receipt was adopted, but a protocol-only object is not valid backtest evidence.
     assert.equal(settled.state.outcome.status, 'failed');
     assert.match(settled.state.outcome.status === 'failed' ? settled.state.outcome.error.message : '', /native_strategy/);
-    assert.ok(reads > 0); assert.deepEqual(requests, [original], 'only GET may observe uncertain original work');
+    assert.ok(reads > 0); assert.ok(requests.every(value => value === `GET /v1/executions/${original.requestId}`), 'only original GET may observe uncertain original work');
+    const children = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items;
+    assert.equal(children.length, 1); assert.deepEqual((children[0]!.input as any).request.request, original);
     const facts = await host.harness.snapshot(NativeRemoteUncertainty, root.id, String(id), BACKGROUND_CONTEXT);
     assert.equal(facts!.requests[0]!.status, 'COMPLETED');
   } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
-});
-
-test('only original-id explicit admission refusal settles a Durable remote reference without a terminal receipt', { timeout: 15_000 }, async () => {
-  for (const command of ['native-strategy-backtest']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
-    const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
-    let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
-    const server = createServer(async (request, response) => {
-      response.setHeader('content-type', 'application/json');
-      if (request.url === '/v1/capabilities') {
-        response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return;
-      }
-      if (request.method === 'POST') {
-        posts++; let data = ''; for await (const chunk of request) data += chunk;
-        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
-        response.statusCode = mode === 'explicit' ? 501 : 429;
-        response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
-          schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
-          admission: 'REJECTED', error: mode === 'explicit' ? 'nautilus_tick_resource_limits_unavailable' : 'nautilus_tick_capacity_exhausted',
-        })); return;
-      }
-      reads++; response.statusCode = 404; response.end(JSON.stringify({ error: 'nautilus_execution_not_found' }));
-    });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const target = { id: 'controlled-pre-admission', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
-    const Compute = defineTask<{}, { phase: 'compute' }, null>({
-      name: 'test.remote-admission.compute', version: 1, initial: () => ({ phase: 'compute' }),
-      phases: { async compute(task, runtime, context) {
-        try {
-          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, command, {}, [], directory, context));
-          assert.fail('controlled endpoint rejected admission');
-        } catch (error) {
-          await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: String(error) } } }), context);
-        }
-      } },
-      async abort(_task, runtime, context) {
-        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
-      },
-    });
-    const extension = defineExtension({ name: 'qz.research', tasks: [Compute], tools: [defineTool({
-      name: 'compute', description: 'Controlled remote admission protocol', parameters: obj({}), replay: 'safe',
-      async execute(_args, api, context) {
-        const id = await api.commit(tx => tx.createTask(Compute, {}, { ownership: { kind: 'task', taskId: api.taskId } }), context);
-        await api.waitForTask(id, context);
-        return { output: [{ type: 'text', text: 'Controlled admission finished.' }], control: { terminate: true } };
-      },
-    })] });
-    const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage(fauxToolCall('compute', {}), { stopReason: 'toolUse' })]);
-    const options = { database: join(directory, 'research.sqlite'), models, extensions: [extension] };
-    let host = await openResearch(options);
-    try {
-      const receipt = await host.start(`original-${mode}`, { goal: 'Verify admission evidence only', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });
-      await (await host.harness.submission(receipt.submissionId, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT);
-      const task = (await host.harness.commit(tx => tx.scanTasks({ kind: 'test.remote-admission.compute' }, 10), BACKGROUND_CONTEXT)).items[0]!;
-      assert.equal(task.state.outcome?.status, 'failed');
-      const facts = await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT);
-      assert.equal(facts?.requests.length, 1);
-      const reference = facts!.requests[0]!;
-      assert.equal(reference.requestId, original!.requestId);
-      if (mode === 'explicit') {
-        assert.equal(reference.status, 'REJECTED'); assert.equal(reference.admission, 'REJECTED');
-        assert.equal(reference.error, 'nautilus_tick_resource_limits_unavailable');
-        await host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, task.conversationId, task.id), BACKGROUND_CONTEXT);
-        await reconcileNativeRemoteTasks(host.harness, [task], BACKGROUND_CONTEXT);
-        assert.equal(reads, 0, 'explicit non-execution does not invent or query a terminal execution receipt');
-      } else {
-        assert.equal(reference.status, 'UNKNOWN');
-        await assert.rejects(host.harness.commit(tx => assertNativeRemoteTaskSettled(tx, task.conversationId, task.id), BACKGROUND_CONTEXT), /native_remote_execution_unsettled/);
-      }
-      await host.close(); host = await openResearch(options);
-      assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), BACKGROUND_CONTEXT), facts);
-      assert.equal(posts, 1, 'reopening never resubmits rejected or uncertain work');
-    } finally {
-      await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  }
-});
-
-test('explicit tick capacity refusal sleeps and resumes the original invocation until one execution is admitted', { timeout: 15_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-remote-capacity-'));
-  const requests: NativeExecutionRequest[] = []; let executed = 0; let reads = 0;
-  const server = createServer(async (request, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (request.url === '/v1/capabilities') {
-      response.end(JSON.stringify({ schemaVersion: 1, implementationDigest: `sha256:${'a'.repeat(64)}`, commands: [...nativeCommands] })); return;
-    }
-    if (request.method === 'POST') {
-      let data = ''; for await (const chunk of request) data += chunk;
-      const value = JSON.parse(data) as NativeExecutionRequest; requests.push(value);
-      if (requests.length === 1) {
-        response.statusCode = 429;
-        response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, admission: 'REJECTED', error: 'nautilus_tick_capacity_exhausted' })); return;
-      }
-      executed++;
-      response.end(JSON.stringify({ schemaVersion: 1, requestId: value.requestId, status: 'COMPLETED', result: { protocolOnly: true } })); return;
-    }
-    reads++; response.statusCode = 404; response.end('{"error":"not_found"}');
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const target = { id: 'controlled-capacity', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
-  const models = createModels(); models.setProvider(fauxProvider().provider);
-  const options = { database: join(directory, 'research.sqlite'), models };
-  let host = await openResearch(options);
-  try {
-    const observation = host.withNativeHost(() => executeNativeValue(target, 'native-strategy-backtest', { marker: 'original-input' }, [], directory, BACKGROUND_CONTEXT)).catch(() => undefined);
-    let pending;
-    for (let i = 0; i < 200; i++) {
-      pending = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT)).items[0];
-      if (pending?.state.status === 'sleeping') break;
-      await delay(5);
-    }
-    assert.ok(pending); assert.equal(pending.state.status, 'sleeping');
-    if (pending.state.status !== 'sleeping') return;
-    assert.deepEqual(pending.state.checkpoint, { phase: 'submit' });
-    assert.ok(pending.state.until - Date.now() > 4000);
-    const rejected = await host.harness.snapshot(NativeRemoteUncertainty, pending.conversationId, String(pending.id), BACKGROUND_CONTEXT);
-    assert.equal(rejected!.requests[0]!.status, 'REJECTED');
-    assert.equal(rejected!.requests[0]!.error, 'nautilus_tick_capacity_exhausted');
-    assert.equal(requests.length, 1); assert.equal(executed, 0); assert.equal(reads, 0);
-    await host.close(); await observation;
-    host = await openResearch(options);
-    const settled = await host.harness.waitForTask(pending.id, BACKGROUND_CONTEXT);
-    assert.equal(settled.state.outcome.status, 'completed');
-    assert.equal(requests.length, 2); assert.equal(executed, 1); assert.equal(reads, 0);
-    assert.deepEqual(requests[1], requests[0]);
-    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), BACKGROUND_CONTEXT);
-    assert.deepEqual(tasks.items.map(task => task.id), [pending.id]);
-    const completed = await host.harness.snapshot(NativeRemoteUncertainty, pending.conversationId, String(pending.id), BACKGROUND_CONTEXT);
-    assert.equal(completed!.requests[0]!.status, 'COMPLETED');
-    assert.equal(completed!.requests[0]!.admissionRejection, 'nautilus_tick_capacity_exhausted');
-    assert.equal(completed!.requests[0]!.admission, undefined);
-  } finally {
-    await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
-    await rm(directory, { recursive: true, force: true });
-  }
 });
