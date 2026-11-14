@@ -533,8 +533,17 @@ fn publish_native_funding(
         .collect::<Vec<_>>();
     if settled_history_manifest.is_some() {
         ensure!(
+            // Official catalog listing inspects file metadata across all identifiers,
+            // not the potentially unbounded funding rows. None must stay global.
             catalog
-                .query::<FundingRateUpdate>(None, None, None, None, None, false)?
+                .query_files(
+                    &nautilus_persistence::catalog::types::CatalogDataType::Data(
+                        nautilus_model::data::NautilusDataType::FundingRateUpdate,
+                    ),
+                    None,
+                    None,
+                    None,
+                )?
                 .is_empty(),
             "SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"
         );
@@ -2053,7 +2062,7 @@ mod tests {
         let mixed = root.path().join("other-market-funded");
         fs::create_dir(&mixed).unwrap();
         job::catalog::currencies::write(&mixed, std::slice::from_ref(&instrument)).unwrap();
-        let other_catalog = ParquetDataCatalog::new(&mixed, None, None, None, None);
+        let mut other_catalog = ParquetDataCatalog::new(&mixed, None, None, None, None);
         other_catalog
             .write_instruments(vec![instrument.clone()])
             .unwrap();
@@ -2071,7 +2080,7 @@ mod tests {
         assert!(publish_native_funding(
             root.path(),
             Some(&mixed),
-            &[instrument],
+            std::slice::from_ref(&instrument),
             &BTreeMap::new(),
             Some(&manifest)
         )
@@ -2079,6 +2088,58 @@ mod tests {
         .to_string()
         .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"));
         assert!(!mixed.join("funding-rates.manifest.json").exists());
+        // A rejected cross-instrument append leaves the original native row intact.
+        let retained = other_catalog
+            .query::<FundingRateUpdate>(None, None, None, None, None, false)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&retained).unwrap(),
+            serde_json::to_value(vec![other]).unwrap()
+        );
+        // Legacy filenames may lack coverage timestamps but remain native-queryable.
+        let files = other_catalog
+            .query_files(
+                &nautilus_persistence::catalog::types::CatalogDataType::Data(
+                    nautilus_model::data::NautilusDataType::FundingRateUpdate,
+                ),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        // Query paths are object-store paths, not necessarily native OS paths.
+        let original = fs::read_dir(
+            mixed
+                .join("data/funding_rates")
+                .join(other.instrument_id.to_string()),
+        )
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+        fs::rename(&original, original.with_file_name("legacy.parquet")).unwrap();
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&mixed),
+            std::slice::from_ref(&instrument),
+            &BTreeMap::new(),
+            Some(&manifest),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"));
+        assert!(!mixed.join("funding-rates.manifest.json").exists());
+        assert_eq!(
+            serde_json::to_value(
+                other_catalog
+                    .query::<FundingRateUpdate>(None, None, None, None, None, false)
+                    .unwrap()
+            )
+            .unwrap(),
+            serde_json::to_value(vec![other]).unwrap()
+        );
         for (index, rate) in ["0.00000000000000000000000000001", "1e-29"]
             .into_iter()
             .enumerate()

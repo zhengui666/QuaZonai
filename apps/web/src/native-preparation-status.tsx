@@ -6,6 +6,9 @@ export function preparationStatus(value:PreparationView){
  if(value.state.status!=='terminal')return {label:'准备任务尚未结束',detail:'这是最近读取的原任务状态，不代表持续运行或已有可选用产物。可只读核实原进度。'};
  if(outcome?.status==='completed')return {label:'产物准备已核实',detail:'构建或导入的能力查询已完成，尚须明确选用；不等于连接账户、策略兼容认证或交易许可。'};
  if(outcome?.status==='aborted')return {label:'准备任务已停止',detail:'任务停止不证明任意用户代码及其后代进程已退出，也不证明没有外部副作用。保留原请求核对。'};
+ const reasons:Record<string,string>={native_preparation_required_file_unavailable:'所需文件不可访问或不存在。请核对服务环境可见的产物、工具链或项目路径。',native_preparation_file_access_denied:'服务环境无权读取或执行所需文件。',native_preparation_identity_mismatch:'产物声明的版本、来源或精度与所要求的身份不匹配。',native_preparation_capabilities_invalid:'产物能力查询不符合所要求的接口。'};
+ const reason=outcome?.error?.message&&reasons[outcome.error.message];
+ if(typeof reason==='string')return {label:'产物尚未核实',detail:reason+' 保留原请求；这不证明没有执行或没有副作用，也不会自动重试。'};
  return {label:'产物尚未核实',detail:'不能将此结果当作可用产物。核对原准备记录与私有诊断，不推断没有执行或没有副作用。'};
 }
 export function PreparationStatus({value}:{value:PreparationView}){

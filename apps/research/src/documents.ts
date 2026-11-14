@@ -3,6 +3,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ConversationId, SubmissionId, TaskId } from '@earendil-works/pi-durable';
 
 export type ResearchInput = JsonObject & {
+  mode?: 'LITERATURE_ONLY';
   goal: string;
   specification?: import('../../../packages/contracts/src/index.ts').ResearchSpecification;
   publicLiteratureQueries?: string[];

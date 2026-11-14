@@ -17,7 +17,7 @@ export function validateNumbers(value: unknown): void {
 
 export function researchInput(value: unknown): ResearchInput {
   const input = record(value, 'research_input');
-  const fields = new Set(['goal', 'specification', 'publicLiteratureQueries', 'campaign', 'model', 'thinkingLevel', 'serviceTier', 'data', 'policy']);
+  const fields = new Set(['mode', 'goal', 'specification', 'publicLiteratureQueries', 'campaign', 'model', 'thinkingLevel', 'serviceTier', 'data', 'policy']);
   if (Object.keys(input).some(key => !fields.has(key))) throw new Error('research_input_fields_unsupported');
   validateNumbers(input);
   const model = record(input.model, 'model');
@@ -32,6 +32,14 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  if (input.mode !== undefined && input.mode !== 'LITERATURE_ONLY') throw new Error('research_mode_unsupported');
+  if (input.mode === 'LITERATURE_ONLY') {
+    if (input.campaign !== undefined || input.specification !== undefined || Object.keys(policy).length) throw new Error('literature_only_policy_unsupported');
+    if (Object.keys(data).some(key => key !== 'dataset')) throw new Error('literature_only_data_unsupported');
+    const dataset = record(data.dataset, 'literature_dataset');
+    if (Object.keys(dataset).some(key => !['id', 'name', 'assetClass', 'currency'].includes(key)) || Object.values(dataset).some(value => typeof value !== 'string')) throw new Error('literature_only_metadata_unsupported');
+    return structuredClone(input) as ResearchInput;
+  }
   if (policy.tickEconomic !== undefined) throw new Error('custom_tick_factor_research_retired');
   if (['max_trials', 'maxTrials', 'maximumScientificCalls', 'maximumTrials', 'maximumModelTurns', 'nativeComputeSeconds', 'modelSpend', 'dataBytes'].some(key => Object.hasOwn(policy, key))) throw new Error('research_policy_fields_unsupported');
   if (policy.reviewPolicy !== undefined) validateReviewPolicy(policy.reviewPolicy);

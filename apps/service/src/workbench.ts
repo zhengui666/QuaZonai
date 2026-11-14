@@ -60,7 +60,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
   };
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    if (Object.keys(body).some(key => !['requestId', 'input', 'goal', 'model', 'datasetId', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
+    if (Object.keys(body).some(key => !['mode', 'requestId', 'input', 'goal', 'model', 'datasetId', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
+    if (body.mode !== undefined && body.mode !== 'LITERATURE_ONLY') throw new Problem('research_mode_unsupported');
+    if (body.mode === 'LITERATURE_ONLY' && (body.input !== undefined || body.specification !== undefined || body.runnerBuildRequestId !== undefined || body.expectedRunnerRevision !== undefined || retainedNautilusTarget)) throw new Problem('literature_only_binding_unsupported');
     const original = json(body); const old = (await readResearchAdmissions(host))[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
     const priorInput = (old?.input ?? nativeAdmission?.input) as NativeResearchInput | undefined;
@@ -90,6 +92,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
         if (canonical(native.input) !== canonical(json(submission.input))) throw new Problem('request_id_conflict', 409);
         return host.start(requestId, native.input as NativeResearchInput, undefined, native.sourceEvidence as unknown as CapturedReviewSource | undefined, native.metadata);
       }
+      if (submission.input.mode === 'LITERATURE_ONLY') throw new Problem('literature_only_requires_dataset_id');
       input = structuredClone(submission.input);
       object(input, 'research_input'); text(input.goal, 'goal');
       publicLiteratureQueries(input.publicLiteratureQueries);
@@ -107,14 +110,14 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
       const publicQueries = publicLiteratureQueries(submission.publicLiteratureQueries);
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       sourceDataset = configured;
-      capturedDataset = captureDataset(configured);
+      if (submission.mode !== 'LITERATURE_ONLY') capturedDataset = captureDataset(configured);
       if (submission.serviceTier !== undefined && !['default', 'priority'].includes(submission.serviceTier)) throw new Problem('invalid_service_tier');
       const preferences = await getSettings();
       const preferredModel = preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId;
       const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
       const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
-      input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
-        policy: { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
+      input = { ...(submission.mode ? { mode: submission.mode } : {}), goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: submission.mode === 'LITERATURE_ONLY' ? { dataset: { id: configured.id, name: configured.name, assetClass: configured.assetClass, currency: configured.currency } } : structuredClone(configured.data),
+        policy: submission.mode === 'LITERATURE_ONLY' ? {} : { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     if (selectedTarget) input.data = bindScienceData(scienceDataWithoutBinding(input.data), selectedTarget);
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
@@ -127,7 +130,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
     const policy = object(input.policy, 'policy');
     if (['reviewedFactorSources', 'reviewPolicy', 'reviewPolicies'].some(key => policy[key] !== undefined)) throw new Problem('research_policy_unsupported', 400);
     const validated = researchInput(input);
-    const sourceEvidence = sourceDataset ? await prepareReviewSourceEvidence(sourceDataset) : null;
+    const sourceEvidence = input.mode !== 'LITERATURE_ONLY' && sourceDataset ? await prepareReviewSourceEvidence(sourceDataset) : null;
     if (sourceDataset && sourceEvidence) await assertCurrentReviewSource(sourceDataset, sourceEvidence);
     if (sourceDataset?.reviewSourceEvidence?.heldoutMetadata && sourceEvidence && validated.data.sealed) {
       const independent = await prepareReviewSourceEvidence(sourceDataset, 'HELDOUT');
