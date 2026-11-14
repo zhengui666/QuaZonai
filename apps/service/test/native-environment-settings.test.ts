@@ -32,3 +32,18 @@ test('one Rust environment saves without executing Cargo or connecting and retai
     assert.deepEqual((await state.service.app.inject({url:'/api/v3/settings/instances',headers:state.headers})).json(),saved.json());
   } finally { await state.cleanup(); }
 });
+
+test('trusted single-node declaration is explicit and survives save/reopen without execution',async()=>{
+ const state=await setup();
+ try{
+  const url='/api/v3/settings/instances';
+  let current=(await state.service.app.inject({url,headers:state.headers})).json();
+  const environment={kind:'RUST_PROCESS',id:'declared-owner',cargoBinary:join(state.directory,'not-executed-cargo'),manifestPath:join(state.directory,'not-read-Cargo.toml'),packageName:'owner',accountFactory:'account'};
+  const put=(value:Record<string,unknown>)=>state.service.app.inject({method:'PUT',url,headers:state.headers,payload:{expectedRevision:current.revision,environment:value}});
+  const ordinary=await put(environment);assert.equal(ordinary.statusCode,200,ordinary.body);current=ordinary.json();assert.equal(current.environment.accountCompatibility,undefined);
+  assert.equal((await put({...environment,accountCompatibility:'VERIFIED'})).statusCode,400);
+  assert.equal((await put({...environment,accountFactory:undefined,accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'})).statusCode,400);
+  const declared=await put({...environment,accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'});assert.equal(declared.statusCode,200,declared.body);
+  await state.restart();assert.deepEqual((await state.service.app.inject({url,headers:state.headers})).json(),declared.json());
+ }finally{await state.cleanup();}
+});

@@ -1,3 +1,4 @@
+import {nativeStrategyControl,assertSameNativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import { accountStrategyCommand, nativeAccountStrategyConfiguration } from '../../../packages/contracts/src/account-strategy.ts';
 import { nativeFixedRiskSizing } from '../../../packages/contracts/src/nautilus.ts';
 import { randomBytes } from 'node:crypto';
@@ -5,7 +6,7 @@ import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AccountRuntime } from './account-runtime.ts';
-import type { AccountOptions, NativeAccountRuntime, NativeAccountSnapshot } from './account-runtime.ts';
+import type { AccountOptions, NativeAccountRuntime, NativeAccountSummary } from './account-runtime.ts';
 import { HyperliquidAccountReader, units } from './hyperliquid-account.ts';
 import type { HyperliquidAccountProof } from './hyperliquid-account.ts';
 import { validateCapitalDocument } from '../../../packages/contracts/src/capital-exit.ts';
@@ -90,7 +91,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   if (state.strategyConfiguration) options.nativeStrategy = nativeAccountStrategyConfiguration(state.strategyConfiguration);
   const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory);
   const reader = options.mode === 'live' ? suppliedReader ?? new HyperliquidAccountReader(options.accountAddress!, options.network) : null;
-  let latest: NativeAccountSnapshot | null = null, proof: HyperliquidAccountProof | null = null, failure: string | null = 'account_runtime_not_started';
+  let latest: NativeAccountSummary | null = null, proof: HyperliquidAccountProof | null = null, failure: string | null = 'account_runtime_not_started';
   let stopped = false;
   let pendingReverse = state.reverseTransferPending ?? false;
   let refreshInFlight: Promise<void> | null = null;
@@ -116,17 +117,20 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   function actions(exit: Exit) {
     exit.view.action_availability = Object.fromEntries(['PAUSE','CANCEL','RESUME','RELEASE_RESERVATION','RECONCILE_EXTERNAL_TRANSFER','RECONCILE_WITHDRAWAL'].map(action=>[action,{allowed:false,reason:['PAUSE','CANCEL'].includes(action)?'capital_original_control_evidence_unavailable':'capital_exit_planning_retired'}])) as CapitalExitView['action_availability'];
   }
-  async function readNativeSnapshot(): Promise<NativeAccountSnapshot> {
-    const value = await runtime.request('SNAPSHOT');
-    if (!Array.isArray(value.orders) || !Array.isArray(value.positions) || !Array.isArray(value.instruments) || !Array.isArray(value.fills)
+  async function readNativeSnapshot(): Promise<NativeAccountSummary> {
+    const capability = runtime.accountObservationCapability?.();
+    if (capability?.supported === false) fail(String(capability.reason));
+    const value = await runtime.request('ACCOUNT_SUMMARY');
+    if (!Array.isArray(value.positions) || !Array.isArray(value.instruments) || !['open','inflight','active_local','emulated'].every(key => typeof (value.official_node_order_activity as Json | undefined)?.[key] === 'boolean') || typeof value.native_session_id!=='string' || value.native_account_id!==options.accountId
       || typeof value.sequence !== 'string' || typeof value.observation_id !== 'string') fail('account_native_snapshot_invalid');
-    return value as unknown as NativeAccountSnapshot;
+    return value as unknown as NativeAccountSummary;
   }
   async function spotObservation() {
     // Read the already-connected original runner only. Do not combine this async
     // observation with Portfolio sequence, cash, CONTROL or trading permission.
-    const raw = (await readNativeSnapshot()).spot_balance_observation;
-    if (raw == null) return { ...envelope(), accountSourceId: state.sourceId, observation: null };
+    const snapshot = await readNativeSnapshot();
+    const raw = snapshot.spot_balance_observation;
+    if (raw == null) return { ...envelope(), accountSourceId: state.sourceId, nativeSessionId: snapshot.native_session_id, observation: null };
     const value = record(raw);
     if (options.mode !== 'live' || value.kind !== 'NAUTILUS_SPOT_BALANCE_OBSERVATION'
       || value.source_id !== state.sourceId || value.account_id !== options.accountId
@@ -138,7 +142,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       || value.exchange_timestamp_ns !== null || value.atomic_reservation !== false || value.trade_permission !== false
       || (value.balances !== null && !Array.isArray(value.balances))
       || (value.error !== null && typeof value.error !== 'string')) fail('account_native_spot_observation_invalid');
-    return { ...envelope(), accountSourceId: state.sourceId, observation: structuredClone(value) };
+    return { ...envelope(), accountSourceId: state.sourceId, nativeSessionId: snapshot.native_session_id, observation: structuredClone(value) };
   }
   async function applyControl() {
     // Only a fresh, explicitly requested START with individually proven zero
@@ -201,16 +205,36 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       throw error;
     }
   }
-  async function advance() {
-    if(!latest?.ready||latest.recovery_required)return;
+  async function readOriginalOrderStatuses() {
+    const session = latest?.native_session_id;
+    const values = new Map<string, Json>();
+    if (failure || !session || !latest?.ready || latest.recovery_required) return {session, values};
+    const ids = new Set(Object.values(state.exits).filter(exit => exit.view.state === 'CANCELLING_EXIT')
+      .flatMap(exit => [...exit.childIds, ...(exit.pendingSlice ? [exit.pendingSlice.id] : [])]));
+    // Read outside the mutation lane: an unavailable original order must not block STOP.
+    for (const id of ids) {
+      if (stopped) break;
+      try { values.set(id, await runtime.request('ORDER_STATUS', {client_order_id:id, expected_native_session_id:session})); }
+      catch { /* Missing/unavailable original evidence never settles an obligation. */ }
+    }
+    return {session, values};
+  }
+  async function advance(observed: Awaited<ReturnType<typeof readOriginalOrderStatuses>>) {
+    if(failure||!latest?.ready||latest.recovery_required)return;
     // Restoring observations never retries an old cancellation or pushes control.
     // Only a new explicit cancellation command may send CANCEL_EXIT.
     for(const [targetId,target] of Object.entries(state.targets))if(target.receipt.status==='PENDING')await settleTarget(targetId);
     let changed=false;
     for(const exit of Object.values(state.exits)){
+      if(exit.view.state!=='CANCELLING_EXIT')continue;
       // Absence from a snapshot is not evidence of cancellation.
       const ids=[...new Set([...exit.childIds,...(exit.pendingSlice?[exit.pendingSlice.id]:[])])];
-      const settled=ids.every(id=>latest!.orders.some(order=>order.client_order_id===id&&terminal(order.status)));
+      const session = latest.native_session_id;
+      const settled = observed.session === session && ids.every(id => {
+        const value = observed.values.get(id);
+        return value?.native_session_id === session && value.account_id === options.accountId
+          && value.client_order_id === id && typeof value.status === 'string' && terminal(value.status);
+      });
       if(exit.view.state==='CANCELLING_EXIT'&&settled){
         exit.pendingSlice=null;exit.view.state=exit.view.stop_action==='CANCEL'?'CANCELLED_RESERVED':'PAUSED';
         event(exit,'ORDERS_SETTLED','原订单均有官方终态；预留金额保持不变。');changed=true;
@@ -243,6 +267,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   function strategyConfiguration() {
     return { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision,
       configuration: structuredClone(options.nativeStrategy), connected: runtime.isConnected?.() ?? null,
+      lifecycleCapability: runtime.strategyLifecycleCapability?.() ?? null,
+      accountObservation: runtime.accountObservationCapability?.() ?? null,
       pendingConfigurationRequests: Object.entries(state.strategyCommands ?? {}).filter(([, value]) => value.original.action === 'CONFIGURE' && value.receipt.status !== 'COMPLETED').map(([requestId]) => requestId),
       runnerValidated: false, note: 'Configuration only. REGISTERED names require a user-built account runner; saving never connects or starts trading.' };
   }
@@ -311,7 +337,49 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     }
     return structuredClone(receipt);
   }
+  function cancelBinding(command: NativeStrategyControl) {
+    if(options.mode!=='paper'||command.action!=='CANCEL'||command.order?.accountId!==options.accountId
+      ||command.binding.sourceId!==state.sourceId||command.binding.environmentId!=='Sandbox') fail('native_cancel_account_binding_mismatch');
+    const current=runtime.paperCancellationBinding?.();
+    if(!current||Object.entries(current).some(([key,value])=>command.binding[key as keyof typeof current]!==value)
+      ||!runtime.bindPaperCancellationSession) fail('native_cancel_original_session_unavailable');
+    return runtime.bindPaperCancellationSession(command.binding.nativeSessionId);
+  }
+  async function observeCancel(item:{original:Json;receipt:Json}) {
+    const command=nativeStrategyControl(item.receipt.command);
+    try {
+      const value=await cancelBinding(command).request('ORDER_OBSERVE',{command});
+      assertSameNativeStrategyControl(command,value.command);
+      if(value.status!=='UNKNOWN')fail('native_cancel_receipt_invalid');
+      // An official order terminal event is not attribution or funds settlement.
+      item.receipt={...value,persisted:true};
+      await save();
+    }catch(error){item.receipt.persisted=false;item.receipt.error=error instanceof Error?error.message:'native_cancel_observation_unavailable';}
+    return structuredClone(item.receipt);
+  }
+  async function cancelCommand(body:Json) {
+    const {clientId:_client,accountId:_account,...value}=body;
+    const command=nativeStrategyControl(value);
+    if(command.action!=='CANCEL')fail('native_cancel_action_invalid');
+    const commands=state.strategyCommands??={};const prior=commands[command.requestId];
+    if(prior){if(canonical(prior.original)!==canonical(body))fail('strategy_request_id_conflict');return structuredClone(prior.receipt);}
+    const bound=cancelBinding(command); // No implicit connect or BOOT.
+    const item={original:structuredClone(body),receipt:{command,status:'UNKNOWN',persisted:true} as Json};
+    commands[command.requestId]=item;
+    // Original per-account command receipt, not another store. A failed save
+    // cannot authorize dispatch, nor a retry under this original request.
+    try{await save();}catch{item.receipt.persisted=false;item.receipt.error='account_receipts_write_failed';return structuredClone(item.receipt);}
+    try{
+      const result=await bound.request('ORDER_CANCEL_ATTEMPT',{command});
+      assertSameNativeStrategyControl(command,result.command);
+      if(result.status!=='UNKNOWN')fail('native_cancel_receipt_invalid');
+      item.receipt={...result,persisted:true};
+    }catch(error){item.receipt.error=error instanceof Error?error.message:'native_cancel_outcome_unknown';}
+    try{await save();}catch{item.receipt.persisted=false;item.receipt.error='account_receipts_write_failed';}
+    return structuredClone(item.receipt);
+  }
   async function strategyCommand(body: Json) {
+    if(body.action==='CANCEL')return cancelCommand(body);
     if (Object.keys(body).some(key => !['requestId', 'action', 'clientId', 'accountId', 'expectedAccountSourceId', 'expectedStrategyRevision'].includes(key))) fail('strategy_command_invalid', 422);
     const command = accountStrategyCommand({ requestId: body.requestId, action: body.action, ...(body.action === 'START' || body.action === 'RECOVER' ? { expectedAccountSourceId: body.expectedAccountSourceId, expectedStrategyRevision: body.expectedStrategyRevision } : {}) });
     const commands = state.strategyCommands ??= {};
@@ -332,9 +400,10 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
       }
     }
-    // The Info payload only provides total/hold, not an authoritative native
-    // spot-free value. Never synthesize it or substitute merged account cash.
-    // This known unsupported capability is rejected before any BOOT or trading.
+    // Official spot balances exist as a separate asynchronous observation, but
+    // Account/Portfolio/Risk consistency and freshness are not wired for START.
+    // Never synthesize permission or substitute combined spot/perp account cash.
+    // Keep the existing durable rejection code; reject before BOOT or trading.
     if (command.action === 'START' && options.mode === 'live') {
       const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
         result: { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' }, error: 'hyperliquid_native_spot_free_required' };
@@ -368,11 +437,12 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         // Explicit recovery may connect despite unresolved obligations, but must
         // not send CONTROL, start a strategy, cancel or resubmit old orders.
         await runtime.start?.();
-        latest = await readNativeSnapshot();
-        failure = null;
+        const observation = runtime.accountObservationCapability?.();
+        if (observation && observation.supported !== true) { latest = null; failure = String(observation.reason); }
+        else { latest = await readNativeSnapshot(); failure = null; }
         const recovered = await runtime.request('RECOVERY_STATUS');
         if (recovered.recovery_only !== true || typeof recovered.native_version !== 'string' || typeof recovered.native_session_id !== 'string') fail('account_native_recovery_result_invalid');
-        receipt.result = recovered;
+        receipt.result = {...recovered, ...(observation ? {accountObservation: observation} : {})};
         receipt.status = 'COMPLETED';
         await save();
         return structuredClone(receipt);
@@ -381,6 +451,12 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         // Only this explicit, fenced and durably recorded START may connect the
         // configured native account for trading. BOOT itself only restores observations.
         await runtime.start?.();
+        const observation = runtime.accountObservationCapability?.();
+        if (observation && observation.supported !== true) {
+          receipt.status = 'REJECTED'; receipt.error = String(observation.reason);
+          receipt.result = {started:false, admission:'REJECTED', accountObservation:observation};
+          await save(); return structuredClone(receipt);
+        }
         latest = await readNativeSnapshot();
         proof = reader ? await reader.account() : null;
         failure = null;
@@ -407,6 +483,10 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       reserved: null, blocked: !!blocked, reason: blocked, exits: Object.values(state.exits).map(exit => structuredClone(exit.view)),
       commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error })) };
   }
+  // Node-wide official activity indices include unassigned and other-account orders.
+  // Only all-empty proves zero. Any activity remains unknown, never a made-up count.
+  // This follows the official cache lifecycle and recovery integrity check; it does
+  // not certify arbitrary user code that bypasses official index updates.
   function account() {
     if (failure || !latest?.native_snapshot || !latest.ready || latest.recovery_required || typeof latest.native_version !== 'string') fail(reason() ?? 'account_native_observation_unavailable', 503);
     return { ...envelope(), accountSourceId: state.sourceId, observationId: latest.observation_id, controlRevision: state.revision,
@@ -415,44 +495,82 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       nativeObservation: { schema_version: 1, binding: { schema_version: 1, project_id: state.sourceId, environment: options.mode === 'paper' ? 'PAPER' : 'LIVE',
         native_trader_id: latest.native_trader_id, native_session_id: latest.native_session_id, native_account_id: latest.native_account_id, native_version: latest.native_version },
         sequence: latest.sequence, dropped_events: '0', observed_at_ns: latest.observed_at_ns, connection: 'CONNECTED', snapshot: latest.native_snapshot },
-      openOrders: { schema_version: 1, account_id: latest.native_account_id, asof_ns: latest.native_snapshot.ts_event, available_ns: latest.observed_at_ns, count: latest.orders.filter(order => !terminal(order.status)).length } };
+      openOrders: { schema_version: 1, account_id: latest.native_account_id, asof_ns: latest.native_snapshot.ts_event, available_ns: latest.observed_at_ns, count: Object.values(latest.official_node_order_activity).every(value => value === false) ? 0 : null } };
   }
   let backgroundQueued = false;
   function background() {
     if (stopped || backgroundQueued) return; backgroundQueued = true;
     // Market/venue I/O is read-only and runs outside the command mutation lane,
     // so a slow Info endpoint cannot queue a stop command behind network polling.
-    void refresh().then(() => stopped ? undefined : serial(() => advance())).catch(error => { failure = error instanceof Error ? error.message : 'capital_account_progress_unavailable'; }).finally(() => { backgroundQueued = false; });
+    void refresh().then(() => readOriginalOrderStatuses()).then(observed => stopped ? undefined : serial(() => advance(observed))).catch(error => { failure = error instanceof Error ? error.message : 'capital_account_progress_unavailable'; }).finally(() => { backgroundQueued = false; });
   }
   const unsubscribe = runtime.subscribeTicks?.(() => background());
   // This timer refreshes read projections and reconciles existing commands.
   // Owner clock notifications only refresh original observations; financial slicing is retired.
   const interval = setInterval(() => background(), 1_000); interval.unref();
   background();
+  // Explicit legacy read only; never feed this into periodic latest or START evidence.
+  let legacyReadInFlight = false;
+  async function legacySnapshot(body: Json) {
+    const capability = runtime.accountObservationCapability?.();
+    if (body.mode !== 'LEGACY_FULL_SNAPSHOT' || body.acknowledgeFullHistoryCost !== true) fail('legacy_snapshot_explicit_ack_required',422);
+    if (capability?.supported !== false || !capability.nativeSessionId || body.expectedNativeSessionId !== capability.nativeSessionId) fail('legacy_snapshot_original_session_required');
+    if (legacyReadInFlight) fail('legacy_snapshot_read_in_progress');
+    legacyReadInFlight = true;
+    try {
+      const snapshot = await runtime.request('SNAPSHOT');
+      const after = runtime.accountObservationCapability?.();
+      if (after?.nativeSessionId !== capability.nativeSessionId || snapshot.native_session_id !== capability.nativeSessionId || snapshot.native_account_id !== options.accountId) fail('legacy_snapshot_binding_changed');
+      if (!Array.isArray(snapshot.orders) || !Array.isArray(snapshot.fills) || typeof snapshot.observed_at_ns !== 'string') fail('legacy_snapshot_invalid');
+      // Do not retransmit enormous order/event history to the browser or persist it anew.
+      // Only original scalar observation values are shown; no derived totals or zero proof.
+      return { ...envelope(), observationMode:'LEGACY_FULL_SNAPSHOT', nativeSessionId:capability.nativeSessionId,
+        observedAtNs:snapshot.observed_at_ns, receivedAt:now(), tradePermission:false, automaticRefresh:false,
+        historyRead:'FULL_UNBOUNDED', historyIncluded:false,
+        observation:{cash:snapshot.cash??null,equity:snapshot.equity??null,nativeVersion:snapshot.native_version??null} };
+    } finally { legacyReadInFlight = false; }
+  }
   async function dispatch(path: string, method: 'GET' | 'POST', clientId: unknown, input?: unknown): Promise<{ status: number; value: unknown }> {
       if (clientId !== options.clientId) fail('account_client_identity_mismatch', 403);
       const body = method === 'POST' ? record(input) : null;
       if (body && (body.clientId !== options.clientId || body.accountId !== options.accountId)) fail('account_identity_mismatch');
       if (method === 'GET' && ['/account'].includes(path)
         || method === 'POST' && (path === '/strategy/commands' && body?.action === 'START')) await refresh();
+      // Slow full-history reads must not queue STOP behind the mutation lane.
+      if (method === 'POST' && path === '/strategy/legacy-snapshot') return {status:200,value:await legacySnapshot(body!)};
       return serial(async () => {
         if (method === 'GET' && path === '/capabilities') return { status: 200, value: { ...envelope(),
+          accountObservation:runtime.accountObservationCapability?.()??{supported:null,reason:'account_summary_capability_unobserved'},
+          ordinaryVenueCancel:runtime.paperCancellationCapability?.()??{supported:false,reason:'native_cancel_original_session_unavailable',scope:null,compatibilityDeclaration:null,compatibilityVerified:null},
           recovery: { supported: true, action: 'RECOVER', automaticConnection: false, automaticStrategyStart: false },
           capitalExit: { version: 2, supported: false, readable: true, reason: 'capital_original_control_evidence_unavailable', policies: [], actions: [] },
           orderPreview: { version: 1, supported: true, previewOnly: true, automaticProtectionEnabled: false, kinds: ['STOP_LOSS', 'TAKE_PROFIT', 'BRACKET'] },
           nativeBrackets: { supported: false, reason: options.mode === 'paper' ? 'account_native_paper_bracket_recovery_unverified' : 'account_native_live_brackets_not_supported', defaultEnabled: false, scope: 'NEW_LONG_POSITION', cancellationPath: '/targets/<id>/cancel-protection', atomicOco: false },
-          nativeStrategy: { version: 1, supported: options.nativeStrategy.strategy.kind === 'EMA_CROSS' && (!failure || failure === 'account_runtime_not_started'),
-            configuredKind: options.nativeStrategy.strategy.kind, supportedKinds: ['EMA_CROSS'],
-            reason: options.nativeStrategy.strategy.kind === 'REGISTERED' ? 'account_registered_runner_support_unverified' : options.nativeStrategy.strategy.kind !== 'EMA_CROSS' ? 'account_native_strategy_account_lifecycle_unsupported_for_orderbook_imbalance' : failure === 'account_runtime_not_started' ? null : failure, defaultStart: 'NOT_STARTED', stopSemantics: 'UPSTREAM_STRATEGY_CONFIG' },
+          nativeStrategy: { version: 1, configuredKind: options.nativeStrategy.strategy.kind,
+            ...(runtime.strategyLifecycleCapability?.()??{supported:null,reason:'account_native_strategy_capability_unobserved',scope:null,strategyVerified:null,nativeSessionId:null}),
+            defaultStart:'NOT_STARTED',stopSemantics:'UPSTREAM_STRATEGY_CONFIG' },
           automaticTargets: { version: 1, supported: false, reason: 'native_strategy_only' } } };
         if (method === 'GET' && path === '/strategy/config') return { status: 200, value: strategyConfiguration() };
         const verifyConfig = /^\/strategy\/config\/commands\/([^/]+)\/verify$/.exec(path);
         if (method === 'POST' && verifyConfig) return { status: 200, value: await verifyConfiguration(decodeURIComponent(verifyConfig[1]!)) };
         if (method === 'POST' && path === '/strategy/config') return { status: 200, value: await configureStrategy(body!) };
-        if (method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision } };
+        const orderPage=/^\/strategy\/orders\/(\d+)$/.exec(path);
+        if(method==='GET'&&orderPage){
+          const offset=Number(orderPage[1]);if(!Number.isSafeInteger(offset)||offset<0)fail('native_order_offset_invalid',422);
+          const capability=runtime.paperCancellationCapability?.()??{supported:false,reason:'native_cancel_original_session_unavailable'};
+          const binding=runtime.paperCancellationBinding?.()??null;
+          if(!binding)return {status:200,value:{...envelope(),capability,binding:null,items:[],offset,total:null,nextOffset:null,available:false,reason:'native_cancel_original_session_unavailable'}};
+          const snapshot=await runtime.request('ORDER_PAGE',{offset,expected_native_session_id:binding.nativeSessionId});
+          const after=runtime.paperCancellationBinding?.();
+          if(!after||canonical(binding)!==canonical(after)||snapshot.native_session_id!==binding.nativeSessionId)fail('native_order_session_changed');
+          if(!Array.isArray(snapshot.items)||snapshot.items.length>50||snapshot.offset!==offset||(snapshot.nextOffset!==null&&snapshot.nextOffset!==offset+50))fail('native_order_observation_invalid');
+          return {status:200,value:{...envelope(),capability,binding,available:true,reason:null,observedAtNs:snapshot.observed_at_ns??null,
+            items:snapshot.items,offset,total:null,nextOffset:snapshot.nextOffset}};
+        }
+        if (method === 'GET' && path === '/strategy/fence') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, ordinaryVenueCancel:runtime.paperCancellationBinding?.()??null } };
         if (method === 'GET' && path === '/strategy') return { status: 200, value: { ...envelope(), accountSourceId: state.sourceId, strategyRevision: state.strategyRevision, strategy: await runtime.request('STRATEGY_STATUS') } };
         const strategyReceipt = /^\/strategy\/commands\/([^/]+)$/.exec(path);
-        if (method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: structuredClone(item.receipt) }; }
+        if (method === 'GET' && strategyReceipt) { const item = state.strategyCommands?.[decodeURIComponent(strategyReceipt[1]!)]; if (!item) fail('strategy_command_not_found', 404); return { status: 200, value: item.original.action==='CANCEL'?await observeCancel(item):structuredClone(item.receipt) }; }
         if (method === 'GET' && path === '/spot-balance-observation') return { status: 200, value: await spotObservation() };
         if (method === 'GET' && path === '/account') return { status: 200, value: account() };
         if (method === 'GET' && path === '/capital-exits') return { status: 200, value: status() };

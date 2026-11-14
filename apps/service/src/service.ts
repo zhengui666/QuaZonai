@@ -1,3 +1,5 @@
+import {createAccountStrategyCommand} from './account-strategy.ts';
+import type {NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
 import {nativePreparationTools} from './native-preparation-tools.ts';
 import {processAccounts} from './process-accounts.ts';
 import {nativeEnvironmentBuild} from './native-environment-build.ts';
@@ -6,7 +8,7 @@ import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
-import staticPlugin from '@fastify/static';
+import { registerStaticWeb } from './static-web.ts';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boundScienceTarget } from './science-binding.ts';
@@ -55,11 +57,17 @@ export async function createService(options: ServiceOptions) {
     startResearch: value => preparationOperations.startResearch(value),
   });
   let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
+  const nativeControlTransport:NativeStrategyControlTransport={
+    async send(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,true);},
+    async read(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,false);},
+  };
+  const accountCommandTask=createAccountStrategyCommand(nativeControlTransport);
+
   const sources = await dataSources(config);
   const definitions = new Map<string, Extension>();
   const defaults = new Map<string, boolean>();
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
+  const installed: Extension[] = [{...science,tasks:science.tasks?.map(task=>task.definition.name==='qz.account-strategy-command'?accountCommandTask:task)}, pm.extension, maintenanceExtension, sources.extension, nativeBuild.extension, preparation];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -282,13 +290,16 @@ export async function createService(options: ServiceOptions) {
   registerModels(app, research, work.getSettings);
   app.get(`${API}/accounts/configurations`,()=>accounts!.list());
   app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
-  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id));
+  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/legacy-snapshot`,r=>configuredStrategies.legacySnapshot(r.params.id,r.body));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/orders`,r=>configuredStrategies.orders(r.params.id,r.query.offset));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id,r.body));
   app.post<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/config/commands/:requestId/verify`,r=>configuredStrategies.verifyConfiguration(r.params.id,r.params.requestId));
+  app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,r=>configuredStrategies.history(r.params.id,r.query.offset));
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/commands`,async(r,reply)=>reply.code(202).send(await configuredStrategies.command(r.params.id,r.body)));
   app.get<{Params:{id:string;requestId:string}}>(`${API}/accounts/configurations/:id/strategy/commands/:requestId`,r=>configuredStrategies.receipt(r.params.id,r.params.requestId));
   registerInstanceSettings(app, instances);
@@ -328,8 +339,7 @@ export async function createService(options: ServiceOptions) {
     return (await extensionViews()).find(item => item.name === found.name)!;
   });
   if (config.staticDir) {
-    await app.register(staticPlugin, { root: config.staticDir });
-    app.setNotFoundHandler((request, reply) => request.url.startsWith('/api/') ? reply.code(404).send({ error: 'not_found' }) : reply.sendFile('index.html'));
+    await registerStaticWeb(app, config.staticDir);
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };

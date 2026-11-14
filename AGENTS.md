@@ -263,7 +263,7 @@ compile, dependency-resolution, precision, or factory-visibility check.
 The owner project must provide a public Rust library and explicitly selected
 factory modules. Backtest modules expose `config` returning the official
 `BacktestRunConfig`, and `install` receiving the official `BacktestEngine`.
-Account modules expose `strategy(name, config)` returning their concrete
+Account modules expose `strategy(name, config, trader_id, account_id, execution_client_id, instrument_id, instruments)` using the official Nautilus identifier types and `&[InstrumentId]`, returning their concrete
 official Strategy type. The generated launcher adapts these entry points; the
 owner library does not need to depend on QuaZonai. Bin-only/private functions
 cannot be reflected into a library or automatically attached to an existing
@@ -309,3 +309,5 @@ target. It passes that exact target to both metadata filtering and Cargo build,
 and reads the target-specific artifact directory. It does not silently follow
 inherited cross-compilation settings; cross-compilation is not supported by this
 entry point. Target-specific dependency caches may require extra disk space.
+
+The account factory receives the original node/account/client identities and configured instrument IDs only at explicit START. These are routing context, not proof of connectivity, balances or trading permission. Older two-argument factories must update their signature and rebuild; source generation does not prove compilation or compatibility. User configuration is passed unchanged; no identity is injected into its JSON.

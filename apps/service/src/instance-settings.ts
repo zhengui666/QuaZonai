@@ -189,10 +189,11 @@ export async function instanceSettings(config: ServiceConfig) {
   function environmentValue(value: unknown): NativeRustEnvironment | null {
     if (value === null) return null;
     const item = object(value, 'rust_environment');
-    if (item.kind !== 'RUST_PROCESS' || Object.keys(item).some(k => !['kind','id','cargoBinary','manifestPath','packageName','features','backtestFactory','accountFactory'].includes(k))
+    if (item.kind !== 'RUST_PROCESS' || Object.keys(item).some(k => !['kind','id','cargoBinary','manifestPath','packageName','features','backtestFactory','accountFactory','accountCompatibility'].includes(k))
       || ['id','cargoBinary','manifestPath','packageName'].some(k => typeof item[k] !== 'string' || !(item[k] as string).trim())
       || !isAbsolute(item.cargoBinary as string) || !isAbsolute(item.manifestPath as string)
       || item.features !== undefined && (!Array.isArray(item.features) || item.features.some(f => typeof f !== 'string' || !f))) throw new Problem('rust_environment_invalid');
+    if(item.accountCompatibility!==undefined && (item.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||typeof item.accountFactory!=='string'))throw new Problem('rust_account_compatibility_declaration_invalid');
     for (const field of ['backtestFactory','accountFactory']) if (item[field] !== undefined) publicRustPath(String(item[field]));
     return structuredClone(item) as unknown as NativeRustEnvironment;
   }

@@ -1,13 +1,26 @@
+import {nativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import {mkdir,mkdtemp,open,readFile,readdir,rename,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createCapitalAccount} from '../../nautilus/src/capital-account.ts';
 import {accountCreation,physicalAccount,saveAccountConfiguration,sameAccountCreation,type AccountCreation} from '../../nautilus/src/account-configurations.ts';
 import {validateNativeTarget} from '../../research/src/native-execution.ts';
-import type {ProcessNativeTarget} from '../../../packages/contracts/src/nautilus.ts';
+import type {ProcessNativeTarget,SavedAccountRunnerReport} from '../../../packages/contracts/src/nautilus.ts';
 import type {ServiceConfig,ConnectionConfig} from './config.ts';
 import {registerProcessAccount} from './downstream.ts';
 import {Problem,object,text} from './facts.ts';
 
+export function savedAccountRunnerReport(runner:ProcessNativeTarget):SavedAccountRunnerReport{
+ const raw=runner.capabilities.identity;
+ const identity=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+ const version=identity.nautilusVersion,revision=identity.nautilusRevision,precision=identity.precision;
+ // Only bounded official version/revision formats are projected, never arbitrary
+ // identity data (which may contain local source paths or opaque owner values).
+ return {source:'SAVED_ACCOUNT_BINDING',nautilusVersion:typeof version==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)&&version.length<=80?version:null,
+ nautilusRevision:typeof revision==='string'&&/^[0-9a-f]{7,40}$/i.test(revision)?revision:null,
+ precision:precision==='standard'||precision==='high'?precision:null,
+ compatibilityDeclaration:runner.capabilities.account.compatibilityDeclaration??null,
+ compatibilityVerified:runner.capabilities.account.compatibilityVerified===false?false:null};
+}
 type Binding={schemaVersion:1;creation:AccountCreation;runner:ProcessNativeTarget};
 type OpenAccount={binding:Binding;connection:ConnectionConfig;account:Awaited<ReturnType<typeof createCapitalAccount>>;detach:()=>void};
 /** Immutable process provenance beside the existing account files, not a new OMS. */
@@ -61,7 +74,7 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
   catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;if(error instanceof Problem&&error.message==='historical_account_identity_requires_explicit_reconciliation'){unavailable.set(binding.creation.configuration.id,error.message);continue;}throw error;}
  }
  }catch(error){await closeOpened();throw error;}
- async function list():Promise<Array<Record<string,unknown>&{id:string}>>{return Promise.all([...retained.values()].map(async binding=>{const id=binding.creation.configuration.id,item=opened.get(id);return {id,accountConfiguration:binding.creation.configuration,environmentId:binding.runner.id,configurationOnly:true,automaticConnection:false,automaticStrategyStart:false,
+ async function list():Promise<Array<Record<string,unknown>&{id:string}>>{return Promise.all([...retained.values()].map(async binding=>{const id=binding.creation.configuration.id,item=opened.get(id);return {id,accountConfiguration:binding.creation.configuration,environmentId:binding.runner.id,savedRunner:savedAccountRunnerReport(binding.runner),configurationOnly:true,automaticConnection:false,automaticStrategyStart:false,
   ...(item?(await item.account.request('/strategy/config','GET',item.connection.clientId)).value as object:{unavailable:unavailable.get(id)??'original_creation_not_fully_saved'})};}));}
  function create(value:unknown){
   const creation=accountCreation(value);
@@ -94,5 +107,20 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
   });lane=work.then(()=>undefined,()=>undefined);return work;
  }
  async function binding(id:string){const item=opened.get(id);if(!item)throw new Problem('native_process_original_account_unavailable',409);const saved=object((await item.account.request('/strategy/config','GET',item.connection.clientId)).value);return {connection:structuredClone(item.connection),view:{currency:text(saved.currency,'account_currency')}};}
- return {list,create,binding,async close(){closing=true;await lane;await closeOpened();}};
+ async function nativeControl(value:NativeStrategyControl,send:boolean){
+  const command=nativeStrategyControl(value);
+  if(command.action!=='CANCEL'||command.binding.environmentId!=='Sandbox')throw new Problem('native_cancel_scope_unsupported',409);
+  const candidates=[...opened.values()].filter(item=>item.binding.creation.configuration.mode==='paper'
+    &&item.binding.creation.configuration.accountId===command.order!.accountId
+    &&item.binding.runner.binary===command.binding.buildId);
+  const matches:OpenAccount[]=[];
+  for(const item of candidates){const saved=object((await item.account.request('/strategy/config','GET',item.connection.clientId)).value);if(saved.accountSourceId===command.binding.sourceId)matches.push(item);}
+  if(matches.length!==1)throw new Problem('native_cancel_original_account_unavailable',409);
+  const item=matches[0]!;
+  const response=await item.account.request(send?'/strategy/commands':`/strategy/commands/${encodeURIComponent(command.requestId)}`,send?'POST':'GET',item.connection.clientId,
+    send?{...command,clientId:item.connection.clientId,accountId:item.connection.accountId}:undefined);
+  if(response.status>=400)throw new Problem(String(object(response.value).error??'native_cancel_outcome_unknown'),response.status);
+  return object(response.value);
+ }
+ return {list,create,binding,nativeControl,async close(){closing=true;await lane;await closeOpened();}};
 }

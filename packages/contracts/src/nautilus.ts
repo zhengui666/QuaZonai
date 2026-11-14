@@ -8,7 +8,7 @@ export type ProcessNativeTarget = {
   /** Exact result of the explicitly inspected user-built runner, not a claimed live state. */
   capabilities: { schemaVersion: 1; protocol: 'quazonai-native-process-v1'; identity: NativeJson;
     research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
-    account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true }; running: false };
+    account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
 }
 export type NativeExecutionTarget = RemoteNativeTarget | ProcessNativeTarget;
 export type NativeTarget = string | NativeExecutionTarget;
@@ -100,4 +100,17 @@ export function nativeFixedRiskSizing(value: unknown): NativeFixedRiskSizingRequ
 export interface NativeRustEnvironment {
   kind: 'RUST_PROCESS'; id: string; cargoBinary: string; manifestPath: string; packageName: string;
   features?: string[]; backtestFactory?: string; accountFactory?: string;
+  /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
+  accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
+}
+
+/** Read-only selected capability facts retained in the original account binding.
+ * No executable/source paths, credentials or current-session certification. */
+export interface SavedAccountRunnerReport {
+ source:'SAVED_ACCOUNT_BINDING';
+ nautilusVersion:string|null;
+ nautilusRevision:string|null;
+ precision:'standard'|'high'|null;
+ compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'|null;
+ compatibilityVerified:false|null;
 }

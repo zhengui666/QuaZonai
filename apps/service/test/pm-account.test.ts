@@ -40,6 +40,7 @@ test('PM observed account: incomplete source identity, pending-order unknowns an
     ['legacy normalized only', snapshot => { delete snapshot.nativeObservation; }, /native_account_observation_required/],
     ['no open orders source', snapshot => { delete snapshot.openOrders; }, /open_orders_report_required/],
     ['missing explicit count', snapshot => { delete (snapshot.openOrders as JsonObject).count; }, /open_orders_shape_invalid/],
+    ['unknown original nonterminal count', snapshot => { (snapshot.openOrders as JsonObject).count = null; }, /no_open_orders_proof_required/],
     ['outstanding order', snapshot => { (snapshot.openOrders as JsonObject).count = 1; }, /no_open_orders_proof_required/],
     ['other account orders', snapshot => { (snapshot.openOrders as JsonObject).account_id = 'OTHER'; }, /open_orders_basis_mismatch/],
     ['other valuation orders', snapshot => { (snapshot.openOrders as JsonObject).asof_ns = '100'; }, /open_orders_basis_mismatch/],

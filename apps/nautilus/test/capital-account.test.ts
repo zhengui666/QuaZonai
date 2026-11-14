@@ -22,11 +22,18 @@ function snapshot(): NativeAccountSnapshot {
     positions: [], instruments: [], orders: [], fills: [], cash: '1000', equity: '1000', currency: 'USDC', currency_precision: 6 };
 }
 class NativeProtocol implements NativeAccountRuntime {
+  activity = {open:false,inflight:false,active_local:false,emulated:false};
   snapshot = snapshot(); requests: { operation: string; payload: Record<string, unknown> }[] = [];
   targets = new Map<string, Record<string, unknown>>(); loseTargetResponse = false; rejectTargetBeforeSubmit = false;
   async request(operation: string, payload: Record<string, unknown> = {}) {
     this.requests.push({ operation, payload });
-    if (operation === 'SNAPSHOT') return structuredClone(this.snapshot) as unknown as Record<string, unknown>;
+    if (operation === 'ACCOUNT_SUMMARY') {
+      const { orders, fills, ...summary } = structuredClone(this.snapshot);
+      return { ...summary, official_node_order_activity: structuredClone(this.activity) } as unknown as Record<string, unknown>;
+    }
+    if (operation === 'ORDER_STATUS') return { native_session_id: this.snapshot.native_session_id,
+      account_id: this.snapshot.native_account_id, client_order_id: payload.client_order_id,
+      status: this.snapshot.orders.find(order => order.client_order_id === payload.client_order_id)?.status ?? null };
     if (operation === 'QUANTIZE_MONEY') return { amount: payload.amount, precision: this.snapshot.currency_precision };
     if (operation === 'TARGET') {
       if (this.rejectTargetBeforeSubmit) {
@@ -112,6 +119,14 @@ test('native strategy startup preserves the configured cash buffer and native eq
   const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => fencedBody(account, method, path, body, request))).value as Record<string, unknown>;
   try {
     const observed = await call('GET', '/account'); assert.equal(observed.equity, '1000');
+    assert.equal((observed.openOrders as Record<string, unknown>).count, 0, 'Only empty node-wide official activity proves zero.');
+    assert.equal(native.requests.some(row => row.operation === 'SNAPSHOT'), false);
+    for (const key of ['open','inflight','active_local','emulated'] as const) {
+      native.activity[key] = true;
+      assert.equal(((await call('GET','/account')).openOrders as Record<string,unknown>).count,null, key);
+      native.activity[key] = false;
+    }
+
     const body = { requestId: 'ordinary-start', action: 'START', clientId: options.clientId, accountId: options.accountId };
     assert.equal((await call('POST', '/strategy/commands', body)).status, 'COMPLETED');
     const control = native.requests.filter(row => row.operation === 'CONTROL').at(-1)!;
@@ -306,6 +321,11 @@ test('official spot facts remain separately bound and timed without changing por
     native.snapshot.spot_balance_observation = raw;
     const portfolio = await get('/account');
     assert.deepEqual((await get('/spot-balance-observation')).observation, raw);
+    assert.equal((await get('/spot-balance-observation')).nativeSessionId,native.snapshot.native_session_id);
+    const originalSession=native.snapshot.native_session_id;
+    native.snapshot.native_session_id='reconnected-session';
+    assert.equal((await get('/spot-balance-observation')).nativeSessionId,'reconnected-session');
+    native.snapshot.native_session_id=originalSession;
     assert.equal('observation' in portfolio,false);
     native.snapshot.spot_balance_observation = {...raw,observation_id:'later',received_ns:'300',balances:[]};
     assert.deepEqual((await get('/spot-balance-observation')).observation.balances,[]);
@@ -323,6 +343,6 @@ test('official spot facts remain separately bound and timed without changing por
     native.snapshot.spot_balance_observation = raw;
     const started = await account.request('/strategy/commands','POST',options.clientId,{clientId:options.clientId,accountId:options.accountId,requestId:'spot-does-not-authorize-start',action:'START',expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision});
     assert.equal((started.value as any).error,'hyperliquid_native_spot_free_required');
-    assert.ok(native.requests.every(r=>r.operation==='SNAPSHOT'));
+    assert.ok(native.requests.every(r=>r.operation==='ACCOUNT_SUMMARY'));
   } finally { await account.close(); await rm(directory,{recursive:true,force:true}); }
 });

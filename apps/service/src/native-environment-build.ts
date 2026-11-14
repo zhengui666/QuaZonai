@@ -25,7 +25,7 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
    const selected=task.input.environment;
    try{
     if(!task.input.importSource&&!selected)throw new Error('rust_environment_not_configured');
-    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,accountFactory:selected!.accountFactory},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),signal:runtime.signal});
+    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,accountFactory:selected!.accountFactory,accountCompatibility:selected!.accountCompatibility},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),signal:runtime.signal});
     const target=validateNativeTarget({kind:'RUST_PROCESS',id:task.input.importSource?.environmentId??selected!.id,binary:result.executable,capabilities:result.capabilities}) as ProcessNativeTarget;
     await runtime.commit(()=>({status:'terminal',outcome:{status:'completed',result:json({qualification:result.qualification,target,...('manifestPath' in result?{manifestPath:result.manifestPath}:{}),connected:false,strategyStarted:false})}}),ctx);
    }catch(error){

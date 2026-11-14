@@ -136,6 +136,7 @@ export async function buildRustLauncher(options: {
   if (capabilities.protocol !== 'quazonai-native-process-v1' || capabilities.running !== false
     || capabilities.research?.configuredRunFactory !== Boolean(options.factories.backtestFactory)
     || capabilities.account?.registration !== Boolean(options.factories.accountFactory)) throw new Error('rust_build_capabilities_mismatch');
+  if((capabilities.account?.compatibilityDeclaration??null)!==(options.factories.accountCompatibility??null))throw new Error('rust_build_compatibility_declaration_mismatch');
   verifyLauncherIdentity(generated, capabilities.identity);
   return { executable, manifestPath: materialized.manifestPath, capabilities, qualification: 'COMPILED_NOT_CONNECTED' };
 }

@@ -1,5 +1,6 @@
+import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
 import AccountConfiguration from './account-configuration';
-import { Button, Form, Input } from 'antd';
+import { Button, Form, Input, Select } from 'antd';
 import { useEffect, useState } from 'react';
 import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
 import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
@@ -8,9 +9,21 @@ import { useResource } from './data-hooks';
 import { ErrorNotice, Loading,useConfirm } from './ui';
 
 type Fields = Omit<NativeRustEnvironment, 'kind' | 'features'> & { featureNames?: string };
+export function environmentFromFields(values: Fields): NativeRustEnvironment {
+  const accountFactory=values.accountFactory?.trim();
+  if(values.accountCompatibility!==undefined && (values.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!accountFactory))throw new Error('兼容声明需要账户策略工厂；不声明时请清除此选项。');
+  return {kind:'RUST_PROCESS',id:values.id.trim(),cargoBinary:values.cargoBinary.trim(),manifestPath:values.manifestPath.trim(),packageName:values.packageName.trim(),
+    features:(values.featureNames??'').split(',').map(v=>v.trim()).filter(Boolean),
+    ...(values.backtestFactory?.trim()?{backtestFactory:values.backtestFactory.trim()}:{}),...(accountFactory?{accountFactory}:{}),
+    ...(values.accountCompatibility?{accountCompatibility:values.accountCompatibility}:{}),
+  };
+}
+export function AccountCompatibilityNotice({declaration}:{declaration:unknown}) {
+  return <p>{declaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'此产物自报已声明可信策略单节点约定；这不是认证、验证或安全隔离。':'此产物未报告可信策略单节点声明；不会据保存配置补充声明。'} 这不证明账户取消当前可用；实际能力还取决于显式连接后原节点与会话。保存将清除当前产物选择，需重新显式选择；不会修改产物、连接账户或启动策略。</p>;
+}
 export function retryUncertainEnvironmentSave(status?: number) { return status === undefined || status >= 500; }
 type BuildRequest={requestId:string;expectedRevision:number;environmentId?:string;sourceExecutable?:string};
-type BuildView={requestId:string;taskId:number;state:{status:string;outcome?:{status:string;result?:{qualification:string;target:{capabilities:unknown}};error?:{message:string}}}};
+type BuildView=PreparationView;
 const required = [{ required: true, whitespace: true, message: '请填写此项' }];
 export default function InstanceSettings() {
   const query = useResource<InstanceSettingsView>('/settings/instances');
@@ -33,12 +46,10 @@ export default function InstanceSettings() {
     setError(undefined); setNotice('');
     try {
       const values = pending ? null : await form.validateFields();
-      const request = pending ?? { expectedRevision:saved.revision, environment:{ kind:'RUST_PROCESS' as const, id:values!.id.trim(), cargoBinary:values!.cargoBinary.trim(), manifestPath:values!.manifestPath.trim(), packageName:values!.packageName.trim(),
-        features:(values!.featureNames ?? '').split(',').map(v=>v.trim()).filter(Boolean),
-        ...(values!.backtestFactory?.trim() ? {backtestFactory:values!.backtestFactory.trim()} : {}), ...(values!.accountFactory?.trim() ? {accountFactory:values!.accountFactory.trim()} : {}) } };
+      const request = pending ?? {expectedRevision:saved.revision,environment:environmentFromFields(values!)};
       setBusy(true); setPending(request);
       const result = await api<InstanceSettingsView>('/settings/instances',{method:'PUT',body:request});
-      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice('环境配置已保存。没有构建、连接账户或启动策略。');
+      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice('环境配置已保存，当前产物选择已清除，需重新显式选择。没有构建、连接账户或启动策略。');
     } catch (failure) {
       setError(failure);
       if (!retryUncertainEnvironmentSave(failure instanceof ApiError ? failure.status : undefined)) {
@@ -84,6 +95,10 @@ export default function InstanceSettings() {
       <Form.Item name="featureNames" label="显式 features（逗号分隔）"><Input /></Form.Item>
       <Form.Item name="backtestFactory" label="回测工厂公开模块（config / install）"><Input /></Form.Item>
       <Form.Item name="accountFactory" label="账户策略工厂公开模块（strategy）"><Input /></Form.Item>
+      <Form.Item name="accountCompatibility" label="可选：账户工厂兼容声明（不是认证）" dependencies={['accountFactory']} rules={[({getFieldValue})=>({validator:async(_,value)=>{if(value && !getFieldValue('accountFactory')?.trim())throw new Error('请先填写账户策略工厂，或清除声明。');}})]}>
+        <Select allowClear placeholder="未声明（默认，不限制原有研究与策略运行）" options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:'我明确声明：可信策略，整个生命周期只使用此单节点'}]}/>
+      </Form.Item>
+      <p>只在你确认用户 Rust 代码的构造、加载、启动和所有后续回调始终只注册此节点的策略，且不创建第二节点、不替换线程全局发送器或消息端点时选择。QuaZonai 不验证或隔离这些代码。未声明不会封禁原有研究或策略运行，但不提供该声明所需的取消能力。此阶段只验证指定版本的模拟账户，不开放实盘。</p>
     </Form>
     {pending && <p>保存结果尚未确认。重试保留原配置与版本，不创建另一请求。</p>}
     <Button onClick={()=>void save()} loading={busy}>{pending ? '核实原保存请求' : '仅保存环境配置'}</Button>{' '}
@@ -100,8 +115,8 @@ export default function InstanceSettings() {
     <Button onClick={()=>void selectRunner()} disabled={busy||build?.state.outcome?.status!=='completed'}>选用已核实产物（不启动账户）</Button>
     {(build?.state.status==='terminal'||(error instanceof ApiError&&error.status<500))&&<Button disabled={busy} onClick={()=>{setBuildRequest(undefined);setBuild(undefined);localStorage.removeItem('qz-native-build-request');}}>准备新的显式构建或导入请求</Button>}
     {buildRequest&&<p>原产物准备请求：{buildRequest.requestId}。重开或查询不会重编或重新执行导入查询；结果不确定时保留原身份，不将它改称成功。本地任务取消或停止不证明任意二进制的后代进程已结束，也不证明没有外部副作用。</p>}
-    {build&&<pre>{JSON.stringify(build,null,2)}</pre>}
-    {saved?.runner&&<><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><pre>{JSON.stringify(saved.runner.capabilities,null,2)}</pre></>}
+    {build&&<PreparationStatus value={build}/>}
+    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><SelectedRunnerStatus runner={saved.runner}/></>}
     <p>当前 QZ 账户接线仅支持 Hyperliquid、单账户中的一个 EMA 或已注册 Rust Strategy，最多 256 个标的，不等于任意官方 LiveNode 配置。账户工厂未编入时不能恢复账户；研究工厂可用不构成交易权限。连接与启动交易仍须账户页各自显式操作。</p>
     <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
     {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}

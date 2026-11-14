@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -51,3 +52,96 @@ test('a permanent official watch failure closes SSE and its peer watch while lea
     controller.abort(); await app.close(); await harness.close(context); await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('SSE folds simultaneous latest-state invalidations but reads again after an in-flight snapshot', async () => {
+  const raw = new EventEmitter() as EventEmitter & { writeHead: () => void; write: (data: string) => boolean; end: () => void };
+  const output: string[] = []; let blocked = false;
+  raw.writeHead = () => {};
+  raw.write = data => { output.push(data); return !blocked; };
+  raw.end = () => { raw.emit('close'); };
+  const reply = { hijack() {}, raw } as unknown as import('fastify').FastifyReply;
+  const streams = new Set<() => Promise<void>>();
+  const watches = [new Watch(0, () => {}, error => assert.fail(String(error))), new Watch(0, () => {}, error => assert.fail(String(error)))];
+  let version = 0; let reads = 0;
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+  const change = (watch: Watch<number>, value: number) => watch.advance({ kind: 'value', value, ops: [['r', value]], retired: false }, context);
+  try {
+    // Both sources may change between watch acquisition and subscription start.
+    change(watches[0]!, 0); change(watches[1]!, 0);
+    await eventStream(reply, 'test', async () => { reads++; return { version }; }, watches, streams);
+    await tick();
+    assert.equal(reads, 1, 'two initial watch callbacks and explicit first read share one projection');
+    blocked = true; version = 1;
+    change(watches[0]!, 1);
+    await tick();
+    assert.equal(reads, 2);
+    version = 2; change(watches[1]!, 2);
+    await tick();
+    assert.equal(reads, 2, 'backpressure prevents reading ahead of the pending output');
+    blocked = false; raw.emit('drain');
+    await tick(); await tick();
+    assert.equal(reads, 3, 'invalidation during drain schedules a fresh read');
+    assert.deepEqual(output.map(data => JSON.parse(data.split('data: ')[1]!.trim()).version), [0, 1, 2]);
+    await Promise.all([...streams].map(close => close()));
+    version = 3; await tick();
+    assert.equal(reads, 3); assert.equal(streams.size, 0);
+    assert.equal((await watches[0]!.closed).kind, 'stopped');
+    assert.equal((await watches[1]!.closed).kind, 'stopped');
+  } finally { await Promise.all([...streams].map(close => close())); }
+});
+
+for (const stage of ['read', 'drain'] as const) {
+  for (const disconnect of [false, true]) {
+    test(`SSE ${disconnect ? 'closes safely' : 'keeps the newest state'} with invalidation during ${stage}`, { timeout: 5000 }, async () => {
+      const raw = new EventEmitter() as EventEmitter & { writeHead: () => void; write: (data: string) => boolean; end: () => void };
+      const output: number[] = []; let writesBlocked = stage === 'drain';
+      raw.writeHead = () => {};
+      raw.write = data => { output.push(JSON.parse(data.split('data: ')[1]!.trim()).version); return !writesBlocked; };
+      raw.end = () => { raw.emit('close'); };
+      const reply = { hijack() {}, raw } as unknown as import('fastify').FastifyReply;
+      const streams = new Set<() => Promise<void>>(); let detached = 0;
+      const watches = [new Watch(0, () => { detached++; }, error => assert.fail(String(error))), new Watch(0, () => { detached++; }, error => assert.fail(String(error)))];
+      const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+      let releaseRead!: () => void;
+      const blockedRead = new Promise<void>(resolve => { releaseRead = resolve; });
+      let reads = 0; let version = 0;
+      const serving = eventStream(reply, 'test', async () => {
+        reads++; const captured = version;
+        if (reads === 1 && stage === 'read') await blockedRead;
+        return { version: captured };
+      }, watches, streams);
+      try {
+        await tick();
+        assert.equal(reads, 1);
+        for (const [index, watch] of watches.entries()) {
+          version = index + 1;
+          watch.advance({ kind: 'value', value: version, ops: [['r', version]], retired: false }, context);
+        }
+        await tick();
+        assert.equal(reads, 1, 'no concurrent projection or read ahead of backpressure');
+        if (disconnect) {
+          raw.emit('close');
+          await tick();
+          assert.equal(detached, 2); assert.equal(streams.size, 0);
+        }
+        releaseRead(); writesBlocked = false;
+        if (!disconnect) raw.emit('drain');
+        await serving; await tick(); await tick();
+        if (disconnect) {
+          assert.equal(reads, 1, 'queued reads do not run after disconnection');
+          assert.deepEqual(output, stage === 'read' ? [] : [0], 'in-flight reads do not write after disconnection');
+        } else {
+          assert.equal(reads, 2, 'both invalidations share one subsequent latest-state projection');
+          assert.deepEqual(output, [0, 2], 'newest state follows the captured older snapshot');
+        }
+        assert.equal(raw.listenerCount('drain'), 0);
+        await Promise.all([...streams].map(close => close()));
+        assert.equal(detached, 2); assert.equal(streams.size, 0);
+        for (const watch of watches) assert.equal((await watch.closed).kind, 'stopped');
+      } finally {
+        releaseRead(); writesBlocked = false; raw.emit('drain');
+        await Promise.all([...streams].map(close => close())); await serving;
+      }
+    });
+  }
+}
