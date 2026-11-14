@@ -102,6 +102,9 @@ FROM execution-base AS application
 COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 COPY --from=application-source / /
 COPY --from=web /build/apps/web/dist/ ./web/
+# COPY file modes also affect newly created destination directories.
+RUN find native-glue apps/nautilus -type d -exec chmod 755 {} + \
+ && find native-glue apps/nautilus -type f -exec chmod 644 {} +
 ARG VERSION=development
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="QuaZonai" \
