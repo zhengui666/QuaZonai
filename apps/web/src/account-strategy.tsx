@@ -33,6 +33,24 @@ export function StrategyLifecycleNotice({value,unavailable=false}:{value?:Lifecy
  {observed&&<p>原生报告类型：{value.configuredKind??'未提供'}；原会话：{value.nativeSessionId}。</p>}
  <p>前台约每 3 秒读取一次，后台暂停轮询；缓存报告可能过时，不证明会话持续在线。这里只显示接线事实，不验证用户工厂、策略兼容性或交易结果。可信代码声明不是认证，也不是交易许可；查看不连接、不启动策略，不改变原命令准入。</p></section>;
 }
+/** Edit only known deployment strings; opaque owner configuration is not interpreted. */
+export function strategyConfigurationField(text:string,field:'instrument_id'|'name',value:string){
+ const parsed:unknown=JSON.parse(text);
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('原策略配置必须为对象');
+ const config=parsed as Record<string,unknown>;
+ if(field==='instrument_id')return JSON.stringify({...config,instrument_id:value},null,2);
+ const strategy=config.strategy;
+ if(!strategy||typeof strategy!=='object'||Array.isArray(strategy)||(strategy as Record<string,unknown>).kind!=='REGISTERED')throw Error('原策略不是 REGISTERED，不替换策略类型');
+ return JSON.stringify({...config,strategy:{...strategy,name:value}},null,2);
+}
+export function StrategyConfigurationFields({text,disabled,onChange}:{text:string;disabled:boolean;onChange:(value:string)=>void}){
+ let config:{instrument_id?:unknown;strategy?:{kind?:unknown;name?:unknown}};
+ try{const value:unknown=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))return <p>请先在高级配置中修正原对象，不生成替代配置。</p>;config=value;}catch{return <p>请先在高级配置中修正原对象，不生成替代配置。</p>;}
+ return <fieldset disabled={disabled}><legend>原生策略配置</legend>
+ <label>策略标的（必须沿用此账户已绑定标的）<Input aria-label="编辑策略标的" disabled={disabled} value={typeof config.instrument_id==='string'?config.instrument_id:''} onChange={event=>onChange(strategyConfigurationField(text,'instrument_id',event.target.value))}/></label>
+ {config.strategy?.kind==='REGISTERED'&&<label>已编入运行器的原策略名称<Input aria-label="编辑原策略名称" disabled={disabled} value={typeof config.strategy.name==='string'?config.strategy.name:''} onChange={event=>onChange(strategyConfigurationField(text,'name',event.target.value))}/></label>}
+ <p>只修改原合同中的文本字段。自定义 config 没有可用 schema，保留高级入口且不猜测参数；未编辑字段保留，十进制字符串不转换为数字。保存不连接或启动策略。</p></fieldset>;
+}
 export default function AccountStrategy({ value, configured=false }: { value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
   const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
   const commandIdentity=configured?`configured:${value.id}`:value.id;
@@ -63,7 +81,9 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
       <p>保留此账户已绑定标的。自定义策略格式为 instrument_id 与 strategy: {`{kind: "REGISTERED", name: "已注册名称", config: 任意JSON}`}。新增 Rust 策略类型须先构建部署账户运行器；仅改 config 参数不需要重新编译。</p>
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
-      <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => setEdited(event.target.value)} />
+      <StrategyConfigurationFields text={configurationText} onChange={setEdited} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending}/>
+      <details><summary>高级：完整原生策略配置</summary><p>未知字段与自定义参数按原合同编辑；裸 JSON 数字不保证超出 JavaScript 精度范围的原始词法，精确小数请沿原策略要求使用字符串。</p>
+      <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => setEdited(event.target.value)} /></details>
       <p>仅断开状态允许保存；保存成功不代表参数已被原生运行器验证，更不会连接账户或发送订单。</p>
       <Button disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} loading={saveConfiguration.busy} onClick={() => {
         try { const parsed = JSON.parse(configurationText); setConfigurationError(undefined); void saveConfiguration.submit({ configuration: parsed, expectedAccountSourceId: configuration.data!.accountSourceId, expectedStrategyRevision: configuration.data!.strategyRevision }); }
