@@ -38,6 +38,33 @@ pub struct NativeStrategyVenueV1 {
     /// Explicit simulation assumptions, never inferred historical venue fees.
     pub maker_fee: String,
     pub taker_fee: String,
+    /// Optional official simulation model. Omitted retains upstream defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_model: Option<NativeStaticLatencyModelV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_model: Option<NativeDefaultFillModelV1>,
+}
+/// Fixed operation delays in nanoseconds; the official model adds base to each operation.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum NativeStaticLatencyModelV1 {
+    Static {
+        base_latency_ns: DbCounter,
+        insert_latency_ns: DbCounter,
+        update_latency_ns: DbCounter,
+        delete_latency_ns: DbCounter,
+    },
+}
+/// Official default probabilistic fill model, not an empirical execution guarantee.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum NativeDefaultFillModelV1 {
+    Default {
+        prob_fill_on_limit: f64,
+        prob_slippage: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        random_seed: Option<DbCounter>,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]

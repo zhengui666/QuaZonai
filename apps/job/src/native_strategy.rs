@@ -10,8 +10,12 @@ use nautilus_common::{
     messages::system::ShutdownSystem,
     msgbus::{self, MessagingSwitchboard, ShareableMessageHandler},
 };
-use nautilus_core::UnixNanos;
-use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+use nautilus_core::{DurationNanos, UnixNanos};
+use nautilus_execution::models::{
+    fee::{FeeModelAny, MakerTakerFeeModel},
+    fill::{DefaultFillModel, FillModelAny},
+    latency::{LatencyModelAny, StaticLatencyModel},
+};
 use nautilus_model::{
     data::{BarType, DataBatch, NautilusDataType, OrderBookDelta, OrderBookDeltas},
     enums::{BookType, RecordFlag},
@@ -36,6 +40,51 @@ use std::{
     rc::Rc,
     str::FromStr,
 };
+
+// Thin constructor adapters for upstream 0.69.0 rev 634e094. No matching/latency logic.
+fn native_latency_model(
+    config: Option<&NativeStaticLatencyModelV1>,
+) -> Result<Option<LatencyModelAny>> {
+    config
+        .map(|config| {
+            let NativeStaticLatencyModelV1::Static {
+                base_latency_ns,
+                insert_latency_ns,
+                update_latency_ns,
+                delete_latency_ns,
+            } = config;
+            let base = base_latency_ns.get();
+            for extra in [insert_latency_ns, update_latency_ns, delete_latency_ns] {
+                ensure!(
+                    base.checked_add(extra.get()).is_some(),
+                    "NATIVE_LATENCY_DURATION_OVERFLOW"
+                );
+            }
+            Ok(LatencyModelAny::Static(StaticLatencyModel::new(
+                DurationNanos::new(base),
+                DurationNanos::new(insert_latency_ns.get()),
+                DurationNanos::new(update_latency_ns.get()),
+                DurationNanos::new(delete_latency_ns.get()),
+            )))
+        })
+        .transpose()
+}
+fn native_fill_model(config: Option<&NativeDefaultFillModelV1>) -> Result<Option<FillModelAny>> {
+    config
+        .map(|config| {
+            let NativeDefaultFillModelV1::Default {
+                prob_fill_on_limit,
+                prob_slippage,
+                random_seed,
+            } = config;
+            Ok(FillModelAny::Default(DefaultFillModel::new(
+                *prob_fill_on_limit,
+                *prob_slippage,
+                random_seed.as_ref().map(|seed| seed.get()),
+            )?))
+        })
+        .transpose()
+}
 
 // Observe the official shutdown notification without consuming its trigger or
 // changing engine lifecycle. Keep only the first matching event, bounded for JSON output.
@@ -346,6 +395,8 @@ pub fn run_with_registration(
                 .transpose()?,
         )
         .default_leverage(venue.leverage.parse()?)
+        .maybe_latency_model(native_latency_model(venue.latency_model.as_ref())?)
+        .maybe_fill_model(native_fill_model(venue.fill_model.as_ref())?)
         .fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
             venue.maker_fee.parse()?,
             venue.taker_fee.parse()?,
@@ -397,6 +448,10 @@ pub fn run_with_registration(
             .get_engine("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
         let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Statically compiled Nautilus Strategy; not Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
+        if request.venue.latency_model.is_some() || request.venue.fill_model.is_some() {
+            notes.push("EXPLICIT_NATIVE_EXECUTION_MODELS: Fixed latency/default probabilistic fill parameters are passed to Nautilus 0.69.0 (634e094). They are simulation assumptions, not measured venue latency, queue position, market impact, or historical execution calibration. Omitted models retain upstream defaults; no compatibility with other versions is implied.".into());
+        }
+
         if counts
             .get("FundingRateUpdate")
             .is_some_and(|rows| rows.get() > 0)
@@ -722,5 +777,70 @@ mod book_quote_tests {
                 "streaming and preloaded official quotes: {field}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod execution_model_tests {
+    use super::*;
+    use nautilus_execution::models::{fill::FillModel, latency::LatencyModel};
+
+    #[test]
+    fn omitted_models_preserve_upstream_defaults() {
+        assert!(native_latency_model(None).unwrap().is_none());
+        assert!(native_fill_model(None).unwrap().is_none());
+        let venue: NativeStrategyVenueV1 = serde_json::from_value(serde_json::json!({
+            "account_type":"MARGIN", "oms_type":"NETTING", "book_type":"L2_MBP",
+            "starting_balances":["6000 USDC"], "base_currency":null,
+            "leverage":"1", "maker_fee":"0", "taker_fee":"0"
+        }))
+        .unwrap();
+        assert!(venue.latency_model.is_none() && venue.fill_model.is_none());
+        let encoded = serde_json::to_value(venue).unwrap();
+        assert!(encoded.get("latency_model").is_none());
+        assert!(encoded.get("fill_model").is_none());
+    }
+
+    #[test]
+    fn explicit_models_delegate_to_native_models() {
+        let latency: NativeStaticLatencyModelV1 = serde_json::from_value(serde_json::json!({
+            "kind":"STATIC", "base_latency_ns":"1000000", "insert_latency_ns":"2000000",
+            "update_latency_ns":"3000000", "delete_latency_ns":"4000000"
+        }))
+        .unwrap();
+        let model = native_latency_model(Some(&latency)).unwrap().unwrap();
+        assert_eq!(model.get_base_latency().as_u64(), 1000000);
+        let fill: NativeDefaultFillModelV1 = serde_json::from_value(serde_json::json!({
+            "kind":"DEFAULT", "prob_fill_on_limit":1.0, "prob_slippage":0.0, "random_seed":"42"
+        }))
+        .unwrap();
+        let mut model = native_fill_model(Some(&fill)).unwrap().unwrap();
+        assert!(model.is_limit_filled().unwrap());
+        assert!(!model.is_slipped().unwrap());
+    }
+
+    #[test]
+    fn invalid_models_fail_without_silent_fallback() {
+        assert!(
+            serde_json::from_value::<NativeStaticLatencyModelV1>(serde_json::json!({
+                "kind":"STATIC", "base_latency_ns":"18446744073709551615", "insert_latency_ns":"1",
+                "update_latency_ns":"0", "delete_latency_ns":"0"
+            }))
+            .is_err()
+        );
+        for probability in [-0.5, 1.5, f64::NAN, f64::INFINITY] {
+            let fill = NativeDefaultFillModelV1::Default {
+                prob_fill_on_limit: probability,
+                prob_slippage: 0.0,
+                random_seed: None,
+            };
+            assert!(native_fill_model(Some(&fill)).is_err());
+        }
+        assert!(
+            serde_json::from_value::<NativeDefaultFillModelV1>(serde_json::json!({
+                "kind":"DEFAULT", "prob_fill_on_limit":1.0, "prob_slippage":0.0, "unsupported":true
+            }))
+            .is_err()
+        );
     }
 }
