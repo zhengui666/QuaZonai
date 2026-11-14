@@ -51,18 +51,30 @@ export function StrategyConfigurationFields({text,disabled,onChange}:{text:strin
  {config.strategy?.kind==='REGISTERED'&&<label>已编入运行器的原策略名称<Input aria-label="编辑原策略名称" disabled={disabled} value={typeof config.strategy.name==='string'?config.strategy.name:''} onChange={event=>onChange(strategyConfigurationField(text,'name',event.target.value))}/></label>}
  <p>只修改原合同中的文本字段。自定义 config 没有可用 schema，保留高级入口且不猜测参数；未编辑字段保留，十进制字符串不转换为数字。保存不连接或启动策略。</p></fieldset>;
 }
+type StrategyEditIdentity={accountSourceId:string;strategyRevision:string};
+export type StrategyEditDraft=StrategyEditIdentity&{text:string;accountKey:string};
+export function strategyEditChanged(draft:StrategyEditDraft|undefined,current:StrategyEditIdentity|undefined,accountKey:string){
+ return !!draft&&(!current||draft.accountKey!==accountKey||draft.accountSourceId!==current.accountSourceId||draft.strategyRevision!==current.strategyRevision);
+}
+export function strategyEditSubmission(draft:StrategyEditDraft|undefined,current:StrategyEditIdentity|undefined,accountKey:string,text:string){
+ if(!current||strategyEditChanged(draft,current,accountKey))throw Error('原策略配置版本已变化；草稿保留，请核对后明确放弃草稿并读取最新配置。');
+ const identity=draft??current;
+ return {configuration:JSON.parse(text),expectedAccountSourceId:identity.accountSourceId,expectedStrategyRevision:identity.strategyRevision};
+}
 export default function AccountStrategy({ value, configured=false }: { value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
   const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
   const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
   const fence = useResource<{ accountSourceId: string; strategyRevision: string }>(`${path}/fence`, { poll: 3000 });
   const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; connected: boolean | null; runnerValidated: boolean; lifecycleCapability?:LifecycleCapability|null; pendingConfigurationRequests: string[] }>(`${path}/config`,{poll:3000});
-  const [edited, setEdited] = useState<string>();
+  const [edited, setEdited] = useState<StrategyEditDraft>();
+  const editConfiguration=(text:string)=>{if(configuration.data)setEdited(prior=>prior?{...prior,text}:{text,accountKey:commandIdentity,accountSourceId:configuration.data!.accountSourceId,strategyRevision:configuration.data!.strategyRevision});};
+  const editChanged=strategyEditChanged(edited,configuration.data,commandIdentity);
   const [configurationError, setConfigurationError] = useState<unknown>();
   const [verifyingConfiguration, setVerifyingConfiguration] = useState(false);
   const [configurationReceipt, setConfigurationReceipt] = useState<{ status: string }>();
   const saveConfiguration = useCommand<{ status: string }>(`strategy:${commandIdentity}:CONFIGURE`, result => { setConfigurationReceipt(result); setEdited(undefined); void configuration.refetch(); void fence.refetch(); }, `${path}/config`);
-  const configurationText = edited ?? (configuration.data ? JSON.stringify(configuration.data.configuration, null, 2) : '');
+  const configurationText = edited?.text ?? (configuration.data ? JSON.stringify(configuration.data.configuration, null, 2) : '');
   const key = `account-strategy:${commandIdentity}`;
   const [last, setLast] = useState(() => readDraft<string>(key));
   const confirm = useConfirm();
@@ -81,12 +93,14 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
       <p>保留此账户已绑定标的。自定义策略格式为 instrument_id 与 strategy: {`{kind: "REGISTERED", name: "已注册名称", config: 任意JSON}`}。新增 Rust 策略类型须先构建部署账户运行器；仅改 config 参数不需要重新编译。</p>
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
-      <StrategyConfigurationFields text={configurationText} onChange={setEdited} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending}/>
+      <StrategyConfigurationFields text={configurationText} onChange={editConfiguration} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending}/>
       <details><summary>高级：完整原生策略配置</summary><p>未知字段与自定义参数按原合同编辑；裸 JSON 数字不保证超出 JavaScript 精度范围的原始词法，精确小数请沿原策略要求使用字符串。</p>
-      <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => setEdited(event.target.value)} /></details>
+      <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => editConfiguration(event.target.value)} /></details>
+      {editChanged&&<p role="alert">原账户或策略配置版本已变化。草稿保留，不能用新版本号覆盖原配置。请先核对，再明确放弃草稿采用最新配置。</p>}
+      {edited&&<Button disabled={!!saveConfiguration.pending||saveConfiguration.busy} onClick={()=>confirm('放弃当前未保存草稿？','只放弃本地编辑并显示最近读取的原配置，不保存、不连接、不启动。',()=>{setEdited(undefined);setConfigurationError(undefined);void configuration.refetch();})}>放弃草稿，采用最新配置</Button>}
       <p>仅断开状态允许保存；保存成功不代表参数已被原生运行器验证，更不会连接账户或发送订单。</p>
-      <Button disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} loading={saveConfiguration.busy} onClick={() => {
-        try { const parsed = JSON.parse(configurationText); setConfigurationError(undefined); void saveConfiguration.submit({ configuration: parsed, expectedAccountSourceId: configuration.data!.accountSourceId, expectedStrategyRevision: configuration.data!.strategyRevision }); }
+      <Button disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending || editChanged} loading={saveConfiguration.busy} onClick={() => {
+        try { const payload = strategyEditSubmission(edited,configuration.data,commandIdentity,configurationText); setConfigurationError(undefined); void saveConfiguration.submit(payload); }
         catch (error) { setConfigurationError(error); }
       }}>仅保存配置</Button>
       {(configuration.data?.pendingConfigurationRequests ?? []).map(requestId => <Button key={requestId} loading={verifyingConfiguration} disabled={verifyingConfiguration} onClick={() => confirm('核实原配置是否已持久保存？', `只核对原请求 ${requestId} 的文件与同步结果，不连接 Nautilus、不启动策略，也不解除任何订单 UNKNOWN。`, () => {

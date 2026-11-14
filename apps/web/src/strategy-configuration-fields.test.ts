@@ -18,3 +18,19 @@ it('shows known original fields with original disabled state, never invents fact
  const html=render(text,true);expect(html).toContain('编辑策略标的');expect(html).toContain('编辑原策略名称');expect(html).toContain('disabled');expect(html).toContain('没有可用 schema');expect(edits).toBe(0);
  expect(render('{',false)).toContain('不生成替代配置');expect(render('{"strategy":{"kind":"EMA_CROSS"}}',false)).not.toContain('编辑原策略名称');
 });
+
+import {strategyEditChanged,strategyEditSubmission} from './account-strategy';
+it('binds the saved draft to its original account/source/revision instead of adopting a newer poll',()=>{
+ const current={accountSourceId:'original-source',strategyRevision:'7'};
+ const draft={...current,accountKey:'configured:original',text:'{"strategy":{"kind":"REGISTERED","config":{"decimal":"9007199254740993.00001"}}}'};
+ expect(strategyEditSubmission(draft,current,draft.accountKey,draft.text)).toEqual({configuration:JSON.parse(draft.text),expectedAccountSourceId:'original-source',expectedStrategyRevision:'7'});
+ for(const next of [{...current,strategyRevision:'8'},{...current,accountSourceId:'replacement'},undefined]){
+  expect(strategyEditChanged(draft,next,draft.accountKey)).toBe(true);
+  expect(()=>strategyEditSubmission(draft,next,draft.accountKey,draft.text)).toThrow(/版本已变化/);
+ }
+ expect(()=>strategyEditSubmission(draft,current,'configured:other',draft.text)).toThrow();
+ expect(draft.strategyRevision).toBe('7');expect(draft.text).toContain('9007199254740993.00001');
+ // Only explicit discard removes the old draft; the fresh server payload then owns its revision.
+ const newer={...current,strategyRevision:'8'};
+ expect(strategyEditSubmission(undefined,newer,draft.accountKey,'{"fresh":true}')).toEqual({configuration:{fresh:true},expectedAccountSourceId:'original-source',expectedStrategyRevision:'8'});
+});
