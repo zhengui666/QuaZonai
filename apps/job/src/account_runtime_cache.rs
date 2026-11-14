@@ -78,7 +78,9 @@ impl AccountCacheFactory {
         if !root.exists() {
             return Ok(None);
         }
-        let stored = load_state(&root)?;
+        // Startup balances need only currencies and official account objects.
+        // Full installation still reads and validates every persisted record.
+        let stored = load_state_kinds(&root, Some(&["currencies", "accounts"]))?;
         ensure_current_pin(&stored)?;
         if let Some(currencies) = stored.records.get("currencies") {
             for value in currencies.values() {
@@ -215,6 +217,9 @@ struct AccountCache {
     failed: Arc<AtomicBool>,
 }
 fn load_state(path: &Path) -> Result<Stored> {
+    load_state_kinds(path, None)
+}
+fn load_state_kinds(path: &Path, kinds: Option<&[&str]>) -> Result<Stored> {
     let mut state: Stored = serde_json::from_slice(&fs::read(path.join("metadata.json"))?)?;
     state.records.clear();
     for kind in fs::read_dir(path)? {
@@ -226,6 +231,9 @@ fn load_state(path: &Path) -> Result<Stored> {
             .file_name()
             .into_string()
             .map_err(|_| anyhow!("account_native_cache_kind"))?;
+        if kinds.is_some_and(|kinds| !kinds.contains(&name.as_str())) {
+            continue;
+        }
         let rows = state.records.entry(name).or_default();
         for entry in fs::read_dir(kind.path())? {
             let entry = entry?;
@@ -996,6 +1004,65 @@ mod order_list_tests {
 #[cfg(test)]
 mod pin_guard_tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn balance_read_skips_history_but_full_install_still_rejects_corruption() -> Result<()> {
+        use nautilus_model::{enums::AccountType, events::AccountState, types::AccountBalance};
+        let dir = tempfile::tempdir()?;
+        let factory = AccountCacheFactory::new(dir.path().into());
+        let trader = TraderId::from("RECOVERY-001");
+        let id = AccountId::from("HYPERLIQUID-001");
+        let balance = AccountBalance::new(
+            Money::from("9007199254.740993 USDC"),
+            Money::from("0.000001 USDC"),
+            Money::from("9007199254.740992 USDC"),
+        );
+        let account = AccountAny::from(AccountState::new(
+            id,
+            AccountType::Cash,
+            vec![balance],
+            vec![],
+            true,
+            UUID4::new(),
+            1.into(),
+            1.into(),
+            None,
+        ));
+        let db = factory
+            .create(trader, UUID4::new(), CacheConfig::default())
+            .await?;
+        db.add_currency(&Currency::USDC())?;
+        db.add_account(&account)?;
+        drop(db);
+        let root = dir.path().join("native-cache");
+        let before = fs::read(root.join("metadata.json"))?;
+        fs::create_dir(root.join("orders"))?;
+        let bad = root.join("orders/broken.json");
+        fs::write(&bad, b"invalid json")?;
+        // This succeeds only if the balance-only read never parses order history.
+        assert_eq!(factory.restored_balances(&id)?, Some(vec![balance.total]));
+        assert_eq!(
+            factory.restored_balances(&AccountId::from("MISSING-001"))?,
+            None
+        );
+        let selected = load_state_kinds(&root, Some(&["currencies", "accounts"]))?;
+        assert!(!selected.records.contains_key("orders"));
+        assert!(load_state(&root).is_err());
+        let cache = Rc::new(RefCell::new(Cache::default()));
+        assert!(
+            factory
+                .install(cache.clone(), trader, UUID4::new(), CacheConfig::default())
+                .await
+                .is_err()
+        );
+        assert!(cache.borrow().account_ref(&id).is_none());
+        assert_eq!(fs::read(&bad)?, b"invalid json");
+        assert_eq!(fs::read(root.join("metadata.json"))?, before);
+        // Required currency/account records must still fail, rather than defaulting cash.
+        fs::write(root.join("accounts/broken.json"), b"invalid json")?;
+        assert!(factory.restored_balances(&id).is_err());
+        Ok(())
+    }
 
     #[test]
     fn old_pin_is_rejected_before_reading_balances_without_rewriting_metadata() -> Result<()> {
