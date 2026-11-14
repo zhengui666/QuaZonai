@@ -5,13 +5,17 @@ use nautilus_backtest::{
     config::{BacktestDataConfig, BacktestEngineConfig, BacktestRunConfig, BacktestVenueConfig},
     node::BacktestNode,
 };
-use nautilus_common::logging::logger::LoggerConfig;
+use nautilus_common::{
+    logging::logger::LoggerConfig,
+    messages::system::ShutdownSystem,
+    msgbus::{self, MessagingSwitchboard, ShareableMessageHandler},
+};
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_model::{
     data::{BarType, DataBatch, NautilusDataType, OrderBookDelta, OrderBookDeltas},
     enums::{BookType, RecordFlag},
-    identifiers::InstrumentId,
+    identifiers::{InstrumentId, TraderId},
     instruments::Instrument,
     types::{Currency, Money},
 };
@@ -26,10 +30,51 @@ mod preloaded_reference;
 pub mod registry;
 use registry::StrategyRegistration;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    rc::Rc,
     str::FromStr,
 };
+
+// Observe the official shutdown notification without consuming its trigger or
+// changing engine lifecycle. Keep only the first matching event, bounded for JSON output.
+struct ShutdownDiagnostic {
+    first: Rc<RefCell<Option<String>>>,
+    handler: ShareableMessageHandler,
+}
+impl ShutdownDiagnostic {
+    fn subscribe(trader_id: TraderId) -> Self {
+        let first = Rc::new(RefCell::new(None));
+        let captured = first.clone();
+        let handler = ShareableMessageHandler::from_typed(move |event: &ShutdownSystem| {
+            if event.trader_id == trader_id && captured.borrow().is_none() {
+                *captured.borrow_mut() = Some(format!(
+                    "OFFICIAL_SHUTDOWN_SYSTEM: {}",
+                    serde_json::json!({"trader_id": event.trader_id.to_string(),
+                        "component_id": event.component_id.to_string(),
+                        "ts_init": event.ts_init.to_string(),
+                        "reason": event.reason.as_ref().map(|reason| reason.chars().take(4096).collect::<String>()),
+                        "reason_truncated": event.reason.as_ref().is_some_and(|reason| reason.chars().count() > 4096)})
+                ));
+            }
+        });
+        msgbus::subscribe_any(
+            MessagingSwitchboard::shutdown_system_topic().into(),
+            handler.clone(),
+            None,
+        );
+        Self { first, handler }
+    }
+}
+impl Drop for ShutdownDiagnostic {
+    fn drop(&mut self) {
+        msgbus::unsubscribe_any(
+            MessagingSwitchboard::shutdown_system_topic().into(),
+            &self.handler,
+        );
+    }
+}
 
 /// Configure only the official book-to-quote pipeline for the pure L2 OBI input.
 /// Existing source quotes/trades and quote-driven strategies keep their own semantics.
@@ -341,6 +386,7 @@ pub fn run_with_registration(
         let engine = node
             .get_engine_mut("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
+        let shutdown = ShutdownDiagnostic::subscribe(engine.trader_id());
         registry::add_strategy(engine, id, &request.strategy, registration)?;
         node.run()?;
         let engine = node
@@ -349,6 +395,9 @@ pub fn run_with_registration(
         let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Statically compiled Nautilus Strategy; not Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
         if book_quotes {
             notes.push("OFFICIAL_BOOK_DERIVED_QUOTES: Nautilus DataEngine emit_quotes_from_book uses original L2 best bid/ask and size for quote cache/publication; these are not additional exchange observations or catalog QuoteTick rows. Original book events still drive matching. Native risk checks and stop-time market exits can change now that quotes exist; old unpriced results and new returns are not directly comparable.".into());
+        }
+        if let Some(diagnostic) = shutdown.first.borrow().clone() {
+            notes.push(diagnostic);
         }
         notes.extend(node_catalog::row_count_notes(&counts, &replay_reads)?);
         Ok(NativeStrategyBacktestResultV1 {
@@ -385,6 +434,60 @@ mod book_quote_tests {
           "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L2_MBP","starting_balances":["100000 USDT"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
           "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false}
         })).unwrap()
+    }
+    #[test]
+    fn shutdown_diagnostic_observes_first_matching_event_and_unsubscribes() {
+        let trader: TraderId = "TESTER-001".parse().unwrap();
+        let observer = ShutdownDiagnostic::subscribe(trader);
+        let event = |trader_id, reason| {
+            ShutdownSystem::new(
+                trader_id,
+                "Strategy".into(),
+                reason,
+                nautilus_core::UUID4::new(),
+                42.into(),
+                None,
+            )
+        };
+        msgbus::publish_any(
+            MessagingSwitchboard::shutdown_system_topic(),
+            &event("OTHER-001".parse().unwrap(), Some("other".into())),
+        );
+        assert!(observer.first.borrow().is_none());
+        msgbus::publish_any(
+            MessagingSwitchboard::shutdown_system_topic(),
+            &event(trader, Some("é".repeat(5000))),
+        );
+        let first = observer.first.borrow().clone().unwrap();
+        let diagnostic: serde_json::Value =
+            serde_json::from_str(first.strip_prefix("OFFICIAL_SHUTDOWN_SYSTEM: ").unwrap())
+                .unwrap();
+        assert_eq!(diagnostic["reason"].as_str().unwrap().chars().count(), 4096);
+        assert_eq!(diagnostic["reason_truncated"], true);
+        msgbus::publish_any(
+            MessagingSwitchboard::shutdown_system_topic(),
+            &event(trader, Some("second".into())),
+        );
+        assert_eq!(observer.first.borrow().as_ref(), Some(&first));
+        let retained = observer.first.clone();
+        drop(observer);
+        *retained.borrow_mut() = None;
+        msgbus::publish_any(
+            MessagingSwitchboard::shutdown_system_topic(),
+            &event(trader, None),
+        );
+        assert!(retained.borrow().is_none());
+        let next = ShutdownDiagnostic::subscribe(trader);
+        msgbus::publish_any(
+            MessagingSwitchboard::shutdown_system_topic(),
+            &event(trader, None),
+        );
+        assert!(next
+            .first
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("\"reason\":null"));
     }
     #[test]
     fn official_book_quote_configuration_only_changes_pure_l2_obi() {
