@@ -103,3 +103,14 @@ export interface NativeRustEnvironment {
   /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
   accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
 }
+
+/** Read-only selected capability facts retained in the original account binding.
+ * No executable/source paths, credentials or current-session certification. */
+export interface SavedAccountRunnerReport {
+ source:'SAVED_ACCOUNT_BINDING';
+ nautilusVersion:string|null;
+ nautilusRevision:string|null;
+ precision:'standard'|'high'|null;
+ compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'|null;
+ compatibilityVerified:false|null;
+}

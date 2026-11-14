@@ -90,3 +90,10 @@ it('keeps each instrument newline while editing and parses only the explicit sav
  expect(accountConfigurationForSave(text,undefined).instruments).toEqual(['OLD.SIM']);
  expect(accountConfigurationForSave(text,'').instruments).toEqual([]);
 });
+
+import {SavedRunnerNotice} from './account-configuration';
+it('shows saved binding provenance without pretending the current runner or session was updated',()=>{
+ const html=renderToStaticMarkup(createElement(SavedRunnerNotice,{value:{source:'SAVED_ACCOUNT_BINDING',nautilusVersion:'0.69.0',nautilusRevision:'634abcd',precision:'high',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false}}));
+ expect(html).toContain('0.69.0');expect(html).toContain('634abcd');expect(html).toContain('不会更新或重新绑定');expect(html).toContain('不是认证');expect(html).toContain('不是当前连接探测');
+ expect(renderToStaticMarkup(createElement(SavedRunnerNotice,{}))).toContain('未记录');
+});

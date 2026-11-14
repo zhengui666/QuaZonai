@@ -1,3 +1,4 @@
+import type {SavedAccountRunnerReport} from '../../../packages/contracts/src/nautilus.ts';
 import AccountStrategy from './account-strategy';
 import {useState} from 'react';
 import {Button,Input,Checkbox,Select} from 'antd';
@@ -89,8 +90,14 @@ function PaperParameters({text,onChange,disabled,onError}:{text:string;onChange:
  {value!==undefined&&<Button disabled={disabled} onClick={()=>{const next={...config};delete next.paperExecution;onChange(JSON.stringify(next,null,2));}}>移除整组可选模拟参数</Button>}
  </fieldset>;
 }
+export function SavedRunnerNotice({value}:{value?:SavedAccountRunnerReport}){
+ return <section aria-label="原账户绑定产物"><h4>原账户绑定产物</h4>
+ <p>来源：账户创建时保留的产物能力报告，不是当前连接探测。切换全局运行器不会更新或重新绑定此账户。</p>
+ <dl><dt>Nautilus 版本</dt><dd>{value?.nautilusVersion??'未记录'}</dd><dt>上游修订</dt><dd>{value?.nautilusRevision??'未记录'}</dd><dt>精度</dt><dd>{value?.precision??'未记录'}</dd><dt>可信代码兼容约定</dt><dd>{value?.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'声明仅在单节点上注册策略（不是认证）':'未记录声明'}</dd></dl>
+ <p>这不证明文件仍可运行、会话在线或策略已验证；不会自动重建、连接、迁移旧账户或重发 UNKNOWN。</p></section>;
+}
 export default function AccountConfiguration({enabled}:{enabled:boolean}){
- const records=useResource<Array<{id:string;unavailable?:string;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
+ const records=useResource<Array<{id:string;unavailable?:string;savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
  const [instrumentsDraft,setInstrumentsDraft]=useState<string>();
  const [text,setText]=useState(initialAccountDraft),[error,setError]=useState<unknown>(),[notice,setNotice]=useState('');
  const command=useCommand<{id:string}>('account-configuration',result=>{setNotice(`账户 ${result.id} 的配置已保存，尚未连接或启动策略。`);void records.refetch();},'/accounts/configurations');
@@ -107,6 +114,6 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  <PendingCommand command={command}/><ErrorNotice error={error??command.error??records.error}/>{notice&&<p>{notice}</p>}
  <p>配置保存不会连接。下方每个账户的恢复连接和策略启动均须独立明确操作；恢复连接不代表可交易。</p>
  <Button onClick={()=>void records.refetch()}>只读取已保存账户</Button>
- {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。保留原身份，不创建替代节点。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
+ {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary><SavedRunnerNotice value={item.savedRunner}/>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。保留原身份，不创建替代节点。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
  </section>;
 }
