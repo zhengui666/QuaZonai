@@ -70,7 +70,9 @@ test('explicit hook modules render only selected capabilities and never boot nod
   assert.match(backtest, /main_with_hooks\(None, Some\(configured\), None\)/);
   assert.doesNotMatch(backtest, /fn account|BOOT|LiveNode/);
   const account = renderRustLauncher({ accountFactory: 'account' });
-  assert.match(account, /registrar.add\(owner_strategy::account::strategy\(name, config\)\?\)/);
+  assert.match(account, /owner_strategy::account::strategy\(\s*name, config, registrar.trader_id\(\), registrar.account_id\(\),\s*registrar.execution_client_id\(\), registrar.instrument_id\(\)\?, registrar.instruments\(\),\s*\)\?/);
+  assert.match(account, /registrar.add\(strategy\)/);
+  assert.doesNotMatch(account, /QZ-PAPER|serde_json::json|config\[/);
   assert.match(account, /main_with_hooks\(None, None, Some\(account\)\)/);
   assert.throws(() => renderRustLauncher({}), /factory_required/);
   assert.throws(() => renderRustLauncher({ accountFactory: 'bad();' }), /invalid_factory_path/);

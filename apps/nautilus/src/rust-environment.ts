@@ -87,7 +87,7 @@ export async function materializeRustLauncher(discovery: RustEnvironmentDiscover
 export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' };
 /** Module paths name explicit public entry contracts, not arbitrary functions or dynamic plugins.
  * owner module backtest: config(Path,name,Value) and install(BacktestEngine,name,Value).
- * owner module account: strategy(name,Value) returning its concrete official Strategy type.
+ * owner module account: strategy(name,Value,TraderId,AccountId,ClientId,InstrumentId,&[InstrumentId]) returning its concrete official Strategy type.
  */
 export function renderRustLauncher(factories: RustFactoryModules): string {
   if (!factories.backtestFactory && !factories.accountFactory) throw new Error('rust_environment_factory_required');
@@ -104,7 +104,11 @@ export function renderRustLauncher(factories: RustFactoryModules): string {
     })
 }
 ` : ''}${account ? `fn account(registrar: &mut job::account_runtime::AccountStrategyRegistrar, name: &str, config: &serde_json::Value) -> anyhow::Result<()> {
-    registrar.add(owner_strategy::${account}::strategy(name, config)?)
+    let strategy = owner_strategy::${account}::strategy(
+        name, config, registrar.trader_id(), registrar.account_id(),
+        registrar.execution_client_id(), registrar.instrument_id()?, registrar.instruments(),
+    )?;
+    registrar.add(strategy)
 }
 ` : ''}fn main() {
     job::native_runner::${factories.accountCompatibility ? 'main_with_hooks_and_account_compatibility' : 'main_with_hooks'}(None, ${backtest ? 'Some(configured)' : 'None'}, ${account ? 'Some(account)' : 'None'}${factories.accountCompatibility ? ', job::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode' : ''});

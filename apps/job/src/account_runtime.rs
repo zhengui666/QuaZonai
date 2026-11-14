@@ -2718,7 +2718,7 @@ mod tests {
                 .strategy_ids()
                 .last()
                 .unwrap();
-            {
+            let (expected_trader, expected_account) = {
                 let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
                     AccountController,
                 >(&owner_id.inner())
@@ -2728,7 +2728,9 @@ mod tests {
                     name: "test.parameterized".into(),
                     config: json!({"trade_size":amount}),
                 };
-            }
+                let trader = owner.native_trader.borrow().trader_id;
+                (trader, owner.account)
+            };
             let handle = native.handle();
             let stop = handle.clone();
             let cache = native.kernel().cache();
@@ -2755,6 +2757,8 @@ mod tests {
                         .orders(None, None, None, None, None)
                         .iter()
                         .any(|o| o.strategy_id() == StrategyId::from("CUSTOM-001")
+                            && o.trader_id() == expected_trader
+                            && o.account_id() == Some(expected_account)
                             && o.filled_qty() == Quantity::from_str(amount).unwrap()),
                     "custom parameter not passed to native strategy"
                 );
