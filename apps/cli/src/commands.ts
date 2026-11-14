@@ -24,6 +24,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
+    mode=LITERATURE_ONLY with datasetId admits only descriptive metadata and approved public literature; no native execution or sealed data.
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]

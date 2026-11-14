@@ -108,6 +108,7 @@ export async function openResearch(options: {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
     if (isRecoveryRequestId(requestId)) throw new Error('request_id_conflict');
     const input = structuredClone(researchInput(value));
+    if (input.mode === 'LITERATURE_ONLY' && sourceEvidence) throw new Error('literature_only_source_evidence_unsupported');
     const inputDigest = canonicalJsonDigest(input);
     const taskId = await controller.commit(async tx => {
       const requests = await tx.doc(Requests); const key = `request:${requestId}`;
@@ -241,7 +242,7 @@ export async function openResearch(options: {
       }
       if (stopped && study.final?.reason === 'owner_stop' || nativeContinuation && ownerAborted) await settleOwnerStopFacts(tx, handle.id);
       const mode = intent?.recovery?.mode ?? (nativeContinuation ? 'native' : stopped ? 'stopped' : 'model_error');
-      const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: recoveryInput(previousId, mode) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
+      const submissionId = await handle.submit(tx, mode === 'model_error' && instruction === undefined ? { type: 'continue', requestId } : { type: 'input', content: (study.input?.mode === 'LITERATURE_ONLY' ? 'Continue the literature-only discussion using only descriptive metadata and approved public literature. No native execution, market data, sealed data or performance evaluation.' : recoveryInput(previousId, mode)) + (instruction === undefined ? '' : `\n\nOwner instruction:\n${instruction}`), requestId, whenBusy: 'reject' });
       if (!intent) {
         delete (await tx.doc(CampaignResearchDoc, handle.id)).ownerStopTaskId;
         if (study.final && mode === 'native') { study.previousNativeResults = [...(study.previousNativeResults ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }

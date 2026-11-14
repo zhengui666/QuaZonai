@@ -5,23 +5,28 @@ import { Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
 import { LiteratureDoc } from '../src/literature-document.ts';
-import { literatureInstructions, literatureTools } from '../src/literature-tools.ts';
+import { literatureInstructions, literatureOnlyInstructions, literatureTools } from '../src/literature-tools.ts';
 import { CampaignResearchDoc } from '../src/pm-campaign.ts';
 
 const instructions = `Research the owner's question using the registered brief and literature. Use native_strategy_backtest for an explicitly bound, unchanged upstream Nautilus strategy, and predeclare explicit training and validation windows before running their separate native_strategy_backtest invocations. Preserve each original request and receipt for Pi to assess out-of-sample evidence; automatic walk-forward selection is unavailable. Do not translate custom signals into non-equivalent upstream strategies. Preserve registered data, original fee models and execution receipts. Never read sealed data, invent performance, approval or trading permission. Ask for genuinely missing inputs; an ordinary discussion does not need an executable binding.
 ${literatureInstructions}`;
 export function researchExtension(search?: Parameters<typeof literatureTools>[0]) {
-  return defineExtension({ name: 'qz.research', sections: [section('research', () => instructions)],
+  return defineExtension({ name: 'qz.research', sections: [section('research', async (input, context) => (await input.read.snapshot(Study, input.conversationId, context))?.input?.mode === 'LITERATURE_ONLY' ? literatureOnlyInstructions : instructions)],
     hooks: [hook(ToolTask, { async afterTool(_call, result, api, context) {
       const final = (await api.snapshot(Study, api.conversationId, context))?.final;
       if (final && final.scientificClaim !== 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION') return { ...result, control: { ...result.control, terminate: true } };
     } })], tools: [
     ...literatureTools(search),
     defineTool({
-      name: 'research_brief', description: 'Original objective, available research data and fixed policy with a compact trial ledger page. Follow nextAfterTrialId with afterTrialId for complete disclosure. research_trial reads original validation feedback without computing. No final held-out values.',
+      name: 'research_brief', description: 'Read the original objective and mode-specific registered brief. Literature-only mode returns descriptive registration fields and permitted public queries only, without scientific data or trial instructions. Other modes include a paged trial ledger; no final held-out values.',
       parameters: obj({ afterTrialId: opt(int({ minimum: 1 })), limit: opt(int({ minimum: 1, maximum: 20 })) }), replay: 'safe',
       async execute(args, api, context) {
         const input = await studyInput(api, context);
+        if (input.mode === 'LITERATURE_ONLY') return { output: [{ type: 'text', text: JSON.stringify({
+          mode: input.mode, goal: input.goal, data: input.data,
+          limitations: 'Descriptive registration fields only, not verified training metadata or scientific admission. No market files, sealed data, native execution or performance results are available. Conclude discussion with research_finish.',
+          literature: { publicQueries: (input.publicLiteratureQueries ?? []).map((query, queryIndex) => ({ queryIndex, query })), readTool: 'research_literature' },
+        }) }] };
         const { data, policy } = modelBriefInput(input);
         const study = await api.snapshot(Study, api.conversationId, context);
         const campaign = await api.snapshot(CampaignResearchDoc, api.conversationId, context);
