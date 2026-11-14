@@ -1,3 +1,4 @@
+import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
 import AccountConfiguration from './account-configuration';
 import { Button, Form, Input, Select } from 'antd';
 import { useEffect, useState } from 'react';
@@ -22,7 +23,7 @@ export function AccountCompatibilityNotice({declaration}:{declaration:unknown}) 
 }
 export function retryUncertainEnvironmentSave(status?: number) { return status === undefined || status >= 500; }
 type BuildRequest={requestId:string;expectedRevision:number;environmentId?:string;sourceExecutable?:string};
-type BuildView={requestId:string;taskId:number;state:{status:string;outcome?:{status:string;result?:{qualification:string;target:{capabilities:unknown}};error?:{message:string}}}};
+type BuildView=PreparationView;
 const required = [{ required: true, whitespace: true, message: '请填写此项' }];
 export default function InstanceSettings() {
   const query = useResource<InstanceSettingsView>('/settings/instances');
@@ -114,8 +115,8 @@ export default function InstanceSettings() {
     <Button onClick={()=>void selectRunner()} disabled={busy||build?.state.outcome?.status!=='completed'}>选用已核实产物（不启动账户）</Button>
     {(build?.state.status==='terminal'||(error instanceof ApiError&&error.status<500))&&<Button disabled={busy} onClick={()=>{setBuildRequest(undefined);setBuild(undefined);localStorage.removeItem('qz-native-build-request');}}>准备新的显式构建或导入请求</Button>}
     {buildRequest&&<p>原产物准备请求：{buildRequest.requestId}。重开或查询不会重编或重新执行导入查询；结果不确定时保留原身份，不将它改称成功。本地任务取消或停止不证明任意二进制的后代进程已结束，也不证明没有外部副作用。</p>}
-    {build&&<pre>{JSON.stringify(build,null,2)}</pre>}
-    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><pre>{JSON.stringify(saved.runner.capabilities,null,2)}</pre></>}
+    {build&&<PreparationStatus value={build}/>}
+    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><SelectedRunnerStatus runner={saved.runner}/></>}
     <p>当前 QZ 账户接线仅支持 Hyperliquid、单账户中的一个 EMA 或已注册 Rust Strategy，最多 256 个标的，不等于任意官方 LiveNode 配置。账户工厂未编入时不能恢复账户；研究工厂可用不构成交易权限。连接与启动交易仍须账户页各自显式操作。</p>
     <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
     {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}
