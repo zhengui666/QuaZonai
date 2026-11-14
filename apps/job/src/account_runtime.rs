@@ -262,6 +262,19 @@ impl AccountStrategyRegistrar<'_> {
     pub fn instruments(&self) -> &[InstrumentId] {
         &self.owner.ids
     }
+    /// Original node trader identity; not a user-configured replacement.
+    pub fn trader_id(&self) -> TraderId {
+        self.owner.native_trader.borrow().trader_id
+    }
+    /// Original account identity used by this runtime.
+    pub fn account_id(&self) -> AccountId {
+        self.owner.account
+    }
+    /// Runtime execution client selected for this account. This is routing
+    /// context, not a connectivity, balance, or trading-permission assertion.
+    pub fn execution_client_id(&self) -> ClientId {
+        self.owner.client
+    }
     pub fn add<T>(&mut self, strategy: T) -> Result<()>
     where
         T: Strategy + StrategyNative + DataActorNative + Component + std::fmt::Debug + 'static,
@@ -2543,6 +2556,10 @@ mod tests {
                 "TEST_ACCOUNT_STRATEGY_UNKNOWN"
             );
             let instrument = registrar.instrument_id()?;
+            assert_eq!(registrar.trader_id().to_string(), registrar.owner.trader);
+            assert_eq!(registrar.account_id(), registrar.owner.account);
+            assert_eq!(registrar.execution_client_id(), registrar.owner.client);
+            let client = registrar.execution_client_id();
             let trade_size = Quantity::from_str(
                 config["trade_size"]
                     .as_str()
@@ -2556,7 +2573,7 @@ mod tests {
                     ..Default::default()
                 }),
                 instrument,
-                client: ClientId::from("QZ-PAPER"),
+                client,
                 trade_size,
             })
         }
