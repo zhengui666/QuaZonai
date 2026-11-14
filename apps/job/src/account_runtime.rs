@@ -1162,22 +1162,25 @@ impl AccountController {
             minimum_interval_ns,
         });
         self.update_spot_observation(spot_candidate);
-        self.last_slice_ns = self.last_slice_ns.max(
-            self.cache()
-                .orders(None, None, None, Some(&self.account), None)
-                .iter()
+        let latest_exit_ns = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
                 .filter(|o| exit_id(o.tags()).is_some())
                 .map(|o| o.ts_submitted().unwrap_or(o.ts_init()).as_u64())
                 .max()
-                .unwrap_or(0),
-        );
-        let pending: Vec<_> = self
-            .cache()
-            .orders(None, None, None, Some(&self.account), None)
-            .iter()
-            .filter(|o| !o.is_closed() && o.order_side() == OrderSide::Buy)
-            .map(|o| o.client_order_id())
-            .collect();
+                .unwrap_or(0)
+        };
+        self.last_slice_ns = self.last_slice_ns.max(latest_exit_ns);
+        let mut pending: Vec<_> = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
+                .filter(|o| !o.is_closed() && o.order_side() == OrderSide::Buy)
+                .map(|o| o.client_order_id())
+                .collect()
+        };
+        pending.sort();
         for id in pending {
             self.cancel_order(id, Some(self.client), None)?;
         }
@@ -1204,22 +1207,24 @@ impl AccountController {
             .ok_or_else(|| anyhow!("account_native_budget_fence_not_applied"))?;
         ensure!(c.epoch == epoch, "account_native_obsolete_control_epoch");
         let exit = r.text("exit_id")?;
-        let ids: Vec<_> = self
-            .cache()
-            .orders(None, None, None, Some(&self.account), None)
-            .iter()
-            .filter(|o| !o.is_closed() && exit_id(o.tags()).as_deref() == Some(exit))
-            .map(|o| o.client_order_id())
-            .collect();
+        let mut ids: Vec<_> = {
+            let cache = self.native_cache.borrow();
+            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+                .map(|id| required_order_ref(&cache, &id))
+                .filter(|o| !o.is_closed() && exit_id(o.tags()).as_deref() == Some(exit))
+                .map(|o| o.client_order_id())
+                .collect()
+        };
+        ids.sort();
         for id in &ids {
             self.cancel_order(*id, Some(self.client), None)?;
         }
         Ok(json!({"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
     fn protection_orders(&self, target: Option<&str>) -> Vec<ClientOrderId> {
-        self.cache()
-            .orders(None, None, None, None, None)
-            .iter()
+        let cache = self.native_cache.borrow();
+        let mut ids: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
+            .map(|id| required_order_ref(&cache, &id))
             .filter(|o| {
                 !o.is_closed()
                     && o.tags().is_some_and(|tags| {
@@ -1231,7 +1236,9 @@ impl AccountController {
                     })
             })
             .map(|o| o.client_order_id())
-            .collect()
+            .collect();
+        ids.sort();
+        ids
     }
     fn cancel_protection(&mut self, r: &Request) -> Result<Value> {
         let target = r.text("id")?;
@@ -1305,6 +1312,11 @@ impl AccountController {
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
     }
 }
+// Preserve the official Cache::orders failure for an inconsistent order index.
+fn required_order_ref<'a>(cache: &'a Cache, id: &ClientOrderId) -> nautilus_common::cache::OrderRef<'a> {
+    cache.order_ref(id).unwrap_or_else(|| panic!("Order {id} not found"))
+}
+
 fn exit_id(tags: Option<&[Ustr]>) -> Option<String> {
     tags?.iter().find_map(|t| {
         t.as_str()
@@ -1866,6 +1878,13 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Order MISSING not found")]
+    fn lazy_control_scan_preserves_missing_order_failure() {
+        let cache = Cache::default();
+        let _ = required_order_ref(&cache, &ClientOrderId::from("MISSING"));
+    }
+
+    #[test]
     fn summary_activity_uses_official_node_indices_including_unassigned_orders() -> Result<()> {
         use nautilus_model::{enums::{OrderType, LiquiditySide, TriggerType},
             events::{OrderPendingCancel,OrderPendingUpdate,OrderEmulated,OrderReleased,OrderTriggered,OrderFilled},
@@ -1902,6 +1921,17 @@ mod tests {
                     }
                 }
                 assert_eq!(order.status().to_string(),name);
+                // The lazy scan must preserve the former account-filtered set,
+                // including the absence of an account on local orders.
+                for filter in [None, Some(&account)] {
+                    let former: Vec<_> = cache.orders(None, None, None, filter, None)
+                        .iter().map(|o| o.client_order_id().to_string()).collect();
+                    let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, filter)
+                        .filter_map(|id| cache.order_ref(&id))
+                        .map(|o| o.client_order_id().to_string()).collect();
+                    lazy.sort();
+                    assert_eq!(former, lazy, "lazy scan {name}/{suffix}");
+                }
                 assert_ne!(official_node_order_activity(&cache),empty,"{name}/{suffix}");
                 cache.clear_index();cache.build_index();
                 assert_ne!(official_node_order_activity(&cache),empty,"rebuilt {name}/{suffix}");
@@ -1921,6 +1951,12 @@ mod tests {
             let order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
             originals.push((order,account));
         }
+        let former: Vec<_> = cache.orders(None, None, None, None, None)
+            .iter().map(|o| o.client_order_id()).collect();
+        let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
+            .map(|id| required_order_ref(&cache, &id).client_order_id()).collect();
+        lazy.sort();
+        assert_eq!(former, lazy, "preserve official cancellation order");
         for (index,(order,account)) in originals.iter().enumerate() {
             assert_ne!(official_node_order_activity(&cache),empty);
             cache.update_order(&TestOrderEventStubs::canceled(order,*account,None))?;
