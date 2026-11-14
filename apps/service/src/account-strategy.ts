@@ -222,8 +222,13 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     const prefix=`${accountKey(binding.connection,app.accountControls)}:`;
     // Read original Pi facts only. No transport, BOOT, or cancellation attempt.
     const items=[];let matched=0,more=false;
-    for(const [key,value] of Object.entries(app.strategyCommands??{})){
-      if(!key.startsWith(prefix)||object(value.original).action!=='CANCEL')continue;
+    const commands=app.strategyCommands??{};
+    // Do not materialize every historical value/entry tuple before paging.
+    // Pi still owns the full document; offset scans and key enumeration are not bounded.
+    for(const key in commands){
+      if(!Object.hasOwn(commands,key)||!key.startsWith(prefix))continue;
+      const value=commands[key]!;
+      if(object(value.original).action!=='CANCEL')continue;
       if(matched++<offset)continue;
       if(items.length===50){more=true;break;}
       items.push(view(value));

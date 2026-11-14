@@ -101,3 +101,45 @@ test('saved paper cancel routes use original Task, retain UNKNOWN and never BOOT
   assert.equal(Object.keys((await state.service.research.harness.snapshot(Application,context))!.strategyCommands!).length,2);
  }finally{await state.cleanup();}
 });
+
+test('cancel history preserves offset order and UNKNOWN without eagerly reading unrelated or later values',async()=>{
+ const {accountStrategyWorkbench}=await import('../src/account-strategy.ts');
+ const {accountKey}=await import('../src/capital-exit.ts');
+ const connection={id:'history',name:'history',url:'http://127.0.0.1:1',clientId:'original',accountId:'original',mode:'paper' as const};
+ const prefix=accountKey(connection)+':';
+ const record=(id:string,action='CANCEL')=>({original:{requestId:id,action,order:{clientOrderId:'order-'+id},binding:{nativeSessionId:'original-session'}},status:'UNCERTAIN',receipt:{status:'UNKNOWN',lastEventJson:'{"ts_event":18446744073709551615}'},error:'native_cancel_original_session_unavailable'});
+ const records:Record<string,ReturnType<typeof record>>=Object.create({[prefix+'inherited']:record('inherited')});
+ records['other-account:unrelated']=record('unrelated');
+ records[prefix+'recover']=record('recover','RECOVER');
+ for(let i=0;i<101;i++)records[prefix+'cancel-'+i]=record('cancel-'+i);
+ let reads:string[]=[];
+ const commands=new Proxy(records,{get(target,key,receiver){if(typeof key==='string'&&Object.hasOwn(target,key))reads.push(key);return Reflect.get(target,key,receiver);}});
+ const host={harness:{snapshot:async()=>({strategyCommands:commands})}} as unknown as Parameters<typeof accountStrategyWorkbench>[0];
+ const work=accountStrategyWorkbench(host,async()=>({connection,view:{currency:'USDC'}}));
+ for(const offset of [0,49,50,51,100,101]){
+  reads=[];const page=await work.history('history',offset);
+  const ids=Array.from({length:Math.min(50,101-offset)},(_,i)=>'cancel-'+(i+offset));
+  assert.deepEqual(page.items.map(item=>(item as Record<string,unknown>).requestId),ids);
+  assert.equal(page.nextOffset,offset+50<101?offset+50:null);
+  for(const item of page.items){assert.equal(item.status,'UNCERTAIN');assert.deepEqual(item.receipt,record('x').receipt);assert.deepEqual((item as Record<string,unknown>).binding,{nativeSessionId:'original-session'});}
+  assert.equal(reads.includes('other-account:unrelated'),false);
+  assert.equal(reads.includes(prefix+'inherited'),false);
+  assert.equal(reads.length,1+Math.min(101,offset+51));
+ }
+ records[prefix+'cancel-101']=record('cancel-101');
+ assert.deepEqual((await work.history('history',101)).items.map(item=>(item as Record<string,unknown>).requestId),['cancel-101']);
+ assert.equal(Object.keys(records).length,104,'history never deletes retained records');
+ // Pi snapshot returns the official Chord tracker value, not a cloned page.
+ const {track}=await import('@earendil-works/chord/delta');
+ const descriptors:string[]=[];const tracked=track({...records}).value;
+ const trackedCommands=new Proxy(tracked,{getOwnPropertyDescriptor(target,key){if(typeof key==='string')descriptors.push(key);return Reflect.getOwnPropertyDescriptor(target,key);}});
+ const trackedHost={harness:{snapshot:async()=>({strategyCommands:trackedCommands})}} as unknown as Parameters<typeof accountStrategyWorkbench>[0];
+ const trackedWork=accountStrategyWorkbench(trackedHost,async()=>({connection,view:{currency:'USDC'}}));
+ assert.deepEqual(await trackedWork.history('history',0),await work.history('history',0));
+ assert.equal(descriptors.includes(prefix+'cancel-101'),false,'later tracker values are not inspected before first page returns');
+ await assert.rejects(work.history('history',-1),/native_order_offset_invalid/);
+ const emptyHost={harness:{snapshot:async()=>({strategyCommands:{}})}} as unknown as Parameters<typeof accountStrategyWorkbench>[0];
+ assert.deepEqual(await accountStrategyWorkbench(emptyHost,async()=>({connection,view:{currency:'USDC'}})).history('history',0),{items:[],nextOffset:null});
+
+
+});
