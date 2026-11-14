@@ -31,7 +31,7 @@ use std::{
     str::FromStr,
 };
 
-/// Configure only the official book-to-quote pipeline for the pure L2 OBI input.
+/// Configure the official book-to-quote pipeline for L2 OBI, including funding data.
 /// Existing source quotes/trades and quote-driven strategies keep their own semantics.
 fn configure_book_quotes(
     config: &mut BacktestEngineConfig,
@@ -40,11 +40,15 @@ fn configure_book_quotes(
     let enabled = matches!(
         request.strategy,
         NativeCompiledStrategyV1::OrderBookImbalance { .. }
-    ) && !request.selectors.is_empty()
-        && request.selectors.iter().all(|selector| {
-            selector.data_type.parse::<NautilusDataType>().ok()
-                == Some(NautilusDataType::OrderBookDelta)
-        });
+    ) && request.selectors.iter().any(|selector| {
+        selector.data_type.parse::<NautilusDataType>().ok()
+            == Some(NautilusDataType::OrderBookDelta)
+    }) && request.selectors.iter().all(|selector| {
+        matches!(
+            selector.data_type.parse::<NautilusDataType>().ok(),
+            Some(NautilusDataType::OrderBookDelta | NautilusDataType::FundingRateUpdate)
+        )
+    });
     if enabled {
         config
             .data_engine
@@ -387,11 +391,25 @@ mod book_quote_tests {
         })).unwrap()
     }
     #[test]
-    fn official_book_quote_configuration_only_changes_pure_l2_obi() {
+    fn official_book_quote_configuration_preserves_l2_obi_with_funding() {
         let mut request = request("ETHUSDT.BINANCE".parse().unwrap());
         let mut config = BacktestEngineConfig::default();
         assert!(configure_book_quotes(&mut config, &request));
         assert!(config.data_engine.unwrap().emit_quotes_from_book);
+        let mut funded = request.clone();
+        funded.selectors.push(
+            serde_json::from_value(
+                json!({"data_type":"FundingRateUpdate","identifier":request.instrument_id}),
+            )
+            .unwrap(),
+        );
+        let mut config = BacktestEngineConfig::default();
+        assert!(configure_book_quotes(&mut config, &funded));
+        assert!(config.data_engine.unwrap().emit_quotes_from_book);
+        funded.selectors.remove(0);
+        let mut config = BacktestEngineConfig::default();
+        assert!(!configure_book_quotes(&mut config, &funded));
+        assert!(config.data_engine.is_none());
         for kind in ["QuoteTick", "TradeTick", "MarkPriceUpdate"] {
             let mut mixed = request.clone();
             mixed.selectors.push(
@@ -537,6 +555,43 @@ mod book_quote_tests {
             "{}",
             old.canonical_result["orders"]
         );
+        // Funding is an auxiliary input: a native update without a settlement
+        // boundary must not switch off L2 valuation or the native stop-time exit.
+        let ts = DAY + 21_000_000;
+        catalog
+            .write_to_parquet(
+                &[nautilus_model::data::FundingRateUpdate::new(
+                    id,
+                    "-0.0000003644".parse().unwrap(),
+                    Some(60),
+                    None,
+                    ts.into(),
+                    ts.into(),
+                )],
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let root = dir.path().to_path_buf();
+        let mut config = request(id);
+        config.selectors.push(
+            serde_json::from_value(
+                json!({"data_type":"FundingRateUpdate","identifier":id.to_string()}),
+            )
+            .unwrap(),
+        );
+        let funded = std::thread::spawn(move || super::run(&root, config).unwrap())
+            .join()
+            .unwrap();
+        assert_eq!(funded.data_rows_by_type["FundingRateUpdate"].get(), 1);
+        assert_eq!(funded.equity_performance.unpriced_snapshot_count, "0");
+        for field in ["fills", "orders", "positions", "accounts"] {
+            assert_eq!(
+                current.canonical_result[field],
+                funded.canonical_result[field]
+            );
+        }
         let root = dir.path().to_path_buf();
         let config = request(id);
         let enabled_preloaded = std::thread::spawn(move || {
