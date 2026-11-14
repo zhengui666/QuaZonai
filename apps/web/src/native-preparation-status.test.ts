@@ -14,3 +14,10 @@ it('shows saved selection separately without executable paths or arbitrary ident
  const runner={kind:'RUST_PROCESS',id:'owner',binary:'/private/runner',capabilities:{identity:{nautilusVersion:'0.69.0',precision:'high',nautilusSource:'path+file:///private/source',private:'secret'},account:{compiled:true,registration:false},research:{configuredRunFactory:true}}} as any;
  const html=renderToStaticMarkup(createElement(SelectedRunnerStatus,{runner}));expect(html).toContain('0.69.0');expect(html).toContain('high');expect(html).toContain('不表示上方每个历史准备请求');expect(html).toContain('旧账户不自动改绑');expect(html).not.toContain('/private');expect(html).not.toContain('secret');expect(html).not.toContain('<pre');
 });
+it('explains only known preparation failure categories without exposing arbitrary diagnostics or promising no execution',()=>{
+ const view=(message:string)=>({requestId:'original',taskId:42,state:{status:'terminal',outcome:{status:'failed',error:{message}}}});
+ for(const [code,text] of [['native_preparation_required_file_unavailable','所需文件'],['native_preparation_file_access_denied','无权'],['native_preparation_identity_mismatch','不匹配'],['native_preparation_capabilities_invalid','接口']]){
+  const status=preparationStatus(view(code!));expect(status.detail).toContain(text);expect(status.detail).toContain('不证明没有执行');expect(status.detail).toContain('不会自动重试');
+ }
+ for(const raw of ['constructor','/private/compiler-secret','native_build_not_verified_inspect_original_build_directory']){const status=preparationStatus(view(raw));expect(status.detail).toContain('不推断');expect(status.detail).not.toContain(raw);}
+});

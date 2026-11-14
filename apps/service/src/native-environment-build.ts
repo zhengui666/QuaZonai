@@ -1,4 +1,4 @@
-import {mkdir} from 'node:fs/promises';
+import {mkdir,stat} from 'node:fs/promises';
 import {join,isAbsolute} from 'node:path';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {defineDoc,defineExtension,defineTask,type JsonObject,type TaskId} from '@earendil-works/pi-durable';
@@ -15,6 +15,23 @@ import type {instanceSettings} from './instance-settings.ts';
 const BuildRequests=defineDoc<{requests:Record<string,{taskId:number,input:JsonObject}>}>({kind:'qz.native-environment-builds',version:1,scope:'session',initial:()=>({requests:{}}),checkpointWhen:()=>true});
 type ImportSource={environmentId:string;sourceExecutable:string;expectedIdentity?:ImportedLauncherIdentity};
 type Input={requestId:string;revision:number;environment:NativeRustEnvironment|null;importSource?:ImportSource};
+/** Public categories only: never forward compiler output, file paths or arbitrary errors. */
+export function nativePreparationFailure(error:unknown):string {
+ const code=(error as {code?:unknown}|null)?.code;
+ if(code==='ENOENT')return 'native_preparation_required_file_unavailable';
+ if(code==='EACCES'||code==='EPERM')return 'native_preparation_file_access_denied';
+ const message=error instanceof Error?error.message:'';
+ if(message==='rust_import_identity_mismatch'||message==='rust_build_binary_identity_mismatch')return 'native_preparation_identity_mismatch';
+ if(message==='rust_import_capabilities_invalid'||message==='rust_build_capabilities_mismatch')return 'native_preparation_capabilities_invalid';
+ return 'native_build_not_verified';
+}
+async function preparationDiagnostics(directory:string){
+ const files:string[]=[];
+ for(const name of ['build.log','capabilities.stdout','capabilities.stderr']){
+  try{if((await stat(join(directory,name))).isFile())files.push(name);}catch{/* Absence/access failure is not evidence of an available log. */}
+ }
+ return files;
+}
 /** Original official Pi task owns construction and uncertainty. No parallel job ledger. */
 export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLauncher,importRunner=importRustLauncher){
  const Build=defineTask<Input,{phase:'compile'|'unknown'},JsonObject>({name:'qz.native-environment-build',version:1,initial:()=>({phase:'compile'}),phases:{
@@ -30,8 +47,9 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
     await runtime.commit(()=>({status:'terminal',outcome:{status:'completed',result:json({qualification:result.qualification,target,...('manifestPath' in result?{manifestPath:result.manifestPath}:{}),connected:false,strategyStarted:false})}}),ctx);
    }catch(error){
     if(runtime.signal.aborted)throw error;
-    // Diagnostics stay in the isolated build files; never expose user compiler stderr here.
-    await runtime.commit(()=>({status:'terminal',outcome:{status:'failed',error:{message:'native_build_not_verified_inspect_original_build_directory'}}}),ctx);
+    // Early preflight can fail before a task directory exists. Name only logs verified present.
+    const diagnosticFiles=await preparationDiagnostics(join(root,String(task.id)));
+    await runtime.commit(()=>({status:'terminal',outcome:{status:'failed',error:{message:nativePreparationFailure(error),detail:{diagnosticFiles}}}}),ctx);
    }
   },
   async unknown(_task,runtime,ctx){await runtime.commit(()=>({status:'terminal',outcome:{status:'failed',error:{message:'native_build_original_outcome_unknown_no_automatic_retry'}}}),ctx);},
