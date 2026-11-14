@@ -145,6 +145,15 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     const result=await downstreamRequest(binding.connection,`strategy/orders/${offset}`,'GET');
     assertEnvelope(binding.connection,result,binding.view.currency);return result;
   }
+  async function legacySnapshot(id:string,value:unknown) {
+    if(!configuredBinding)throw new Problem('native_control_transport_unsupported',409);
+    const binding=await fact(id);throwIfHistoricalHttp(binding.connection);
+    const body=object(value);
+    const result=await downstreamRequest(binding.connection,'strategy/legacy-snapshot','POST',{
+      mode:body.mode,expectedNativeSessionId:body.expectedNativeSessionId,acknowledgeFullHistoryCost:body.acknowledgeFullHistoryCost,
+      clientId:binding.connection.clientId,accountId:binding.connection.accountId});
+    assertEnvelope(binding.connection,result,binding.view.currency);return result;
+  }
   async function spotObservation(id: string) {
     const binding = await fact(id);
     throwIfHistoricalHttp(binding.connection);
@@ -263,5 +272,5 @@ export function accountStrategyWorkbench(host: ResearchHost,configuredBinding?:(
     assertEnvelope(binding.connection, result, binding.view.currency);
     return result;
   }
-  return { status, fence, orders, history, spotObservation, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
+  return { status, fence, orders, history, legacySnapshot, spotObservation, configuration, verifyConfiguration, command: async (id: string, value: unknown) => view(await command(id, value)), receipt: async (id: string, requestId: string) => view(await receipt(id, requestId)) };
 }

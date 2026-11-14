@@ -15,7 +15,7 @@ use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
 use indexmap::IndexMap;
 use nautilus_common::{
     actor::{DataActor, DataActorNative},
-    cache::CacheConfig,
+    cache::{Cache, CacheConfig},
     component::{component_state, reset_component, Component},
     enums::{ComponentState, Environment},
     logging::logger::LoggerConfig,
@@ -182,6 +182,14 @@ struct Request {
     #[serde(flatten)]
     body: BTreeMap<String, Value>,
 }
+// Official node-wide activity indices. No account filter: unassigned orders and
+// other strategies/accounts must conservatively prevent a zero-order proof.
+fn official_node_order_activity(cache: &Cache) -> Value {
+    json!({"open":cache.has_orders_open(None,None,None,None,None),
+        "inflight":cache.has_orders_inflight(None,None,None,None,None),
+        "active_local":cache.has_orders_active_local(None,None,None,None,None),
+        "emulated":cache.has_orders_emulated(None,None,None,None,None)})
+}
 impl Request {
     fn ensure_external(&self) -> Result<()> {
         ensure!(
@@ -312,7 +320,6 @@ struct AccountController {
     fee_valid_until_ns: u64,
     control: Option<Control>,
     snapshot: Option<Value>,
-    stamp: String,
     last_tick_ns: u64,
     last_slice_ns: u64,
     cache_failed: Arc<AtomicBool>,
@@ -375,7 +382,7 @@ impl DataActor for AccountController {
         respond(
             &self.boot_id,
             Ok(
-                json!({"strategy_lifecycle":self.strategy_lifecycle(),"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
+                json!({"account_summary_protocol":1,"strategy_lifecycle":self.strategy_lifecycle(),"ready":true,"fenced":true,"native_version":crate::NAUTILUS_VERSION,"native_session_id":self.session,"recovery":"OFFICIAL_CACHE_AND_RECONCILIATION","recovery_only":self.signal_strategy_id.is_none(),"ordinary_venue_cancel":self.cancel_node.is_some(),"account_compatibility_declaration":self.compatibility.declaration(),"account_compatibility_verified":false,"ordinary_venue_cancel_scope":if self.cancel_node.is_none(){None}else if self.user_registration.is_some(){Some("DECLARED_TRUSTED_STRATEGY_ONLY_PAPER_ORDINARY_VENUE")}else{Some("KNOWN_OWNED_EMA_PAPER_ORDINARY_VENUE")}}),
             ),
         );
         Ok(())
@@ -535,35 +542,6 @@ impl AccountController {
     }
     fn refresh_snapshot(&mut self) -> Result<()> {
         let account = self.account;
-        let stamp = {
-            let cache = self.cache();
-            let account_event = cache
-                .account(&account)
-                .and_then(|v| v.last_event())
-                .ok_or_else(|| anyhow!("account_native_account_unavailable"))?;
-            let mut stamp = account_event.event_id.to_string();
-            for id in &self.ids {
-                if let Some(q) = cache.quote(id) {
-                    stamp.push_str(&format!(":{}:{}", id, q.ts_init));
-                }
-                if let Some(book) = cache.order_book(id) {
-                    stamp.push_str(&format!(":book:{}", book.ts_last));
-                }
-            }
-            let orders = cache.orders(None, None, None, Some(&account), None);
-            for o in &orders {
-                stamp.push_str(&format!(
-                    ":{}:{}:{}",
-                    o.client_order_id(),
-                    o.status(),
-                    o.filled_qty()
-                ));
-            }
-            stamp
-        };
-        if stamp == self.stamp {
-            return Ok(());
-        }
         let native = self
             .portfolio_rc()
             .try_borrow_mut()
@@ -589,32 +567,13 @@ impl AccountController {
                 "taker_fee_rate":if now<self.fee_valid_until_ns{Some(self.fee_rate.to_string())}else{None},"fee_source":self.fee_source,"fee_valid_until_ns":self.fee_valid_until_ns.to_string(),"bid":quote.bid_price.as_decimal().to_string(),"ask":quote.ask_price.as_decimal().to_string(),
                 "bid_depth":depth,"asof_ns":quote.ts_init.as_u64().to_string(),"book_asof_ns":book_ns.map(|v|v.to_string())}));
         }
-        let orders = cache.orders(None, None, None, Some(&account), None);
-        let mut fills = vec![];
-        let mut order_rows:Vec<_>=orders.iter().map(|o|{
-            for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
-            json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),"is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string()),"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
-                "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
-                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
-                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
-                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
-                "contingency_type":o.contingency_type().map(|v|v.to_string()),
-                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
-        }).collect();
-        let mut positions:Vec<_>=cache.positions(None,None,None,Some(&account),None).iter().filter(|p|p.is_open()).map(|p|{
+        let mut positions:Vec<_>=cache.positions_open(None,None,None,Some(&account),None).iter().map(|p|{
             // Public per-position PnL requires a caller-selected price. The official
             // Portfolio price/staleness selection is private and its public PnL is
             // aggregate; do not recreate that policy or duplicate an aggregate here.
             json!({"instrument_id":p.instrument_id.to_string(),"quantity":p.signed_decimal_qty().to_string(),"value":Value::Null,"pnl":Value::Null})
         }).collect();
-        order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
         positions.sort_by_key(|v| v["instrument_id"].as_str().unwrap_or_default().to_owned());
-        fills.sort_by_key(|v| {
-            (
-                v["ts_event_ns"].as_str().unwrap_or_default().to_owned(),
-                v["trade_id"].as_str().unwrap_or_default().to_owned(),
-            )
-        });
         let cash = native
             .balances
             .iter()
@@ -635,12 +594,38 @@ impl AccountController {
         self.snapshot = Some(
             json!({"ready":fresh&&!native.is_stale,"recovery_required":false,"reason":if fresh {None}else{Some("account_native_market_data_stale_or_unavailable")},
             "sequence":native.ts_init.as_u64().to_string(),"observed_at_ns":native.ts_init.as_u64().to_string(),"observation_id":Id::new().to_string(),
-            "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"orders":order_rows,"fills":fills,"cash":cash,"equity":equity,"currency":"USDC",
+            "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"official_node_order_activity":official_node_order_activity(&self.native_cache.borrow()),"cash":cash,"equity":equity,"currency":"USDC",
             "native_version":crate::NAUTILUS_VERSION,"currency_precision":Currency::USDC().precision,"control_epoch":self.control.as_ref().map(|c|c.epoch.to_string()),"control_revision":self.control.as_ref().map(|c|c.revision.clone()),"fenced":self.control.as_ref().is_none_or(|c|c.mode=="PAUSED")||self.cache_failed.load(Ordering::SeqCst),
             "spot_balance_observation":self.spot_balance_observation,"remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
         );
-        self.stamp = stamp;
         Ok(())
+    }
+    // Explicit legacy export only. Periodic observations never enumerate order history.
+    // This preserves full historical export semantics; it is not a bounded endpoint.
+    fn append_order_history(&self, frame: &mut Value) {
+        let account = self.account;
+        let cache = self.cache();
+        let orders = cache.orders(None, None, None, Some(&account), None);
+        let mut fills = vec![];
+        let mut order_rows:Vec<_>=orders.iter().map(|o|{
+            for event in o.events() {if let OrderEventAny::Filled(f)=event {fills.push(json!({"trade_id":f.trade_id.to_string(),"event_id":f.event_id.to_string(),"client_order_id":f.client_order_id.to_string(),"instrument_id":f.instrument_id.to_string(),"side":f.order_side.to_string(),"quantity":f.last_qty.as_decimal().to_string(),"price":f.last_px.as_decimal().to_string(),"commission":f.commission.map(|v|v.as_decimal().to_string()),"commission_currency":f.commission.map(|v|v.currency.to_string()),"ts_event_ns":f.ts_event.as_u64().to_string()}));}}
+            json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),"is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string()),"client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),"side":o.order_side().to_string(),
+                "quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),"leaves_quantity":o.leaves_qty().as_decimal().to_string(),"status":o.status().to_string(),
+                "limit_price":o.price().map(|v|v.as_decimal().to_string()),"reduce_only":o.is_reduce_only(),"exit_id":exit_id(o.tags()),
+                "order_type":o.order_type().to_string(),"trigger_price":o.trigger_price().map(|v|v.as_decimal().to_string()),
+                "order_list_id":o.order_list_id().map(|v|v.to_string()),"parent_order_id":o.parent_order_id().map(|v|v.to_string()),
+                "contingency_type":o.contingency_type().map(|v|v.to_string()),
+                "protection_target_id":o.tags().and_then(|tags|tags.iter().find_map(|tag|tag.as_str().strip_prefix("QZ-PROTECTION:").map(str::to_owned)))})
+        }).collect();
+        order_rows.sort_by_key(|v| v["client_order_id"].as_str().unwrap_or_default().to_owned());
+        fills.sort_by_key(|v| {
+            (
+                v["ts_event_ns"].as_str().unwrap_or_default().to_owned(),
+                v["trade_id"].as_str().unwrap_or_default().to_owned(),
+            )
+        });
+        frame["orders"] = json!(order_rows);
+        frame["fills"] = json!(fills);
     }
     // Installed only by the owned runtime's known official paper path. Public
     // async/user-factory/live entry points cannot claim this node ownership.
@@ -913,10 +898,39 @@ impl AccountController {
                         "status":o.status().to_string(),"quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),
                         "is_active_local":o.is_active_local(),"emulation_trigger":o.emulation_trigger().map(|v|v.to_string()),"exec_algorithm_id":o.exec_algorithm_id().map(|v|v.to_string())}));
                 }
-                let next = if ids.next().is_some() { Some(offset.checked_add(50).ok_or_else(|| anyhow!("native_order_offset_invalid"))?) } else { None };
-                Ok(json!({"native_session_id":self.session,"observed_at_ns":self.clock().timestamp_ns().as_u64().to_string(),"items":items,"offset":offset,"nextOffset":next,"total":Value::Null}))
+                let next = if ids.next().is_some() {
+                    Some(
+                        offset
+                            .checked_add(50)
+                            .ok_or_else(|| anyhow!("native_order_offset_invalid"))?,
+                    )
+                } else {
+                    None
+                };
+                Ok(
+                    json!({"native_session_id":self.session,"observed_at_ns":self.clock().timestamp_ns().as_u64().to_string(),"items":items,"offset":offset,"nextOffset":next,"total":Value::Null}),
+                )
             }
-            "SNAPSHOT" => {
+            "ORDER_STATUS" => {
+                ensure!(
+                    r.text("expected_native_session_id")? == self.session,
+                    "native_order_session_changed"
+                );
+                let id: ClientOrderId = r.text("client_order_id")?.parse()?;
+                let cache = self.native_cache.borrow();
+                let order = cache.order_ref(&id);
+                if let Some(ref order) = order {
+                    ensure!(
+                        order.account_id() == Some(self.account)
+                            && order.trader_id() == self.trader.parse()?,
+                        "native_order_identity_mismatch"
+                    );
+                }
+                Ok(
+                    json!({"native_session_id":self.session,"account_id":self.account.to_string(),"client_order_id":id.to_string(),"status":order.map(|o|o.status().to_string())}),
+                )
+            }
+            "ACCOUNT_SUMMARY" | "SNAPSHOT" => {
                 self.refresh_snapshot()?;
                 let mut frame = self
                     .snapshot
@@ -947,6 +961,9 @@ impl AccountController {
                     frame["fenced"] = json!(true);
                     frame["reason"] = json!("account_native_cache_write_failed");
                 }
+                if r.operation == "SNAPSHOT" {
+                    self.append_order_history(&mut frame);
+                }
                 Ok(frame)
             }
             "SPOT_BALANCE_REFRESH" => {
@@ -968,7 +985,6 @@ impl AccountController {
                     "account_native_spot_observation_binding_mismatch"
                 );
                 self.spot_balance_observation = Some(observation.clone());
-                self.stamp.clear();
                 Ok(json!({"updated":true,"trade_permission":false}))
             }
             "FEE_REFRESH" => {
@@ -978,7 +994,6 @@ impl AccountController {
                 self.fee_source = r.value("source").clone();
                 let asof = r.text("asof_ns")?.parse::<u64>()?;
                 self.fee_valid_until_ns = asof.saturating_add(60_000_000_000);
-                self.stamp.clear();
                 Ok(json!({"updated":true}))
             }
             "CONTROL" => self.apply_control(r),
@@ -1001,7 +1016,9 @@ impl AccountController {
     fn strategy_lifecycle(&self) -> Value {
         let (kind, supported) = match &self.config.native_strategy.strategy {
             NativeCompiledStrategyV1::EmaCross { .. } => ("EMA_CROSS", true),
-            NativeCompiledStrategyV1::Registered { .. } => ("REGISTERED", self.user_registration.is_some()),
+            NativeCompiledStrategyV1::Registered { .. } => {
+                ("REGISTERED", self.user_registration.is_some())
+            }
             _ => ("UNSUPPORTED", false),
         };
         json!({"configuredKind":kind,"supported":supported,
@@ -1116,7 +1133,6 @@ impl AccountController {
                 );
                 let revision = old.revision.clone();
                 if self.update_spot_observation(spot_candidate) {
-                    self.stamp.clear();
                     self.refresh_snapshot()?;
                 }
                 return Ok(
@@ -1165,7 +1181,6 @@ impl AccountController {
         for id in pending {
             self.cancel_order(id, Some(self.client), None)?;
         }
-        self.stamp.clear();
         self.refresh_snapshot()?;
         Ok(
             json!({"applied":true,"epoch":epoch.to_string(),"revision":r.text("revision")?,"remaining_trading":"PAUSED_NATIVE_STRATEGY","fenced_old_targets":true}),
@@ -1228,7 +1243,6 @@ impl AccountController {
         for id in &ids {
             self.cancel_order(*id, Some(self.client), None)?;
         }
-        self.stamp.clear();
         Ok(json!({"target_id":target,"cancellation_requested":ids.len(),"settled":ids.is_empty()}))
     }
     fn persist_acceptances(&self) -> Result<()> {
@@ -1378,7 +1392,12 @@ pub async fn run_with_registration(
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
     // External callers may drive several nodes on one thread. No ownership claim.
-    run_input(registration, false, crate::native_runner::AccountCompatibility::Unspecified).await
+    run_input(
+        registration,
+        false,
+        crate::native_runner::AccountCompatibility::Unspecified,
+    )
+    .await
 }
 pub(crate) async fn run_owned_registration(
     registration: Option<AccountStrategyRegistration>,
@@ -1397,7 +1416,14 @@ async fn run_input(
     let boot: Request = serde_json::from_str(&first)?;
     ensure!(boot.operation == "BOOT", "account_native_boot_required");
     let config: AccountRuntimeConfig = serde_json::from_value(boot.value("config").clone())?;
-    let result = run_config_owned(config, boot.id.clone(), registration, owned_runtime, compatibility).await;
+    let result = run_config_owned(
+        config,
+        boot.id.clone(),
+        registration,
+        owned_runtime,
+        compatibility,
+    )
+    .await;
     if let Err(e) = &result {
         // Full causal diagnostics stay on the private process stderr channel.
         // The public protocol keeps its existing stable top-level error.
@@ -1436,7 +1462,14 @@ async fn run_config_with_registration(
     boot_id: String,
     registration: Option<AccountStrategyRegistration>,
 ) -> Result<()> {
-    run_config_owned(config, boot_id, registration, false, crate::native_runner::AccountCompatibility::Unspecified).await
+    run_config_owned(
+        config,
+        boot_id,
+        registration,
+        false,
+        crate::native_runner::AccountCompatibility::Unspecified,
+    )
+    .await
 }
 fn ordinary_cancel_supported(
     owned_runtime: bool,
@@ -1800,7 +1833,6 @@ async fn run_config_owned(
         fee_valid_until_ns,
         control: None,
         snapshot: None,
-        stamp: String::new(),
         last_tick_ns: 0,
         last_slice_ns: 0,
         cache_failed,
@@ -1830,6 +1862,70 @@ mod tests {
         let wire = json!({"lastEvent":event,"lastEventJson":raw});
         let decoded: Value = serde_json::from_str(&serde_json::to_string(&wire)?)?;
         assert_eq!(decoded["lastEventJson"].as_str(), Some(raw.as_str()));
+        Ok(())
+    }
+
+    #[test]
+    fn summary_activity_uses_official_node_indices_including_unassigned_orders() -> Result<()> {
+        use nautilus_model::{enums::{OrderType, LiquiditySide, TriggerType},
+            events::{OrderPendingCancel,OrderPendingUpdate,OrderEmulated,OrderReleased,OrderTriggered,OrderFilled},
+            identifiers::{VenueOrderId, TradeId}, orders::{builder::OrderTestBuilder,stubs::TestOrderEventStubs}};
+        let empty = json!({"open":false,"inflight":false,"active_local":false,"emulated":false});
+        for name in ["INITIALIZED","SUBMITTED","ACCEPTED","PENDING_CANCEL","PENDING_UPDATE","PARTIALLY_FILLED","EMULATED","RELEASED","TRIGGERED"] {
+            for suffix in ["001","002"] {
+                let mut cache=Cache::default();
+                let account=AccountId::from(format!("OTHER-{suffix}"));
+                let mut builder=OrderTestBuilder::new(OrderType::StopLimit);
+                builder.instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID")).side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}"))).quantity(Quantity::from("2.00"))
+                    .price(Price::from("100.00")).trigger_price(Price::from("101.00"));
+                if ["EMULATED","RELEASED"].contains(&name) {builder.emulation_trigger(TriggerType::LastPrice);}
+                let mut order=builder.build();
+                assert!(order.account_id().is_none());
+                cache.add_order(order.clone(),None,None,false)?;
+                assert_ne!(official_node_order_activity(&cache),empty,"unassigned initialized order");
+                let id=order.client_order_id();let trader=order.trader_id();let strategy=order.strategy_id();let instrument=order.instrument_id();
+                if ["EMULATED","RELEASED"].contains(&name) {
+                    order=cache.update_order(&OrderEventAny::Emulated(OrderEmulated::new(trader,strategy,instrument,id,UUID4::new(),1.into(),1.into())))?;
+                    if name=="RELEASED" {order=cache.update_order(&OrderEventAny::Released(OrderReleased::new(trader,strategy,instrument,id,Price::from("101.00"),UUID4::new(),2.into(),2.into())))?;}
+                } else if name!="INITIALIZED" {
+                    order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
+                    if name!="SUBMITTED" {
+                        order=cache.update_order(&TestOrderEventStubs::accepted(&order,account,VenueOrderId::from("V-1")))?;
+                        let event=match name {
+                            "PENDING_CANCEL"=>Some(OrderEventAny::PendingCancel(OrderPendingCancel::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
+                            "PENDING_UPDATE"=>Some(OrderEventAny::PendingUpdate(OrderPendingUpdate::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
+                            "TRIGGERED"=>Some(OrderEventAny::Triggered(OrderTriggered::new(trader,strategy,instrument,id,UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1")),Some(account)))),
+                            "PARTIALLY_FILLED"=>Some(OrderEventAny::Filled(OrderFilled::new(trader,strategy,instrument,id,VenueOrderId::from("V-1"),account,TradeId::from("T-1"),order.order_side(),order.order_type(),Quantity::from("1.00"),Price::from("100.00"),Currency::USDC(),LiquiditySide::Taker,UUID4::new(),3.into(),3.into(),false,None,None,None))),
+                            _=>None,
+                        };
+                        if let Some(event)=event {order=cache.update_order(&event)?;}
+                    }
+                }
+                assert_eq!(order.status().to_string(),name);
+                assert_ne!(official_node_order_activity(&cache),empty,"{name}/{suffix}");
+                cache.clear_index();cache.build_index();
+                assert_ne!(official_node_order_activity(&cache),empty,"rebuilt {name}/{suffix}");
+                cache.update_order(&TestOrderEventStubs::canceled(&order,account,order.venue_order_id()))?;
+                assert_eq!(official_node_order_activity(&cache),empty,"closed {name}/{suffix}");
+            }
+        }
+        let mut cache=Cache::default();
+        let mut originals=vec![];
+        for suffix in ["001","002"] {
+            let order=OrderTestBuilder::new(OrderType::Limit).instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+                .side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}")))
+                .client_order_id(ClientOrderId::from(format!("ORIGINAL-{suffix}")))
+                .quantity(Quantity::from("2.00")).price(Price::from("100.00")).build();
+            cache.add_order(order.clone(),None,None,false)?;
+            let account=AccountId::from(format!("OTHER-{suffix}"));
+            let order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
+            originals.push((order,account));
+        }
+        for (index,(order,account)) in originals.iter().enumerate() {
+            assert_ne!(official_node_order_activity(&cache),empty);
+            cache.update_order(&TestOrderEventStubs::canceled(order,*account,None))?;
+            assert_eq!(official_node_order_activity(&cache)==empty,index==1,"other account/strategy still blocks zero");
+        }
         Ok(())
     }
 
@@ -2248,7 +2344,6 @@ mod tests {
             fee_valid_until_ns: u64::MAX,
             control: None,
             snapshot: None,
-            stamp: String::new(),
             last_tick_ns: 0,
             last_slice_ns: 0,
             cache_failed: factory.failed.clone(),
@@ -2765,6 +2860,27 @@ mod tests {
             // A position is not a currency balance or a QZ-computed available size.
             // Preserve official position quantities and original orders; no per-position valuation policy is recreated.
             let snapshot = request(&tx, &replies, "SNAPSHOT", json!({})).await?;
+            // Periodic payload excludes all historical orders/events; explicit export remains intact.
+            let summary = request(&tx, &replies, "ACCOUNT_SUMMARY", json!({})).await?;
+            assert!(summary.get("orders").is_none());
+            assert!(summary.get("fills").is_none());
+            assert_eq!(summary["official_node_order_activity"], json!({"open":false,"inflight":false,"active_local":false,"emulated":false}));
+            let row = snapshot["orders"].as_array().unwrap().first().unwrap();
+            let session = summary["native_session_id"].clone();
+            let status = request(&tx, &replies, "ORDER_STATUS", json!({"expected_native_session_id":session,"client_order_id":row["client_order_id"]})).await?;
+            assert_eq!(status["status"], row["status"]);
+            assert_eq!(status["account_id"], summary["native_account_id"]);
+            assert_eq!(status["client_order_id"], row["client_order_id"]);
+            assert_eq!(status["native_session_id"], session);
+            assert!(request(&tx, &replies, "ORDER_STATUS", json!({"expected_native_session_id":"other","client_order_id":row["client_order_id"]})).await.unwrap_err().to_string().contains("native_order_session_changed"));
+            let missing = request(
+                &tx,
+                &replies,
+                "ORDER_STATUS",
+                json!({"expected_native_session_id":session,"client_order_id":"absent-original"}),
+            )
+            .await?;
+            assert!(missing["status"].is_null());
             let positions = snapshot["positions"].as_array().unwrap();
             ensure!(!positions.is_empty(), "native_position_not_projected");
             for row in positions {

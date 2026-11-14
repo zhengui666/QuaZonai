@@ -45,7 +45,13 @@ class ControlledProtocol implements NativeAccountRuntime {
   }
   async request(operation: string, payload: Json = {}): Promise<Json> {
     this.requests.push({ operation, payload: structuredClone(payload) });
-    if (operation === 'SNAPSHOT') return structuredClone(this.snapshot) as unknown as Json;
+    if (operation === 'ACCOUNT_SUMMARY') {
+      const { orders, fills, ...summary } = structuredClone(this.snapshot);
+      return { ...summary, official_node_order_activity: {open:false,inflight:false,active_local:false,emulated:false} } as unknown as Record<string, unknown>;
+    }
+    if (operation === 'ORDER_STATUS') return { native_session_id: this.snapshot.native_session_id,
+      account_id: this.snapshot.native_account_id, client_order_id: payload.client_order_id,
+      status: this.snapshot.orders.find(order => order.client_order_id === payload.client_order_id)?.status ?? null };
     if (operation === 'QUANTIZE_MONEY') return { amount: payload.amount, precision: this.snapshot.currency_precision };
     if (operation === 'CONTROL') return { applied: true, epoch: payload.epoch, revision: payload.revision };
     if (operation === 'CANCEL_EXIT') return { applied: true, epoch: payload.epoch };
@@ -118,6 +124,46 @@ for (const evidence of ['known_partial_fill', 'missing_original_fill', 'unknown_
     disk = await saved(); assert.equal(disk.epoch, '3'); assert.equal(disk.revision, '3'); assert.ok(disk.exits['old-exit'].pendingSlice); assert.equal(disk.commands.unknown.state, 'UNCERTAIN');
     await account.close(); account = await createCapitalAccount(paperOptions, directory, '/unused', native);
     assert.equal((await call('GET', '/capital-exits/commands/unknown')).status, 'UNCERTAIN');
+    // Original-ID observation faults must leave the obligation and UNKNOWN untouched.
+    const currentRequest = native.request.bind(native);
+    for (const fault of ['missing', 'wrong-session', 'wrong-account', 'wrong-id', 'unavailable', 'nonterminal']) {
+      native.request = async (op, payload = {}) => {
+        if (op !== 'ORDER_STATUS') return currentRequest(op, payload);
+        native.requests.push({operation: op, payload});
+        assert.equal(payload.client_order_id, 'original-order');
+        assert.equal(payload.expected_native_session_id, native.snapshot.native_session_id);
+        if (fault === 'unavailable') throw Error('original_read_unavailable');
+        return { native_session_id: fault === 'wrong-session' ? 'other' : native.snapshot.native_session_id,
+          account_id: fault === 'wrong-account' ? 'other' : paperOptions.accountId,
+          client_order_id: fault === 'wrong-id' ? 'other' : payload.client_order_id,
+          status: fault === 'missing' ? null : fault === 'nonterminal' ? 'ACCEPTED' : 'CANCELED' };
+      };
+      native.tick(); await delay(35); disk = await saved();
+      assert.equal(disk.exits['old-exit'].view.state, 'CANCELLING_EXIT', fault);
+      assert.ok(disk.exits['old-exit'].pendingSlice); assert.equal(disk.commands.unknown.state, 'UNCERTAIN');
+      assert.deepEqual(disk.exits['old-exit'].view.funds, funds);
+    }
+    native.request = currentRequest;
+    if (evidence === 'known_partial_fill') {
+      let entered = false;
+      let release!: () => void;
+      const blockedRead = new Promise<void>(resolve => {release = resolve;});
+      native.request = async (op, payload = {}) => {
+        if (op === 'ORDER_STATUS') { entered = true; await blockedRead; }
+        return currentRequest(op, payload);
+      };
+      try {
+        native.tick(); await eventually(async () => entered, Boolean, 'Original status read begins');
+        const stopWhileReading = await Promise.race([
+          call('POST', '/capital-exits/old-exit/actions', {...stop, requestId:'stop-during-read'}),
+          delay(500).then(() => {throw Error('read_blocked_explicit_stop');})
+        ]);
+        assert.equal(stopWhileReading.status, 'REJECTED');
+        assert.equal(stopWhileReading.error, 'capital_original_control_evidence_unavailable');
+      } finally { release(); native.request = currentRequest; }
+      await delay(30);
+    }
+    assert.equal(native.requests.some(row => row.operation === 'SNAPSHOT'), false);
     settled = true; native.snapshot.orders.push({ client_order_id: 'original-order', status: 'CANCELED' } as NativeAccountSnapshot['orders'][number]); native.tick(); disk = await eventually(saved, value => value.exits['old-exit'].view.state === 'CANCELLED_RESERVED', 'Original terminal order must settle without release');
     assert.equal(disk.exits['old-exit'].view.state, 'CANCELLED_RESERVED'); assert.deepEqual(disk.exits['old-exit'].view.funds, funds); assert.deepEqual(disk.exits['old-exit'].view.progress, progress);
     assert.equal(disk.exits['old-exit'].executionCost, '0.29975'); assert.deepEqual(disk.exits['old-exit'].fillCosts, retained.exits['old-exit'].fillCosts); assert.deepEqual(disk.ledgerClaims, retained.ledgerClaims);
@@ -293,7 +339,7 @@ test('unpersisted legacy cancellation refusal stays uncertain without changing i
   const body={requestId:'new-refusal',clientId:paperOptions.clientId,accountId:paperOptions.accountId,command:{schema_version:2,action:'CANCEL',expected_revision:'2'}};
   const reply=await call('POST','/capital-exits/old/actions',body);assert.equal(reply.status,'UNCERTAIN');assert.equal(reply.error,'account_receipts_write_failed');
   assert.deepEqual(await call('POST','/capital-exits/old/actions',body),reply);assert.deepEqual(await call('GET','/capital-exits/commands/new-refusal'),reply);
-  assert.ok(native.requests.every(row=>row.operation==='SNAPSHOT'), 'Only existing read refreshes are allowed; no CONTROL, cancellation or strategy command.');const after=JSON.parse(await readFile(path,'utf8'));assert.equal(after.epoch,'13');assert.deepEqual(after.exits,disk.exits);
+  assert.ok(native.requests.every(row=>row.operation==='ACCOUNT_SUMMARY'), 'Only existing read refreshes are allowed; no CONTROL, cancellation or strategy command.');const after=JSON.parse(await readFile(path,'utf8'));assert.equal(after.epoch,'13');assert.deepEqual(after.exits,disk.exits);
  }finally{await account.close().catch(()=>{});await rm(directory,{recursive:true,force:true});}
 });
 

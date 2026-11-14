@@ -293,6 +293,7 @@ export async function createService(options: ServiceOptions) {
   const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
+  app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/legacy-snapshot`,r=>configuredStrategies.legacySnapshot(r.params.id,r.body));
   app.get<{Params:{id:string};Querystring:{offset?:string}}>(`${API}/accounts/configurations/:id/strategy/orders`,r=>configuredStrategies.orders(r.params.id,r.query.offset));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/fence`,r=>configuredStrategies.fence(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/config`,r=>configuredStrategies.configuration(r.params.id));

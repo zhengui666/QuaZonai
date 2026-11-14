@@ -48,11 +48,14 @@ export interface NativeAccountSnapshot {
   instruments: NativeInstrument[]; orders: NativeOrder[]; fills: NativeFill[];
   cash: string | null; equity: string | null; currency: string; currency_precision: number;
 }
+/** Periodic official observation excludes historical order/event arrays. */
+export type NativeAccountSummary = Omit<NativeAccountSnapshot, 'orders' | 'fills'> & { official_node_order_activity: {open:boolean;inflight:boolean;active_local:boolean;emulated:boolean} };
 export interface NativeAccountRuntime {
   start?(): Promise<void>;
   paperCancellationBinding?(): NativeSessionBinding | null;
   paperCancellationCapability?(): Record<string,unknown>;
   strategyLifecycleCapability?(): Record<string,unknown>;
+  accountObservationCapability?(): Record<string,unknown>;
   bindPaperCancellationSession?(expectedSessionId: string): {request(operation: 'ORDER_CANCEL_ATTEMPT'|'ORDER_OBSERVE', payload: Record<string, unknown>): Promise<Record<string, unknown>>};
   isConnected?(): boolean;
   request(operation: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -67,6 +70,7 @@ export class AccountRuntime implements NativeAccountRuntime {
   private stopped = false;
   private nativeSessionId: string | null = null;
   private ordinaryVenueCancel = false;
+  private accountSummaryProtocol = false;
   private cancellationFacts:Record<string,unknown> = {};
   private lifecycleFacts:Record<string,unknown>|null = null;
   private ticks = new Set<() => void>();
@@ -102,7 +106,7 @@ export class AccountRuntime implements NativeAccountRuntime {
         // A superseded process can emit error and then exit after its successor
         // has started. It has no authority over that generation's requests.
         if (this.child !== child) return;
-        this.child = null; this.nativeSessionId = null; this.ordinaryVenueCancel = false; this.cancellationFacts = {}; this.lifecycleFacts = null;
+        this.child = null; this.nativeSessionId = null; this.ordinaryVenueCancel = false; this.cancellationFacts = {}; this.lifecycleFacts = null; this.accountSummaryProtocol = false;
         for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error('account_runtime_outcome_uncertain')); }
         this.pending.clear();
       };
@@ -137,6 +141,7 @@ export class AccountRuntime implements NativeAccountRuntime {
           source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
         this.nativeSessionId = typeof boot.native_session_id === 'string' ? boot.native_session_id : null;
         this.ordinaryVenueCancel = boot.ordinary_venue_cancel === true;
+        this.accountSummaryProtocol = boot.account_summary_protocol === 1;
         const lifecycle=boot.strategy_lifecycle as Record<string,unknown>|undefined;
         this.lifecycleFacts=lifecycle && !Array.isArray(lifecycle)
           && lifecycle.configuredKind===this.options.nativeStrategy.strategy.kind
@@ -157,6 +162,12 @@ export class AccountRuntime implements NativeAccountRuntime {
    * ownership or permission to trade. Native operations must independently check
    * the same session and original order before any dispatch.
    */
+  accountObservationCapability():Record<string,unknown> {
+    const connected = !this.stopped && !this.starting && !!this.child && this.child.exitCode === null && this.child.signalCode === null && !!this.nativeSessionId;
+    return {supported: connected ? this.accountSummaryProtocol : null, nativeSessionId: connected ? this.nativeSessionId : null,
+      reason: !connected ? 'account_summary_capability_unobserved' : this.accountSummaryProtocol ? null : 'account_bound_runner_summary_upgrade_required',
+      automaticRebind: false, legacyHistory: 'EXPLICIT_SNAPSHOT_ONLY'};
+  }
   strategyLifecycleCapability():Record<string,unknown> {
     const connected=!this.stopped&&!this.starting&&!!this.child&&this.child.exitCode===null&&this.child.signalCode===null&&!!this.nativeSessionId;
     return connected&&this.lifecycleFacts ? {...this.lifecycleFacts,nativeSessionId:this.nativeSessionId} :
@@ -204,6 +215,8 @@ export class AccountRuntime implements NativeAccountRuntime {
     if (this.stopped) throw new Error('account_runtime_stopped');
     if (!this.child) throw new Error('account_runtime_not_started');
     if (this.starting) await this.starting;
+    if (['ACCOUNT_SUMMARY','ORDER_STATUS'].includes(operation) && this.accountObservationCapability().supported !== true)
+      throw new Error(String(this.accountObservationCapability().reason));
     return this.send(operation, payload);
   }
   subscribeTicks(listener: () => void): () => void { this.ticks.add(listener); return () => { this.ticks.delete(listener); }; }
