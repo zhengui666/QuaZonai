@@ -8,7 +8,7 @@ import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
-import staticPlugin from '@fastify/static';
+import { registerStaticWeb } from './static-web.ts';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boundScienceTarget } from './science-binding.ts';
@@ -339,8 +339,7 @@ export async function createService(options: ServiceOptions) {
     return (await extensionViews()).find(item => item.name === found.name)!;
   });
   if (config.staticDir) {
-    await app.register(staticPlugin, { root: config.staticDir });
-    app.setNotFoundHandler((request, reply) => request.url.startsWith('/api/') ? reply.code(404).send({ error: 'not_found' }) : reply.sendFile('index.html'));
+    await registerStaticWeb(app, config.staticDir);
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
