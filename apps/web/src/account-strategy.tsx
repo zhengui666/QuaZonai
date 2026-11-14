@@ -1,3 +1,4 @@
+import {SpotBalanceObservation} from './spot-balance-observation';
 import AccountOrders from './account-orders';
 import { useRef, useState } from 'react';
 import { Button, Input } from 'antd';
@@ -23,7 +24,7 @@ export function strategyResultText(value: StrategyReceipt) {
     ? '原生已确认停止，但远端回执未能持久化；原命令仍标为不确定，不会自动重发。'
     : '远端回执未能持久化，且未确认停止；请核对当前策略状态，不会自动重发。';
   if (value.error === 'strategy_start_fence_changed') return '账户策略版本已变化，本次旧启动请求被拒绝。请先核对最新状态，再明确发起新的启动；不会自动换版本重试。';
-  if (value.status === 'REJECTED' && value.error === 'hyperliquid_native_spot_free_required') return '实盘启动暂不可用：尚未接通可验证的 Nautilus 官方现货可用余额事实。本次未连接或启动策略；后续需完成官方余额与风控一致性验收，不会自动重试。';
+  if (value.status === 'REJECTED' && value.error === 'hyperliquid_native_spot_free_required') return '实盘启动暂不可用：官方现货余额观察尚未与 Account、Portfolio 和 Risk 的一致性及新鲜度接通。本次未连接或启动策略；后续需完成官方余额与风控一致性验收，不会自动重试。';
   return value.status === 'COMPLETED' ? '原命令已收到回执；不代表订单已成交或资金已退出。'
     : value.status === 'REJECTED' ? '原生明确拒绝本次启动，未启动策略。'
     : '原命令尚未确定；这里只查询同一请求，不自动重发或用当前状态代替回执。';
@@ -122,6 +123,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
     <AccountObservationNotice value={configuration.data?.accountObservation} unavailable={!!configuration.error}/>
     {configured&&<LegacyAccountObservation key={path} path={path} capability={configuration.data?.accountObservation} unavailable={!!configuration.error}/>}
     <StrategyLifecycleNotice value={configuration.data?.lifecycleCapability} unavailable={!!configuration.error}/>
+    {configured&&value.mode==='live'&&<SpotBalanceObservation key={path} path={`/accounts/configurations/${encodeURIComponent(value.id)}`} sourceId={configuration.data?.accountSourceId} nativeSessionId={configuration.data?.accountObservation?.nativeSessionId} connected={!configuration.error&&configuration.data?.connected===true&&configuration.data?.accountObservation?.supported===true}/>}
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
       <p>保留此账户已绑定标的。自定义策略格式为 instrument_id 与 strategy: {`{kind: "REGISTERED", name: "已注册名称", config: 任意JSON}`}。新增 Rust 策略类型须先构建部署账户运行器；仅改 config 参数不需要重新编译。</p>
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
@@ -142,7 +144,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
       {configurationReceipt && <p>{configurationReceipt.status === 'COMPLETED' ? '配置已保存，尚未连接或启动交易。' : '配置持久结果不确定；保留原请求，交易启动被阻止。请核对原配置回执，不要当作保存成功。'}</p>}
     </details>
     <p>查看账户和重启服务不会自动连接。连接恢复不加载交易策略，不自动下单、改单或撤单；再次启动策略是独立操作。停止遵从上游配置，不保证撤销全部订单或清空持仓。资金退出请使用独立资金操作。</p>
-    {value.mode === 'live' && <p role="status">实盘启动暂不可用：缺少已验证的官方现货余额事实接线。保存配置、明确恢复连接和停止仍是独立操作；不得用合并账户余额代替现货余额。</p>}
+    {value.mode === 'live' && <p role="status">实盘启动暂不可用：官方现货余额观察尚未与 Account、Portfolio 和 Risk 的一致性及新鲜度接通。保存配置、明确恢复连接和停止仍是独立操作；不得用合并账户余额代替现货余额。</p>}
     <ErrorNotice error={status.error} retry={() => { void status.refetch(); }} />
     {native && <><Facts items={[["账户模式", value.mode === 'live' ? '实盘：可能产生真实订单' : '模拟盘'], ["策略", native.strategy_id ?? '未注册（仅恢复连接）'], ["状态", <Status value={native.state} />], ["标的", native.instrument_id], ["原生版本", native.native_version], ["策略控制修订", status.data!.strategyRevision]]} /><details><summary>账户原生策略完整配置</summary><pre>{JSON.stringify(native.config, null, 2)}</pre></details></>}
     <ErrorNotice error={fence.error} retry={() => { void fence.refetch(); }} />

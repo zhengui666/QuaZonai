@@ -321,6 +321,11 @@ test('official spot facts remain separately bound and timed without changing por
     native.snapshot.spot_balance_observation = raw;
     const portfolio = await get('/account');
     assert.deepEqual((await get('/spot-balance-observation')).observation, raw);
+    assert.equal((await get('/spot-balance-observation')).nativeSessionId,native.snapshot.native_session_id);
+    const originalSession=native.snapshot.native_session_id;
+    native.snapshot.native_session_id='reconnected-session';
+    assert.equal((await get('/spot-balance-observation')).nativeSessionId,'reconnected-session');
+    native.snapshot.native_session_id=originalSession;
     assert.equal('observation' in portfolio,false);
     native.snapshot.spot_balance_observation = {...raw,observation_id:'later',received_ns:'300',balances:[]};
     assert.deepEqual((await get('/spot-balance-observation')).observation.balances,[]);

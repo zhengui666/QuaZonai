@@ -128,8 +128,9 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   async function spotObservation() {
     // Read the already-connected original runner only. Do not combine this async
     // observation with Portfolio sequence, cash, CONTROL or trading permission.
-    const raw = (await readNativeSnapshot()).spot_balance_observation;
-    if (raw == null) return { ...envelope(), accountSourceId: state.sourceId, observation: null };
+    const snapshot = await readNativeSnapshot();
+    const raw = snapshot.spot_balance_observation;
+    if (raw == null) return { ...envelope(), accountSourceId: state.sourceId, nativeSessionId: snapshot.native_session_id, observation: null };
     const value = record(raw);
     if (options.mode !== 'live' || value.kind !== 'NAUTILUS_SPOT_BALANCE_OBSERVATION'
       || value.source_id !== state.sourceId || value.account_id !== options.accountId
@@ -141,7 +142,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       || value.exchange_timestamp_ns !== null || value.atomic_reservation !== false || value.trade_permission !== false
       || (value.balances !== null && !Array.isArray(value.balances))
       || (value.error !== null && typeof value.error !== 'string')) fail('account_native_spot_observation_invalid');
-    return { ...envelope(), accountSourceId: state.sourceId, observation: structuredClone(value) };
+    return { ...envelope(), accountSourceId: state.sourceId, nativeSessionId: snapshot.native_session_id, observation: structuredClone(value) };
   }
   async function applyControl() {
     // Only a fresh, explicitly requested START with individually proven zero
@@ -399,9 +400,10 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
         commands[command.requestId] = { original: structuredClone(body), receipt }; await save(); return structuredClone(receipt);
       }
     }
-    // The Info payload only provides total/hold, not an authoritative native
-    // spot-free value. Never synthesize it or substitute merged account cash.
-    // This known unsupported capability is rejected before any BOOT or trading.
+    // Official spot balances exist as a separate asynchronous observation, but
+    // Account/Portfolio/Risk consistency and freshness are not wired for START.
+    // Never synthesize permission or substitute combined spot/perp account cash.
+    // Keep the existing durable rejection code; reject before BOOT or trading.
     if (command.action === 'START' && options.mode === 'live') {
       const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
         result: { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' }, error: 'hyperliquid_native_spot_free_required' };
