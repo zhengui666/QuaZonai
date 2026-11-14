@@ -3005,6 +3005,147 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn official_combined_margin_updates_do_not_use_spot_observations() -> Result<()> {
+        use nautilus_hyperliquid::{
+            common::{
+                enums::HyperliquidAccountAbstraction as Abstraction,
+                parse::{parse_combined_account_balances_and_margins, parse_spot_account_balances},
+            },
+            http::models::{ClearinghouseState, SpotClearinghouseState},
+        };
+        use nautilus_model::{enums::TradingState, events::AccountState};
+        let directory = tempfile::tempdir()?;
+        // No node run/connect, strategy start, execution client or order invocation.
+        let (mut native, _, _) = node_with_scope(directory.path(), true).await?;
+        let cache = native.kernel().cache();
+        let portfolio = native.kernel().portfolio.clone();
+        let risk = native.kernel().risk_engine().clone();
+        let execution = native.kernel().exec_engine().clone();
+        risk.borrow_mut().set_trading_state(TradingState::Halted);
+        let counts = (
+            risk.borrow().command_count(),
+            execution.borrow().command_count(),
+        );
+        let account = AccountId::from("HYPERLIQUID-001");
+        let perp: ClearinghouseState = serde_json::from_value(json!({
+            "assetPositions":[], "crossMarginSummary":{"accountValue":"150",
+            "totalNtlPos":"0","totalRawUsd":"100","totalMarginUsed":"20"},
+            "withdrawable":"80", "time":1700000000000_u64
+        }))?;
+        let spot = |total: &str, hold: &str| -> Result<SpotClearinghouseState> {
+            Ok(serde_json::from_value(json!({"balances":[{
+                "coin":"USDC","token":0,"total":total,"hold":hold,"entryNtl":"0"
+            }]}))?)
+        };
+        let apply = |abstraction, state: &SpotClearinghouseState, time: u64| -> Result<()> {
+            let (balances, margins) =
+                parse_combined_account_balances_and_margins(&perp, state, abstraction)?;
+            portfolio.borrow_mut().update_account(&AccountState::new(
+                account,
+                AccountType::Margin,
+                balances.clone(),
+                margins,
+                true,
+                UUID4::new(),
+                time.into(),
+                time.into(),
+                None,
+            ));
+            assert_eq!(
+                portfolio
+                    .borrow_mut()
+                    .build_snapshot(&account)
+                    .unwrap()
+                    .balances,
+                balances
+            );
+            assert_eq!(
+                cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()],
+                balances[0]
+            );
+            Ok(())
+        };
+        let raw_spot = spot("800", "1")?;
+        // Official Disabled mode reports the combined perp summary, not spot-only USDC.
+        apply(Abstraction::Disabled, &raw_spot, 100)?;
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].free,
+            Money::from("80 USDC")
+        );
+        assert_eq!(
+            parse_spot_account_balances(&raw_spot)?[0].free,
+            Money::from("799 USDC")
+        );
+        let before = serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?;
+        let owner_id = *native
+            .kernel()
+            .trader
+            .borrow()
+            .strategy_ids()
+            .last()
+            .unwrap();
+        {
+            let mut owner = nautilus_common::actor::registry::try_get_actor_unchecked::<
+                AccountController,
+            >(&owner_id.inner())
+            .unwrap();
+            owner.config.account_address = Some("explicit-test-address".into());
+            let observation = json!({
+                "account_id":owner.config.account_id,"source_id":owner.config.source_id,
+                "account_address":"explicit-test-address","network":"mainnet",
+                "request_started_ns":"200","received_ns":"300",
+                "balances":parse_spot_account_balances(&raw_spot)?,
+                "trade_permission":false,"atomic_reservation":false
+            });
+            owner.process(&Request {
+                id: String::new(),
+                operation: "SPOT_BALANCE_REFRESH".into(),
+                body: BTreeMap::from([("observation".into(), observation)]),
+            })?;
+            assert!(owner.spot_facts.is_none());
+            assert!(owner.control.is_none());
+        }
+        assert_eq!(
+            serde_json::to_value(&*cache.borrow().account_ref(&account).unwrap())?,
+            before
+        );
+        // Unified/portfolio modes select spot collateral through the official parser.
+        for (index, abstraction) in [Abstraction::UnifiedAccount, Abstraction::PortfolioMargin]
+            .into_iter()
+            .enumerate()
+        {
+            apply(abstraction, &raw_spot, 400 + index as u64)?;
+            assert_eq!(
+                cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].free,
+                Money::from("799 USDC")
+            );
+        }
+        // Unlike spot-only observation parsing, the combined path emits explicit zero.
+        apply(Abstraction::UnifiedAccount, &spot("0", "0")?, 500)?;
+        assert_eq!(
+            cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].total,
+            Money::from("0 USDC")
+        );
+        assert_eq!(risk.borrow().trading_state(), TradingState::Halted);
+        assert_eq!(
+            (
+                risk.borrow().command_count(),
+                execution.borrow().command_count()
+            ),
+            counts
+        );
+        assert!(
+            cache
+                .borrow()
+                .iter_client_order_ids(None, None, None, None)
+                .next()
+                .is_none()
+        );
+        native.dispose();
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let (mut native, tx, replies) = node(directory.path()).await?;
