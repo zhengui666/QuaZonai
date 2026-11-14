@@ -882,17 +882,27 @@ impl AccountController {
                 )
             }
             "ORDER_PAGE" => {
-                ensure!(r.text("expected_native_session_id")? == self.session, "native_order_session_changed");
-                let offset = r.value("offset").as_u64().ok_or_else(|| anyhow!("native_order_offset_invalid"))?;
+                ensure!(
+                    r.text("expected_native_session_id")? == self.session,
+                    "native_order_session_changed"
+                );
+                let offset = r
+                    .value("offset")
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("native_order_offset_invalid"))?;
                 let offset = usize::try_from(offset)?;
                 let cache = self.native_cache.borrow();
                 // Official lazy ID iterator: at most offset + 51 matching IDs yielded, only
                 // 50 borrowed orders projected, never clone orders or event histories.
                 // Cache iteration is live, not a stable historical snapshot.
-                let mut ids = cache.iter_client_order_ids(None, None, None, Some(&self.account)).skip(offset);
+                let mut ids = cache
+                    .iter_client_order_ids(None, None, None, Some(&self.account))
+                    .skip(offset);
                 let mut items = Vec::with_capacity(50);
                 for id in ids.by_ref().take(50) {
-                    let o = cache.order_ref(&id).ok_or_else(|| anyhow!("native_order_missing"))?;
+                    let o = cache
+                        .order_ref(&id)
+                        .ok_or_else(|| anyhow!("native_order_missing"))?;
                     items.push(json!({"trader_id":o.trader_id().to_string(),"strategy_id":o.strategy_id().to_string(),"account_id":o.account_id().map(|v|v.to_string()),
                         "client_order_id":o.client_order_id().to_string(),"venue_order_id":o.venue_order_id().map(|v|v.to_string()),"instrument_id":o.instrument_id().to_string(),
                         "status":o.status().to_string(),"quantity":o.quantity().as_decimal().to_string(),"filled_quantity":o.filled_qty().as_decimal().to_string(),
@@ -1164,7 +1174,8 @@ impl AccountController {
         self.update_spot_observation(spot_candidate);
         let latest_exit_ns = {
             let cache = self.native_cache.borrow();
-            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+            cache
+                .iter_client_order_ids(None, None, None, Some(&self.account))
                 .map(|id| required_order_ref(&cache, &id))
                 .filter(|o| exit_id(o.tags()).is_some())
                 .map(|o| o.ts_submitted().unwrap_or(o.ts_init()).as_u64())
@@ -1174,7 +1185,8 @@ impl AccountController {
         self.last_slice_ns = self.last_slice_ns.max(latest_exit_ns);
         let mut pending: Vec<_> = {
             let cache = self.native_cache.borrow();
-            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+            cache
+                .iter_client_order_ids(None, None, None, Some(&self.account))
                 .map(|id| required_order_ref(&cache, &id))
                 .filter(|o| !o.is_closed() && o.order_side() == OrderSide::Buy)
                 .map(|o| o.client_order_id())
@@ -1209,7 +1221,8 @@ impl AccountController {
         let exit = r.text("exit_id")?;
         let mut ids: Vec<_> = {
             let cache = self.native_cache.borrow();
-            cache.iter_client_order_ids(None, None, None, Some(&self.account))
+            cache
+                .iter_client_order_ids(None, None, None, Some(&self.account))
                 .map(|id| required_order_ref(&cache, &id))
                 .filter(|o| !o.is_closed() && exit_id(o.tags()).as_deref() == Some(exit))
                 .map(|o| o.client_order_id())
@@ -1223,7 +1236,8 @@ impl AccountController {
     }
     fn protection_orders(&self, target: Option<&str>) -> Vec<ClientOrderId> {
         let cache = self.native_cache.borrow();
-        let mut ids: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
+        let mut ids: Vec<_> = cache
+            .iter_client_order_ids(None, None, None, None)
             .map(|id| required_order_ref(&cache, &id))
             .filter(|o| {
                 !o.is_closed()
@@ -1313,8 +1327,13 @@ impl AccountController {
     }
 }
 // Preserve the official Cache::orders failure for an inconsistent order index.
-fn required_order_ref<'a>(cache: &'a Cache, id: &ClientOrderId) -> nautilus_common::cache::OrderRef<'a> {
-    cache.order_ref(id).unwrap_or_else(|| panic!("Order {id} not found"))
+fn required_order_ref<'a>(
+    cache: &'a Cache,
+    id: &ClientOrderId,
+) -> nautilus_common::cache::OrderRef<'a> {
+    cache
+        .order_ref(id)
+        .unwrap_or_else(|| panic!("Order {id} not found"))
 }
 
 fn exit_id(tags: Option<&[Ustr]>) -> Option<String> {
@@ -1805,9 +1824,15 @@ async fn run_config_owned(
             &config.mode,
             registration.is_some(),
             &config.native_strategy.strategy,
-        ) || (owned_runtime && config.mode == "paper" && registration.is_some()
-            && compatibility == crate::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode
-            && matches!(config.native_strategy.strategy,NativeCompiledStrategyV1::Registered { .. })))
+        ) || (owned_runtime
+            && config.mode == "paper"
+            && registration.is_some()
+            && compatibility
+                == crate::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode
+            && matches!(
+                config.native_strategy.strategy,
+                NativeCompiledStrategyV1::Registered { .. }
+            )))
         .then(|| crate::account_queued_cancel::BoundCancelNode::capture(&node)),
         signal_strategy_id: None,
         user_registration: registration,
@@ -1863,9 +1888,17 @@ mod tests {
     fn official_event_json_keeps_adjacent_nanoseconds() -> Result<()> {
         use nautilus_model::events::OrderCanceled;
         let event = OrderEventAny::Canceled(OrderCanceled::new(
-            "T-001".parse()?, "S-001".parse()?, "TEST.SIM".parse()?, "original".parse()?,
-            UUID4::new(), 1794603862176207674_u64.into(), 1794603862176207675_u64.into(),
-            false, None, None, None,
+            "T-001".parse()?,
+            "S-001".parse()?,
+            "TEST.SIM".parse()?,
+            "original".parse()?,
+            UUID4::new(),
+            1794603862176207674_u64.into(),
+            1794603862176207675_u64.into(),
+            false,
+            None,
+            None,
+            None,
         ));
         let raw = official_order_event_json(&event)?;
         assert_eq!(raw, serde_json::to_string(&event)?);
@@ -1886,81 +1919,230 @@ mod tests {
 
     #[test]
     fn summary_activity_uses_official_node_indices_including_unassigned_orders() -> Result<()> {
-        use nautilus_model::{enums::{OrderType, LiquiditySide, TriggerType},
-            events::{OrderPendingCancel,OrderPendingUpdate,OrderEmulated,OrderReleased,OrderTriggered,OrderFilled},
-            identifiers::{VenueOrderId, TradeId}, orders::{builder::OrderTestBuilder,stubs::TestOrderEventStubs}};
+        use nautilus_model::{
+            enums::{LiquiditySide, OrderType, TriggerType},
+            events::{
+                OrderEmulated, OrderFilled, OrderPendingCancel, OrderPendingUpdate, OrderReleased,
+                OrderTriggered,
+            },
+            identifiers::{TradeId, VenueOrderId},
+            orders::{builder::OrderTestBuilder, stubs::TestOrderEventStubs},
+        };
         let empty = json!({"open":false,"inflight":false,"active_local":false,"emulated":false});
-        for name in ["INITIALIZED","SUBMITTED","ACCEPTED","PENDING_CANCEL","PENDING_UPDATE","PARTIALLY_FILLED","EMULATED","RELEASED","TRIGGERED"] {
-            for suffix in ["001","002"] {
-                let mut cache=Cache::default();
-                let account=AccountId::from(format!("OTHER-{suffix}"));
-                let mut builder=OrderTestBuilder::new(OrderType::StopLimit);
-                builder.instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID")).side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}"))).quantity(Quantity::from("2.00"))
-                    .price(Price::from("100.00")).trigger_price(Price::from("101.00"));
-                if ["EMULATED","RELEASED"].contains(&name) {builder.emulation_trigger(TriggerType::LastPrice);}
-                let mut order=builder.build();
+        for name in [
+            "INITIALIZED",
+            "SUBMITTED",
+            "ACCEPTED",
+            "PENDING_CANCEL",
+            "PENDING_UPDATE",
+            "PARTIALLY_FILLED",
+            "EMULATED",
+            "RELEASED",
+            "TRIGGERED",
+        ] {
+            for suffix in ["001", "002"] {
+                let mut cache = Cache::default();
+                let account = AccountId::from(format!("OTHER-{suffix}"));
+                let mut builder = OrderTestBuilder::new(OrderType::StopLimit);
+                builder
+                    .instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+                    .side(OrderSide::Buy)
+                    .strategy_id(StrategyId::from(format!("OTHER-{suffix}")))
+                    .quantity(Quantity::from("2.00"))
+                    .price(Price::from("100.00"))
+                    .trigger_price(Price::from("101.00"));
+                if ["EMULATED", "RELEASED"].contains(&name) {
+                    builder.emulation_trigger(TriggerType::LastPrice);
+                }
+                let mut order = builder.build();
                 assert!(order.account_id().is_none());
-                cache.add_order(order.clone(),None,None,false)?;
-                assert_ne!(official_node_order_activity(&cache),empty,"unassigned initialized order");
-                let id=order.client_order_id();let trader=order.trader_id();let strategy=order.strategy_id();let instrument=order.instrument_id();
-                if ["EMULATED","RELEASED"].contains(&name) {
-                    order=cache.update_order(&OrderEventAny::Emulated(OrderEmulated::new(trader,strategy,instrument,id,UUID4::new(),1.into(),1.into())))?;
-                    if name=="RELEASED" {order=cache.update_order(&OrderEventAny::Released(OrderReleased::new(trader,strategy,instrument,id,Price::from("101.00"),UUID4::new(),2.into(),2.into())))?;}
-                } else if name!="INITIALIZED" {
-                    order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
-                    if name!="SUBMITTED" {
-                        order=cache.update_order(&TestOrderEventStubs::accepted(&order,account,VenueOrderId::from("V-1")))?;
-                        let event=match name {
-                            "PENDING_CANCEL"=>Some(OrderEventAny::PendingCancel(OrderPendingCancel::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
-                            "PENDING_UPDATE"=>Some(OrderEventAny::PendingUpdate(OrderPendingUpdate::new(trader,strategy,instrument,id,Some(account),UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1"))))),
-                            "TRIGGERED"=>Some(OrderEventAny::Triggered(OrderTriggered::new(trader,strategy,instrument,id,UUID4::new(),3.into(),3.into(),false,Some(VenueOrderId::from("V-1")),Some(account)))),
-                            "PARTIALLY_FILLED"=>Some(OrderEventAny::Filled(OrderFilled::new(trader,strategy,instrument,id,VenueOrderId::from("V-1"),account,TradeId::from("T-1"),order.order_side(),order.order_type(),Quantity::from("1.00"),Price::from("100.00"),Currency::USDC(),LiquiditySide::Taker,UUID4::new(),3.into(),3.into(),false,None,None,None))),
-                            _=>None,
+                cache.add_order(order.clone(), None, None, false)?;
+                assert_ne!(
+                    official_node_order_activity(&cache),
+                    empty,
+                    "unassigned initialized order"
+                );
+                let id = order.client_order_id();
+                let trader = order.trader_id();
+                let strategy = order.strategy_id();
+                let instrument = order.instrument_id();
+                if ["EMULATED", "RELEASED"].contains(&name) {
+                    order = cache.update_order(&OrderEventAny::Emulated(OrderEmulated::new(
+                        trader,
+                        strategy,
+                        instrument,
+                        id,
+                        UUID4::new(),
+                        1.into(),
+                        1.into(),
+                    )))?;
+                    if name == "RELEASED" {
+                        order =
+                            cache.update_order(&OrderEventAny::Released(OrderReleased::new(
+                                trader,
+                                strategy,
+                                instrument,
+                                id,
+                                Price::from("101.00"),
+                                UUID4::new(),
+                                2.into(),
+                                2.into(),
+                            )))?;
+                    }
+                } else if name != "INITIALIZED" {
+                    order = cache.update_order(&TestOrderEventStubs::submitted(&order, account))?;
+                    if name != "SUBMITTED" {
+                        order = cache.update_order(&TestOrderEventStubs::accepted(
+                            &order,
+                            account,
+                            VenueOrderId::from("V-1"),
+                        ))?;
+                        let event = match name {
+                            "PENDING_CANCEL" => {
+                                Some(OrderEventAny::PendingCancel(OrderPendingCancel::new(
+                                    trader,
+                                    strategy,
+                                    instrument,
+                                    id,
+                                    Some(account),
+                                    UUID4::new(),
+                                    3.into(),
+                                    3.into(),
+                                    false,
+                                    Some(VenueOrderId::from("V-1")),
+                                )))
+                            }
+                            "PENDING_UPDATE" => {
+                                Some(OrderEventAny::PendingUpdate(OrderPendingUpdate::new(
+                                    trader,
+                                    strategy,
+                                    instrument,
+                                    id,
+                                    Some(account),
+                                    UUID4::new(),
+                                    3.into(),
+                                    3.into(),
+                                    false,
+                                    Some(VenueOrderId::from("V-1")),
+                                )))
+                            }
+                            "TRIGGERED" => Some(OrderEventAny::Triggered(OrderTriggered::new(
+                                trader,
+                                strategy,
+                                instrument,
+                                id,
+                                UUID4::new(),
+                                3.into(),
+                                3.into(),
+                                false,
+                                Some(VenueOrderId::from("V-1")),
+                                Some(account),
+                            ))),
+                            "PARTIALLY_FILLED" => Some(OrderEventAny::Filled(OrderFilled::new(
+                                trader,
+                                strategy,
+                                instrument,
+                                id,
+                                VenueOrderId::from("V-1"),
+                                account,
+                                TradeId::from("T-1"),
+                                order.order_side(),
+                                order.order_type(),
+                                Quantity::from("1.00"),
+                                Price::from("100.00"),
+                                Currency::USDC(),
+                                LiquiditySide::Taker,
+                                UUID4::new(),
+                                3.into(),
+                                3.into(),
+                                false,
+                                None,
+                                None,
+                                None,
+                            ))),
+                            _ => None,
                         };
-                        if let Some(event)=event {order=cache.update_order(&event)?;}
+                        if let Some(event) = event {
+                            order = cache.update_order(&event)?;
+                        }
                     }
                 }
-                assert_eq!(order.status().to_string(),name);
+                assert_eq!(order.status().to_string(), name);
                 // The lazy scan must preserve the former account-filtered set,
                 // including the absence of an account on local orders.
                 for filter in [None, Some(&account)] {
-                    let former: Vec<_> = cache.orders(None, None, None, filter, None)
-                        .iter().map(|o| o.client_order_id().to_string()).collect();
-                    let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, filter)
+                    let former: Vec<_> = cache
+                        .orders(None, None, None, filter, None)
+                        .iter()
+                        .map(|o| o.client_order_id().to_string())
+                        .collect();
+                    let mut lazy: Vec<_> = cache
+                        .iter_client_order_ids(None, None, None, filter)
                         .filter_map(|id| cache.order_ref(&id))
-                        .map(|o| o.client_order_id().to_string()).collect();
+                        .map(|o| o.client_order_id().to_string())
+                        .collect();
                     lazy.sort();
                     assert_eq!(former, lazy, "lazy scan {name}/{suffix}");
                 }
-                assert_ne!(official_node_order_activity(&cache),empty,"{name}/{suffix}");
-                cache.clear_index();cache.build_index();
-                assert_ne!(official_node_order_activity(&cache),empty,"rebuilt {name}/{suffix}");
-                cache.update_order(&TestOrderEventStubs::canceled(&order,account,order.venue_order_id()))?;
-                assert_eq!(official_node_order_activity(&cache),empty,"closed {name}/{suffix}");
+                assert_ne!(
+                    official_node_order_activity(&cache),
+                    empty,
+                    "{name}/{suffix}"
+                );
+                cache.clear_index();
+                cache.build_index();
+                assert_ne!(
+                    official_node_order_activity(&cache),
+                    empty,
+                    "rebuilt {name}/{suffix}"
+                );
+                cache.update_order(&TestOrderEventStubs::canceled(
+                    &order,
+                    account,
+                    order.venue_order_id(),
+                ))?;
+                assert_eq!(
+                    official_node_order_activity(&cache),
+                    empty,
+                    "closed {name}/{suffix}"
+                );
             }
         }
-        let mut cache=Cache::default();
-        let mut originals=vec![];
-        for suffix in ["001","002"] {
-            let order=OrderTestBuilder::new(OrderType::Limit).instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
-                .side(OrderSide::Buy).strategy_id(StrategyId::from(format!("OTHER-{suffix}")))
+        let mut cache = Cache::default();
+        let mut originals = vec![];
+        for suffix in ["001", "002"] {
+            let order = OrderTestBuilder::new(OrderType::Limit)
+                .instrument_id(InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"))
+                .side(OrderSide::Buy)
+                .strategy_id(StrategyId::from(format!("OTHER-{suffix}")))
                 .client_order_id(ClientOrderId::from(format!("ORIGINAL-{suffix}")))
-                .quantity(Quantity::from("2.00")).price(Price::from("100.00")).build();
-            cache.add_order(order.clone(),None,None,false)?;
-            let account=AccountId::from(format!("OTHER-{suffix}"));
-            let order=cache.update_order(&TestOrderEventStubs::submitted(&order,account))?;
-            originals.push((order,account));
+                .quantity(Quantity::from("2.00"))
+                .price(Price::from("100.00"))
+                .build();
+            cache.add_order(order.clone(), None, None, false)?;
+            let account = AccountId::from(format!("OTHER-{suffix}"));
+            let order = cache.update_order(&TestOrderEventStubs::submitted(&order, account))?;
+            originals.push((order, account));
         }
-        let former: Vec<_> = cache.orders(None, None, None, None, None)
-            .iter().map(|o| o.client_order_id()).collect();
-        let mut lazy: Vec<_> = cache.iter_client_order_ids(None, None, None, None)
-            .map(|id| required_order_ref(&cache, &id).client_order_id()).collect();
+        let former: Vec<_> = cache
+            .orders(None, None, None, None, None)
+            .iter()
+            .map(|o| o.client_order_id())
+            .collect();
+        let mut lazy: Vec<_> = cache
+            .iter_client_order_ids(None, None, None, None)
+            .map(|id| required_order_ref(&cache, &id).client_order_id())
+            .collect();
         lazy.sort();
         assert_eq!(former, lazy, "preserve official cancellation order");
-        for (index,(order,account)) in originals.iter().enumerate() {
-            assert_ne!(official_node_order_activity(&cache),empty);
-            cache.update_order(&TestOrderEventStubs::canceled(order,*account,None))?;
-            assert_eq!(official_node_order_activity(&cache)==empty,index==1,"other account/strategy still blocks zero");
+        for (index, (order, account)) in originals.iter().enumerate() {
+            assert_ne!(official_node_order_activity(&cache), empty);
+            cache.update_order(&TestOrderEventStubs::canceled(order, *account, None))?;
+            assert_eq!(
+                official_node_order_activity(&cache) == empty,
+                index == 1,
+                "other account/strategy still blocks zero"
+            );
         }
         Ok(())
     }
@@ -2489,9 +2671,14 @@ mod tests {
                 );
                 if service_fixture {
                     owner.config.source_id = boot.value("config")["source_id"]
-                        .as_str().ok_or_else(|| anyhow!("test_source_required"))?.to_owned();
+                        .as_str()
+                        .ok_or_else(|| anyhow!("test_source_required"))?
+                        .to_owned();
                 } else {
-                    ensure!(boot.value("config")["source_id"] == "test-source", "test_source_required");
+                    ensure!(
+                        boot.value("config")["source_id"] == "test-source",
+                        "test_source_required"
+                    );
                 }
                 owner.boot_id = boot.id.clone();
             }
@@ -2541,11 +2728,20 @@ mod tests {
             publish_native_quote(&cache, "100.00")?;
             tokio::time::sleep(Duration::from_millis(30)).await;
             if service_fixture {
-                ensure!(cache.borrow().orders(None, None, None, None, None).is_empty(), "test_boot_created_order");
+                ensure!(
+                    cache
+                        .borrow()
+                        .orders(None, None, None, None, None)
+                        .is_empty(),
+                    "test_boot_created_order"
+                );
                 write("boot-empty.json", &json!({"orders":0}))?;
                 let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 while !directory.join("explicit-test-start").exists() {
-                    ensure!(std::time::Instant::now() < deadline, "test_explicit_start_timeout");
+                    ensure!(
+                        std::time::Instant::now() < deadline,
+                        "test_explicit_start_timeout"
+                    );
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
@@ -3134,13 +3330,11 @@ mod tests {
             ),
             counts
         );
-        assert!(
-            cache
-                .borrow()
-                .iter_client_order_ids(None, None, None, None)
-                .next()
-                .is_none()
-        );
+        assert!(cache
+            .borrow()
+            .iter_client_order_ids(None, None, None, None)
+            .next()
+            .is_none());
         native.dispose();
         Ok(())
     }
@@ -3199,7 +3393,10 @@ mod tests {
             let summary = request(&tx, &replies, "ACCOUNT_SUMMARY", json!({})).await?;
             assert!(summary.get("orders").is_none());
             assert!(summary.get("fills").is_none());
-            assert_eq!(summary["official_node_order_activity"], json!({"open":false,"inflight":false,"active_local":false,"emulated":false}));
+            assert_eq!(
+                summary["official_node_order_activity"],
+                json!({"open":false,"inflight":false,"active_local":false,"emulated":false})
+            );
             let row = snapshot["orders"].as_array().unwrap().first().unwrap();
             let session = summary["native_session_id"].clone();
             let status = request(&tx, &replies, "ORDER_STATUS", json!({"expected_native_session_id":session,"client_order_id":row["client_order_id"]})).await?;
