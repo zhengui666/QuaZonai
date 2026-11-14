@@ -98,6 +98,10 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 - 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。Rust job 已不依赖 WASM 解释器或 Clarabel 求解器；历史 Wire 类型及拒绝旧请求的测试仍可保留相关标识，不等于支持执行。真实资金/账户与原始数据代码须按调用图保留，不能按关键词盲删。
 - 原生兼容方向是使用官方配置、策略、指标、数据与报告接口，而不是再造策略 DSL。当前 Rust `add_strategy<T>` 需要编译时具体类型；尚无任意 Python `ImportableStrategyConfig` 动态执行接线，原生策略入口也不支持用户源码即席运行。已接入的策略不是 Nautilus 全部能力，扩展应接官方公开接口，不修改上游。
 
+`market-history hyperliquid-funding` 默认仍保存官方适配器原始 `FundingRateUpdate`。显式同时给出 `--settled-history-jsonl <原侧车>` 与 `--historical-settlement` 时走离线事后结算适配，不请求网络：保留原 `event_ns`/费率，以该原始时间同值设置 `next_funding_ns`、`ts_event` 和假定的 `ts_init`，不取整、不计算资金费。输出目录须为新目录；目标 native catalog 可已有行情，但不得已有资金费，此模式不做增量混合/覆盖。既有资金费 manifest 在数据写入前保存明确范围，失败不留下无标签的适配数据。
+
+该目录用于 `native-strategy-backtest` 时须显式选择 `FundingRateUpdate`，不能只导入不回放；正式结果保留事后结算限制 notes。真实接收/发布时间未知，不能称严格 PIT 或无前视认证；策略若将这些费率用于信号仍有前视风险。导入不提供历史结算价格，官方引擎采用已有 mark 或盘口中点，不等于 Hyperliquid 真实支付；读取行数不证明全部结算，须核对官方持仓资金调整与账户事件。L2 OBI 加资金费仍保持原生 book-to-quote 管道；加入 MarkPrice 等其他选择器的组合不在本次接线范围。
+
 ## 账户资金退出运行配置
 
 既有远程 Nautilus 入口通过 `QZ_NAUTILUS_ACCOUNTS` 显式配置账户数组；每项包含 `id`、`clientId`、`accountId`、`mode` 和原生现货 `instruments`。Paper 另外要求 `startingBalance` 与显式 `paperFeeRate`；LIVE 使用 `accountAddress` 指定 master 地址，`network` 选择 mainnet/testnet。签名密钥通过账户宿主读取的 `HYPERLIQUID_PK` / `HYPERLIQUID_TESTNET_PK` 注入，不写入源码或业务请求。
