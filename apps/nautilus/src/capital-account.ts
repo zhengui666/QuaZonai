@@ -386,6 +386,19 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     const prior = commands[command.requestId];
     if (prior) { if (canonical(prior.original) !== canonical(body)) fail('strategy_request_id_conflict'); return structuredClone(prior.receipt); }
     if (command.action === 'START') {
+      // A newer request/fence cannot resolve an earlier unknown connection or
+      // START outcome. Preserve those receipts; observation and STOP stay available.
+      if (Object.values(commands).some(value => ['START', 'RECOVER'].includes(String(value.original.action))
+        && !['COMPLETED', 'REJECTED'].includes(String(value.receipt.status)))) {
+        const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
+          result: { admission: 'REJECTED', started: false, reason: 'strategy_original_command_unsettled' }, error: 'strategy_original_command_unsettled' };
+        commands[command.requestId] = { original: structuredClone(body), receipt };
+        try { await save(); } catch {
+          receipt.status = 'UNCERTAIN'; receipt.result = null; receipt.persisted = false;
+          receipt.error = 'account_receipts_write_failed';
+        }
+        return structuredClone(receipt);
+      }
       if (Object.values(state.strategyCommands ?? {}).some(value => value.original.action === 'CONFIGURE' && value.receipt.status !== 'COMPLETED')) fail('account_configuration_save_unsettled');
       if(Object.values(state.commands).some(command=>['PENDING','UNCERTAIN'].includes(command.state)))fail('capital_original_command_unsettled');
       if (writeFailed) fail('account_receipts_write_failed');

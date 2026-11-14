@@ -257,6 +257,73 @@ test('native strategy control persists uncertain original commands without repla
 });
 
 
+for (const action of ['START', 'RECOVER'] as const) for (const reopen of [false, true]) test(`uncertain ${action} prevents a new START with a fresh fence (reopen=${reopen})`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-unsettled-strategy-'));
+  class UnsettledProtocol extends NativeProtocol {
+    connections = 0;
+    async start() { this.connections++; }
+    override async request(operation: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+      const result = await super.request(operation, payload);
+      if (operation === (action === 'START' ? 'STRATEGY_START' : 'RECOVERY_STATUS')) throw new Error('controlled_original_reply_lost');
+      return result;
+    }
+  }
+  const native = new UnsettledProtocol();
+  const paper = { ...options, mode: 'paper' as const, startingBalance: '1000', paperFeeRate: '0.001' };
+  let account = await createCapitalAccount(paper, directory, '/unused', native);
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  const fresh = async (requestId: string, nextAction: 'START' | 'RECOVER') => {
+    const fence = await call('GET', '/strategy/fence');
+    return { requestId, action: nextAction, clientId: options.clientId, accountId: options.accountId,
+      expectedAccountSourceId: fence.accountSourceId, expectedStrategyRevision: fence.strategyRevision };
+  };
+  try {
+    const original = await fresh('original-uncertain', action);
+    const receipt = await call('POST', '/strategy/commands', original);
+    assert.equal(receipt.status, 'UNCERTAIN');
+    assert.equal(native.connections, 1);
+    const file = join(directory, 'capital-receipts.json');
+    const before = JSON.parse(await readFile(file, 'utf8'));
+    const commands = () => native.requests.filter(row => row.operation !== 'ACCOUNT_SUMMARY');
+    const requests = structuredClone(commands());
+    if (reopen) { await account.close(); account = await createCapitalAccount(paper, directory, '/unused', native); }
+    assert.deepEqual(await call('GET', '/strategy/commands/original-uncertain'), receipt);
+    assert.deepEqual(await call('POST', '/strategy/commands', original), receipt);
+    const replacement = await fresh('replacement', 'START');
+    const rejection = await call('POST', '/strategy/commands', replacement);
+    assert.equal(rejection.status, 'REJECTED',
+      JSON.stringify({connections:native.connections,originalOperations:requests.map(row=>row.operation),actualOperations:native.requests.map(row=>row.operation)}));
+    assert.deepEqual(rejection.result, { admission: 'REJECTED', started: false, reason: 'strategy_original_command_unsettled' });
+    assert.equal(rejection.error, 'strategy_original_command_unsettled');
+    assert.equal(native.connections, 1);
+    assert.deepEqual(commands(), requests, 'new identity must not reconnect, CONTROL, or START');
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { ...before,
+      strategyCommands: { ...before.strategyCommands, replacement: { original: replacement, receipt: rejection } } },
+      'only the new rejection is added; original receipts and control revisions are unchanged');
+    await account.close(); account = await createCapitalAccount(paper, directory, '/unused', native);
+    assert.deepEqual(await call('POST', '/strategy/commands', replacement), rejection);
+    assert.deepEqual(await call('GET', '/strategy/commands/replacement'), rejection);
+    assert.deepEqual(commands(), requests, 'durable rejection replay never dispatches');
+    assert.equal((await call('POST', '/strategy/commands', {requestId:'explicit-stop',action:'STOP',clientId:options.clientId,accountId:options.accountId})).status, 'COMPLETED');
+    assert.equal(native.connections, 1, 'STOP never connects');
+    assert.equal(native.requests.filter(row => row.operation === 'STRATEGY_STOP').length, 1);
+    assert.deepEqual(await call('GET', '/strategy/commands/original-uncertain'), receipt, 'STOP does not settle the unknown original command');
+    assert.equal((await call('POST', '/strategy/commands', await fresh('replacement-after-stop', 'START'))).status, 'REJECTED');
+    const beforeFailedSave = await readFile(file, 'utf8');
+    const commandsBeforeFailedSave = structuredClone(commands());
+    await mkdir(file + '.next');
+    const unrecorded = await fresh('replacement-write-failed', 'START');
+    const uncertain = await call('POST', '/strategy/commands', unrecorded);
+    assert.equal(uncertain.status, 'UNCERTAIN'); assert.equal(uncertain.persisted, false);
+    assert.equal(uncertain.result, null); assert.equal(uncertain.error, 'account_receipts_write_failed');
+    assert.deepEqual(await call('POST', '/strategy/commands', unrecorded), uncertain);
+    assert.deepEqual(await call('GET', '/strategy/commands/replacement-write-failed'), uncertain);
+    assert.deepEqual(await call('GET', '/strategy/commands/original-uncertain'), receipt);
+    assert.equal(await readFile(file, 'utf8'), beforeFailedSave);
+    assert.equal(native.connections, 1); assert.deepEqual(commands(), commandsBeforeFailedSave);
+  } finally { await account.close().catch(()=>{}); await rm(directory, { recursive: true, force: true }); }
+});
+
 test('live START without native spot-free capability is durably rejected before BOOT and replay never trades', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-live-unsupported-'));
   const native = Object.assign(new NativeProtocol(), { async start() { throw new Error('BOOT_MUST_NOT_RUN'); } });
