@@ -19,9 +19,9 @@ test('production ORDER_PAGE cancellation preserves official event JSON through S
  if(process.env.NODE_TEST_WORKER_ID!==undefined)assert.equal(process.env.NODE_TEST_WORKER_ID,'1');
  const built=JSON.parse(await readFile(process.env.QZ_DECLARED_OWNER_BUILD_RESULT!,'utf8'));
  assert.equal(built.capabilities.account.compatibilityDeclaration,'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1');assert.equal(built.capabilities.account.compatibilityVerified,false);
- const state=await setup();const evidence:Record<string,any>={sourceCommit:'8b25a2fcdd0d99efaaaba51b73ff818f1700089f',directory:state.directory,builtExecutable:built.executable};
+ const state=await setup();const evidence:Record<string,any>={directory:state.directory,builtExecutable:built.executable};
  let observed:any=null,cancelSends=0;const originalRequest=AccountRuntime.prototype.request;
- const observe=mock.method(AccountRuntime.prototype,'request',async function(this:AccountRuntime,op:string,payload:Record<string,unknown>={}){const result=await originalRequest.call(this,op,payload);if(op==='SNAPSHOT')observed=structuredClone(result);return result;});
+ const observe=mock.method(AccountRuntime.prototype,'request',async function(this:AccountRuntime,op:string,payload:Record<string,unknown>={}){const result=await originalRequest.call(this,op,payload);if(op==='ACCOUNT_SUMMARY')observed=structuredClone(result);return result;});
  const originalBind=AccountRuntime.prototype.bindPaperCancellationSession;
  const observeCancel=mock.method(AccountRuntime.prototype,'bindPaperCancellationSession',function(this:AccountRuntime,session:string){const bound=originalBind.call(this,session);return {request:(op:'ORDER_CANCEL_ATTEMPT'|'ORDER_OBSERVE',payload:Record<string,unknown>)=>{if(op==='ORDER_CANCEL_ATTEMPT')cancelSends++;return bound.request(op,payload);}};});
  const api='/api/v3/settings/instances',url='/api/v3/accounts/configurations',base=url+'/paper/strategy';
@@ -41,7 +41,7 @@ test('production ORDER_PAGE cancellation preserves official event JSON through S
   const connection=state.service.config.connections.find(v=>v.id==='paper')!;
   let ready=false;
   for(let i=0;i<30;i++){const previous=observed;try{await downstreamRequest(connection,'account','GET');ready=observed!==previous&&observed?.ready===true&&observed.recovery_required===false;}catch{ready=false;}if(ready)break;await delay(1000);}
-  assert.equal(ready,true,'No START without successful current account read and fresh official observation');assert.equal(observed.recovery_required,false);assert.deepEqual(observed.orders,[]);assert.deepEqual(observed.fills,[]);assert.deepEqual(observed.positions,[]);
+  assert.equal(ready,true,'No START without successful current account read and fresh official observation');assert.equal(observed.recovery_required,false);assert.deepEqual(observed.official_node_order_activity,{open:false,inflight:false,active_local:false,emulated:false});assert.equal('orders' in observed,false);assert.equal('fills' in observed,false);assert.deepEqual(observed.positions,[]);
   const data=join(state.directory,'accounts','paper');
   const diagnostics=async()=>{const names=(await readdir(data)).filter(n=>n.startsWith('native-stderr-'));return (await Promise.all(names.map(n=>readFile(join(data,n),'utf8')))).join('\n');};
   assert.doesNotMatch(await diagnostics(),/isolated-owner-factory-called|isolated-paper-start/);
