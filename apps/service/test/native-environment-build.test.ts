@@ -63,3 +63,28 @@ test('competing artifacts have one revision winner; original selection retry and
   await work.select(winner);assert.deepEqual(settings.view(),frozen);await assert.rejects(work.select(loser),/revision_conflict/);assert.equal(count,2);
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('real import failures expose bounded categories and only existing logs; original failures never rerun after reopen',async()=>{
+ const {writeFile,readdir}=await import('node:fs/promises');
+ const dir=await mkdtemp(join(tmpdir(),'qz-import-diagnostics-'));const config=configDefaults({dataDir:dir});
+ const builder=nativeEnvironmentBuild(config);const models=createModels();models.setProvider(fauxProvider().provider);
+ const opts={database:join(dir,'research.sqlite'),models,extensions:[builder.extension]};let host=await openResearch(opts);const settings=await instanceSettings(config);
+ const caps={schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'0.69.0',nautilusSource:'test-only',jobVersion:'test',precision:'high'},research:{singleStrategyRegistration:false,configuredRunFactory:false},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false};
+ const source=join(dir,'identity-artifact');await writeFile(source,'#!/bin/sh\nprintf \'%s\\n\' \''+JSON.stringify(caps)+'\'\n',{mode:0o700});
+ const bad=join(dir,'loader-failure');await writeFile(bad,'#!/missing-private-review-loader\nPRIVATE_COMPILER_DIAGNOSTIC\n',{mode:0o700});
+ const cases=[{name:'missing',source:join(dir,'absent'),reason:'native_preparation_required_file_unavailable',logs:[]},
+ {name:'loader',source:bad,reason:'native_preparation_required_file_unavailable',logs:['capabilities.stdout','capabilities.stderr']},
+ {name:'identity',source,reason:'native_preparation_identity_mismatch',logs:['capabilities.stdout','capabilities.stderr'],expectedIdentity:{nautilusSource:'another-source',nautilusVersion:'0.69.0',precision:'high'}}];
+ try{
+  for(const item of cases){
+   const work=builder.workbench(host,settings);const request={requestId:item.name,expectedRevision:0,environmentId:'review',sourceExecutable:item.source,...(item.expectedIdentity?{expectedIdentity:item.expectedIdentity}:{})};
+   const original=await work.startImport(request);await host.harness.waitForTask(original.taskId,context);const result=await work.read(item.name);
+   assert.equal(result.state.status,'terminal');if(result.state.status!=='terminal'||result.state.outcome.status!=='failed')throw Error('expected failure');
+   assert.equal(result.state.outcome.error.message,item.reason);assert.deepEqual(result.state.outcome.error.detail,{diagnosticFiles:item.logs});
+   assert.equal(JSON.stringify(result.state).includes(dir),false);assert.equal(JSON.stringify(result.state).includes('PRIVATE_COMPILER_DIAGNOSTIC'),false);
+   if(item.name==='missing')assert.deepEqual(await readdir(join(dir,'native-builds')),[]);
+   await assert.rejects(work.select({requestId:item.name,expectedRevision:0}),/native_build_not_completed/);assert.equal(config.nativeProcess,undefined);
+   await host.close();host=await openResearch(opts);const repeated=await builder.workbench(host,settings).startImport(request);assert.equal(repeated.taskId,original.taskId);assert.deepEqual(repeated.state,result.state);
+  }
+ }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
