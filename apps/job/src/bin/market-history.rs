@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     fs,
-    io::{BufReader, Write},
+    io::{BufRead, BufReader, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -87,6 +87,13 @@ enum Command {
         /// Research source revision to which the funding sidecar belongs.
         #[arg(long)]
         source_revision: String,
+        /// Existing three-field funding JSONL; offline historical settlement simulation only.
+        #[arg(long, requires = "historical_settlement")]
+        settled_history_jsonl: Option<PathBuf>,
+        /// Explicitly map settled event_ns to the native boundary and assumed ts_init.
+        /// Receive time is unknown; this is not PIT-certified or exact exchange charging.
+        #[arg(long, requires = "settled_history_jsonl")]
+        historical_settlement: bool,
     },
     /// Obtain current definitions using the official public adapter, without historical backdating.
     HyperliquidInstruments {
@@ -411,7 +418,8 @@ fn publish_funding(
     end_ns: u64,
     instruments: Vec<String>,
     rates: BTreeMap<(u64, String), rust_decimal::Decimal>,
-) -> Result<()> {
+    settled_history_source: Option<&Path>,
+) -> Result<serde_json::Value> {
     let observed: BTreeSet<_> = rates.keys().map(|(_, id)| id.as_str()).collect();
     let missing: Vec<_> = instruments
         .iter()
@@ -431,42 +439,58 @@ fn publish_funding(
     }
     file.flush()?;
     file.persist(output.join("funding-rates.jsonl"))?;
-    publish_funding_json(
-        &output.join("funding-rates.manifest.json"),
-        &serde_json::json!({
-            "source_revision": source_revision,
-            "start_ns": start_ns.to_string(),
-            "end_ns": end_ns.to_string(),
-            "instruments": instruments,
-            "rows": rates.len(),
-            "missing_instruments": missing,
-            "native_catalog": "catalog",
-            "native_funding_fields": "Original official FundingRateUpdate: rate, interval, next_funding_ns, ts_event and ts_init preserved",
-            "historical_clock_semantics": "Official historical adapter maps venue interval-end time to both ts_event and ts_init; not measured collector receive time",
-            "simulation_scope": "Nautilus standard funding uses mark price or book midpoint, not Hyperliquid oracle-price payment equivalence",
-            "source": "Hyperliquid public fundingHistory at https://api.hyperliquid.xyz/info via official NautilusTrader adapter; settled hourly interval-end timestamps; half-open event-time window; no collector receive timestamps",
-        }),
-    )?;
+    let mut manifest = serde_json::json!({
+        "source_revision": source_revision,
+        "start_ns": start_ns.to_string(),
+        "end_ns": end_ns.to_string(),
+        "instruments": instruments,
+        "rows": rates.len(),
+        "missing_instruments": missing,
+        "native_catalog": "catalog",
+        "native_funding_fields": "Original official FundingRateUpdate: rate, interval, next_funding_ns, ts_event and ts_init preserved",
+        "historical_clock_semantics": "Official historical adapter maps venue interval-end time to both ts_event and ts_init; not measured collector receive time",
+        "simulation_scope": "Nautilus standard funding uses mark price or book midpoint, not Hyperliquid oracle-price payment equivalence",
+        "source": "Hyperliquid public fundingHistory at https://api.hyperliquid.xyz/info via official NautilusTrader adapter; settled hourly interval-end timestamps; half-open event-time window; no collector receive timestamps",
+    });
+    if let Some(source) = settled_history_source {
+        manifest["funding_settlement_mode"] = "HISTORICAL_POST_HOC_EVENT_TIME".into();
+        manifest["native_funding_fields"] = "Explicit QZ data adaptation, not original official adapter output: original rate/event_ns retained; interval=60; next_funding_ns=ts_event=ts_init=event_ns without rounding".into();
+        manifest["historical_clock_semantics"] = "Historical post-hoc settlement simulation: actual receive/publication time unknown; ts_init=event_ns is an assumption, not PIT evidence. Strategies using these rates as signals can introduce look-ahead.".into();
+        manifest["simulation_scope"] = "No historical settlement-price evidence supplied by this import. Native funding uses mark price if supplied, otherwise book midpoint; not exact Hyperliquid charging or out-of-sample certification.".into();
+        manifest["source"] = "Existing user-selected Hyperliquid settled-history sidecar; not independently reacquired or source-authenticated".into();
+        manifest["source_file"] = serde_json::to_value(source.canonicalize()?)?;
+    }
+    publish_funding_json(&output.join("funding-rates.manifest.json"), &manifest)?;
     eprintln!(
         "{} funding rows, {} missing perpetuals",
         rates.len(),
         missing.len()
     );
-    Ok(())
+    Ok(manifest)
 }
 
-/// Publish the adapter's original typed funding records, without reconstructing clocks
-/// or inventing a settlement boundary. Existing published output is verified, never erased.
+/// Publish the supplied typed funding records unchanged. A retrospective adaptation
+/// must carry its explicit scope before data is written; existing data is never erased.
 fn publish_native_funding(
     output: &Path,
     native_catalog: Option<&Path>,
     instruments: &[InstrumentAny],
     updates: &BTreeMap<String, Vec<FundingRateUpdate>>,
+    settled_history_manifest: Option<&serde_json::Value>,
 ) -> Result<()> {
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let destination = native_catalog.map_or_else(|| output.join("catalog"), Path::to_path_buf);
     if native_catalog.is_some() {
         ensure!(destination.is_dir(), "FUNDING_TARGET_CATALOG_REQUIRED");
+    }
+    let provenance = destination.join("funding-rates.manifest.json");
+    if provenance.exists() {
+        ensure!(
+            settled_history_manifest.is_none()
+                && json::<serde_json::Value>(&provenance)?["funding_settlement_mode"]
+                    != "HISTORICAL_POST_HOC_EVENT_TIME",
+            "FUNDING_CATALOG_PROVENANCE_ALREADY_EXISTS"
+        );
     }
     let staged = (!destination.exists())
         .then(|| {
@@ -507,6 +531,14 @@ fn publish_native_funding(
         .iter()
         .map(|value| value.id().to_string())
         .collect::<Vec<_>>();
+    if settled_history_manifest.is_some() {
+        ensure!(
+            catalog
+                .query::<FundingRateUpdate>(None, None, None, None, None, false)?
+                .is_empty(),
+            "SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"
+        );
+    }
     let actual =
         catalog.query::<FundingRateUpdate>(Some(ids.clone()), None, None, None, None, false)?;
     let mut existing = BTreeMap::new();
@@ -537,6 +569,11 @@ fn publish_native_funding(
             }
         }
     }
+    // Persist the conservative scope before any adapted data. If a write fails,
+    // an existing market catalog remains explicitly labelled, never silently raw.
+    if let Some(manifest) = settled_history_manifest {
+        publish(&root.join("funding-rates.manifest.json"), manifest)?;
+    }
     for rows in additions.values_mut() {
         rows.sort_by_key(|row| row.ts_init);
         if !rows.is_empty() {
@@ -560,6 +597,102 @@ fn publish_native_funding(
     if staged.is_some() {
         fs::rename(root, &destination)?;
     }
+    Ok(())
+}
+
+/// Offline mapping of previously settled Hyperliquid records, never a forecast.
+fn import_settled_history(
+    source: &Path,
+    instruments_path: &Path,
+    start_seconds: u64,
+    end_seconds: u64,
+    output: &Path,
+    source_revision: &str,
+    native_catalog: Option<&Path>,
+) -> Result<()> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SettledRow {
+        instrument_id: InstrumentId,
+        event_ns: String,
+        rate: String,
+    }
+    ensure!(start_seconds < end_seconds, "FUNDING_TIME_RANGE_INVALID");
+    ensure!(
+        !source_revision.trim().is_empty(),
+        "FUNDING_SOURCE_REVISION_EMPTY"
+    );
+    let start = start_seconds
+        .checked_mul(1_000_000_000)
+        .context("FUNDING_TIME_RANGE_INVALID")?;
+    let end = end_seconds
+        .checked_mul(1_000_000_000)
+        .context("FUNDING_TIME_RANGE_INVALID")?;
+    let instruments = job::catalog::currencies::read_instruments(instruments_path)?
+        .into_iter()
+        .filter(|value| matches!(value, InstrumentAny::CryptoPerpetual(_)))
+        .collect::<Vec<_>>();
+    ensure!(!instruments.is_empty(), "FUNDING_PERPETUALS_EMPTY");
+    let ids = instruments
+        .iter()
+        .map(|value| value.id())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        ids.iter().all(|id| id.venue.as_str() == "HYPERLIQUID"),
+        "FUNDING_HYPERLIQUID_INSTRUMENT_REQUIRED"
+    );
+    let mut updates = BTreeMap::<String, Vec<FundingRateUpdate>>::new();
+    let mut rates = BTreeMap::new();
+    for line in BufReader::new(fs::File::open(source)?).lines() {
+        let row: SettledRow = serde_json::from_str(&line?)?;
+        if !ids.contains(&row.instrument_id) {
+            continue;
+        }
+        let time = row.event_ns.parse::<u64>()?;
+        if !(start..end).contains(&time) {
+            continue;
+        }
+        let rate = rust_decimal::Decimal::from_str_exact(&row.rate)?;
+        let key = (time, row.instrument_id.to_string());
+        ensure!(!rates.contains_key(&key), "FUNDING_NATIVE_DUPLICATE_EVENT");
+        rates.insert(key, rate);
+        // Upstream Hyperliquid history defines `time` as the settled interval end.
+        // The boundary is that exact source event, not its rounded hour. The
+        // absent receipt time is explicitly an assumption, not reconstructed fact.
+        updates
+            .entry(row.instrument_id.to_string())
+            .or_default()
+            .push(FundingRateUpdate::new(
+                row.instrument_id,
+                rate,
+                Some(60),
+                Some(time.into()),
+                time.into(),
+                time.into(),
+            ));
+    }
+    ensure!(!rates.is_empty(), "SETTLED_HISTORY_SELECTED_ROWS_EMPTY");
+    fs::create_dir(output)?;
+    let mut manifest = publish_funding(
+        output,
+        source_revision,
+        start,
+        end,
+        ids.iter().map(ToString::to_string).collect(),
+        rates,
+        Some(source),
+    )?;
+    if let Some(path) = native_catalog {
+        manifest["native_catalog"] = serde_json::to_value(path.canonicalize()?)?;
+        publish_funding_json(&output.join("funding-rates.manifest.json"), &manifest)?;
+    }
+    publish_native_funding(
+        output,
+        native_catalog,
+        &instruments,
+        &updates,
+        Some(&manifest),
+    )?;
     Ok(())
 }
 
@@ -650,8 +783,17 @@ async fn hyperliquid_funding(
         native_catalog,
         &instruments.values().cloned().collect::<Vec<_>>(),
         &native_updates,
+        None,
     )?;
-    publish_funding(output, source_revision, start_ns, end_ns, selected, rates)?;
+    publish_funding(
+        output,
+        source_revision,
+        start_ns,
+        end_ns,
+        selected,
+        rates,
+        None,
+    )?;
     if let Some(path) = native_catalog {
         let manifest_path = output.join("funding-rates.manifest.json");
         let mut manifest: serde_json::Value = json(&manifest_path)?;
@@ -1552,18 +1694,34 @@ fn main() {
             output,
             source_revision,
             native_catalog,
-        } => tokio::runtime::Runtime::new()
-            .context("FUNDING_RUNTIME_UNAVAILABLE")
-            .and_then(|runtime| {
-                runtime.block_on(hyperliquid_funding(
+            settled_history_jsonl,
+            historical_settlement: _,
+        } => {
+            if let Some(source) = settled_history_jsonl {
+                import_settled_history(
+                    &source,
                     &instruments,
                     start_seconds,
                     end_seconds,
                     &output,
                     &source_revision,
                     native_catalog.as_deref(),
-                ))
-            }),
+                )
+            } else {
+                tokio::runtime::Runtime::new()
+                    .context("FUNDING_RUNTIME_UNAVAILABLE")
+                    .and_then(|runtime| {
+                        runtime.block_on(hyperliquid_funding(
+                            &instruments,
+                            start_seconds,
+                            end_seconds,
+                            &output,
+                            &source_revision,
+                            native_catalog.as_deref(),
+                        ))
+                    })
+            }
+        }
         Command::ContextPrices {
             manifest,
             instruments,
@@ -1734,6 +1892,231 @@ mod tests {
     }
 
     #[test]
+    fn settled_history_cli_requires_both_explicit_options() {
+        let base = vec![
+            "market-history",
+            "hyperliquid-funding",
+            "--instruments",
+            "i.json",
+            "--start-seconds",
+            "1",
+            "--end-seconds",
+            "2",
+            "--output",
+            "out",
+            "--source-revision",
+            "source",
+        ];
+        assert!(Arguments::try_parse_from(base.clone()).is_ok());
+        let mut missing_confirmation = base.clone();
+        missing_confirmation.extend(["--settled-history-jsonl", "rates.jsonl"]);
+        assert!(Arguments::try_parse_from(missing_confirmation).is_err());
+        let mut missing_source = base.clone();
+        missing_source.push("--historical-settlement");
+        assert!(Arguments::try_parse_from(missing_source).is_err());
+        let mut explicit = base;
+        explicit.extend([
+            "--settled-history-jsonl",
+            "rates.jsonl",
+            "--historical-settlement",
+        ]);
+        assert!(Arguments::try_parse_from(explicit).is_ok());
+    }
+
+    #[test]
+    fn settled_history_preserves_events_and_reaches_native_account_settlement() {
+        use nautilus_model::{
+            data::{BookOrder, OrderBookDelta},
+            enums::{BookAction, OrderSide, RecordFlag},
+            types::{Price, Quantity},
+        };
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        let root = tempfile::tempdir().unwrap();
+        let market = root.path().join("market");
+        fs::create_dir(&market).unwrap();
+        let mut instrument = nautilus_model::instruments::stubs::crypto_perpetual_ethusdt();
+        instrument.id = "ETHUSDT-PERP.HYPERLIQUID".parse().unwrap();
+        let instrument = InstrumentAny::CryptoPerpetual(instrument);
+        let id = instrument.id();
+        job::catalog::currencies::write(&market, std::slice::from_ref(&instrument)).unwrap();
+        let mut catalog = ParquetDataCatalog::new(&market, None, None, None, None);
+        catalog.write_instruments(vec![instrument.clone()]).unwrap();
+        let definitions = root.path().join("instruments.json");
+        publish(&definitions, &vec![instrument.clone()]).unwrap();
+        let mut books = Vec::new();
+        for time in [1_000_000_000u64, 7_200_000_000_000] {
+            let mut clear = OrderBookDelta::clear(id, 0, time.into(), time.into());
+            clear.order.price = Price::from("0.00");
+            clear.order.size = Quantity::from("0.000");
+            books.push(clear);
+            for (side, price, size, last) in [
+                (OrderSide::Buy, "100.00", "10.000", false),
+                (OrderSide::Sell, "101.00", "1.000", true),
+            ] {
+                books.push(OrderBookDelta::new(
+                    id,
+                    BookAction::Add,
+                    BookOrder::new(side, Price::from(price), Quantity::from(size), 0),
+                    RecordFlag::F_SNAPSHOT as u8 | if last { RecordFlag::F_LAST as u8 } else { 0 },
+                    0,
+                    time.into(),
+                    time.into(),
+                ));
+            }
+        }
+        catalog.write_to_parquet(&books, None, None, None).unwrap();
+        let source = root.path().join("history.jsonl");
+        let boundary = 3_600_021_000_000u64;
+        let line = serde_json::json!({"instrument_id":id.to_string(), "event_ns":boundary.to_string(), "rate":"0.010000000000000001"}).to_string();
+        let end = serde_json::json!({"instrument_id":id.to_string(), "event_ns":"7201000000000", "rate":"9"}).to_string();
+        let original = format!("{end}\n{line}\n");
+        fs::write(&source, &original).unwrap();
+        let output = root.path().join("funding");
+        import_settled_history(
+            &source,
+            &definitions,
+            1,
+            7201,
+            &output,
+            "settled-history-test",
+            Some(&market),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&source).unwrap(), original);
+        let saved = catalog
+            .query::<FundingRateUpdate>(None, None, None, None, None, false)
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].rate.to_string(), "0.010000000000000001");
+        assert_eq!(saved[0].interval, Some(60));
+        assert_eq!(saved[0].ts_event.as_u64(), boundary);
+        assert_eq!(saved[0].ts_init.as_u64(), boundary);
+        assert_eq!(saved[0].next_funding_ns.unwrap().as_u64(), boundary);
+        let manifest: serde_json::Value =
+            json(&market.join("funding-rates.manifest.json")).unwrap();
+        assert_eq!(
+            manifest["funding_settlement_mode"],
+            "HISTORICAL_POST_HOC_EVENT_TIME"
+        );
+        assert!(!manifest["native_funding_fields"]
+            .as_str()
+            .unwrap()
+            .contains("Original official FundingRateUpdate"));
+        assert!(!manifest["source"]
+            .as_str()
+            .unwrap()
+            .contains("via official NautilusTrader adapter"));
+        assert!(!output.join(".funding-parts").exists());
+        let request: contracts::native_strategy::NativeStrategyBacktestRequestV1 = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"instrument_id":id.to_string(),"selectors":[{"data_type":"OrderBookDelta","identifier":id.to_string()},{"data_type":"FundingRateUpdate","identifier":id.to_string()}],
+            "event_start_ns":"1000000000","event_end_ns":"7201000000000","available_end_ns":"7201000000000",
+            "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L2_MBP","starting_balances":["100000 USDT"],"base_currency":null,"leverage":"1","maker_fee":"0","taker_fee":"0"},
+            "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":10800.0,"time_in_force":"IOC","dry_run":false}
+        })).unwrap();
+        let replay = job::native_strategy::run(&market, request).unwrap();
+        assert_eq!(replay.data_rows_by_type["FundingRateUpdate"].get(), 1);
+        assert_eq!(replay.data_rows_by_type["OrderBookDelta"].get(), 6);
+        assert!(replay
+            .notes
+            .iter()
+            .any(|value| value.starts_with("HISTORICAL_POST_HOC_FUNDING:")));
+        let canonical = &replay.canonical_result;
+        let adjustments = canonical["positions"][0]["adjustments"].as_array().unwrap();
+        assert_eq!(adjustments.len(), 1);
+        assert_eq!(adjustments[0]["adjustment_type"], "FUNDING");
+        assert_eq!(adjustments[0]["ts_event"], boundary.to_string());
+        assert_eq!(adjustments[0]["pnl_change"], "-1.00500000 USDT");
+        let accounts = canonical["accounts"][0]["Margin"]["base"]["events"]
+            .as_array()
+            .unwrap();
+        let settled = accounts
+            .iter()
+            .find(|event| event["ts_event"] == boundary.to_string())
+            .unwrap();
+        assert_eq!(settled["balances"][0]["total"], "99998.99500000 USDT");
+        assert_eq!(canonical["fills"].as_array().unwrap().len(), 2);
+        // Neither a raw append nor another source may erase the explicit scope.
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&market),
+            std::slice::from_ref(&instrument),
+            &BTreeMap::new(),
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("FUNDING_CATALOG_PROVENANCE_ALREADY_EXISTS"));
+        assert_eq!(
+            json::<serde_json::Value>(&market.join("funding-rates.manifest.json")).unwrap(),
+            manifest
+        );
+        let mixed = root.path().join("other-market-funded");
+        fs::create_dir(&mixed).unwrap();
+        job::catalog::currencies::write(&mixed, std::slice::from_ref(&instrument)).unwrap();
+        let other_catalog = ParquetDataCatalog::new(&mixed, None, None, None, None);
+        other_catalog
+            .write_instruments(vec![instrument.clone()])
+            .unwrap();
+        let other = FundingRateUpdate::new(
+            "BTC-USD-PERP.HYPERLIQUID".parse().unwrap(),
+            "0.01".parse().unwrap(),
+            Some(60),
+            None,
+            boundary.into(),
+            boundary.into(),
+        );
+        other_catalog
+            .write_to_parquet(&[other], None, None, None)
+            .unwrap();
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&mixed),
+            &[instrument],
+            &BTreeMap::new(),
+            Some(&manifest)
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"));
+        assert!(!mixed.join("funding-rates.manifest.json").exists());
+        for (index, rate) in ["0.00000000000000000000000000001", "1e-29"]
+            .into_iter()
+            .enumerate()
+        {
+            let invalid = root.path().join(format!("inexact-{index}.jsonl"));
+            fs::write(&invalid, serde_json::json!({"instrument_id":id.to_string(), "event_ns":boundary.to_string(), "rate":rate}).to_string()).unwrap();
+            let rejected = root.path().join(format!("inexact-output-{index}"));
+            assert!(import_settled_history(
+                &invalid,
+                &definitions,
+                1,
+                7201,
+                &rejected,
+                "inexact",
+                None
+            )
+            .is_err());
+            assert!(!rejected.exists());
+        }
+        let duplicate = root.path().join("duplicate.jsonl");
+        fs::write(&duplicate, format!("{line}\n{line}\n")).unwrap();
+        let rejected = root.path().join("duplicate-output");
+        assert!(import_settled_history(
+            &duplicate,
+            &definitions,
+            1,
+            7201,
+            &rejected,
+            "duplicate",
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("FUNDING_NATIVE_DUPLICATE_EVENT"));
+        assert!(!rejected.exists());
+    }
+
+    #[test]
     fn funding_sidecar_preserves_decimal_time_order_and_missing_markets() {
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("funding");
@@ -1768,6 +2151,7 @@ mod tests {
                 "Z.HYPERLIQUID".into(),
             ],
             rates,
+            None,
         )
         .unwrap();
         let rows: Vec<serde_json::Value> = fs::read_to_string(output.join("funding-rates.jsonl"))
@@ -1858,6 +2242,7 @@ mod tests {
             Some(&market),
             std::slice::from_ref(&instrument),
             &updates,
+            None,
         )
         .unwrap();
         let saved = catalog
@@ -1887,7 +2272,7 @@ mod tests {
         changed.rate = "0.02".parse().unwrap();
         let conflict = BTreeMap::from([(id.to_string(), vec![changed])]);
         assert!(
-            publish_native_funding(root.path(), Some(&market), &[instrument], &conflict)
+            publish_native_funding(root.path(), Some(&market), &[instrument], &conflict, None)
                 .unwrap_err()
                 .to_string()
                 .contains("FUNDING_CATALOG_RECORD_CONFLICT")
@@ -2246,15 +2631,9 @@ mod tests {
                     None,
                 )
                 .unwrap();
-            let ticks = native.query::<TradeTick>(
-                None,
-                None,
-                None,
-                None,
-                None,
-                false,
-            )
-            .unwrap();
+            let ticks = native
+                .query::<TradeTick>(None, None, None, None, None, false)
+                .unwrap();
             assert_eq!(
                 ticks.iter().map(|tick| tick.ts_init.as_u64()).min(),
                 Some(first)
@@ -2335,15 +2714,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        let ticks = native.query::<TradeTick>(
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
+        let ticks = native
+            .query::<TradeTick>(None, None, None, None, None, false)
+            .unwrap();
         assert_eq!(
             ticks.iter().map(|tick| tick.ts_init.as_u64()).min(),
             Some(1767225600001000000)

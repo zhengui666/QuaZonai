@@ -351,6 +351,20 @@ pub fn run_with_registration(
             .get_engine("native-strategy")
             .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_ENGINE_MISSING"))?;
         let mut notes = vec![if scenario.is_some() { "Hypothetical static instrument rules: the selected original definition and timestamps are unchanged, but applied as a fixed simulation assumption, not verified historical metadata.".into() } else { "Instrument definitions are selected by original catalog availability, not an independent source-history audit.".into() }, "Statically compiled Nautilus Strategy; not Python import or live execution.".into(), "Fees are explicit simulation assumptions; historical computation is not out-of-sample validation.".into()];
+        if counts
+            .get("FundingRateUpdate")
+            .is_some_and(|rows| rows.get() > 0)
+        {
+            let provenance = root.join("funding-rates.manifest.json");
+            if provenance.exists() {
+                let manifest: serde_json::Value =
+                    serde_json::from_reader(std::fs::File::open(provenance)?)?;
+                if manifest["funding_settlement_mode"] == "HISTORICAL_POST_HOC_EVENT_TIME" {
+                    notes.push("HISTORICAL_POST_HOC_FUNDING: selected catalog funding was explicitly adapted from settled history, not preserved as original official adapter output. Original event_ns/rate are retained; next_funding_ns=ts_event=ts_init=event_ns without rounding. Actual receive/publication time is unknown; ts_init is a simulation assumption, not PIT certification. Using these historical rates as strategy signals can introduce look-ahead.".into());
+                    notes.push("FUNDING_PRICE_SCOPE: this import supplies no historical settlement-price evidence. Nautilus uses supplied mark price or otherwise book midpoint; this is not exact Hyperliquid payment reproduction or out-of-sample validation. Loaded funding-row counts do not prove that every row settled; inspect native position adjustments and account events.".into());
+                }
+            }
+        }
         if book_quotes {
             notes.push("OFFICIAL_BOOK_DERIVED_QUOTES: Nautilus DataEngine emit_quotes_from_book uses original L2 best bid/ask and size for quote cache/publication; these are not additional exchange observations or catalog QuoteTick rows. Original book events still drive matching. Native risk checks and stop-time market exits can change now that quotes exist; old unpriced results and new returns are not directly comparable.".into());
         }
