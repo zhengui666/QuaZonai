@@ -158,6 +158,25 @@ test('instrument definition evidence cannot silently upgrade static assumptions 
   const basis = { mode: 'HISTORICAL_AS_OF_START', ts_init_ns: '0', ts_event_ns: '0', scope: 'CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START' };
   const result: JsonObject = { schema_version: 1, native_version: '0.69.0', request, instrument_definition: basis, equity_performance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'OFFICIAL_PORTFOLIO_RETURNS_UNAVAILABLE', currency: null, returns: [], statistics: [252, 365].flatMap(annualization_days => ['CAGR', 'Sharpe Ratio'].map(name => ({ native_key: `${name} (${annualization_days} days)`, annualization_days, value: null }))), first_snapshot_ns: null, last_snapshot_ns: null, snapshot_count: '0', observed_utc_days: '0', unpriced_snapshot_count: '0', return_days: '0', notes: ['Protocol fixture, not measured performance'] }, canonical_result: { schema: 'nautilus-backtest-result/v1', run: { outcome: 'completed' }, accounts: [], diagnostics: [], fills: [], orders: [], portfolio_snapshots: [], position_snapshots: [], positions: [], statistics: {}, components: {} }, data_rows_by_type: { QuoteTick: '1' }, notes: [] };
   assert.deepEqual(nativeStrategyResult(result, request).instrument_definition, basis);
+  // Request/response binding follows Rust Option serialization, not extra permissive filtering.
+  for (const models of [
+    { latency_model: null, fill_model: null },
+    { fill_model: { kind: 'DEFAULT', prob_fill_on_limit: 1, prob_slippage: 0, random_seed: null } },
+    { fill_model: { kind: 'DEFAULT', prob_fill_on_limit: 1, prob_slippage: 0, random_seed: '0' },
+      latency_model: { kind: 'STATIC', base_latency_ns: '0', insert_latency_ns: '1', update_latency_ns: '2', delete_latency_ns: '3' } },
+  ] as JsonObject[]) {
+    const input: JsonObject = { ...request, venue: { base_currency: null, ...models } };
+    const echoedVenue: JsonObject = { base_currency: null, ...models };
+    if (echoedVenue.latency_model === null) delete echoedVenue.latency_model;
+    if (echoedVenue.fill_model === null) delete echoedVenue.fill_model;
+    if ((models.fill_model as JsonObject | null)?.random_seed === null) echoedVenue.fill_model = { kind: 'DEFAULT', prob_fill_on_limit: 1, prob_slippage: 0 };
+    const echo = { ...request, venue: echoedVenue };
+    assert.doesNotThrow(() => nativeStrategyResult({ ...result, request: echo }, input));
+    assert.deepEqual(input.venue, { base_currency: null, ...models }, 'Normalization must not mutate original request');
+    const changed = structuredClone(echo); (changed.venue as JsonObject).unrecognized = null;
+    assert.throws(() => nativeStrategyResult({ ...result, request: changed }, input), /request_mismatch/);
+  }
+
   const countNotes = ['CATALOG_ROW_COUNTS: pre-run validation scan, not consumed events', 'REPLAY_READER_ROWS_INCLUDING_PREFETCH: {"QuoteTick":"9007199254740993"}', 'CATALOG_READ_CONSISTENCY_UNVERIFIED: equal counts do not prove identical inputs'];
   assert.deepEqual(nativeStrategyResult({ ...result, notes: countNotes }, request).notes, countNotes);
   assert.deepEqual(nativeStrategyResult(result, request).notes, [], 'Older report notes must not acquire an inferred streaming mode');
@@ -176,6 +195,9 @@ test('optional official BAR execution preserves explicit false and normalizes on
   const strategy = { kind: 'HURST_VPIN_DIRECTIONAL', bar_type: 'BTC.SIM-100-VALUE-LAST-INTERNAL' };
   assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: false }, strategy }).venue, { base_currency: null, bar_execution: false });
   assert.deepEqual(normalizedNativeStrategyRequest({ venue: { bar_execution: null }, strategy }).venue, { base_currency: null });
+  const unknown: JsonObject = { kind: 'UNKNOWN', random_seed: null, extra: null };
+  assert.deepEqual(normalizedNativeStrategyRequest({ venue: { fill_model: unknown }, strategy }).venue, { base_currency: null, fill_model: unknown });
+
 });
 
 test('official equity metrics keep frequencies separate and unavailable evidence never falls back to positions', () => {

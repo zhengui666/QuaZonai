@@ -799,6 +799,22 @@ mod execution_model_tests {
         let encoded = serde_json::to_value(venue).unwrap();
         assert!(encoded.get("latency_model").is_none());
         assert!(encoded.get("fill_model").is_none());
+        let mut nullable = encoded;
+        nullable["latency_model"] = serde_json::Value::Null;
+        nullable["fill_model"] = serde_json::Value::Null;
+        let venue: NativeStrategyVenueV1 = serde_json::from_value(nullable).unwrap();
+        let echoed = serde_json::to_value(venue).unwrap();
+        assert!(echoed.get("latency_model").is_none() && echoed.get("fill_model").is_none());
+        let fill: NativeDefaultFillModelV1 = serde_json::from_value(serde_json::json!({
+            "kind":"DEFAULT", "prob_fill_on_limit":1.0, "prob_slippage":0.0, "random_seed":null
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(fill).unwrap(),
+            serde_json::json!({
+                "kind":"DEFAULT", "prob_fill_on_limit":1.0, "prob_slippage":0.0
+            })
+        );
     }
 
     #[test]
