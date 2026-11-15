@@ -97,7 +97,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
   const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
   const fence = useResource<{ accountSourceId: string; strategyRevision: string }>(`${path}/fence`, { poll: 3000 });
-  const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; connected: boolean | null; runnerValidated: boolean; lifecycleCapability?:LifecycleCapability|null; accountObservation?:AccountObservationCapability|null; pendingConfigurationRequests: string[] }>(`${path}/config`,{poll:3000});
+  const configuration = useResource<{ accountSourceId: string; strategyRevision: string; configuration: NativeAccountStrategyConfig; accountSemantics?: 'NATIVE_MARGIN' | 'LEGACY_SPOT'; connected: boolean | null; runnerValidated: boolean; lifecycleCapability?:LifecycleCapability|null; accountObservation?:AccountObservationCapability|null; pendingConfigurationRequests: string[] }>(`${path}/config`,{poll:3000});
   const [edited, setEdited] = useState<StrategyEditDraft>();
   const editConfiguration=(text:string)=>{if(configuration.data)setEdited(prior=>prior?{...prior,text}:{text,accountKey:commandIdentity,accountSourceId:configuration.data!.accountSourceId,strategyRevision:configuration.data!.strategyRevision});};
   const editChanged=strategyEditChanged(edited,configuration.data,commandIdentity);
@@ -117,6 +117,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
   const receipt = useResource<StrategyReceipt>(`${path}/commands/${encodeURIComponent(requestId ?? '')}`, { enabled: !!requestId, poll: 2000 });
   const native = status.data?.strategy;
   const supported = !!native && typeof status.data?.accountSourceId === 'string' && /^\d+$/.test(status.data.strategyRevision);
+  const liveSemanticsBlocked = value.mode === 'live' && configuration.data?.accountSemantics !== 'NATIVE_MARGIN';
   const unsettled = !!requestId && (!receipt.data || ['PENDING', 'UNCERTAIN'].includes(receipt.data.status));
   return <section className="result-section"><h3>Nautilus 原生策略</h3>
     <p>勿填写私钥或密码。</p>
@@ -143,12 +144,11 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
       <PendingCommand command={saveConfiguration} />
       {configurationReceipt && <p>{configurationReceipt.status === 'COMPLETED' ? '配置已保存，尚未连接或启动交易。' : '配置持久结果不确定；保留原请求，交易启动被阻止。请核对原配置回执，不要当作保存成功。'}</p>}
     </details>
-
-    {value.mode === 'live' && <p role="status">实盘启动暂不可用：现货余额与风控尚未接通。</p>}
+    {liveSemanticsBlocked && <p role="status">实盘启动暂不可用：现货余额与风控尚未接通。</p>}
     <ErrorNotice error={status.error} retry={() => { void status.refetch(); }} />
     {native && <><Facts items={[["账户模式", value.mode === 'live' ? '实盘：可能产生真实订单' : '模拟盘'], ["策略", native.strategy_id ?? '未注册（仅恢复连接）'], ["状态", <Status value={native.state} />], ["标的", native.instrument_id], ["原生版本", native.native_version], ["策略控制修订", status.data!.strategyRevision]]} /><details><summary>账户原生策略完整配置</summary><pre>{JSON.stringify(native.config, null, 2)}</pre></details></>}
     <ErrorNotice error={fence.error} retry={() => { void fence.refetch(); }} />
-    <div className="form-actions"><Button loading={recover.busy} disabled={!fence.data || !!fence.error || !!recover.pending} onClick={() => confirm('连接账户进行恢复？', '明确连接此账户的 Nautilus 恢复节点，不加载交易策略，不自动下单、改单或撤单。原订单、预留和 UNKNOWN 保留；连接成功不代表对账完成或可交易。', () => { void recover.submit({ action: 'RECOVER', expectedAccountSourceId: fence.data!.accountSourceId, expectedStrategyRevision: fence.data!.strategyRevision }); })}>连接账户进行恢复</Button><Button type="primary" loading={start.busy} disabled={value.mode === 'live' || !accountSummaryStartAllowed(configuration.data?.accountObservation,!!configuration.error) || !supported || unsettled || !!status.error || native?.state === 'RUNNING' || !!start.pending} onClick={() => confirm('启动原生策略？', `${value.mode === 'live' ? '这是实盘，会按已配置策略发送真实订单。' : '这是模拟盘。'}账户：${value.connectionName ?? value.connectionId ?? value.id}；策略：${native?.strategy_id}；标的：${native?.instrument_id}。不是仅启动观测。`, () => { void start.submit({ action: 'START', expectedAccountSourceId: status.data!.accountSourceId, expectedStrategyRevision: status.data!.strategyRevision }); })}>启动{value.mode === 'live' ? '实盘' : '模拟'}策略</Button>
+    <div className="form-actions"><Button loading={recover.busy} disabled={!fence.data || !!fence.error || !!recover.pending} onClick={() => confirm('连接账户进行恢复？', '明确连接此账户的 Nautilus 恢复节点，不加载交易策略，不自动下单、改单或撤单。原订单、预留和 UNKNOWN 保留；连接成功不代表对账完成或可交易。', () => { void recover.submit({ action: 'RECOVER', expectedAccountSourceId: fence.data!.accountSourceId, expectedStrategyRevision: fence.data!.strategyRevision }); })}>连接账户进行恢复</Button><Button type="primary" loading={start.busy} disabled={liveSemanticsBlocked || !accountSummaryStartAllowed(configuration.data?.accountObservation,!!configuration.error) || !supported || unsettled || !!status.error || native?.state === 'RUNNING' || !!start.pending} onClick={() => confirm('启动原生策略？', `${value.mode === 'live' ? '这是实盘，会按已配置策略发送真实订单。' : '这是模拟盘。'}账户：${value.connectionName ?? value.connectionId ?? value.id}；策略：${native?.strategy_id}；标的：${native?.instrument_id}。不是仅启动观测。`, () => { void start.submit({ action: 'START', expectedAccountSourceId: status.data!.accountSourceId, expectedStrategyRevision: status.data!.strategyRevision }); })}>启动{value.mode === 'live' ? '实盘' : '模拟'}策略</Button>
     <Button danger loading={stop.busy} disabled={!!stop.pending} onClick={() => confirm('停止原生策略？', '向此账户发送官方策略 STOP；依上游配置可能撤单或平仓。停止本地观测不等于停止策略。', () => { void stop.submit({ action: 'STOP' }); })}>停止策略</Button>
     <Button onClick={() => { void status.refetch(); void fence.refetch(); void configuration.refetch(); if (requestId) void receipt.refetch(); }}>核对状态与原回执</Button></div>
     <PendingCommand command={recover} /><PendingCommand command={start} /><PendingCommand command={stop} /><ErrorNotice error={recover.error ?? start.error ?? stop.error ?? receipt.error} />
