@@ -411,6 +411,75 @@ fn funding_parts(output: &Path, request: &serde_json::Value) -> Result<PathBuf> 
     Ok(parts)
 }
 
+/// Timestamp diagnostics only: no historical listing/suspension calendar is available.
+/// State is bounded per selected instrument, never proportional to funding row count.
+fn funding_temporal_coverage(
+    instruments: &[String],
+    rates: &BTreeMap<(u64, String), rust_decimal::Decimal>,
+    start_ns: u64,
+    end_ns: u64,
+) -> serde_json::Value {
+    const HOUR_NS: u64 = 3_600_000_000_000;
+    const SAMPLE_LIMIT: usize = 20;
+    #[derive(Default, Serialize)]
+    struct Coverage {
+        observed_rows: u64,
+        first_event_ns: Option<String>,
+        last_event_ns: Option<String>,
+        non_hour_aligned_rows: u64,
+        observed_gap_count: u64,
+        observed_gaps: Vec<serde_json::Value>,
+        gaps_truncated: bool,
+        #[serde(skip)]
+        last: Option<u64>,
+    }
+    let mut by_instrument: BTreeMap<&str, Coverage> = instruments
+        .iter()
+        .map(|id| (id.as_str(), Coverage::default()))
+        .collect();
+    // The source map is globally time-ordered, hence each instrument is ordered too.
+    for ((time, id), _) in rates {
+        if !(start_ns..end_ns).contains(time) {
+            continue;
+        }
+        let Some(coverage) = by_instrument.get_mut(id.as_str()) else {
+            continue;
+        };
+        coverage.observed_rows += 1;
+        coverage.non_hour_aligned_rows += u64::from(time % HOUR_NS != 0);
+        if let Some(previous) = coverage.last {
+            let interval = time - previous;
+            if interval > HOUR_NS {
+                coverage.observed_gap_count += 1;
+                if coverage.observed_gaps.len() < SAMPLE_LIMIT {
+                    coverage.observed_gaps.push(serde_json::json!({
+                        "previous_event_ns": previous.to_string(),
+                        "next_event_ns": time.to_string(),
+                        "interval_ns": interval.to_string(),
+                    }));
+                } else {
+                    coverage.gaps_truncated = true;
+                }
+            }
+        } else {
+            coverage.first_event_ns = Some(time.to_string());
+        }
+        coverage.last = Some(*time);
+        coverage.last_event_ns = Some(time.to_string());
+    }
+    serde_json::json!({
+        "schema_version": 1,
+        "completeness": "UNKNOWN",
+        "historical_schedule_verified": false,
+        "window_start_ns": start_ns.to_string(),
+        "window_end_exclusive_ns": end_ns.to_string(),
+        "gap_threshold_ns": HOUR_NS.to_string(),
+        "gap_samples_per_instrument_limit": SAMPLE_LIMIT,
+        "scope": "Observed timestamp spacing only, not confirmed missing funding or completeness evidence. Listing, delisting, suspension and funding applicability calendars are unavailable. First/last observations do not establish expected coverage at window edges. No interpolation, zero filling or fee calculation. Upstream-discarded duplicate records cannot be diagnosed here.",
+        "instruments": by_instrument,
+    })
+}
+
 fn publish_funding(
     output: &Path,
     source_revision: &str,
@@ -446,6 +515,8 @@ fn publish_funding(
         "instruments": instruments,
         "rows": rates.len(),
         "missing_instruments": missing,
+        "missing_instruments_semantics": "No observed records in this window; not proof that records were expected",
+        "temporal_coverage": funding_temporal_coverage(&instruments, &rates, start_ns, end_ns),
         "native_catalog": "catalog",
         "native_funding_fields": "Original official FundingRateUpdate: rate, interval, next_funding_ns, ts_event and ts_init preserved",
         "historical_clock_semantics": "Official historical adapter maps venue interval-end time to both ts_event and ts_init; not measured collector receive time",
@@ -2232,6 +2303,51 @@ mod tests {
             manifest["missing_instruments"],
             serde_json::json!(["M.HYPERLIQUID"])
         );
+    }
+
+    #[test]
+    fn funding_coverage_reports_spacing_without_claiming_missing_hours() {
+        const H: u64 = 3_600_000_000_000;
+        let ids = vec!["A".to_string(), "B".to_string(), "EMPTY".to_string()];
+        let rates = BTreeMap::from([
+            ((H, "A".into()), rust_decimal::Decimal::ZERO),
+            ((2 * H, "A".into()), rust_decimal::Decimal::ONE),
+            ((4 * H, "A".into()), rust_decimal::Decimal::ZERO),
+            ((5 * H, "A".into()), rust_decimal::Decimal::ZERO),
+            ((2 * H + 1, "B".into()), rust_decimal::Decimal::ZERO),
+        ]);
+        let before = rates.clone();
+        let report = funding_temporal_coverage(&ids, &rates, H, 5 * H);
+        assert_eq!(report["completeness"], "UNKNOWN");
+        assert_eq!(report["historical_schedule_verified"], false);
+        let a = &report["instruments"]["A"];
+        assert_eq!(a["observed_rows"], 3);
+        assert_eq!(a["observed_gap_count"], 1);
+        assert_eq!(a["first_event_ns"], H.to_string());
+        assert_eq!(a["last_event_ns"], (4 * H).to_string());
+        assert_eq!(a["observed_gaps"][0]["interval_ns"], (2 * H).to_string());
+        let b = &report["instruments"]["B"];
+        assert_eq!(b["non_hour_aligned_rows"], 1);
+        assert_eq!(b["first_event_ns"], (2 * H + 1).to_string());
+        assert_eq!(b["observed_gap_count"], 0);
+        assert_eq!(report["instruments"]["EMPTY"]["observed_rows"], 0);
+        assert!(report["instruments"]["EMPTY"]["first_event_ns"].is_null());
+        assert_eq!(rates, before);
+    }
+
+    #[test]
+    fn funding_coverage_bounds_gap_samples_and_does_not_infer_edge_gaps() {
+        const H: u64 = 3_600_000_000_000;
+        let rates = (1..=24)
+            .map(|n| ((n * 2 * H, "A".into()), rust_decimal::Decimal::ZERO))
+            .collect();
+        let report = funding_temporal_coverage(&["A".into()], &rates, 0, 100 * H);
+        let a = &report["instruments"]["A"];
+        assert_eq!(a["observed_rows"], 24);
+        assert_eq!(a["observed_gap_count"], 23);
+        assert_eq!(a["observed_gaps"].as_array().unwrap().len(), 20);
+        assert_eq!(a["gaps_truncated"], true);
+        assert_eq!(a["last_event_ns"], (48 * H).to_string());
     }
 
     #[tokio::test]
