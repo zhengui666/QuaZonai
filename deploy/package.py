@@ -88,7 +88,10 @@ def smoke_launcher_archive(path: Path, platform: str, version: str) -> None:
             dirname = shutil.which('dirname')
             if not dirname:
                 raise ValueError('Archive wrapper test requires dirname.')
-            shutil.copy2(dirname, tools / 'dirname')
+            # macOS system binaries carry restricted flags which cannot be
+            # copied into the temporary fixture. Copy bytes and executable mode only.
+            shutil.copyfile(dirname, tools / 'dirname')
+            (tools / 'dirname').chmod(0o755)
         def execute(argument: str) -> subprocess.CompletedProcess:
             # Fixed arguments only. cmd.exe is explicit because .cmd is not a PE executable.
             command = (f'"{os.environ["COMSPEC"]}" /d /s /c ""{entry}" {argument}"'
