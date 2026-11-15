@@ -63,6 +63,18 @@ objective.metricId 使用 options 返回的实际标识、partition:"FULL_SELECT
 
 `portfolio list/get` 保留历史只读结果。CLI 不再提供新建因子、组合 build 或容量评分入口。旧 `portfolio replay-ticks` / `portfolio tick-replay` 的服务路由已移除，不可用于新建或查询回放；使用同一 `research` 的官方原生策略入口，不尝试重新启用旧因子执行链。
 
+## 显式授权的实现源码评审
+
+源码评审不自动扫描本机、下载 URL 或读取凭据。所有者可经已认证的 `POST /api/v3/research/{conversationId}/implementation-sources` 提供准备好的源码文本：
+
+```json
+{"requestId":"source-material-1","shareWithResearchModel":true,"model":{"provider":"实际提供方","modelId":"当前研究模型"},"files":[{"id":"strategy","name":"strategy.rs","revision":"所有者声明的版本","content":"经过确认可以交给该模型的源码文本"}]}
+```
+
+这明确授权把这些文本交给此研究的指定模型；不要包含密码、密钥、私有账户资料或未授权文件。回复只返回清单，不启动评审/编译/回测/交易。相同 requestId 的原材料不能被替换；材料绑定当时的原生研究请求和模型，修改配置需要重新登记相应材料。没有独立 CLI 上传命令，不要编造命令。
+
+随后让原研究通过 `native_strategy_logic_review` 的 `sourceRequestId` 选择这份材料。Pi 子会话按 `native_assessment_read_source` 分页读取，报告实际读取的文件及 UTF-16 字元范围。未提供的依赖、未读区间、源码与构建产物的对应关系均保持未知；用户给出的版本标签不是构建证明。`SCOPED_SOURCE_LOGIC_REVIEW` 仅表示读过授权片段，不代表全部实现已审查。缺少材料仍是配置逻辑评价。旧 Task、报告和原始请求保留，不重新计算或授权交易。
+
 ## 新数据集与单次研究的独立 runner
 
 需要额外的可信 Rust runner 时，先 `native-runner status` 读取当前 revision，再用 `native-runner import --file` 提交一次原请求，随后 `native-runner build-status REQUEST_ID` 确认原任务完成且 configuredRunFactory 可用。导入执行可信代码的 capabilities，不等于数据/策略验收，不会选择全局 runner。

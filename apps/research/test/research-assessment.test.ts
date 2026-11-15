@@ -227,7 +227,7 @@ test('retired configuration metadata cannot supply an absent official execution 
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('synthesis reopens its original owned review conversation and submission after host suspension', { timeout: 15000 }, async () => {
+for (const mode of ['LOGIC', 'SYNTHESIS'] as const) test(`${mode} reopens its original owned review conversation and submission after host suspension`, { timeout: 15000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-assessment-resume-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   let entered!: () => void; const called = new Promise<void>(resolve => { entered = resolve; });
@@ -240,7 +240,7 @@ test('synthesis reopens its original owned review conversation and submission af
   let host = await openResearch(options);
   try {
     const root = await host.harness.root(context);
-    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS' as const, model: { provider: faux.provider.id, modelId: faux.getModel().id }, request, configurationTaskId: null, evidence: {} }, { ownership: { kind: 'conversation' } }), context);
+    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode, model: { provider: faux.provider.id, modelId: faux.getModel().id }, request, configurationTaskId: null, evidence: {} }, { ownership: { kind: 'conversation' } }), context);
     await called;
     const before = await host.harness.commit(tx => tx.scanConversations({ ownerTaskId: id }, 10), context);
     assert.equal(before.items.length, 1);
