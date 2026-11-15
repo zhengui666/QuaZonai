@@ -82,7 +82,9 @@ export class AccountRuntime implements NativeAccountRuntime {
   private dataDir: string;
   private pending = new Map<string, { resolve(value: Record<string, unknown>): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   private receiptOwnerFd?: number;
-  constructor(binary: string, options: AccountOptions, sourceId: string, dataDir: string, receiptOwnerFd?:number) {
+  private nativeTraderId?: string;
+  constructor(binary: string, options: AccountOptions, sourceId: string, dataDir: string, receiptOwnerFd?:number, nativeTraderId?: string) {
+    this.nativeTraderId = nativeTraderId;
     this.receiptOwnerFd = receiptOwnerFd;
     this.binary = binary; this.options = options; this.sourceId = sourceId; this.dataDir = dataDir;
   }
@@ -147,7 +149,7 @@ export class AccountRuntime implements NativeAccountRuntime {
           native_strategy: this.options.nativeStrategy,
           instruments: this.options.instruments, starting_balance: this.options.startingBalance ?? '0', paper_fee_rate: this.options.paperFeeRate ?? null,
           risk: this.options.risk ?? {}, paper_execution: this.options.paperExecution ?? null,
-          source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
+          ...(this.nativeTraderId ? {trader_id:this.nativeTraderId} : {}), source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
         this.nativeSessionId = typeof boot.native_session_id === 'string' ? boot.native_session_id : null;
         this.ordinaryVenueCancel = boot.ordinary_venue_cancel === true;
         this.accountSummaryProtocol = boot.account_summary_protocol === 1;
