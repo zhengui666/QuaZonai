@@ -386,6 +386,8 @@ test('account configuration creation persists original identity without starting
     assert.equal(retry.status, 201); assert.equal((await retry.json() as any).accountSourceId, original.accountSourceId);
     const duplicate = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'different', configuration: { ...creation.configuration, id: 'other' } }) });
     assert.equal(duplicate.status, 409);
+    const crossSemantics = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'margin-cannot-replace-spot', configuration: { ...creation.configuration, id: 'other-margin', accountId: 'OTHER-ACCOUNT-ID', accountSemantics: 'NATIVE_MARGIN' } }) });
+    assert.equal(crossSemantics.status, 409);
     const key = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'secret-not-accepted', configuration: { ...creation.configuration, privateKey: 'DO_NOT_STORE' } }) });
     assert.equal(key.status, 422);
     const badId = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ ...creation, configuration: { ...creation.configuration, id: 123 } }) });
@@ -442,4 +444,24 @@ test('account creation failed publication never reports success and retries its 
     assert.equal((await read.json() as any).accounts[0].accountSourceId, result.accountSourceId);
     await assert.rejects(readFile(f.count), { code: 'ENOENT' });
   } finally { fsPromises.rename = originalRename; syncBuiltinESMExports(); await f.cleanup(); }
+});
+
+// A removed legacy configuration still owns its physical venue account. A new
+// semantic opt-in cannot hide UNKNOWN requests by choosing another directory.
+test('native margin configuration cannot evade retained live UNKNOWN ownership', async () => {
+  const f = await fixture();
+  const address = '0x' + '3'.repeat(40);
+  const directory = join(f.options.dataDir, 'accounts', 'retired-legacy-live');
+  const retained = JSON.stringify({ sourceId: 'legacy-source', identity: { mode: 'live', network: 'mainnet', accountId: 'LEGACY-001', accountAddress: address, currency: 'USDC' }, commands: { original: { state: 'UNCERTAIN', original: { requestId: 'never-resend' } } } });
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'capital-receipts.json'), retained);
+    await f.restart();
+    const configuration = { id: 'new-margin', clientId: 'client', accountId: 'DIFFERENT-ID', mode: 'live', accountSemantics: 'NATIVE_MARGIN', accountAddress: address, instruments: ['BTC-USDC-SPOT.HYPERLIQUID'], nativeStrategy: { instrument_id: 'BTC-USDC-SPOT.HYPERLIQUID', strategy: { kind: 'REGISTERED', name: 'Owner', config: null } } };
+    const rejected = await fetch(f.url + '/accounts/configurations', { method: 'POST', headers: f.headers, body: JSON.stringify({ requestId: 'new-mode', configuration }) });
+    assert.equal(rejected.status, 409);
+    assert.equal(await readFile(join(directory, 'capital-receipts.json'), 'utf8'), retained);
+    await assert.rejects(readFile(join(f.options.dataDir, 'accounts', 'new-margin', 'configuration.json')), { code: 'ENOENT' });
+    await assert.rejects(readFile(f.count), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
 });

@@ -97,3 +97,11 @@ it('shows saved binding provenance without pretending the current runner or sess
  expect(html).toContain('0.69.0');expect(html).toContain('634abcd');expect(html).toContain('不会更新或重新绑定');expect(html).toContain('不是认证');expect(html).toContain('不是当前连接探测');
  expect(renderToStaticMarkup(createElement(SavedRunnerNotice,{}))).toContain('未记录');
 });
+
+it('native Margin is explicit configuration only and clearing it preserves old fields',()=>{
+ const original={mode:'live',accountAddress:'0x'+'1'.repeat(40),id:'original',nativeStrategy:{strategy:{kind:'REGISTERED',config:['9007199254740993']}}};
+ const opted=accountConfigurationInput(accountConfigurationField(JSON.stringify(original),'accountSemantics','NATIVE_MARGIN'));
+ expect(opted).toEqual({...original,accountSemantics:'NATIVE_MARGIN'});
+ expect(accountConfigurationInput(accountConfigurationField(JSON.stringify(opted),'accountSemantics',''))).toEqual(original);
+ expect(opted).not.toHaveProperty('automaticStrategyStart');
+});

@@ -79,6 +79,7 @@ pub struct AccountRuntimeConfig {
     pub client_id: String,
     pub account_id: String,
     pub mode: String,
+    pub account_semantics: Option<String>,
     pub account_address: Option<String>,
     pub native_strategy: NativeStrategyDeployment,
     pub instruments: Vec<String>,
@@ -313,6 +314,7 @@ struct AccountController {
     inbox: Receiver<Request>,
     handle: LiveNodeHandle,
     boot_id: String,
+    session_started_ns: u64,
     session: String,
     trader: String,
     fee_rate: Decimal,
@@ -564,7 +566,7 @@ impl AccountController {
             instruments.push(json!({"instrument_id":id.to_string(),"base_currency":instrument.base_currency().map(|v|v.to_string()),"quote_currency":instrument.quote_currency().to_string(),
                 "size_increment":instrument.size_increment().as_decimal().to_string(),"price_increment":instrument.price_increment().as_decimal().to_string(),
                 "minimum_quantity":instrument.min_quantity().map(|v|v.as_decimal().to_string()),"minimum_notional":instrument.min_notional().map(|v|v.as_decimal().to_string()),
-                "taker_fee_rate":if now<self.fee_valid_until_ns{Some(self.fee_rate.to_string())}else{None},"fee_source":self.fee_source,"fee_valid_until_ns":self.fee_valid_until_ns.to_string(),"bid":quote.bid_price.as_decimal().to_string(),"ask":quote.ask_price.as_decimal().to_string(),
+                "taker_fee_rate":if self.config.account_semantics.as_deref()!=Some("NATIVE_MARGIN")&&now<self.fee_valid_until_ns{Some(self.fee_rate.to_string())}else{None},"fee_source":if self.config.account_semantics.as_deref()==Some("NATIVE_MARGIN"){Value::Null}else{self.fee_source.clone()},"fee_valid_until_ns":self.fee_valid_until_ns.to_string(),"bid":quote.bid_price.as_decimal().to_string(),"ask":quote.ask_price.as_decimal().to_string(),
                 "bid_depth":depth,"asof_ns":quote.ts_init.as_u64().to_string(),"book_asof_ns":book_ns.map(|v|v.to_string())}));
         }
         let mut positions:Vec<_>=cache.positions_open(None,None,None,Some(&account),None).iter().map(|p|{
@@ -594,7 +596,7 @@ impl AccountController {
         self.snapshot = Some(
             json!({"ready":fresh&&!native.is_stale,"recovery_required":false,"reason":if fresh {None}else{Some("account_native_market_data_stale_or_unavailable")},
             "sequence":native.ts_init.as_u64().to_string(),"observed_at_ns":native.ts_init.as_u64().to_string(),"observation_id":Id::new().to_string(),
-            "native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"official_node_order_activity":official_node_order_activity(&self.native_cache.borrow()),"cash":cash,"equity":equity,"currency":"USDC",
+            "account_semantics":self.config.account_semantics,"native_session_id":self.session,"native_trader_id":self.trader,"native_account_id":account.to_string(),"native_snapshot":projected,"positions":positions,"instruments":instruments,"official_node_order_activity":official_node_order_activity(&self.native_cache.borrow()),"cash":cash,"equity":equity,"currency":"USDC",
             "native_version":crate::NAUTILUS_VERSION,"currency_precision":Currency::USDC().precision,"control_epoch":self.control.as_ref().map(|c|c.epoch.to_string()),"control_revision":self.control.as_ref().map(|c|c.revision.clone()),"fenced":self.control.as_ref().is_none_or(|c|c.mode=="PAUSED")||self.cache_failed.load(Ordering::SeqCst),
             "spot_balance_observation":self.spot_balance_observation,"remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
         );
@@ -770,6 +772,24 @@ impl AccountController {
             "STRATEGY_STATUS" => self.strategy_status(),
             "STRATEGY_START" => {
                 let prepared = (|| -> Result<_> {
+                    if self.config.mode == "live" {
+                        self.refresh_snapshot()?;
+                        ensure!(
+                            self.snapshot.as_ref().is_some_and(|v| v["ready"] == true),
+                            "account_native_margin_snapshot_not_ready"
+                        );
+                        ensure!(
+                            self.config.account_semantics.as_deref() == Some("NATIVE_MARGIN"),
+                            "hyperliquid_native_spot_free_required"
+                        );
+                        require_current_margin_account(
+                            &self.native_cache.borrow(),
+                            self.account,
+                            self.session_started_ns,
+                        )?;
+                        // No abstraction or spendable spot amount is inferred. The
+                        // official account/risk/execution path remains authoritative.
+                    }
                     let control = self.fence(r.text("epoch")?.parse()?)?;
                     ensure!(
                         control.mode == "NORMAL"
@@ -1172,6 +1192,16 @@ impl AccountController {
             minimum_interval_ns,
         });
         self.update_spot_observation(spot_candidate);
+        if self.config.account_semantics.as_deref() == Some("NATIVE_MARGIN") {
+            // The native Margin lifecycle never runs the retired capital target
+            // cancellation policy. Retained native orders keep their identity and
+            // recovery status; only an explicit strategy owns its order behavior.
+            self.refresh_snapshot()?;
+            return Ok(
+                json!({"applied":true,"epoch":epoch.to_string(),"revision":r.text("revision")?,
+                "remaining_trading":"NATIVE_STRATEGY_EXPLICIT_LIFECYCLE"}),
+            );
+        }
         let latest_exit_ns = {
             let cache = self.native_cache.borrow();
             cache
@@ -1326,6 +1356,26 @@ impl AccountController {
         self.finish_unsubmitted_target(&id, "account_native_target_not_submitted".into())
     }
 }
+// Read only the original official account. This does not identify venue
+// abstraction, estimate spendable balances, or make an order risk decision.
+fn require_current_margin_account(cache: &Cache, id: AccountId, started_ns: u64) -> Result<()> {
+    let account = cache
+        .account_ref(&id)
+        .ok_or_else(|| anyhow!("account_native_margin_state_unavailable"))?;
+    ensure!(
+        matches!(*account, nautilus_model::accounts::AccountAny::Margin(_)),
+        "account_native_margin_type_required"
+    );
+    let state = account
+        .last_event()
+        .ok_or_else(|| anyhow!("account_native_margin_state_unavailable"))?;
+    ensure!(
+        state.is_reported && state.ts_init.as_u64() >= started_ns,
+        "account_native_margin_current_session_update_required"
+    );
+    Ok(())
+}
+
 // Preserve the official Cache::orders failure for an inconsistent order index.
 fn required_order_ref<'a>(
     cache: &'a Cache,
@@ -1562,6 +1612,12 @@ async fn run_config_owned(
         config.data_dir.is_absolute(),
         "account_native_data_directory_absolute"
     );
+    ensure!(
+        config.account_semantics.is_none()
+            || (config.mode == "live"
+                && config.account_semantics.as_deref() == Some("NATIVE_MARGIN")),
+        "account_native_semantics_invalid"
+    );
     let ids: Vec<_> = config
         .instruments
         .iter()
@@ -1588,6 +1644,11 @@ async fn run_config_owned(
         ensure!(rate >= Decimal::ZERO, "account_native_fee_positive");
         fee_source = json!({"kind":"EXPLICIT_PAPER_FEE_SCENARIO","rate":rate.to_string()});
         rate
+    } else if config.account_semantics.as_deref() == Some("NATIVE_MARGIN") {
+        // Not a fee estimate: this legacy projection is unused and hidden in
+        // native Margin mode. The official execution adapter owns actual fees.
+        fee_source = Value::Null;
+        Decimal::ZERO
     } else {
         let address = config
             .account_address
@@ -1730,7 +1791,7 @@ async fn run_config_owned(
     let handle = node.handle();
     let session = node.instance_id().to_string();
     let (sender, inbox) = mpsc::sync_channel::<Request>(64);
-    if config.mode == "live" {
+    if config.mode == "live" && config.account_semantics.as_deref() != Some("NATIVE_MARGIN") {
         let address = config.account_address.clone().unwrap();
         let updates = sender.clone();
         let spot_binding = crate::account_spot_observation::SpotObservationBinding {
@@ -1863,6 +1924,7 @@ async fn run_config_owned(
         inbox,
         handle,
         boot_id,
+        session_started_ns: node.kernel().clock().borrow().timestamp_ns().as_u64(),
         session,
         trader: trader.to_string(),
         fee_rate,
@@ -2418,6 +2480,13 @@ mod tests {
         directory: &std::path::Path,
         scoped: bool,
     ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
+        node_with_account_type(directory, scoped, false).await
+    }
+    async fn node_with_account_type(
+        directory: &std::path::Path,
+        scoped: bool,
+        margin: bool,
+    ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
         let ids = vec![
             InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"),
             InstrumentId::from("ETH-USDC-SPOT.HYPERLIQUID"),
@@ -2476,7 +2545,11 @@ mod tests {
                 Box::new(SandboxExecutionClientConfig {
                     account_id: account,
                     venue: Venue::from("HYPERLIQUID"),
-                    account_type: AccountType::Cash,
+                    account_type: if margin {
+                        AccountType::Margin
+                    } else {
+                        AccountType::Cash
+                    },
                     base_currency: Some(Currency::USDC()),
                     starting_balances: starting,
                     fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
@@ -2528,6 +2601,7 @@ mod tests {
                 client_id: "test".into(),
                 account_id: account.to_string(),
                 mode: if scoped { "live" } else { "paper" }.into(),
+                account_semantics: margin.then(|| "NATIVE_MARGIN".into()),
                 account_address: None,
                 native_strategy: NativeStrategyDeployment {
                     instrument_id: ids[0].to_string(),
@@ -2555,6 +2629,7 @@ mod tests {
             inbox: rx,
             handle: node.handle(),
             boot_id: "boot-test".into(),
+            session_started_ns: 1,
             session: node.instance_id().to_string(),
             trader: trader.to_string(),
             fee_rate: Decimal::new(1, 3),
@@ -3200,6 +3275,38 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn official_margin_balances_cannot_prove_account_abstraction() -> Result<()> {
+        use nautilus_hyperliquid::{
+            common::{
+                enums::HyperliquidAccountAbstraction as Abstraction,
+                parse::parse_combined_account_balances_and_margins,
+            },
+            http::models::{ClearinghouseState, SpotClearinghouseState},
+        };
+        // No node, connection, credentials or order. Different actual account modes
+        // can project to identical official balances/margins. Do not infer a mode
+        // from Portfolio values or use a caller's mode label to enable live START.
+        // The installed execution client's emit_account_state supplies info=None;
+        // it does not propagate the abstraction it used into the AccountState.
+        let perp: ClearinghouseState = serde_json::from_value(json!({
+            "assetPositions":[], "crossMarginSummary":{"accountValue":"100",
+            "totalNtlPos":"0","totalRawUsd":"100","totalMarginUsed":"0"},
+            "withdrawable":"100", "time":1700000000000_u64
+        }))?;
+        let spot: SpotClearinghouseState = serde_json::from_value(json!({
+            "balances":[{"coin":"USDC","token":0,"total":"100","hold":"0","entryNtl":"0"}]
+        }))?;
+        let disabled =
+            parse_combined_account_balances_and_margins(&perp, &spot, Abstraction::Disabled)?;
+        let unified =
+            parse_combined_account_balances_and_margins(&perp, &spot, Abstraction::UnifiedAccount)?;
+        assert_eq!(disabled.0, unified.0);
+        assert_eq!(disabled.1, unified.1);
+        assert_eq!(disabled.0[0].free, Money::from("100 USDC"));
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn official_combined_margin_updates_do_not_use_spot_observations() -> Result<()> {
         use nautilus_hyperliquid::{
@@ -3264,6 +3371,12 @@ mod tests {
         let raw_spot = spot("800", "1")?;
         // Official Disabled mode reports the combined perp summary, not spot-only USDC.
         apply(Abstraction::Disabled, &raw_spot, 100)?;
+        require_current_margin_account(&cache.borrow(), account, 100)?;
+        assert!(require_current_margin_account(&cache.borrow(), account, 101).is_err());
+        assert!(
+            require_current_margin_account(&cache.borrow(), AccountId::from("OTHER-001"), 1)
+                .is_err()
+        );
         assert_eq!(
             cache.borrow().account_ref(&account).unwrap().balances()[&Currency::USDC()].free,
             Money::from("80 USDC")
@@ -3339,10 +3452,10 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
+    async fn assert_explicit_strategy_start(margin: bool) -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let (mut native, tx, replies) = node(directory.path()).await?;
+        let (mut native, tx, replies) =
+            node_with_account_type(directory.path(), margin, margin).await?;
         {
             let owner_id = *native
                 .kernel()
@@ -3356,6 +3469,10 @@ mod tests {
             >(&owner_id.inner())
             .unwrap();
             owner.config.client_id = "test-on-start".into();
+            if margin {
+                owner.ids.truncate(1);
+                owner.config.instruments.truncate(1);
+            }
         }
         let handle = native.handle();
         let stop = handle.clone();
@@ -3372,6 +3489,45 @@ mod tests {
                 .is_empty());
             let status = request(&tx, &replies, "STRATEGY_STATUS", json!({})).await?;
             assert_eq!(status["state"], "UNREGISTERED");
+            if margin {
+                // Sandbox emits unreported balances. Explicitly simulate the
+                // adapter's reported event through the official execution queue;
+                // this validates wiring only, not real venue balance authority.
+                let account = AccountId::from("HYPERLIQUID-001");
+                let state = cache
+                    .borrow()
+                    .account_ref(&account)
+                    .unwrap()
+                    .last_event()
+                    .unwrap();
+                assert!(!state.is_reported);
+                assert!(require_current_margin_account(&cache.borrow(), account, 1).is_err());
+                let mut emitter = nautilus_live::ExecutionEventEmitter::new(
+                    nautilus_core::time::get_atomic_clock_realtime(),
+                    TraderId::from("QZ-ACCOUNT-001"),
+                    account,
+                    AccountType::Margin,
+                    Some(Currency::USDC()),
+                );
+                emitter.set_sender(nautilus_common::live::runner::get_exec_event_sender());
+                emitter.try_emit_account_state(
+                    state.balances,
+                    state.margins,
+                    true,
+                    state.ts_event,
+                    None,
+                )?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                assert!(
+                    cache
+                        .borrow()
+                        .account_ref(&account)
+                        .unwrap()
+                        .last_event()
+                        .unwrap()
+                        .is_reported
+                );
+            }
             let mut normal = control("1", "NORMAL", "0");
             normal["exit_ids"] = json!([]);
             request(&tx, &replies, "CONTROL", normal).await?;
@@ -3437,14 +3593,52 @@ mod tests {
                     "native_position_quantity_changed"
                 );
             }
+            if margin {
+                assert!(summary["instruments"][0]["taker_fee_rate"].is_null());
+                assert!(summary["instruments"][0]["fee_source"].is_null());
+                request(&tx, &replies, "TEST_RESTING_LIMIT", json!({})).await?;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                let original = cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .clone();
+                assert!(!original.is_closed());
+                let mut next = control("2", "NORMAL", "0");
+                next["exit_ids"] = json!([]);
+                request(&tx, &replies, "CONTROL", next).await?;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                let retained = cache
+                    .borrow()
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .unwrap()
+                    .clone();
+                assert_eq!(retained.status(), original.status());
+                assert_eq!(retained.filled_qty(), original.filled_qty());
+                assert_eq!(retained.events().len(), original.events().len());
+            }
             stop.stop();
             Ok::<_, anyhow::Error>(())
         };
-        let (run, result) = tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive);
+        let (run, result) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive)
+        })
+        .await?;
         run?;
         result?;
         native.dispose();
         Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
+        assert_explicit_strategy_start(false).await
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_margin_lifecycle_uses_official_sandbox_only() -> Result<()> {
+        // Only the official Sandbox is installed. The live-mode admission branch
+        // is exercised without any Hyperliquid client, credential or connection.
+        assert_explicit_strategy_start(true).await
     }
 
     #[tokio::test(flavor = "current_thread")]
