@@ -1,3 +1,4 @@
+import {acquireAccountReceiptLock} from './account-receipt-lock.ts';
 import {nativeStrategyControl,assertSameNativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import { accountStrategyCommand, nativeAccountStrategyConfiguration } from '../../../packages/contracts/src/account-strategy.ts';
 import { nativeFixedRiskSizing } from '../../../packages/contracts/src/nautilus.ts';
@@ -66,6 +67,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   if (options.mode === 'paper' && (options.paperFeeRate == null || units(options.paperFeeRate) < 0n || units(options.startingBalance ?? '0') <= 0n)) fail('paper_balance_and_explicit_fee_required', 422);
   if (options.mode === 'live' && !options.accountAddress) fail('hyperliquid_master_account_required', 422);
   await mkdir(directory, { recursive: true });
+  const receiptOwner=await acquireAccountReceiptLock(directory);
+  try {
   const statePath = join(directory, 'capital-receipts.json');
   const identity = { mode: options.mode, network: options.network ?? 'mainnet', accountId: options.accountId, accountAddress: options.accountAddress?.toLowerCase() ?? null, currency: 'USDC' as const, ...(options.accountSemantics ? {accountSemantics: options.accountSemantics} : {}) };
   let state: AccountState;
@@ -90,15 +93,16 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   // Opening retained records never reinterprets their original control epoch.
   await save();
   if (state.strategyConfiguration) options.nativeStrategy = nativeAccountStrategyConfiguration(state.strategyConfiguration);
-  const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory);
+  const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory, receiptOwner.fd);
   const nativeMargin = options.accountSemantics === 'NATIVE_MARGIN';
   const reader = options.mode === 'live' && !nativeMargin ? suppliedReader ?? new HyperliquidAccountReader(options.accountAddress!, options.network) : null;
   let latest: NativeAccountSummary | null = null, proof: HyperliquidAccountProof | null = null, failure: string | null = 'account_runtime_not_started';
   let stopped = false;
+  let closing:Promise<void>|null=null;
   let pendingReverse = state.reverseTransferPending ?? false;
   let refreshInFlight: Promise<void> | null = null;
   let queue: Promise<unknown> = Promise.resolve();
-  function serial<T>(operation: () => Promise<T>): Promise<T> { const result = queue.then(operation); queue = result.catch(() => {}); return result; }
+  function serial<T>(operation: () => Promise<T>): Promise<T> { const result = queue.then(()=>{if(stopped)fail('account_receipts_owner_closed',409);return operation();}); queue = result.catch(() => {}); return result; }
   const envelope = () => ({ clientId: options.clientId, accountId: options.accountId, mode: options.mode, currency: 'USDC' });
   function reason(): string | null {
     if (writeFailed) return 'account_receipts_write_failed';
@@ -548,11 +552,13 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     } finally { legacyReadInFlight = false; }
   }
   async function dispatch(path: string, method: 'GET' | 'POST', clientId: unknown, input?: unknown): Promise<{ status: number; value: unknown }> {
+    if(stopped)fail('account_receipts_owner_closed',409);
       if (clientId !== options.clientId) fail('account_client_identity_mismatch', 403);
       const body = method === 'POST' ? record(input) : null;
       if (body && (body.clientId !== options.clientId || body.accountId !== options.accountId)) fail('account_identity_mismatch');
       if (method === 'GET' && ['/account'].includes(path)
         || method === 'POST' && (path === '/strategy/commands' && body?.action === 'START')) await refresh();
+      if(stopped)fail('account_receipts_owner_closed',409);
       // Slow full-history reads must not queue STOP behind the mutation lane.
       if (method === 'POST' && path === '/strategy/legacy-snapshot') return {status:200,value:await legacySnapshot(body!)};
       return serial(async () => {
@@ -618,6 +624,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       if (request.method !== 'GET' && request.method !== 'POST') return {status:405,value:{error:'method_not_allowed'}};
       return dispatch(path,request.method,request.headers['x-qz-client-id'],request.method === 'POST' ? await readBody() : undefined);
     },
-    async close() { stopped = true; clearInterval(interval); unsubscribe?.(); await queue; await runtime.close(); await save(); },
+    close() { return closing??=(async()=>{ stopped = true; clearInterval(interval); unsubscribe?.(); await queue; await runtime.close(); try{await save();}finally{await receiptOwner.close();} })(); },
   };
+  }catch(error){await receiptOwner.close();throw error;}
 }
