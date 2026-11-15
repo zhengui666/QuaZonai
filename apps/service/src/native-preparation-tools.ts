@@ -26,7 +26,7 @@ export function nativePreparationTools(operations: {
       description: 'Explicitly select a successfully built runner as the global default for subsequent NEW research. Uses the original build revision CAS. Never changes existing research bindings or connects an account. Retain the returned revision for native_research_start_bound.',
       async execute(args) { return output(await operations.select(args)); } }),
     defineTool({ name: 'native_research_start_bound', parameters: obj({ requestId: str(), runnerBuildRequestId: str(), expectedRunnerRevision: int(), goal: str(), datasetId: str(), model: obj({ provider: str(), modelId: str() }), thinkingLevel: opt(str()), serviceTier: opt(str()) }), replay: 'safe', executionMode: 'sequential',
-      description: 'Explicitly start a NEW research conversation with a completed, selected original build and registered dataset. Preserve requestId on retry. Existing research and UNKNOWN executions are not rebound or erased. Uses normal model/dataset/admission checks, never starts live trading. Returns original conversation/submission references, not a completed research result.',
+      description: 'Explicitly start a NEW research conversation with an explicitly named completed original build (global selection is not required) and registered dataset. Preserve requestId on retry. Existing research and UNKNOWN executions are not rebound or erased. Uses current settings revision and original environment checks without changing defaults; normal model/dataset/admission checks still apply, never starts live trading. Returns original conversation/submission references, not a completed research result.',
       async execute(args) { return output(await operations.startResearch(args)); } }),
   ] });
 }

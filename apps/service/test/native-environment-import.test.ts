@@ -21,6 +21,7 @@ test('explicit import uses the same Pi identity and selection CAS without Cargo;
  try{
  settings.view();await assert.rejects(work.startImport({...request,requestId:'invalid-precision',expectedIdentity:{...request.expectedIdentity,precision:['standard']}}),/native_import_expected_identity_invalid/);await assert.rejects(work.read('invalid-precision'),/native_build_request_not_found/);await assert.rejects(readFile(marker),/ENOENT/);assert.equal(settings.view().environment,undefined);
  const first=await work.startImport(request);await host.harness.waitForTask(first.taskId,context);const done=await work.read(request.requestId);assert.equal(done.state.outcome?.status,'completed');assert.equal(config.nativeProcess,undefined);
+ assert.deepEqual(await work.researchTarget(request.requestId,0),done.state.outcome?.result?.target);assert.equal(config.nativeProcess,undefined);
  await assert.rejects(work.startImport({...request,sourceExecutable:source+'-changed'}),/request_id_conflict/);await assert.rejects(work.start({requestId:request.requestId,expectedRevision:0}),/request_id_conflict/);
  const otherRequest={...request,requestId:'competing-import'};const second=await work.startImport(otherRequest);await host.harness.waitForTask(second.taskId,context);
  const selected=await Promise.allSettled([work.select({requestId:request.requestId,expectedRevision:0}),work.select({requestId:otherRequest.requestId,expectedRevision:0})]);assert.equal(selected.filter(v=>v.status==='fulfilled').length,1);assert.equal(selected.filter(v=>v.status==='rejected').length,1);
@@ -41,6 +42,7 @@ test('interrupted import retains its original Pi ID and never executes or select
  try{
  const first=await builder.workbench(host,settings).startImport(request);await ready;await host.close();host=await openResearch(opts);await host.harness.waitForTask(first.taskId,context);
  const work=builder.workbench(host,settings),result=await work.startImport(request);assert.equal(result.taskId,first.taskId);assert.equal(executions,1);assert.equal(result.state.outcome?.status,'failed');if(result.state.outcome?.status==='failed')assert.match(result.state.outcome.error.message,/outcome_unknown_no_automatic_retry/);
+ await assert.rejects(work.researchTarget(request.requestId,0),/native_build_not_completed/);
  await assert.rejects(work.select({requestId:request.requestId,expectedRevision:0}),/native_build_not_completed/);assert.equal(config.nativeProcess,undefined);
  await assert.rejects(work.startImport({...request,expectedIdentity:{nautilusSource:'other',nautilusVersion:'other',precision:'high'}}),/request_id_conflict/);
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}

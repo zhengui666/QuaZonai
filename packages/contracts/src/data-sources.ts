@@ -8,6 +8,8 @@ export interface DataSourceField {
 export interface DataSourceView {
   name: string; version: string | null; enabled: boolean; state: 'loaded' | 'disabled' | 'error';
   fields: DataSourceField[]; config: JsonObject; datasetIds: string[]; lastLoadedAt: string | null; error: string | null;
+  /** CAS revision for the append-only registered dataset source. */
+  revision?: number;
   acquisition?: { manifestPath: string; planId: string };
 }
 export interface DataSourceUpdate { config: JsonObject; enabled: boolean }

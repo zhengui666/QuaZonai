@@ -54,6 +54,7 @@ export interface ResearchSpecification {
   capital?: CapitalAssumptions;
 }
 export interface ResearchInput { mode?: 'LITERATURE_ONLY'; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
+/** Explicit completed-build binding applies only to this new research, never global selection. */
 export type ResearchRunnerBinding = { runnerBuildRequestId?: string; expectedRunnerRevision?: number };
 export type ResearchStart = ResearchRunnerBinding & ({ requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
   requestId: string; mode?: 'LITERATURE_ONLY'; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string;

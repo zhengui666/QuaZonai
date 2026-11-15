@@ -62,3 +62,11 @@ objective.metricId 使用 options 返回的实际标识、partition:"FULL_SELECT
 ## 既有记录
 
 `portfolio list/get` 保留历史只读结果。CLI 不再提供新建因子、组合 build 或容量评分入口。旧 `portfolio replay-ticks` / `portfolio tick-replay` 的服务路由已移除，不可用于新建或查询回放；使用同一 `research` 的官方原生策略入口，不尝试重新启用旧因子执行链。
+
+## 新数据集与单次研究的独立 runner
+
+需要额外的可信 Rust runner 时，先 `native-runner status` 读取当前 revision，再用 `native-runner import --file` 提交一次原请求，随后 `native-runner build-status REQUEST_ID` 确认原任务完成且 configuredRunFactory 可用。导入执行可信代码的 capabilities，不等于数据/策略验收，不会选择全局 runner。
+
+新数据集通过 `datasets registry` 获取 `qz.data.registered` revision，使用 `datasets register --file` 追加服务端已准备的 DatasetConfig 文件。相同 ID 不可覆盖任何现有或保留数据集；保存原 requestId，未知结果只查询/重放原请求，不能另换 ID。登记不启动研究、不运行数据获取，也不改变旧数据源。
+
+验收完成后，新的 `research start --file` 可带 `runnerBuildRequestId` 和当前 `expectedRunnerRevision` 显式绑定该完成构建；无需选择全局默认。原环境变化或 revision 冲突必须先核对，不能自动刷新并重发。已有研究及同 requestId 重放保留原 executor。数据集和 runner 就绪不代表允许实盘。

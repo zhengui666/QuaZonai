@@ -26,7 +26,7 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
  const preparation=nativePreparationTools({configuration:()=>operations.configuration(),build:v=>operations.build(v),read:v=>operations.read(v),select:v=>operations.select(v),startResearch:v=>operations.startResearch(v)});
  const options={database:join(dir,'research.sqlite'),models,extensions:[builder.extension,preparation]};
  let host=await openResearch(options);let settings=await instanceSettings(config);
- const connect=()=>{const builds=builder.workbench(host,settings);const work=workbench(host,config,builds.selectedTarget);operations={configuration:builds.configuration,build:builds.start,read:builds.read,select:builds.select,startResearch:work.startResearch};return{builds,work};};
+ const connect=()=>{const builds=builder.workbench(host,settings);const work=workbench(host,config,builds.researchTarget);operations={configuration:builds.configuration,build:builds.start,read:builds.read,select:builds.select,startResearch:work.startResearch};return{builds,work};};
  let {builds,work}=connect();
  const model={provider:faux.provider.id,modelId:faux.getModel().id};
  try{
@@ -37,6 +37,15 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
   await (await host.harness.submission(old.submissionId,context))!.wait(context);
   const built=await builds.read('original-build');await host.harness.waitForTask(built.taskId,context);
   assert.equal(count,1);
+  const settingsBefore=settings.view(), datasetsBefore=structuredClone(config.datasets);
+  const scopedBody={requestId:'scoped-without-global-selection',runnerBuildRequestId:'original-build',expectedRunnerRevision:1,goal:'New scoped discussion only',datasetId:'fixture',model};
+  faux.setResponses([fauxAssistantMessage('Scoped study, no native execution.')]);
+  const scoped=await work.startResearch(scopedBody);await (await host.harness.submission(scoped.submissionId,context))!.wait(context);
+  const scopedInput=(await host.harness.snapshot(Study,scoped.conversationId,context))!.input!;
+  assert.equal((scopedInput.data.nautilusTarget as any).binary,join(dir,'runner-1'));
+  assert.deepEqual(settings.view(),settingsBefore);assert.deepEqual(config.datasets,datasetsBefore);assert.equal(config.nativeProcess,undefined);
+  assert.equal((await host.harness.snapshot(Study,old.conversationId,context))!.input!.data.nautilusTarget,undefined);
+  await assert.rejects(work.startResearch({...scopedBody,requestId:'wrong-scoped-revision',expectedRunnerRevision:0}),/revision_conflict/);
   const conversation=await host.harness.conversation(old.conversationId,context);assert.ok(conversation);
   faux.setResponses([
    fauxAssistantMessage(fauxToolCall('native_runner_build_status',{requestId:'original-build'}),{stopReason:'toolUse'}),
@@ -62,9 +71,13 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
   assert.deepEqual(saved!.input!.data.nautilusTarget,config.nativeProcess);
   await settings.saveEnvironment({expectedRevision:2,environment:null});
   await assert.rejects(work.startResearch({...body,requestId:'stale-new'}),/revision_conflict/);
+  await assert.rejects(work.startResearch({...scopedBody,requestId:'changed-environment',expectedRunnerRevision:3}),/native_build_environment_changed/);
+  assert.deepEqual(await work.startResearch(scopedBody),scoped);
+  assert.deepEqual((await host.harness.snapshot(Study,scoped.conversationId,context))!.input,scopedInput);
   assert.deepEqual(await work.startResearch(body),next,'original request replays its original frozen target after settings change');
   assert.deepEqual((await host.harness.snapshot(Study,next.conversationId,context))!.input,saved!.input);
   await settings.close();await host.close();settings=await instanceSettings(config);host=await openResearch(options);({builds,work}=connect());
+  assert.deepEqual(await work.startResearch(scopedBody),scoped);
   assert.deepEqual(await work.startResearch(body),next);assert.equal((await builds.read('original-build')).taskId,built.taskId);assert.equal(count,1);
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
 });
