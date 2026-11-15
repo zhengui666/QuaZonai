@@ -4,10 +4,10 @@ import { expect, it, vi } from 'vitest';
 import type { ObservationView } from '../../../packages/contracts/src/index.ts';
 import AccountStrategy, { strategyResultText, StrategyLifecycleNotice, AccountObservationNotice, LegacyAccountObservation, accountSummaryStartAllowed } from './account-strategy';
 
-const mocks=vi.hoisted(()=>({kind:'EMA_CROSS',submits:0,commands:[] as string[],observation:undefined as undefined|{supported:boolean|null;nativeSessionId?:string}}));
-vi.mock('./commands',()=>({readDraft:()=>undefined,saveDraft:()=>true,useCommand:(kind:string,_accepted:unknown,path:string)=>{mocks.commands.push(`${kind}:${path}`);return {pending:undefined,busy:false,submit:()=>{mocks.submits++;},values:undefined};}}));
+const mocks=vi.hoisted(()=>({accountSemantics:undefined as string|undefined,configError:false,statusError:false,unsettled:false,running:false,startPending:false,kind:'EMA_CROSS',submits:0,commands:[] as string[],observation:undefined as undefined|{supported:boolean|null;nativeSessionId?:string}}));
+vi.mock('./commands',()=>({readDraft:()=>mocks.unsettled?'original-unknown':undefined,saveDraft:()=>true,useCommand:(kind:string,_accepted:unknown,path:string)=>{mocks.commands.push(`${kind}:${path}`);return {pending:mocks.startPending&&kind.endsWith(':START')?{}:undefined,busy:false,submit:()=>{mocks.submits++;},values:undefined};}}));
 vi.mock('./ui',()=>({useConfirm:()=>()=>{},ErrorNotice:()=>null,PendingCommand:()=>null,Status:({value}:{value:string})=>value,Facts:()=>null}));
-vi.mock('./data-hooks',()=>({useResource:(path:string)=>({refetch:()=>{},data:path.endsWith('/config')?{accountSourceId:'source-original',strategyRevision:'7',configuration:{instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},connected:true,accountObservation:mocks.observation,pendingConfigurationRequests:[]}:path.endsWith('/fence')?{accountSourceId:'source-original',strategyRevision:'7'}:path.endsWith('/strategy')?{accountSourceId:'source-original',strategyRevision:'7',strategy:{strategy_id:'EMA_CROSS-001',state:'STOPPED',instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',native_version:'0.69.0',config:{kind:mocks.kind,trade_size:'0.000000000000000001',fast_period:2,slow_period:3}}}:undefined})}));
+vi.mock('./data-hooks',()=>({useResource:(path:string)=>({refetch:()=>{},error:path.endsWith('/config')&&mocks.configError||path.endsWith('/strategy')&&mocks.statusError?new Error('unavailable'):undefined,data:path.endsWith('/config')?{accountSourceId:'source-original',strategyRevision:'7',configuration:{instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}},connected:true,accountSemantics:mocks.accountSemantics,accountObservation:mocks.observation,pendingConfigurationRequests:[]}:path.endsWith('/fence')?{accountSourceId:'source-original',strategyRevision:'7'}:path.endsWith('/strategy')?{accountSourceId:'source-original',strategyRevision:'7',strategy:{strategy_id:'EMA_CROSS-001',state:mocks.running?'RUNNING':'STOPPED',instrument_id:'BTC-USDC-SPOT.HYPERLIQUID',native_version:'0.69.0',config:{kind:mocks.kind,trade_size:'0.000000000000000001',fast_period:2,slow_period:3}}}:undefined})}));
 const value={id:'account/a',mode:'live',connectionName:'Explicit account'} as ObservationView;
 it('exposes real HTTP strategy command hooks separately from account observation and funds',()=>{
   mocks.commands=[];mocks.kind='EMA_CROSS';const html=renderToStaticMarkup(createElement(AccountStrategy,{value}));
@@ -84,4 +84,20 @@ it('legacy full-history observation is explicit and disabled for unknown/current
   expect(html.includes('disabled=""')).toBe(capability?.supported!==false);
  }
  expect(mocks.submits).toBe(0);
+});
+
+
+it('allows only explicitly reported native Margin live START and retains all existing readiness checks',()=>{
+ const renderStart=()=>{const html=renderToStaticMarkup(createElement(AccountStrategy,{value}));return {html,start:[...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(m=>m[0]).find(b=>b.includes('启动实盘策略'))!};};
+ mocks.observation={supported:true,nativeSessionId:'original'};
+ for(const semantics of [undefined,'LEGACY_SPOT','UNKNOWN','NATIVE_MARGIN']) {
+  mocks.accountSemantics=semantics;const {html,start}=renderStart();
+  expect(start.includes('disabled=""')).toBe(semantics!=='NATIVE_MARGIN');
+  expect(html.includes('实盘启动暂不可用')).toBe(semantics!=='NATIVE_MARGIN');
+ }
+ mocks.accountSemantics='NATIVE_MARGIN';
+ for(const key of ['configError','statusError','unsettled','running','startPending'] as const){mocks[key]=true;expect(renderStart().start).toContain('disabled=""');mocks[key]=false;}
+ for(const observation of [undefined,{supported:false,nativeSessionId:'original'},{supported:true}]) {mocks.observation=observation;expect(renderStart().start).toContain('disabled=""');}
+ expect(mocks.submits).toBe(0);
+ mocks.observation=undefined;mocks.accountSemantics=undefined;
 });
