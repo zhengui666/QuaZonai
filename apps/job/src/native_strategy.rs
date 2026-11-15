@@ -27,6 +27,7 @@ use nautilus_persistence::{
     catalog::types::CatalogQuery,
     config::{CatalogBackendType, DataCatalogConfig},
 };
+mod book_input;
 mod node_catalog;
 pub(crate) mod performance;
 #[cfg(test)]
@@ -330,6 +331,7 @@ pub fn run_with_registration(
             4096,
         )?;
         let mut rows = 0u64;
+        let mut book_input = book_input::BookInputCheck::default();
         let mut pending = Vec::<OrderBookDelta>::new();
         while let Some(batch) = session.next_batch()? {
             rows = rows
@@ -337,6 +339,9 @@ pub fn run_with_registration(
                 .ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_ROW_COUNT_OVERFLOW"))?;
             if let DataBatch::BookDelta(values) = batch {
                 for delta in values.as_ref() {
+                    if book == BookType::L2_MBP {
+                        book_input.observe(delta)?;
+                    }
                     pending.push(*delta);
                     if delta.flags & RecordFlag::F_LAST as u8 != 0 {
                         // Validation only; the official node performs replay grouping later.
@@ -466,6 +471,13 @@ pub fn run_with_registration(
                 }
             }
         }
+        if book == BookType::L2_MBP
+            && counts
+                .get("OrderBookDelta")
+                .is_some_and(|rows| rows.get() > 0)
+        {
+            notes.push("L2_INITIAL_FRAME_EVIDENCE: the pre-run selected delta scan starts with CLEAR and closes each observed batch with F_LAST; snapshot-marked batches require an observed CLEAR. This is a conservative cold-start evidence requirement, not a universal Nautilus snapshot format rule or proof of source completeness. No outside-window data or synthetic book is added. Concurrent catalog changes remain unverified.".into());
+        }
         if book_quotes {
             notes.push("OFFICIAL_BOOK_DERIVED_QUOTES: Nautilus DataEngine emit_quotes_from_book uses original L2 best bid/ask and size for quote cache/publication; these are not additional exchange observations or catalog QuoteTick rows. Original book events still drive matching. Native risk checks and stop-time market exits can change now that quotes exist; old unpriced results and new returns are not directly comparable.".into());
         }
@@ -508,6 +520,67 @@ mod book_quote_tests {
           "strategy":{"kind":"ORDER_BOOK_IMBALANCE","max_trade_size":"1.000","trigger_min_size":"1","trigger_imbalance_ratio":"0.2","min_seconds_between_triggers":0.0,"time_in_force":"IOC","dry_run":false}
         })).unwrap()
     }
+    #[test]
+    fn filtered_book_prefix_and_tail_fail_before_strategy_execution() {
+        for cut in ["event_prefix", "event_tail", "available_prefix"] {
+            let dir = tempfile::tempdir().unwrap();
+            let instrument = InstrumentAny::CryptoPerpetual(crypto_perpetual_ethusdt());
+            let id = instrument.id();
+            crate::catalog::currencies::write(dir.path(), std::slice::from_ref(&instrument))
+                .unwrap();
+            let catalog = ParquetDataCatalog::from_uri(
+                dir.path().to_str().unwrap(),
+                None,
+                Some(4096),
+                None,
+                None,
+            )
+            .unwrap();
+            catalog.write_instruments(vec![instrument]).unwrap();
+            let mut clear = OrderBookDelta::clear(id, 0, 999_999_999.into(), 1_000_000_001.into());
+            clear.order.price = Price::from("0.00");
+            clear.order.size = Quantity::from("0.000");
+            let mut last = OrderBookDelta::new(
+                id,
+                BookAction::Add,
+                BookOrder::new(
+                    OrderSide::Buy,
+                    Price::from("100.00"),
+                    Quantity::from("1.000"),
+                    0,
+                ),
+                RecordFlag::F_SNAPSHOT as u8 | RecordFlag::F_LAST as u8,
+                0,
+                1_000_000_000.into(),
+                1_000_000_001.into(),
+            );
+            if cut == "available_prefix" {
+                clear.ts_event = 1_000_000_000.into();
+                last.ts_init = 1_000_000_002.into();
+            }
+            catalog
+                .write_to_parquet(&[clear, last], None, None, None)
+                .unwrap();
+            let mut config = request(id);
+            if cut == "available_prefix" {
+                config.available_start_ns = Some(DbCounter::new(1_000_000_002).unwrap());
+            }
+            if cut == "event_tail" {
+                config.event_start_ns = DbCounter::new(999_999_999).unwrap();
+                config.event_end_ns = DbCounter::new(1_000_000_000).unwrap();
+            }
+            let error = super::run(dir.path(), config).unwrap_err().to_string();
+            assert!(
+                error.contains(if cut != "event_tail" {
+                    "INITIAL_SNAPSHOT_UNPROVEN"
+                } else {
+                    "INCOMPLETE_EVENT_BATCH"
+                }),
+                "{error}"
+            );
+        }
+    }
+
     #[test]
     fn shutdown_diagnostic_observes_first_matching_event_and_unsubscribes() {
         let trader: TraderId = "TESTER-001".parse().unwrap();
