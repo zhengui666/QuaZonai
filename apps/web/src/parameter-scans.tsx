@@ -30,7 +30,7 @@ function ScanList({ route }: { route: Route }) {
   const list = useListWorkspace<ParameterScanView>(route, collection, 'createdAt');
   return <section className="parameter-scans list-workspace" aria-label="参数扫描列表">
     <header className="list-heading"><h1>历史参数扫描</h1></header>
-    <p className="quiet">仅查看原始历史记录及停止未决执行，不再创建参数网格或计算排名。</p>
+
     <ListTools list={list} searchLabel="搜索参数扫描" placeholder="搜索扫描名称、来源或数据集" filters={[{ key: 'status', label: '执行状态' }, { key: 'mode', label: '扫描类型', options: [{ value: 'STRATEGY', label: '策略账户回测' }] }, { key: 'datasetId', label: '数据集' }]} />
     <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} /><StaleNotice stale={list.query.isError} at={list.query.dataUpdatedAt} />
     {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<ParameterScanView> {...list.tableProps} rowKey="id" size="small" scroll={{ x: 1150 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的参数扫描' : '尚无参数扫描'} /> }} columns={[
@@ -64,9 +64,9 @@ function ScanDetail({ route, id }: { route: Route; id: string }) {
 function ScanOverview({ value }: { value: ParameterScanView }) {
   const rows: [string, string][] = [['全部组合', value.counts.total], ['可执行', value.counts.eligible], ['已完成', value.counts.completed], ['可比较', value.counts.comparable], ['运行中', value.counts.running], ['尚未执行', value.counts.pending], ['失败', value.counts.failed], ['约束跳过', value.counts.skipped], ['已停止', value.counts.stopped], ['远端待核对', value.counts.unknown]];
   return <><dl className="scan-summary">{rows.map(([label, count]) => <div key={label}><dt>{label}</dt><dd><Exact value={count} /></dd></div>)}</dl>
-    {active(value) && <div className="scan-notice" role="status"><p>{value.status === 'STOPPING' ? '停止请求已记录；等待当前原生执行结束及远端回执核对。' : value.status === 'RECONCILING' ? '原执行结果尚不确定，正在核对同一远端身份。' : '进度来自已记录的参数任务；关闭页面不会取消扫描。'}</p><p className="quiet">更新于 <Timestamp value={value.updatedAt} />。本地任务停止不代表远端已停止。</p></div>}
+    {active(value) && <div className="scan-notice" role="status"><p>{value.status === 'STOPPING' ? '停止请求已记录；等待当前原生执行结束及远端回执核对。' : value.status === 'RECONCILING' ? '原执行结果尚不确定，正在核对同一远端身份。' : '执行中'}</p><p className="quiet">更新于 <Timestamp value={value.updatedAt} />。本地任务停止不代表远端已停止。</p></div>}
     <ExecutionFailure error={value.error} identity={`参数扫描 ${value.id} / 主任务 #${value.taskId}`} title="扫描未完整完成" />
-    <p className="quiet">历史探索记录，不重新计算排名，不代表独立证据通过。</p>
+
   </>;
 }
 
@@ -79,7 +79,7 @@ function ScanTrials({ scan, route, update }: { scan: ParameterScanView; route: R
   const [lookup, setLookup] = useState(ordinal ?? ''); const [lookupError, setLookupError] = useState(false);
   useEffect(() => { setLookup(ordinal ?? ''); setLookupError(false); }, [ordinal]);
   return <><div className="scan-toolbar"><label>执行状态<Select aria-label="筛选试验状态" allowClear value={status || undefined} onChange={value => update({ trialStatus: value, trialPage: undefined })} options={['PENDING', 'RUNNING', 'RECONCILING', 'COMPLETED', 'FAILED', 'STOPPED', 'SKIPPED'].map(value => ({ value, label: labels[value] ?? ({ RUNNING: '运行中', FAILED: '失败', STOPPED: '已停止' })[value as 'RUNNING'] ?? value }))} /></label></div>
-    <p className="quiet">列表展示已创建计算任务的参数点。仅可读取已保存的原序号，不重新展开参数组合；读取不启动计算。</p>
+
     <div className="scan-toolbar"><Input.Search aria-label="按精确参数序号查看" placeholder="参数序号（从 0 开始）" value={lookup} onChange={event => { setLookup(event.target.value); setLookupError(false); }} enterButton="查看参数点" onSearch={value => { if (!/^(0|[1-9]\d*)$/.test(value)) { setLookupError(true); return; } update({ trial: value }); }} /></div>
     {lookupError && <p className="scan-subtle-error" role="alert">请输入从 0 开始的完整非负整数序号。</p>}
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} /><StaleNotice stale={query.isError} at={query.dataUpdatedAt} />
@@ -91,6 +91,6 @@ function ScanTrials({ scan, route, update }: { scan: ParameterScanView; route: R
       { title: '指标原因 / 执行错误', width: 230, render: (_cell, row) => row.metric?.reason ?? row.error ?? row.skipReason ?? (row.status === 'COMPLETED' && row.metric?.value == null ? '目标指标未提供' : '—') },
       { title: '远端回执', width: 140, render: (_cell, row) => row.remoteStatus ?? '未记录' },
     ]} locale={{ emptyText: <Empty title="暂无匹配的参数结果" /> }} />
-    {ordinal !== null && <section className="result-section"><div className="section-heading"><h3>试验 #{ordinal}</h3><Button size="small" onClick={() => update({ trial: undefined })}>收起</Button></div><ErrorNotice error={detail.error} retry={() => { void detail.refetch(); }} />{detail.isPending ? <Loading /> : detail.data && <><ParameterFacts values={detail.data.parameters} copy /><Facts items={[["执行状态", <ScanStatus status={detail.data.status} />], ["科学任务", detail.data.taskId], ["远端回执", detail.data.remoteStatus], ["约束", detail.data.skipReason]]} /><ExecutionFailure error={detail.data.error} identity={`参数扫描 ${scan.id} / 试验 #${detail.data.ordinal}`} title="试验未完成" /><Metrics metrics={scanNativeMetrics(detail.data.metrics)} />{detail.data.details?.equityPerformance && <details><summary>官方日权益收益与年化口径</summary><p>252/365是年化频率，不是观测天数；短样本年化是外推，非实现的一年收益。不可用时不替换为持仓收益。</p><pre className="scan-code">{JSON.stringify(detail.data.details.equityPerformance, null, 2)}</pre></details>}{detail.data.details?.instrumentDefinition && <details><summary>原始合约规格依据</summary><pre className="scan-code">{JSON.stringify(detail.data.details.instrumentDefinition, null, 2)}</pre></details>}{detail.data.details?.curveReason === 'native_equity_pages_not_loaded' && <p role="note">权益快照已按页保存，当前曲线未加载，并非缺少权益数据。可由研究工具读取原任务的分页证据；此页面不展开整份大表。</p>}{detail.data.sampleCounts && <details><summary>样本与预热计数</summary><pre className="scan-code">{JSON.stringify(detail.data.sampleCounts, null, 2)}</pre></details>}</>}</section>}
+    {ordinal !== null && <section className="result-section"><div className="section-heading"><h3>试验 #{ordinal}</h3><Button size="small" onClick={() => update({ trial: undefined })}>收起</Button></div><ErrorNotice error={detail.error} retry={() => { void detail.refetch(); }} />{detail.isPending ? <Loading /> : detail.data && <><ParameterFacts values={detail.data.parameters} copy /><Facts items={[["执行状态", <ScanStatus status={detail.data.status} />], ["科学任务", detail.data.taskId], ["远端回执", detail.data.remoteStatus], ["约束", detail.data.skipReason]]} /><ExecutionFailure error={detail.data.error} identity={`参数扫描 ${scan.id} / 试验 #${detail.data.ordinal}`} title="试验未完成" /><Metrics metrics={scanNativeMetrics(detail.data.metrics)} />{detail.data.details?.equityPerformance && <details><summary>官方日权益收益与年化口径</summary><p>年化为外推，非实际全年收益。</p><pre className="scan-code">{JSON.stringify(detail.data.details.equityPerformance, null, 2)}</pre></details>}{detail.data.details?.instrumentDefinition && <details><summary>原始合约规格依据</summary><pre className="scan-code">{JSON.stringify(detail.data.details.instrumentDefinition, null, 2)}</pre></details>}{detail.data.details?.curveReason === 'native_equity_pages_not_loaded' && <p role="note">权益快照已保存，曲线未加载。</p>}{detail.data.sampleCounts && <details><summary>样本与预热计数</summary><pre className="scan-code">{JSON.stringify(detail.data.sampleCounts, null, 2)}</pre></details>}</>}</section>}
   </>;
 }

@@ -14,7 +14,7 @@ export function AutomaticControls({ value }: { value: ObservationView }) {
   const cache = useQueryClient(); const [saving, setSaving] = useState(false); const [error, setError] = useState<unknown>(); const [form] = Form.useForm();
   useEffect(() => { form.setFieldsValue(value.automaticPolicy ?? { enabled: false, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 }); }, [value.id, value.automaticPolicy?.enabled, value.automaticPolicy?.cashBuffer, value.automaticPolicy?.maximumSnapshotAgeSeconds]);
   const allocation = value.allocation;
-  return <section className="account-control-section"><h3>按账户净值自动调整</h3><p className="quiet">仅在原选因子池内按批准权重缩放；预留资金与现金缓冲先扣除。后台由官方 Pi Durable 任务运行，浏览器关闭不影响。权益、预留或容量未知时不交付；原目标过期仅显示投影，不延长有效期。</p>
+  return <section className="account-control-section"><h3>按账户净值自动调整</h3>
     <Form form={form} layout="vertical" disabled={saving || value.status === 'STOPPED'} onFinish={(fields: { enabled: boolean; cashBuffer: string; maximumSnapshotAgeSeconds: string | number }) => { setSaving(true); setError(undefined); void api<ObservationView>(`/observations/${encodeURIComponent(value.id)}/automatic`, { method: 'POST', body: { enabled: !!fields.enabled, cashBuffer: fields.cashBuffer, maximumSnapshotAgeSeconds: Number(fields.maximumSnapshotAgeSeconds) } }).then(() => cache.invalidateQueries({ queryKey: ['/observations'] }), setError).finally(() => setSaving(false)); }}>
       <Form.Item name="enabled" valuePropName="checked"><Checkbox>启用自动调整</Checkbox></Form.Item><div className="form-columns"><Form.Item label="显式现金缓冲" name="cashBuffer" rules={[{ required: true }, { validator: (_rule, input: string) => (decimalUnits(input ?? '') ?? -1n) >= 0n ? Promise.resolve() : Promise.reject(new Error('请输入非负精确金额')) }]}><Input inputMode="decimal" suffix={value.currency} /></Form.Item><Form.Item label="账户快照最大年龄（秒）" name="maximumSnapshotAgeSeconds" rules={[{ required: true }]}><Input inputMode="numeric" /></Form.Item></div><Button htmlType="submit" loading={saving}>保存自动调整设置</Button><ErrorNotice error={error} />
     </Form>
@@ -25,21 +25,21 @@ export function AutomaticControls({ value }: { value: ObservationView }) {
 }
 
 export function CapitalFundsSummary({ exit }: { exit: CapitalExitView; now?: number }) {
-  return <><p role="status">历史金额原值，不能据此认定当前可提资金或解除预留。</p><Facts items={[
+  return <><p role="status">历史金额（非当前可提资金）</p><Facts items={[
     ['原请求金额', <Exact value={exit.funds.requested_amount.amount} unit={exit.funds.requested_amount.currency} />],
     ['保留的现货预留', <Exact value={exit.funds.reserved_amount.amount} unit={exit.funds.reserved_amount.currency} />],
     ['保留的外部待提现金额', <Exact value={exit.funds.staged_for_withdrawal_amount.amount} unit={exit.funds.staged_for_withdrawal_amount.currency} />],
     ['历史已对账本金', <Exact value={exit.funds.reconciled_withdrawal_amount.amount} unit={exit.funds.reconciled_withdrawal_amount.currency} />],
     ['历史手续费', <Exact value={exit.funds.actual_fees?.amount} unit={exit.funds.actual_fees?.currency} missing="未记录" />],
     ['原证据时间', <Timestamp value={exit.funds.evidence_asof} />],
-  ]}/><p>新规划、恢复执行和释放预留入口已退役。停止原订单不会自动解除资金义务。</p></>;
+  ]}/><p>新规划、恢复执行和释放预留已停用。</p></>;
 }
 export function CapitalControls({ value }: { value: ObservationView }) {
   const path=`/observations/${encodeURIComponent(value.id)}/capital-exits`;
   const status=useResource<CapitalExitStatus>(path,{poll:5000});const confirm=useConfirm();
   const command=useCommand<{requestId:string;state:string}>(`capital:${value.id}`,()=>{void status.refetch();},`${path}/commands`);
-  return <section className="account-control-section"><h3>历史资金退出与原订单</h3><p>自研资金规划、费用估算、切片和恢复执行已退役。以下金额为保留记录，不是新核定可提资金；未决预留不会自动释放。旧资金计划暂停/取消暂不可用：缺少可验证的原 CONTROL 证据，不代表已取消任何订单；后续需要官方原订单 ID 取消接线验收。</p>
-    <p>下游原记录预留与本地原命令未决金额分列，不相加，也不表示新增可用资金。</p>
+  return <section className="account-control-section"><h3>历史资金退出与原订单</h3><p>原资金计划暂停与取消暂不可用。</p>
+
     <Facts items={[["下游预留原记录（非官方余额）", <Exact value={(status.data??value.capitalExit)?.reserved??null}/>]]}/>
     {((status.data??value.capitalExit)?.unsettledReservations??[]).map(fact=><div key={fact.requestId}><code>{fact.requestId}</code> <Status value={fact.state}/> <Exact value={fact.reserved}/></div>)}
     <ErrorNotice error={status.error}/><PendingCommand command={command}/>
