@@ -239,7 +239,7 @@ test('native research and account-control commands preserve original file bytes 
   } finally { await config.close(); await api.close(); }
 });
 
-test('delete commands retain exact original identities, send once without bodies and expose receipts or blockers', async () => {
+test('delete commands retain exact original identities, send once with empty JSON and expose receipts or blockers', async () => {
   const sent: { method: string; url: string; bytes: string }[] = []; let drop = true;
   const receipt = { kind: 'research', id: '508', deletedAt: '2026-10-25T12:00:00.000Z' };
   const api = await server((request, response, bytes) => {
@@ -262,12 +262,12 @@ test('delete commands retain exact original identities, send once without bodies
       assert.equal((error as { code: string }).code, 'portfolio_in_use'); assert.equal((error as { status: number }).status, 409); return true;
     });
     assert.deepEqual(sent, [
-      { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/mandates/mandate%3Aone%2Ftwo', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/portfolios/p%2Foriginal', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/portfolios/p%3Aalias', bytes: '' },
-      { method: 'DELETE', url: '/api/v3/portfolios/blocked', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/research/508', bytes: '{}' },
+      { method: 'DELETE', url: '/api/v3/research/508', bytes: '{}' },
+      { method: 'DELETE', url: '/api/v3/mandates/mandate%3Aone%2Ftwo', bytes: '{}' },
+      { method: 'DELETE', url: '/api/v3/portfolios/p%2Foriginal', bytes: '{}' },
+      { method: 'DELETE', url: '/api/v3/portfolios/p%3Aalias', bytes: '{}' },
+      { method: 'DELETE', url: '/api/v3/portfolios/blocked', bytes: '{}' },
     ]);
     const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
