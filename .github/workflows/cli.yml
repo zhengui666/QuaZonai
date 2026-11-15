@@ -49,6 +49,10 @@ jobs:
           runtime=$(node -p "require('node:path').resolve(process.execPath, process.platform === 'win32' ? '..' : '../..')")
           python -B deploy/package.py pack-cli --runtime "$runtime" \
             --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
+      - name: Verify the shipped launcher builder
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: python -B deploy/launcher_verify.py "$RUNNER_TEMP/cli-assets" "$PLATFORM" "$VERSION"
       - name: Unix installer with the real archive and no host Node
         if: runner.os != 'Windows'
         env:

@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+import launcher_package
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = 'zhengui666/QuaZonai'
@@ -20,7 +21,7 @@ CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suff
     ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
 IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application',)}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
-REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
+REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()) | set(launcher_package.ARCHIVES.values()))
 MARKER = '@QUAZONAI_VERSION@'
 
 def identity(version: str, revision: str) -> None:
@@ -102,6 +103,7 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
                 for file in files:
                     archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
     check_cli_archive(output, platform)
+    launcher_package.pack(runtime, platform, destination, version, revision)
     return output
 
 def read_manifest(destination: Path) -> dict:
@@ -146,6 +148,15 @@ skill directories are refused rather than replaced. A QuaZonai directory at
 ownership in `~/.agents/.skill-lock.json` is updated in place: shipped files are
 replaced, owner-added files and the global lock remain untouched. The installed
 `release.json`, not the older skills-manager ref, records the actual release.
+
+Separate `quazonai-launcher-builder-<platform>` assets include their own Node runtime
+and the existing offline build tool. They are builders, not precompiled trading
+engines, and do not bundle Nautilus. Run `quazonai-launcher-builder --help` for
+`inspect` and explicit `build CONFIG.json`. Building requires your existing Rust
+project, public factories, actual Cargo toolchain and cached native dependencies.
+It does not connect accounts or start trading. The resulting native executable
+is specific to that owner project, Nautilus version, precision and runtime ABI;
+use a build environment compatible with the machine/container that will run it.
 
 For updates, use the target release installer with the same installation owner
 and original `--directory`. Preserve the installation root, configuration,
@@ -211,6 +222,7 @@ def verify(destination: Path) -> dict:
     manifest = read_manifest(destination)
     for platform, name in CLI_ARCHIVES.items():
         check_cli_archive(destination / name, platform)
+        launcher_package.verify(destination / launcher_package.ARCHIVES[platform], platform, manifest['version'], manifest['revision'])
     with tarfile.open(destination / 'quazonai-deploy.tar.gz', 'r:gz') as archive:
         if set(archive.getnames()) != DEPLOY_FILES or json.load(archive.extractfile('release.json')) != manifest:
             raise ValueError('Deployment bundle does not match release.json.')
