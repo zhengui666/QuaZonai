@@ -2,7 +2,8 @@ import type {SavedAccountRunnerReport} from '../../../packages/contracts/src/nau
 import AccountStrategy from './account-strategy';
 import {useState} from 'react';
 import {Button,Input,Checkbox,Select} from 'antd';
-import {useResource} from './data-hooks';
+import {ResourceActivity,useResource} from './data-hooks';
+import {useIsFetching} from '@tanstack/react-query';
 import {useCommand} from './commands';
 import {ErrorNotice,PendingCommand} from './ui';
 
@@ -115,6 +116,22 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  <PendingCommand command={command}/><ErrorNotice error={error??command.error??records.error}/>{notice&&<p>{notice}</p>}
 
  <Button onClick={()=>void records.refetch()}>只读取已保存账户</Button>
- {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary><SavedRunnerNotice value={item.savedRunner}/>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
+ {records.data?.map(item=><SavedAccountPanel key={item.id} item={item}/>)}
  </section>;
+}
+
+export type SavedAccountItem={id:string;unavailable?:string;savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}};
+export function SavedAccountPanel({item}:{item:SavedAccountItem}){
+ const [open,setOpen]=useState(false),[visited,setVisited]=useState(false);
+ const prefix=`/accounts/configurations/${encodeURIComponent(item.id)}/strategy`;
+ const fetching=useIsFetching({predicate:query=>typeof query.queryKey[0]==='string'&&(query.queryKey[0]===prefix||query.queryKey[0].startsWith(`${prefix}/`))});
+ return <details onToggle={event=>{const next=event.currentTarget.open;setOpen(next);if(next)setVisited(true);}}>
+ <summary>{item.id} · {item.accountConfiguration.mode}</summary>
+ {visited&&<ResourceActivity.Provider value={open}>
+ <SavedRunnerNotice value={item.savedRunner}/>
+ {item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}
+ {open&&fetching>0&&<p role="status">正在刷新，以下可能仍是上次读数。</p>}
+ {item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}
+ </ResourceActivity.Provider>}
+ </details>;
 }

@@ -1,10 +1,13 @@
-import { useEffect } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Page, PortfolioView, ResearchDetail, ResearchSummary } from '../../../packages/contracts/src/index.ts';
 import type { ParameterScanView } from '../../../packages/contracts/src/parameter-scans.ts';
 import { api } from './api';
+/** Hidden account panels keep drafts mounted, but do not read native state. */
+export const ResourceActivity = createContext<boolean | undefined>(undefined);
 export function useResource<T>(path: string, options: { enabled?: boolean; poll?: number } = {}) {
-  return useQuery({ queryKey: [path], queryFn: ({ signal }) => api<T>(path, { signal }), enabled: options.enabled ?? true, refetchInterval: options.poll, refetchIntervalInBackground: false });
+  const active = useContext(ResourceActivity);
+  return useQuery({ queryKey: [path], queryFn: ({ signal }) => api<T>(path, { signal }), enabled: (options.enabled ?? true) && active !== false, ...(active !== undefined ? { staleTime: 0 } : {}), refetchInterval: options.poll, refetchIntervalInBackground: false });
 }
 function useLiveResource<T>(path: string, event: string) {
   const cache = useQueryClient();
