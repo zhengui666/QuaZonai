@@ -66,6 +66,44 @@ def check_cli_archive(path: Path, platform: str, launcher: bool = False) -> None
     if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform, launcher).issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
+def smoke_launcher_archive(path: Path, platform: str, version: str) -> None:
+    """Run the final archive wrapper with no host Node on PATH (CI only)."""
+    check_cli_archive(path, platform, True)
+    windows = platform.startswith('windows-')
+    with tempfile.TemporaryDirectory(prefix='qz launcher smoke ', dir=os.environ.get('TMPDIR')) as temporary:
+        root = Path(temporary)
+        unpacked = root / 'unpacked'
+        unpacked.mkdir()
+        if windows:
+            with zipfile.ZipFile(path) as archive:
+                archive.extractall(unpacked)
+        else:
+            with tarfile.open(path, 'r:gz') as archive:
+                archive.extractall(unpacked, filter='data')
+        entry = unpacked / ('quazonai-launcher.cmd' if windows else 'quazonai-launcher')
+        tools = root / 'tools'
+        tools.mkdir()
+        env = {**os.environ, 'PATH': str(tools)}
+        if not windows:
+            dirname = shutil.which('dirname')
+            if not dirname:
+                raise ValueError('Archive wrapper test requires dirname.')
+            shutil.copy2(dirname, tools / 'dirname')
+        def execute(argument: str) -> subprocess.CompletedProcess:
+            # Fixed arguments only. cmd.exe is explicit because .cmd is not a PE executable.
+            command = (f'"{os.environ["COMSPEC"]}" /d /s /c ""{entry}" {argument}"'
+                if windows else [str(entry), argument])
+            return subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        help_result = execute('--help')
+        if help_result.returncode != 0 or 'No Nautilus' not in help_result.stdout:
+            raise ValueError('Extracted launcher wrapper help failed.')
+        version_result = execute('--version')
+        if version_result.returncode != 0 or version_result.stdout.strip() != 'quazonai-launcher ' + version:
+            raise ValueError('Extracted launcher wrapper version failed.')
+        refused = execute('build')
+        if refused.returncode != 1 or 'launcher_command_invalid' not in refused.stderr:
+            raise ValueError('Extracted launcher wrapper did not reject build.')
+
 def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revision: str, launcher: bool = False) -> Path:
     identity(version, revision)
     windows = platform.startswith('windows-')
@@ -138,6 +176,8 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
                 for file in files:
                     archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
     check_cli_archive(output, platform, launcher)
+    if launcher:
+        smoke_launcher_archive(output, platform, version)
     return output
 
 def read_manifest(destination: Path) -> dict:
