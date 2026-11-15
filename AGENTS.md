@@ -315,3 +315,18 @@ inherited cross-compilation settings; cross-compilation is not supported by this
 entry point. Target-specific dependency caches may require extra disk space.
 
 The account factory receives the original node/account/client identities and configured instrument IDs only at explicit START. These are routing context, not proof of connectivity, balances or trading permission. Older two-argument factories must update their signature and rebuild; source generation does not prove compilation or compatibility. User configuration is passed unchanged; no identity is injected into its JSON.
+
+### Native backtest execution-model assumptions
+
+`native-strategy-backtest` accepts optional venue fields for the tested Nautilus
+0.69.0 revision `634e094`: `latency_model` with `kind: "STATIC"` and decimal-string
+`base_latency_ns`, `insert_latency_ns`, `update_latency_ns`, `delete_latency_ns`;
+and `fill_model` with `kind: "DEFAULT"`, `prob_fill_on_limit`, `prob_slippage`
+(upstream `[0,1]` validation, including its numerical tolerance) and optional
+decimal-string `random_seed`.
+The official static model adds base latency to each operation delay. Omission
+keeps the previous upstream defaults. These are explicit scenario assumptions,
+not measured exchange latency or calibrated queue/impact execution. They neither
+supply missing order books nor certify historical fees, fills or profitability.
+This limited wiring does not claim all upstream fill models or versions are
+supported. Account runtime configuration and existing account history are unchanged.

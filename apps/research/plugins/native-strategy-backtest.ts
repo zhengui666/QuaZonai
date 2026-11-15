@@ -159,6 +159,11 @@ export function normalizedNativeStrategyRequest(request: JsonObject): JsonObject
   const venue = object(expected.venue, 'native_strategy_venue');
   if (venue.base_currency === undefined) venue.base_currency = null;
   if (venue.bar_execution === null) delete venue.bar_execution;
+  if (venue.latency_model === null) delete venue.latency_model;
+  if (venue.fill_model === null) delete venue.fill_model;
+  const fill = venue.fill_model;
+  if (fill && typeof fill === 'object' && !Array.isArray(fill) && fill.kind === 'DEFAULT' && fill.random_seed === null) delete fill.random_seed;
+
   const strategy = object(expected.strategy, 'native_strategy_config');
   if (strategy.base === null) delete strategy.base;
   if (strategy.kind === 'GRID_MARKET_MAKER') {

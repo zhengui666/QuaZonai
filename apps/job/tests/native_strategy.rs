@@ -378,38 +378,46 @@ fn sparse_funding_and_close_streams_are_legal_with_actual_market_events() {
 }
 
 #[test]
-fn actual_l2_walk_forward_cli_keeps_every_native_summary_on_stderr() {
+fn separate_native_replays_keep_each_summary_outside_json_without_claiming_walk_forward() {
     let books = (1..=8)
         .flat_map(|n| snapshot(n * SECOND, n * SECOND, "10.000000", "0.100000"))
         .collect::<Vec<_>>();
     let dir = catalog(&books, &[]);
-    let request = json!({
-        "schema_version":1, "candidates":[request(8 * SECOND)],
-        "split":{"n_splits":2,"test_size":2,"gap":0,"max_train_size":null},
-        "objective":{"native_key":"PnL (total)","currency":"USDT","direction":"MAXIMIZE"}
-    });
-    let output = native_cli::command(
+    // These are independent official engine invocations, not an atomic fold controller,
+    // a shared account, train/test isolation, or walk-forward validation.
+    for end in [4 * SECOND, 8 * SECOND] {
+        let request = request(end);
+        let output = native_cli::command(
+            &[
+                "native-strategy-backtest".as_ref(),
+                "--catalog".as_ref(),
+                dir.path().as_os_str(),
+            ],
+            &request,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .expect("all upstream summaries must stay outside JSON stdout");
+        assert_eq!(result["request"], serde_json::to_value(request).unwrap());
+        assert!(result["canonical_result"].is_object());
+        assert!(result.get("folds").is_none());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("summary:"));
+    }
+    let retired = native_cli::command(
         &[
             "native-walk-forward".as_ref(),
             "--catalog".as_ref(),
             dir.path().as_os_str(),
         ],
-        &request,
+        &json!({}),
     );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .expect("all upstream summaries must stay outside JSON stdout");
-    assert_eq!(result["folds"].as_array().unwrap().len(), 2);
-    assert!(result["folds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|fold| fold["trials"][0]["result"].is_object()));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("summary:"));
+    assert!(!retired.status.success());
+    assert!(retired.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&retired.stderr).contains("unrecognized subcommand"));
 }
 
 #[test]
