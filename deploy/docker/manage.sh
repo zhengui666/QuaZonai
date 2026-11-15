@@ -36,7 +36,7 @@ qz_configuration() {
 qz_preflight() {
     [[ $(uname -s)/$(uname -m) == Linux/x86_64 && $(id -u) != 0 ]] || qz_fail 'Run as the non-root Linux x86_64 installation owner.'
     local tool
-    for tool in docker curl tar awk flock realpath sync od; do command -v "$tool" >/dev/null || qz_fail "Missing $tool"; done
+    for tool in docker curl tar awk flock realpath sync od cmp; do command -v "$tool" >/dev/null || qz_fail "Missing $tool"; done
     docker compose version >/dev/null
 }
 qz_lock() { mkdir -p "$1"; exec 9>>"$1/.deployment.lock"; flock -n 9 || qz_fail 'Another deployment operation is running.'; }
@@ -194,6 +194,42 @@ qz_apply_update() {
     elif [[ "$phase" != starting ]]; then qz_fail 'Unknown pending update phase.'; fi
     qz_activate "$root" "$candidate"
 }
+# Explicit abandonment of a failed update only after the original application
+# has independently been restored. Does not restore, migrate, or delete data.
+qz_recover_failed_update() {
+    local root=$1 pending="$1/pending.json" previous="$QZ_WORK/recovery-previous.json" archive
+    qz_configuration "$root"
+    [[ -f "$pending" && ! -L "$pending" ]] || qz_fail 'Original regular pending.json required; no recovery was performed.'
+    [[ $(qz_get "$pending" operation) == update && $(qz_get "$pending" phase) == starting ]] || qz_fail 'Only a failed update in starting phase may be reconciled.'
+    qz_raw "$pending" previous > "$previous"; qz_manifest "$previous"
+    [[ $(qz_raw "$QZ_CONFIG") == "$(qz_raw "$previous")" ]] || qz_fail 'Installation must already match the original previous manifest; no rollback is performed.'
+    [[ -L "$root/current" && $(realpath -e "$root/current") == "$(realpath -e "$(qz_get "$previous" bundle)/..")" ]] || qz_fail 'Current release must already point to the original previous bundle.'
+    [[ $(qz_get "$pending" target.version) != "$(qz_get "$previous" version)" ]] || qz_fail 'Failed target and original version must differ.'
+    cp -- "$pending" "$QZ_WORK/original-pending.json"
+    qz_verify "$previous"
+    # Inspect only with the app writer stopped, through official maintenance.
+    # A refusal leaves pending untouched and may leave the app stopped.
+    # It never cancels unresolved work; recovery does not imply global venue idle.
+    qz_stop "$previous"; qz_idle "$previous"
+    cmp -s "$pending" "$QZ_WORK/original-pending.json" || qz_fail 'Pending changed during recovery; preserving all records.'
+    [[ $(qz_raw "$QZ_CONFIG") == "$(qz_raw "$previous")" ]] || qz_fail 'Installation changed during recovery.'
+    mkdir -p "$root/failed-updates"
+    archive=$(mktemp -d "$root/failed-updates/$(date +%Y%m%dT%H%M%S)-XXXXXX")
+    cp -- "$pending" "$archive/pending.original.json"
+    cp -- "$QZ_CONFIG" "$archive/installation.json"
+    sync -f "$archive/pending.original.json"; sync -f "$archive/installation.json"; sync -f "$archive"
+    printf '{"operation":"recover-failed-update","archive":%s,"previous_version":%s,"failed_version":%s,"data_replaced":false,"original_pending":"pending.original.json","phase":"verified-idle"}\n' "$(qz_quote "$archive")" "$(qz_quote "$(qz_get "$previous" version)")" "$(qz_quote "$(qz_get "$pending" target.version)")" | qz_save "$archive/recovery.json"
+    # Persist every ancestor before removing the only active marker.
+    sync -f "$root/failed-updates"; sync -f "$root"
+    # Restart only the already verified previous application. No new image or
+    # native process is selected. Keep active pending until health succeeds.
+    qz_start "$previous"
+    cmp -s "$pending" "$archive/pending.original.json" || qz_fail 'Pending changed before archival; preserving active marker.'
+    printf '{"operation":"recover-failed-update","archive":%s,"pending":"pending.json","audit":"recovery.json"}\n' "$(qz_quote "$archive")" | qz_save "$root/failed-update-recovery.json"
+    mv -T -- "$pending" "$archive/pending.json"
+    sync -f "$archive"; sync -f "$root"
+    printf 'Failed update retained at %s; previous app verified. No data or backup was replaced.\n' "$archive"
+}
 qz_restore() {
     local root=$1 backup=$2 file="$2/installation.json" name destination
     qz_configuration "$root"; qz_manifest "$file"
@@ -237,7 +273,7 @@ qz_unpack() {
     qz_manifest "$destination/release.json"
 }
 qz_help() {
-    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH [--directory PATH] [--port PORT] [--no-backup]' \
+    printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH|recover-failed-update [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
       '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
       'Native environments are owner-managed; deployment only starts/updates app and preserves external services and data.' \
@@ -288,6 +324,7 @@ qz_main() {
       stop) qz_configuration "$root"; qz_stop "$QZ_CONFIG";;
       status) qz_configuration "$root"; printf 'Recorded %s: http://localhost:%s\n' "$(qz_get "$QZ_CONFIG" version)" "$(qz_get "$QZ_CONFIG" port)"; qz_compose "$QZ_CONFIG" ps;;
       backup) qz_configuration "$root"; qz_stop "$QZ_CONFIG"; qz_idle "$QZ_CONFIG"; qz_backup "$QZ_CONFIG"; printf 'App remains stopped. Use start when ready.\n';;
+      recover-failed-update) [[ -z "$argument" ]] || qz_fail 'recover-failed-update takes no target; the original pending record is authoritative.'; qz_recover_failed_update "$root";;
       restore) [[ -n "$argument" ]] || qz_fail 'restore requires the original recovery-point directory.'; qz_restore "$root" "$(realpath -e "$argument")";;
       runtime|recover-access|apply-config|source) qz_fail 'Retired Rust transport command. Configure datasets/connections in data/service.json and use the Node CLI.';;
       *) qz_fail "Unknown command: $command";;
