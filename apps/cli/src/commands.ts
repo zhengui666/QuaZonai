@@ -13,6 +13,9 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   identity | logout | forget
   schema list [--domain] | schema show NAME [--domain]
   datasets | usage
+  datasets registry | register --file REQUEST.json (append-only new IDs; requestId, expectedRevision, path)
+  native-runner status | import --file REQUEST.json | build-status REQUEST_ID
+    Import inspects trusted executable capabilities; never selects a global runner or starts research/accounts.
   datasets coverage ID --file REQUEST.json (selectors [{data_type,identifier}] or bar_types; start_ns/end_ns as inclusive ts_init strings)
   maintenance status | enter --file ORIGINAL_REQUEST.json | resume --file ORIGINAL_REQUEST.json
   pm list | get ID | delete ID | decision ID | history ID | events ID | capabilities
@@ -252,9 +255,23 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (action !== 'list') throw new CliError('unknown_extensions_command');
   } else if (group === 'identity') path = '/session';
   else if (group === 'logout') { method = 'DELETE'; path = '/devices/current'; }
+  else if (group === 'native-runner') {
+    if (action === 'status') path = '/settings/instances';
+    else if (action === 'build-status') path = `/settings/instances/build/${resourceId(id)}`;
+    else if (action === 'import') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 0) throw new CliError('expected_revision_required');
+      path = '/settings/instances/import'; method = 'POST'; body = file.bytes;
+    } else throw new CliError('unknown_native_runner_command');
+  } else if (group === 'datasets' && action === 'registry') path = '/data-sources';
+  else if (group === 'datasets' && action === 'register') {
+    const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+    if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 1) throw new CliError('expected_revision_required');
+    path = '/data-sources/qz.data.registered/datasets'; method = 'POST'; body = file.bytes;
+  }
   else if (group === 'datasets' && action === 'coverage') {
     path = `/datasets/${resourceId(id)}/coverage`; method = 'POST'; body = (await fileBody(values.file)).bytes;
-  } else if (group === 'datasets' || group === 'usage') path = `/${group}`;
+  } else if ((group === 'datasets' || group === 'usage') && action === undefined) path = `/${group}`;
   else throw new CliError('unknown_command');
 
   const profile = await loadProfile();
