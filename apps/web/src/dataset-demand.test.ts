@@ -15,7 +15,7 @@ import Data from './data';
 let renderer:ReactTestRenderer|undefined,client:QueryClient|undefined;
 async function settle(){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10));});}
 async function click(name:string){await act(async()=>{renderer!.root.findAllByType('button').find(node=>node.children.some(child=>child===name))!.props.onClick();});await settle();}
-async function mount(){vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);network.calls.length=0;network.pending.clear();client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}});await act(async()=>{renderer=create(createElement(QueryClientProvider,{client},createElement(Data)));});await settle();}
+async function mount(){vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);network.calls.length=0;network.pending.clear();client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}});await act(async()=>{renderer=create(createElement(QueryClientProvider,{client:client!},createElement(Data)));});await settle();}
 function text(){return JSON.stringify(renderer!.toJSON());}
 afterEach(async()=>{if(renderer)await act(async()=>renderer!.unmount());client?.clear();renderer=undefined;vi.unstubAllGlobals();});
 it('loads no detail before selection, isolates fast A/B changes, and ignores a late closed response',async()=>{
