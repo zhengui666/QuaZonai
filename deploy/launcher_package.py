@@ -23,6 +23,12 @@ def verify(path, platform, version=None, revision=None):
             names = archive.getnames()
             read = lambda name: archive.extractfile(name).read()
         required = {'distribution.json', 'runtime/LICENSE', 'app/package.json', 'app/launcher-build.mjs', *('app/' + x for x in MODULES), 'glue/apps/job/src/native_runner.rs', 'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node', 'quazonai-launcher-builder.cmd' if platform.startswith('windows-') else 'quazonai-launcher-builder'}
+        for item in GLUE:
+            source = ROOT/item
+            if source.is_dir():
+                required.update('glue/' + p.relative_to(ROOT).as_posix() for p in source.rglob('*') if p.is_file() and not p.is_symlink())
+            else:
+                required.add('glue/' + item)
         allowed = lambda n: n in required or any(n == 'glue/' + x or n.startswith('glue/' + x + '/') for x in GLUE)
         if len(set(names)) != len(names) or not required.issubset(names) or any(not allowed(n) or '..' in Path(n).parts or '\\' in n for n in names):
             raise ValueError('Incomplete or invalid launcher builder archive')

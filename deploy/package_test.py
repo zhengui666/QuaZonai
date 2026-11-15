@@ -64,7 +64,6 @@ class CliEncodingTests(unittest.TestCase):
             json.loads(result.stdout)['source'],
         )
 
-if __name__ == '__main__': unittest.main()
 
 class LauncherBuilderTests(unittest.TestCase):
     def test_builder_is_required_and_uses_existing_glue(self):
@@ -92,3 +91,5 @@ class LauncherBuilderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 launcher_package.verify(path, 'linux-x86_64', 'v3.0.0-dev.2', 'a'*40)
             subprocess.run([sys.executable, str(package.ROOT/'deploy/launcher_verify.py'), str(output), 'linux-x86_64', 'v3.0.0-dev.1'], check=True)
+
+if __name__ == '__main__': unittest.main()
