@@ -534,3 +534,29 @@ test('refresh finishing after close cannot write through a released receipt owne
   assert.equal(native.requests.some(value=>value.operation==='STRATEGY_START'),false);
  }finally{release();await successor?.close();await account.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('new native trader tags are durable and distinct without migrating old receipts or cache',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-native-trader-'));
+ try{
+  const tags:string[]=[];
+  for(const name of ['a','b']){
+   const path=join(directory,name);let account=await createCapitalAccount(options,path,'/never-execute',new NativeProtocol());await account.close();
+   const before=JSON.parse(await readFile(join(path,'capital-receipts.json'),'utf8'));tags.push(before.nativeTraderId);
+   assert.equal(before.nativeTraderId,`QZ-ACCOUNT-${before.sourceId.replaceAll('-','')}`);
+   account=await createCapitalAccount(options,path,'/never-execute',new NativeProtocol());await account.close();
+   assert.equal(JSON.parse(await readFile(join(path,'capital-receipts.json'),'utf8')).nativeTraderId,before.nativeTraderId);
+  }
+  assert.notEqual(tags[0],tags[1]);
+  const corruptFile=join(directory,'b','capital-receipts.json');const corrupt=JSON.parse(await readFile(corruptFile,'utf8'));corrupt.nativeTraderId='QZ-ACCOUNT-wrong';const corruptText=JSON.stringify(corrupt);await writeFile(corruptFile,corruptText);
+  await assert.rejects(createCapitalAccount(options,join(directory,'b'),'/never-execute',new NativeProtocol()),/account_native_trader_identity_invalid/);assert.equal(await readFile(corruptFile,'utf8'),corruptText);
+  const old=join(directory,'a'),file=join(old,'capital-receipts.json');const state=JSON.parse(await readFile(file,'utf8'));delete state.nativeTraderId;
+  state.commands.original={original:{requestId:'original'},state:'UNCERTAIN',error:'unknown',exitId:''};await writeFile(file,JSON.stringify(state));
+  const legacy=await createCapitalAccount(options,old,'/never-execute',new NativeProtocol());
+  const config=(await legacy.request('/strategy/config','GET',options.clientId)).value as any;assert.equal(config.nativeTraderId,'QZ-ACCOUNT-001');await legacy.close();
+  const kept=JSON.parse(await readFile(file,'utf8'));assert.equal(kept.nativeTraderId,undefined);assert.deepEqual(kept.commands.original,state.commands.original);
+  const retained=join(directory,'retained');await mkdir(join(retained,'native-cache'),{recursive:true});await writeFile(join(retained,'native-cache','metadata.json'),'retained-not-opened');
+  const cached=await createCapitalAccount(options,retained,'/never-execute',new NativeProtocol());await cached.close();
+  assert.equal(JSON.parse(await readFile(join(retained,'capital-receipts.json'),'utf8')).nativeTraderId,undefined);
+  assert.equal(await readFile(join(retained,'native-cache','metadata.json'),'utf8'),'retained-not-opened');
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
