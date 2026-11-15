@@ -18,7 +18,7 @@ test('pre-aborted exchange never invokes SSH or a local socket',async()=>{
  await assert.rejects(exchangeRemoteAccount({kind:'UNIX',socketPath:'/no/account.sock'},remoteAccountHello(),AbortSignal.abort()),/cancelled_before_send/);
 });
 
-test('actual serve CLI reports unknown on first signal; repeated signal can terminate it without proving owner state',async()=>{
+test('actual serve CLI reports unknown on first signal; repeated signal can terminate it without proving owner state',{skip:process.platform!=='linux'},async()=>{
  const {mkdtemp,writeFile,mkdir,rm,readFile}=await import('node:fs/promises');
  const {tmpdir}=await import('node:os');const {join,resolve}=await import('node:path');const {spawn}=await import('node:child_process');
  const root=await mkdtemp(join(tmpdir(),'qz-cli-sig-'));const accountDirectory=join(root,'account');await mkdir(accountDirectory);
