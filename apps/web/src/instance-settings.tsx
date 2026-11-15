@@ -19,7 +19,7 @@ export function environmentFromFields(values: Fields): NativeRustEnvironment {
   };
 }
 export function AccountCompatibilityNotice({declaration}:{declaration:unknown}) {
-  return <p>{declaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'此产物自报已声明可信策略单节点约定；这不是认证、验证或安全隔离。':'此产物未报告可信策略单节点声明；不会据保存配置补充声明。'} 这不证明账户取消当前可用；实际能力还取决于显式连接后原节点与会话。保存将清除当前产物选择，需重新显式选择；不会修改产物、连接账户或启动策略。</p>;
+  return <p>{declaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'可信策略单节点：自报声明，未验证':'可信策略单节点：未声明'}</p>;
 }
 export function retryUncertainEnvironmentSave(status?: number) { return status === undefined || status >= 500; }
 type BuildRequest={requestId:string;expectedRevision:number;environmentId?:string;sourceExecutable?:string};
@@ -49,7 +49,7 @@ export default function InstanceSettings() {
       const request = pending ?? {expectedRevision:saved.revision,environment:environmentFromFields(values!)};
       setBusy(true); setPending(request);
       const result = await api<InstanceSettingsView>('/settings/instances',{method:'PUT',body:request});
-      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice('环境配置已保存，当前产物选择已清除，需重新显式选择。没有构建、连接账户或启动策略。');
+      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice('配置已保存，请重新选择产物。未连接账户。');
     } catch (failure) {
       setError(failure);
       if (!retryUncertainEnvironmentSave(failure instanceof ApiError ? failure.status : undefined)) {
@@ -80,13 +80,13 @@ export default function InstanceSettings() {
     try{setBuild(await api<BuildView>('/settings/instances/import',{method:'POST',body:request}));}catch(failure){setError(failure);}finally{setBusy(false);}
   }
   async function readBuild(){if(!buildRequest||busy)return;setBusy(true);setError(undefined);try{setBuild(await api<BuildView>(`/settings/instances/build/${encodeURIComponent(buildRequest.requestId)}`));}catch(failure){setError(failure);}finally{setBusy(false);}}
-  async function selectRunner(){if(!buildRequest||!saved||busy)return;setBusy(true);setError(undefined);try{setSaved(await api<InstanceSettingsView>('/settings/instances/select-runner',{method:'POST',body:{requestId:buildRequest.requestId,expectedRevision:buildRequest.expectedRevision}}));setNotice('已选用已核实的启动器产物。尚未连接账户或启动策略。');}catch(failure){setError(failure);}finally{setBusy(false);}}
+  async function selectRunner(){if(!buildRequest||!saved||busy)return;setBusy(true);setError(undefined);try{setSaved(await api<InstanceSettingsView>('/settings/instances/select-runner',{method:'POST',body:{requestId:buildRequest.requestId,expectedRevision:buildRequest.expectedRevision}}));setNotice('产物已选用，未连接账户。');}catch(failure){setError(failure);}finally{setBusy(false);}}
   if (!loaded) return query.error ? <ErrorNotice error={query.error} /> : <Loading />;
   return <div className="settings-page instance-settings"><header className="page-heading"><h2>Nautilus 原生 Rust 环境</h2></header>
-    <p>只有一种连接方式：通过同一进程连接查看与控制 Nautilus。可以使用已有 Rust 项目构建薄启动器，或显式导入已有兼容启动器；这只是两种产物准备方式，不是两种连接。QuaZonai 不随应用捆绑 Nautilus，不修改其源码，不要求预装常驻适配服务。</p>
-    <p>路径必须能被 QuaZonai 服务所在机器访问；默认容器没有 Cargo / rustc 或宿主项目挂载，不能直接填写宿主路径当作可用环境。容器需要所有者准备兼容的已有工具链、系统库和挂载，宿主与容器 glibc 不一致也可能无法运行。这里不会通过 SSH 自动访问远程机器，也不会接管已运行且未提供接口的节点。</p>
-    <p>保存配置、检查或构建环境、连接账户、启动交易是不同操作。单一环境可承载独立研究进程和显式账户进程，不代表只有一个操作系统进程；研究权限不是交易许可。</p>
-    {!!saved && (!!saved.backtest || saved.connections.length > 0) && <p>检测到旧 HTTP 配置，已作为迁移事实保留，不再提供新的 HTTP 配置入口。旧任务、账户及未决回执不会改写成新连接，UNKNOWN 不会自动重发或清除。</p>}
+
+    <p>路径须可被应用运行环境访问。</p>
+
+    {!!saved && (!!saved.backtest || saved.connections.length > 0) && <p>旧 HTTP 配置已保留。</p>}
     <Form form={form} layout="vertical" disabled={busy || !!pending}>
       <Form.Item name="id" label="环境标识" rules={required}><Input /></Form.Item>
       <Form.Item name="cargoBinary" label="已有 Cargo 可执行文件绝对路径" rules={required}><Input /></Form.Item>
@@ -96,28 +96,28 @@ export default function InstanceSettings() {
       <Form.Item name="backtestFactory" label="回测工厂公开模块（config / install）"><Input /></Form.Item>
       <Form.Item name="accountFactory" label="账户策略工厂公开模块（strategy）"><Input /></Form.Item>
       <Form.Item name="accountCompatibility" label="可选：账户工厂兼容声明（不是认证）" dependencies={['accountFactory']} rules={[({getFieldValue})=>({validator:async(_,value)=>{if(value && !getFieldValue('accountFactory')?.trim())throw new Error('请先填写账户策略工厂，或清除声明。');}})]}>
-        <Select allowClear placeholder="未声明（默认，不限制原有研究与策略运行）" options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:'我明确声明：可信策略，整个生命周期只使用此单节点'}]}/>
+        <Select allowClear placeholder="未声明" options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:'我明确声明：可信策略，整个生命周期只使用此单节点'}]}/>
       </Form.Item>
-      <p>只在你确认用户 Rust 代码的构造、加载、启动和所有后续回调始终只注册此节点的策略，且不创建第二节点、不替换线程全局发送器或消息端点时选择。QuaZonai 不验证或隔离这些代码。未声明不会封禁原有研究或策略运行，但不提供该声明所需的取消能力。此阶段只验证指定版本的模拟账户，不开放实盘。</p>
+
     </Form>
-    {pending && <p>保存结果尚未确认。重试保留原配置与版本，不创建另一请求。</p>}
+    {pending && <p>保存结果待核对。</p>}
     <Button onClick={()=>void save()} loading={busy}>{pending ? '核实原保存请求' : '仅保存环境配置'}</Button>{' '}
     <Button onClick={()=>void inspect()} disabled={busy || !!pending || !saved?.environment}>显式检查已保存环境</Button>
-    <p>检查仅读取 Cargo 清单。显式构建会在独立目录执行你项目的 Rust / build.rs 代码，使用已有离线依赖，不下载或替换 Nautilus；路径、版本或精度不兼容会失败。当前源码构建胶水仅验证固定官方 git 634（0.69），同版本 registry/path 来源也可能不兼容，不能据此宣称任意版本支持。构建成功仍不代表已连接账户或可交易。</p>
-    <details><summary>显式导入已有兼容启动器（不需要应用内 Cargo）</summary>
-      <p>必须是当前应用容器能访问和执行的兼容产物，不是任意 Nautilus 可执行文件。将复制到独立产物目录，再在应用环境实际执行 capabilities；这是运行你信任的代码，不是静态安全扫描，也不是沙箱隔离。不会发送 BOOT 或启动策略。身份来自产物自报，不是源码真实性证明。</p>
+    <p>构建将执行项目代码。仅验证 Nautilus 0.69（官方 git 634）。</p>
+    <details><summary>导入兼容启动器</summary>
+      <p>导入将执行所选程序的 capabilities，不启动账户。</p>
       <Input aria-label="导入环境标识" placeholder="没有源码环境时填写环境标识" value={saved?.environment?.id??importId} disabled={!!saved?.environment||!!buildRequest||busy} onChange={e=>setImportId(e.target.value)}/>
       <Input aria-label="已有启动器绝对路径" placeholder="应用容器可访问的绝对路径" value={importPath} disabled={!!buildRequest||busy} onChange={e=>setImportPath(e.target.value)}/>
-      <Button disabled={busy||!!pending||(!buildRequest&&(!importPath||!(saved?.environment?.id??importId)))} onClick={()=>confirm('执行可信启动器的能力查询？','这将复制并运行所选二进制的 capabilities。任意用户代码可能产生副作用；不代表安全沙箱。不会主动 BOOT、连接账户或发起交易，选择产物仍需下一步明确操作。',()=>{void importEnvironment();})}>{buildRequest?.sourceExecutable?'核实原导入请求':'显式导入并执行能力查询'}</Button>
+      <Button disabled={busy||!!pending||(!buildRequest&&(!importPath||!(saved?.environment?.id??importId)))} onClick={()=>confirm('执行可信启动器的能力查询？','将运行所选程序的 capabilities，未隔离用户代码；不会主动连接账户或交易。',()=>{void importEnvironment();})}>{buildRequest?.sourceExecutable?'核实原导入请求':'显式导入并执行能力查询'}</Button>
     </details>
     <Button onClick={()=>void buildEnvironment()} disabled={busy||!!pending||(!saved?.environment&&!buildRequest)}>{buildRequest?'核实原准备请求':'显式构建启动器'}</Button>{' '}
     <Button onClick={()=>void readBuild()} disabled={busy||!buildRequest}>只读取原准备进度</Button>{' '}
     <Button onClick={()=>void selectRunner()} disabled={busy||build?.state.outcome?.status!=='completed'}>选用已核实产物（不启动账户）</Button>
     {(build?.state.status==='terminal'||(error instanceof ApiError&&error.status<500))&&<Button disabled={busy} onClick={()=>{setBuildRequest(undefined);setBuild(undefined);localStorage.removeItem('qz-native-build-request');}}>准备新的显式构建或导入请求</Button>}
-    {buildRequest&&<p>原产物准备请求：{buildRequest.requestId}。重开或查询不会重编或重新执行导入查询；结果不确定时保留原身份，不将它改称成功。本地任务取消或停止不证明任意二进制的后代进程已结束，也不证明没有外部副作用。</p>}
+    {buildRequest&&<p>原请求：{buildRequest.requestId}</p>}
     {build&&<PreparationStatus value={build}/>}
-    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><p>已选用编译产物。此处 running:false 是能力查询进程的值，不表示任何账户已离线或对账完成。</p><SelectedRunnerStatus runner={saved.runner}/></>}
-    <p>当前 QZ 账户接线仅支持 Hyperliquid、单账户中的一个 EMA 或已注册 Rust Strategy，最多 256 个标的，不等于任意官方 LiveNode 配置。账户工厂未编入时不能恢复账户；研究工厂可用不构成交易权限。连接与启动交易仍须账户页各自显式操作。</p>
+    {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><SelectedRunnerStatus runner={saved.runner}/></>}
+
     <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
     {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}
     {discovery !== undefined && <pre>{JSON.stringify(discovery,null,2)}</pre>}

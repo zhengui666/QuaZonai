@@ -44,7 +44,7 @@ function PerformanceSummary({ value }: { value?: PortfolioPerformanceSummary }) 
     ['年化收益率', <PerformanceValue value={value.annualizedReturn} percent />],
     ['最大回撤（原始值）', <PerformanceValue value={value.maxDrawdown} percent />],
     ['年化天数', value.annualizationDays ?? '未记录'],
-  ]} /><p className="quiet">Sharpe 与最大回撤来自本次原生账户日收益；年化收益率只读取上游原始 CAGR，不从日收益重新计算。指标缺失时保留为空，完整口径见原始回测指标。</p><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', value.basis.annualizedReturn === 'NATIVE_CAGR' ? '上游原始 CAGR' : '上游未提供'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
+  ]} /><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', value.basis.annualizedReturn === 'NATIVE_CAGR' ? '上游原始 CAGR' : '上游未提供'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
 }
 function StrategyPortfolios({ route }: { route: Route }) {
   const list = useListWorkspace<PortfolioListItem>(route, '/portfolios', 'createdAt');
@@ -81,7 +81,7 @@ function PortfolioDetail({ id, route }: { id: string; route: Route }) {
     <BacktestProgress portfolio={value} />
     <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} initialCapital={value.capital} /></Suspense></section>
     <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>
-    <section className="result-section"><div className="section-heading"><h3>目标权重</h3><span className="quiet">历史目标仅供查阅，不再交付账户</span></div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
+    <section className="result-section"><div className="section-heading"><h3>目标权重</h3><span className="quiet">历史目标（只读）</span></div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
     <PortfolioAccounts portfolioId={id} />
   </div>}</article></div>;
 }

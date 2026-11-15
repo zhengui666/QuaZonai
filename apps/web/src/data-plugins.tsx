@@ -67,12 +67,12 @@ function DataPlugin({ source }: { source: DataSourceView }) {
     <header><h2>{source.name}</h2><code>{source.version ?? '未提供版本'}</code><Status plain value={source.state} /></header>
     <div className="settings-group-body"><Form form={form} layout="vertical" initialValues={saved} disabled={!!busy} onValuesChange={() => { setNotice(''); setError(undefined); }} onFinish={() => { void update('save'); }}>
       <Form.Item label="启用插件" name="enabled" valuePropName="checked"><Switch aria-label={`启用 ${source.name}`} /></Form.Item>
-      {source.fields.map(field => <Form.Item key={field.key} label={field.label} name={['config', field.key]} extra={field.description} valuePropName={field.type === 'boolean' ? 'checked' : 'value'} rules={field.required && values?.enabled ? [{ required: true, message: `请填写${field.label}` }] : undefined}>
+      {source.fields.map(field => <Form.Item key={field.key} label={field.label} name={['config', field.key]} valuePropName={field.type === 'boolean' ? 'checked' : 'value'} rules={field.required && values?.enabled ? [{ required: true, message: `请填写${field.label}` }] : undefined}>
         {field.choices ? <Select allowClear options={field.choices} placeholder="选择输入类型" /> : field.type === 'password' ? <Input.Password autoComplete="new-password" /> : field.type === 'number' ? <InputNumber style={{ width: '100%' }} /> : field.type === 'boolean' ? <Switch aria-label={field.label} /> : <Input autoComplete="off" />}
       </Form.Item>)}
       <p className="quiet">{source.datasetIds.length} 个数据集 · 上次加载 <Timestamp value={source.lastLoadedAt} /></p>
       {source.acquisition && <div aria-label="最近完成的原始采集">
-        <p>原始来源已保存。完成目录准备与验证后可用于研究。</p>
+
         <p>采集清单：<code style={{ overflowWrap: 'anywhere' }}>{source.acquisition.manifestPath}</code></p>
         <details><summary>来源计划</summary><code style={{ overflowWrap: 'anywhere' }}>{source.acquisition.planId}</code></details>
       </div>}
