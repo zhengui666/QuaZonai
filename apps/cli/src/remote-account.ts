@@ -98,8 +98,9 @@ export async function serveRemoteAccount(input:unknown,emit:(value:unknown)=>voi
  emit({socketPath:owner.socketPath,deploymentId:owner.deploymentId,automaticConnection:false,automaticStrategyStart:false,sourceAttested:false});
  // Transport interruption never invokes shutdownOwner. The native child retains its receipt lease.
  await new Promise<void>(resolve=>{if(signal?.aborted)resolve();else signal?.addEventListener('abort',()=>resolve(),{once:true});});
- // Do not strand a surviving owner by removing its only control socket.
- emit({accepting:true,ownerShutdownRequested:false,outcome:'SUPERVISOR_REMAINS_AVAILABLE_OWNER_SHUTDOWN_NOT_REQUESTED'});
+ // Keep this listener, but terminal process-group signals may also reach the
+ // owner, and repeated signals may terminate this CLI. Neither proves a trade outcome.
+ emit({accepting:true,ownerShutdownRequested:false,nativeOutcome:'UNKNOWN',signalIsolationVerified:false});
  await new Promise<void>(()=>{});
 }
 export function remoteAccountHello():RemoteAccountFrame{return {version:1,requestId:randomUUID(),kind:'HELLO'};}

@@ -16,7 +16,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   schema list [--domain] | schema show NAME [--domain]
   remote-account hello --file TRANSPORT.json | request --file ORIGINAL_ENVELOPE.json
   remote-account serve --file EXISTING_OWNER.json | relay --socket-path PRIVATE_SOCKET
-    Requires an already compiled compatible owner. Disconnect/Ctrl-C never stops trading; serve retains control access. Preserve UNKNOWN and query original receipts.
+    Requires an already compiled compatible owner. Disconnect does not request owner shutdown. Terminal/repeated signals can interrupt owner processes: outcome UNKNOWN. Query original receipts, never auto-resend.
   remote-owner inspect --file CONFIG.json
     Requests trusted remote owner capabilities over pinned-host SSH; no connection/start command or compilation.
     Trusted executable code may have side effects; SSH timeout does not prove remote termination.

@@ -38,7 +38,7 @@ export async function startRemoteAccountSupervisor(options:RemoteAccountSupervis
   const value=record(response.value),observation=record(value.accountObservation);
   if(response.status!==200||typeof value.accountSourceId!=='string'||!value.accountSourceId||value.clientId!==options.clientId||value.accountId!==options.accountId)throw Error('remote_account_original_identity_unavailable');
   const session=observation.nativeSessionId;
-  if(session!==undefined&&session!==null&&typeof session!=='string')throw Error('remote_account_session_invalid');
+  if(session!==undefined&&session!==null&&(typeof session!=='string'||!session||session.length>512))throw Error('remote_account_session_invalid');
   return {deploymentId,sourceId:value.accountSourceId,clientId:options.clientId,accountId:options.accountId,runnerIdentity:options.runnerIdentity,nativeSessionId:typeof session==='string'?session:null};
  }
  const server=createServer({allowHalfOpen:true},socket=>{
