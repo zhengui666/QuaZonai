@@ -1,4 +1,4 @@
-import {describe,it,expect,vi} from 'vitest';
+import {it,expect,vi} from 'vitest';
 const state=vi.hoisted(()=>({values:[false,false],cursor:0}));
 vi.mock('react',async importOriginal=>({...await importOriginal<typeof import('react')>(),useState:(initial:unknown)=>{const index=state.cursor++;return [state.values[index]??initial,(value:boolean)=>{state.values[index]=value;}];}}));
 vi.mock('@tanstack/react-query',async importOriginal=>({...await importOriginal<typeof import('@tanstack/react-query')>(),useIsFetching:()=>0}));
