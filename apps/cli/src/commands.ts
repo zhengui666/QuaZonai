@@ -6,12 +6,20 @@ import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
 import { observe, observeParameterScan, observePortfolio } from './watch.ts';
 import { schemas } from './schema.ts';
+import { inspectRemoteOwner } from './remote-owner.ts';
+import { exchangeRemoteAccount, remoteAccountHello, remoteAccountRelay, serveRemoteAccount } from './remote-account.ts';
 import type { AccountObservationStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
 
 const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   login [--origin URL] [--name NAME] [--replace] [--ca-certificate FILE]
   identity | logout | forget
   schema list [--domain] | schema show NAME [--domain]
+  remote-account hello --file TRANSPORT.json | request --file ORIGINAL_ENVELOPE.json
+  remote-account serve --file EXISTING_OWNER.json | relay --socket-path PRIVATE_SOCKET
+    Requires an already compiled compatible owner. Disconnect does not request owner shutdown. Terminal/repeated signals can interrupt owner processes: outcome UNKNOWN. Query original receipts, never auto-resend.
+  remote-owner inspect --file CONFIG.json
+    Requests trusted remote owner capabilities over pinned-host SSH; no connection/start command or compilation.
+    Trusted executable code may have side effects; SSH timeout does not prove remote termination.
   datasets | usage
   datasets registry | register --file REQUEST.json (append-only new IDs; requestId, expectedRevision, path)
   native-runner status | import --file REQUEST.json | build-status REQUEST_ID
@@ -69,6 +77,7 @@ const options = {
   instruction: { type: 'string' as const },
   'account-source-id': { type: 'string' as const }, 'expected-revision': { type: 'string' as const },
   'tick-book-cores': { type: 'string' as const },
+  'socket-path': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CliError('json_object_required');
@@ -123,6 +132,19 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (values.help || positionals.length === 0) { process.stdout.write(help); return 0; }
   if (positionals.length > 3 && !((positionals[0] === 'capital' && positionals[1] === 'get' || positionals[0] === 'account-strategy' && positionals[1] === 'receipt') && positionals.length === 4)) throw new CliError('unexpected_argument');
   const [group, action, id, exitId] = positionals;
+  if (group === 'remote-account') {
+    if (id) throw new CliError('unexpected_argument');
+    if (action === 'relay') { await remoteAccountRelay(values['socket-path'], signal); return 0; }
+    const { body } = await fileBody(values.file);
+    if (action === 'serve') { await serveRemoteAccount(body, emit, signal); return 0; }
+    if (action === 'hello') { emit(await exchangeRemoteAccount(body, remoteAccountHello(), signal)); return 0; }
+    if (action !== 'request' || Object.keys(body).some(key => !['transport','frame'].includes(key))) throw new CliError('remote_account_command_invalid');
+    emit(await exchangeRemoteAccount(body.transport, body.frame, signal)); return 0;
+  }
+  if (group === 'remote-owner') {
+    if (action !== 'inspect' || id) throw new CliError('remote_owner_inspect_required');
+    emit(await inspectRemoteOwner((await fileBody(values.file)).body, signal)); return 0;
+  }
   if (group === 'schema') {
     if (!['list', 'show'].includes(action) || (action === 'show' && !id)) throw new CliError('schema_command_required');
     emit(await schemas(action === 'show' ? id : undefined, values.domain)); return 0;

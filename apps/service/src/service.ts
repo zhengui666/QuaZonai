@@ -1,3 +1,4 @@
+import {remoteAccounts,assertRemoteAccountAccess} from './remote-accounts.ts';
 import { registerImplementationSources } from '../../research/src/implementation-source.ts';
 import {createAccountStrategyCommand} from './account-strategy.ts';
 import type {NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
@@ -58,6 +59,7 @@ export async function createService(options: ServiceOptions) {
     startResearch: value => preparationOperations.startResearch(value),
   });
   let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
+  let remote:Awaited<ReturnType<typeof remoteAccounts>>|undefined;
   const nativeControlTransport:NativeStrategyControlTransport={
     async send(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,true);},
     async read(command,signal){if(signal.aborted)throw signal.reason;if(!accounts)throw new Problem('native_control_transport_unsupported');return accounts.nativeControl(command,false);},
@@ -157,9 +159,10 @@ export async function createService(options: ServiceOptions) {
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   app.addHook('onRequest', (_request, _reply, done) => research.withNativeHost(done));
   app.addHook('preClose', async () => { await Promise.all([...eventStreams].map(close => close())); await sources.close(); });
-  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); await accounts?.close(); });
+  app.addHook('onClose', async () => { await instances.close(); await extensionWatch?.stop(); await research.close(); await remote?.close(); await accounts?.close(); });
   try {
   accounts = await processAccounts(config);
+  remote = await remoteAccounts(config);
   // All persisted preparation tools must resolve their service callbacks before resuming.
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
@@ -178,6 +181,11 @@ export async function createService(options: ServiceOptions) {
   });
   await app.register(cookie);
   registerAuth(app, research, config);
+  app.addHook('onRequest', async request => {
+    const path=request.url.split('?')[0]!;
+    const publicAuth=new Set([`${API}/session`,`${API}/session/setup`,`${API}/session/login`,`${API}/devices/login`]);
+    if(remote?.active()&&path.startsWith(`${API}/`)&&!publicAuth.has(path))assertRemoteAccountAccess(config,request);
+  });
   registerListRoutes(app, research, config);
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
@@ -304,9 +312,12 @@ export async function createService(options: ServiceOptions) {
     return observationView(await work.getObservation(id));
   });
   registerModels(app, research, work.getSettings);
-  app.get(`${API}/accounts/configurations`,()=>accounts!.list());
+  app.get(`${API}/accounts/remote/targets`,()=>remote!.targets());
+  app.post(`${API}/accounts/remote/probe`,request=>remote!.probe(request.body));
+  app.post(`${API}/accounts/remote/bind`,request=>remote!.bind(request.body));
+  app.get(`${API}/accounts/configurations`,async()=>[...await accounts!.list(),...await remote!.list()]);
   app.post(`${API}/accounts/configurations`,request=>accounts!.create(request.body));
-  const configuredStrategies=accountStrategyWorkbench(research,id=>accounts!.binding(id),nativeControlTransport,accountCommandTask);
+  const configuredStrategies=accountStrategyWorkbench(research,id=>remote!.has(id)?remote!.binding(id):accounts!.binding(id),nativeControlTransport,accountCommandTask);
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/spot-balance-observation`,r=>configuredStrategies.spotObservation(r.params.id));
   app.get<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy`,r=>configuredStrategies.status(r.params.id));
   app.post<{Params:{id:string}}>(`${API}/accounts/configurations/:id/strategy/legacy-snapshot`,r=>configuredStrategies.legacySnapshot(r.params.id,r.body));
@@ -359,7 +370,7 @@ export async function createService(options: ServiceOptions) {
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
   return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
-  } catch (error) { await extensionWatch?.stop(); await research.close(); await accounts?.close(); throw error; }
+  } catch (error) { await extensionWatch?.stop(); await research.close(); await remote?.close(); await accounts?.close(); throw error; }
 }
 export const buildService = createService;
 export type Service = Awaited<ReturnType<typeof createService>>;

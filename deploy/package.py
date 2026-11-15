@@ -35,12 +35,16 @@ def safe_name(name: str) -> bool:
     value = PurePosixPath(name)
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
+REMOTE_OWNER_MODULES = ('account-configurations.ts', 'account-runtime.ts', 'account-receipt-lock.ts',
+    'capital-account.ts', 'hyperliquid-account.ts', 'remote-account-supervisor.ts',
+    'remote-account-client.ts', 'remote-account-ssh.ts')
+
 def cli_members(platform: str) -> set[str]:
     return {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',
         'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
         'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
-        'app/package.json', 'app/apps/cli/package.json', 'app/apps/cli/src/main.ts', 'app/packages/contracts/src/index.ts'}
+        'app/package.json', 'app/apps/cli/package.json', 'app/apps/cli/src/main.ts', 'app/packages/contracts/src/index.ts', *('app/apps/nautilus/src/' + name for name in REMOTE_OWNER_MODULES)}
 
 def check_cli_archive(path: Path, platform: str) -> None:
     regular(path)
@@ -76,6 +80,10 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         (cli / 'package.json').write_text(json.dumps(package, indent=2) + '\n')
         subprocess.run(['npm.cmd' if os.name == 'nt' else 'npm', 'ci', '--prefix', str(cli), '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], check=True)
         shutil.copytree(ROOT / 'packages/contracts/src', directory / 'app/packages/contracts/src')
+        owner = directory / 'app/apps/nautilus/src'
+        owner.mkdir(parents=True)
+        for name in REMOTE_OWNER_MODULES:
+            shutil.copy2(ROOT / 'apps/nautilus/src' / name, owner / name)
         (directory / 'app/package.json').write_text('{"type":"module"}\n')
         shutil.copytree(ROOT / 'contracts/generated', directory / 'app/contracts/generated')
         shutil.copy2(ROOT / 'deploy/cli-launch.mjs', directory / 'app/launch.mjs')
@@ -91,6 +99,13 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
             launcher = directory / 'quazonai'
             launcher.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
             launcher.chmod(0o755)
+        # Validate the actual packaged module closure on each CI target, without
+        # opening an account/socket, running Cargo, or executing an owner.
+        imports = ['app/apps/cli/src/remote-account.ts', 'app/apps/nautilus/src/capital-account.ts',
+            'app/apps/nautilus/src/remote-account-supervisor.ts']
+        code = '\n'.join('await import(' + json.dumps((directory / name).as_uri()) + ');' for name in imports)
+        subprocess.run([str(directory / ('runtime/node.exe' if windows else 'runtime/node')),
+            '--experimental-strip-types', '--input-type=module', '-e', code], check=True)
         # npm executable links are irrelevant to CLI runtime; do not ship them.
         files = [file for file in directory.rglob('*') if file.is_file() and not file.is_symlink()]
         if windows:

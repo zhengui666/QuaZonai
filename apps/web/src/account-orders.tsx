@@ -45,14 +45,14 @@ export function CancellationHistory({accountId}:{accountId:string}){
  {detail.data&&<p>原请求 {detail.data.requestId}：<Status value={detail.data.status}/>；官方订单 {detail.data.receipt?.orderObservation?.status??'未取得'}；已成交 {detail.data.receipt?.orderObservation?.filledQuantity??'未知'}。</p>}
  <CancellationPersistenceNotice receipt={detail.data?.receipt}/>{!!query&&<Button onClick={()=>void detail.refetch()}>刷新原回执</Button>}<ErrorNotice error={detail.error}/></section>;
 }
-export default function AccountOrders({accountId}:{accountId:string}){
+export default function AccountOrders({accountId,readOnly=false}:{accountId:string;readOnly?:boolean}){
  const [offset,setOffset]=useState(0);const page=useResource<Page>(`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/orders?offset=${offset}`,{poll:3000});
- return <section className="result-section"><h3>原生订单与显式模拟取消</h3><p>仅支持普通模拟订单取消。实时分页可能重复或遗漏。</p><ErrorNotice error={page.error} retry={()=>void page.refetch()}/>
+ return <section className="result-section"><h3>{readOnly?'原生订单（只读）':'原生订单与显式模拟取消'}</h3><p>{readOnly?'远端取消尚未开放。':'仅支持普通模拟订单取消。'}实时分页可能重复或遗漏。</p><ErrorNotice error={page.error} retry={()=>void page.refetch()}/>
  {page.data&&!page.data.available&&<p>原会话不可用，订单状态未知。</p>}
- {page.data?.available&&<><p>取消能力：{page.data.capability.supported?'当前节点报告支持受限模拟取消':'当前节点未报告支持'}。</p><Table<Order> rowKey="client_order_id" pagination={false} dataSource={page.data.items} scroll={{x:750}} columns={[
+ {page.data?.available&&<><p>取消能力：{readOnly?'当前连接不提供取消':page.data.capability.supported?'当前节点报告支持受限模拟取消':'当前节点未报告支持'}。</p><Table<Order> rowKey="client_order_id" pagination={false} dataSource={page.data.items} scroll={{x:750}} columns={[
  {title:'原订单',dataIndex:'client_order_id'},{title:'原策略',dataIndex:'strategy_id',render:v=>v??'原节点未提供'},{title:'标的',dataIndex:'instrument_id'},{title:'官方状态',dataIndex:'status'},{title:'数量',dataIndex:'quantity'},{title:'已成交',dataIndex:'filled_quantity'},
- {title:'操作',render:(_,order)=>page.data!.binding?<CancelOrder key={`${page.data!.binding.nativeSessionId}:${order.client_order_id}`} accountId={accountId} page={page.data!} order={order}/>:null},
+ {title:'操作',render:(_,order)=>!readOnly&&page.data!.binding?<CancelOrder key={`${page.data!.binding.nativeSessionId}:${order.client_order_id}`} accountId={accountId} page={page.data!} order={order}/>:null},
  ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</Button><Button disabled={page.data.nextOffset===null} onClick={()=>setOffset(page.data!.nextOffset!)}>下一页</Button></>}
- <CancellationHistory accountId={accountId}/>
+ {!readOnly&&<CancellationHistory accountId={accountId}/>}
  </section>;
 }
