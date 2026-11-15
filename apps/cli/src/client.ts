@@ -11,7 +11,7 @@ export async function connect(profile: Profile) {
   return {
     async *events<T>(path: string, signal?: AbortSignal): AsyncGenerator<T> {
       const response = await fetch(`${base}${API}${path}`, { dispatcher, redirect: 'error', signal,
-        headers: { accept: 'text/event-stream', 'x-quazonai-cli': '1', ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) } });
+        headers: { origin: base, accept: 'text/event-stream', 'x-quazonai-cli': '1', ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) } });
       if (!response.ok) { await response.body?.cancel(); throw new CliError('event_stream_unavailable', response.status); }
       if (!response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) {
         await response.body?.cancel(); throw new CliError('invalid_event_stream');
@@ -36,11 +36,12 @@ export async function connect(profile: Profile) {
       } finally { signal?.removeEventListener('abort', cancel); await reader.cancel().catch(() => {}); reader.releaseLock(); }
     },
     async request<T = unknown>(method: string, path: string, body?: string, signal?: AbortSignal): Promise<T> {
+      const payload = body ?? (!['GET', 'HEAD'].includes(method.toUpperCase()) ? '{}' : undefined);
       let response;
       try {
         response = await fetch(`${base}${API}${path}`, {
-          method, body, dispatcher, redirect: 'error', signal,
-          headers: { accept: 'application/json', 'x-quazonai-cli': '1', ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) },
+          method, body: payload, dispatcher, redirect: 'error', signal,
+          headers: { origin: base, accept: 'application/json', 'x-quazonai-cli': '1', ...(payload !== undefined ? { 'content-type': 'application/json' } : {}), ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) },
         });
       } catch { throw new CliError(method === 'GET' ? 'service_unavailable' : 'write_outcome_unknown_retain_original_request'); }
       if (!response.ok) {

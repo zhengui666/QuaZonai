@@ -7,6 +7,14 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  remote_account_local_origin_required: '远端账户管理仅开放给已配置的本机同源会话',
+  remote_account_target_not_allowed: '此远端不在部署授权列表内',
+  remote_account_probe_stale: '探测已过期或会话已变化，请明确重新探测',
+  remote_account_binding_changed: '原远端会话已变化；保留原请求，不自动重绑',
+  remote_account_binding_superseded: '原绑定已保留为历史，请选择明确接受的新会话',
+  remote_account_history_requires_reconciliation: '存在原账户历史，须先明确核对，不能创建替代绑定',
+  remote_account_successor_invalid: '新会话不能替代所选原绑定',
+  remote_account_outcome_unknown: '远端结果未知；保留原请求并核对原回执，不重新发送',
   capital_exit_amount_invalid: '请输入精确正金额',
   capital_exit_policy_unsupported: '当前账户不支持此资金释放方式，请刷新规划依据',
   capital_exit_deadline_invalid: '请输入未来的最晚时间',
@@ -114,7 +122,7 @@ export function shortError(error: unknown): string {
 type Options = { method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown; rawBody?: string; signal?: AbortSignal };
 export async function api<T>(path: string, options: Options = {}): Promise<T> {
   let response: Response;
-  const body = options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body));
+  const body = options.rawBody ?? (options.body === undefined ? (options.method && options.method !== 'GET' ? '{}' : undefined) : JSON.stringify(options.body));
   try {
     response = await fetch(`${API}${path}`, {
       method: options.method ?? 'GET', credentials: 'same-origin', cache: 'no-store',

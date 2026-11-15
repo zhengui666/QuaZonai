@@ -18,7 +18,7 @@ export function connectionBase(connection: ConnectionConfig): URL {
 // Ephemeral direct handles only; original account files and Pi remain the stores.
 const processAccounts=new Map<string,{binding:string;request:(path:string,method:'GET'|'POST',clientId:unknown,input?:unknown)=>Promise<{status:number;value:unknown}>}>();
 export function registerProcessAccount(connection:ConnectionConfig,request:(path:string,method:'GET'|'POST',clientId:unknown,input?:unknown)=>Promise<{status:number;value:unknown}>) {
-  if(connection.kind!=='RUST_PROCESS'||!connection.processBinding)throw new Problem('native_process_account_binding_required');
+  if(connection.kind!=='RUST_PROCESS'||(!connection.processBinding&&!connection.remoteBinding))throw new Problem('native_process_account_binding_required');
   const key=connectionBase(connection).href;if(processAccounts.has(key))throw new Problem('native_process_account_already_open',409);
   const value={binding:canonical(connection as unknown as JsonObject),request};processAccounts.set(key,value);return ()=>{if(processAccounts.get(key)===value)processAccounts.delete(key);};
 }

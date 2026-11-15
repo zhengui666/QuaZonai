@@ -19,7 +19,8 @@ export interface DatasetConfig extends DatasetView {
   /** Explicit source-owner metadata and grant files covered by revisionManifest. */
   reviewSourceEvidence?: import('../../../packages/contracts/src/review-source.ts').ReviewSourceFiles;
 }
-export type ConnectionConfig = NautilusConnection & { credentialRef?: string; kind?: 'RUST_PROCESS'; processBinding?: { runner: ProcessNativeTarget; directory: string } };
+export interface TrustedRemoteAccountTarget { id:string; name:string; transport:Record<string,unknown> }
+export type ConnectionConfig = NautilusConnection & { credentialRef?: string; kind?: 'RUST_PROCESS'; processBinding?: { runner: ProcessNativeTarget; directory: string }; remoteBinding?: { target:TrustedRemoteAccountTarget; binding:import('../../../packages/contracts/src/remote-account.ts').RemoteAccountBinding } };
 type BacktestConfig = RemoteNativeTarget & { token?: string };
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string; config?: JsonObject }
 export interface ServiceConfig {
@@ -29,6 +30,7 @@ export interface ServiceConfig {
   retainedDatasets?: DatasetConfig[];
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
   nativeProcess?: ProcessNativeTarget;
+  remoteAccounts?: { targets:TrustedRemoteAccountTarget[]; origins:string[] };
   nautilus?: { backtest?: BacktestConfig };
   name: string; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; jobBinary: string;
   passwordHash?: string; secureCookies: boolean; staticDir?: string;

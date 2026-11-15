@@ -92,7 +92,7 @@ export function strategyEditSubmission(draft:StrategyEditDraft|undefined,current
  const identity=draft??current;
  return {configuration:JSON.parse(text),expectedAccountSourceId:identity.accountSourceId,expectedStrategyRevision:identity.strategyRevision};
 }
-export default function AccountStrategy({ value, configured=false }: { value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
+export default function AccountStrategy({ value, configured=false, remoteUnsupported=[] }: { remoteUnsupported?:string[]; value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
   const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
   const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
@@ -122,9 +122,9 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
   return <section className="result-section"><h3>Nautilus 原生策略</h3>
     <p>勿填写私钥或密码。</p>
     <AccountObservationNotice value={configuration.data?.accountObservation} unavailable={!!configuration.error}/>
-    {configured&&<LegacyAccountObservation key={path} path={path} capability={configuration.data?.accountObservation} unavailable={!!configuration.error}/>}
+    {configured&&!remoteUnsupported.includes('legacySnapshot')&&<LegacyAccountObservation key={path} path={path} capability={configuration.data?.accountObservation} unavailable={!!configuration.error}/>}
     <StrategyLifecycleNotice value={configuration.data?.lifecycleCapability} unavailable={!!configuration.error}/>
-    {configured&&value.mode==='live'&&<SpotBalanceObservation key={path} path={`/accounts/configurations/${encodeURIComponent(value.id)}`} sourceId={configuration.data?.accountSourceId} nativeSessionId={configuration.data?.accountObservation?.nativeSessionId} connected={!configuration.error&&configuration.data?.connected===true&&configuration.data?.accountObservation?.supported===true}/>}
+    {configured&&!remoteUnsupported.includes('spotObservation')&&value.mode==='live'&&<SpotBalanceObservation key={path} path={`/accounts/configurations/${encodeURIComponent(value.id)}`} sourceId={configuration.data?.accountSourceId} nativeSessionId={configuration.data?.accountObservation?.nativeSessionId} connected={!configuration.error&&configuration.data?.connected===true&&configuration.data?.accountObservation?.supported===true}/>}
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
 
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
@@ -138,7 +138,7 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
         try { const payload = strategyEditSubmission(edited,configuration.data,commandIdentity,configurationText); setConfigurationError(undefined); void saveConfiguration.submit(payload); }
         catch (error) { setConfigurationError(error); }
       }}>仅保存配置</Button>
-      {(configuration.data?.pendingConfigurationRequests ?? []).map(requestId => <Button key={requestId} loading={verifyingConfiguration} disabled={verifyingConfiguration} onClick={() => confirm('核实原配置是否已持久保存？', `只核对原请求 ${requestId} 的文件与同步结果，不连接 Nautilus、不启动策略，也不解除任何订单 UNKNOWN。`, () => {
+      {!remoteUnsupported.includes('verifyConfiguration')&&(configuration.data?.pendingConfigurationRequests ?? []).map(requestId => <Button key={requestId} loading={verifyingConfiguration} disabled={verifyingConfiguration} onClick={() => confirm('核实原配置是否已持久保存？', `只核对原请求 ${requestId} 的文件与同步结果，不连接 Nautilus、不启动策略，也不解除任何订单 UNKNOWN。`, () => {
         setVerifyingConfiguration(true); void api<{status:string}>(`${path}/config/commands/${encodeURIComponent(requestId)}/verify`, {method:'POST',body:{}}).then(result=>{setConfigurationReceipt(result);void configuration.refetch();}).catch(setConfigurationError).finally(()=>setVerifyingConfiguration(false));
       })}>核实原配置保存结果：{requestId}</Button>)}
       <PendingCommand command={saveConfiguration} />
@@ -153,6 +153,6 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
     <Button onClick={() => { void status.refetch(); void fence.refetch(); void configuration.refetch(); if (requestId) void receipt.refetch(); }}>核对状态与原回执</Button></div>
     <PendingCommand command={recover} /><PendingCommand command={start} /><PendingCommand command={stop} /><ErrorNotice error={recover.error ?? start.error ?? stop.error ?? receipt.error} />
     {receipt.data && <div><h4>最近策略命令回执</h4><Facts items={[["请求", receipt.data.requestId], ["操作", receipt.data.action], ["回执", <Status value={receipt.data.status} />]]} /><p>{strategyResultText(receipt.data)}</p>{receipt.data.error && <code>{receipt.data.error}</code>}</div>}
-    {configured&&<AccountOrders key={value.id} accountId={value.id}/>}
+    {configured&&<AccountOrders key={value.id} accountId={value.id} readOnly={remoteUnsupported.includes('nativeCancellation')}/>}
   </section>;
 }

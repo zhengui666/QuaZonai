@@ -13,3 +13,12 @@ it('sends the exact captured request bytes on an explicit retry after a failed s
     expect(shortError('{"error":"raw payload"}')).toBe('请求失败');
   } finally { vi.unstubAllGlobals(); }
 });
+
+it('uses explicit JSON for bodyless mutations while GET remains bodyless', async () => {
+ const fetch=vi.fn().mockImplementation(()=>Promise.resolve(Response.json({})));
+ vi.stubGlobal('fetch',fetch);
+ try{await api('/fixture',{method:'DELETE'});await api('/fixture');
+  expect(fetch.mock.calls[0]![1].headers).toEqual({'Content-Type':'application/json'});expect(fetch.mock.calls[0]![1].body).toBe('{}');
+  expect(fetch.mock.calls[1]![1].body).toBeUndefined();
+ }finally{vi.unstubAllGlobals();}
+});

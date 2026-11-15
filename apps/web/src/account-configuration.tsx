@@ -1,4 +1,6 @@
 import type {SavedAccountRunnerReport} from '../../../packages/contracts/src/nautilus.ts';
+import RemoteAccountConfiguration from './remote-account-configuration';
+import type {RemoteAccountBinding} from '../../../packages/contracts/src/remote-account.ts';
 import AccountStrategy from './account-strategy';
 import {useState} from 'react';
 import {Button,Input,Checkbox,Select} from 'antd';
@@ -98,7 +100,7 @@ export function SavedRunnerNotice({value}:{value?:SavedAccountRunnerReport}){
  </section>;
 }
 export default function AccountConfiguration({enabled}:{enabled:boolean}){
- const records=useResource<Array<{id:string;unavailable?:string;savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
+ const records=useResource<Array<{id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
  const [instrumentsDraft,setInstrumentsDraft]=useState<string>();
  const [text,setText]=useState(initialAccountDraft),[error,setError]=useState<unknown>(),[notice,setNotice]=useState('');
  const command=useCommand<{id:string}>('account-configuration',result=>{setNotice(`账户 ${result.id} 的配置已保存，尚未连接或启动策略。`);void records.refetch();},'/accounts/configurations');
@@ -114,7 +116,8 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  <Button disabled={!enabled||command.busy} loading={command.busy} onClick={()=>{if(command.pending){void command.submit();return;}try{setError(undefined);void command.submit({configuration:accountConfigurationForSave(text,instrumentsDraft)});}catch(failure){setError(failure);}}}>{command.pending?'核实原账户保存请求':'仅保存新账户配置'}</Button>
  <PendingCommand command={command}/><ErrorNotice error={error??command.error??records.error}/>{notice&&<p>{notice}</p>}
 
+ <RemoteAccountConfiguration onSaved={()=>void records.refetch()} previous={records.data?.filter(item=>item.remoteBinding&&!item.supersededBy).map(item=>({id:item.id}))}/>
  <Button onClick={()=>void records.refetch()}>只读取已保存账户</Button>
- {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary><SavedRunnerNotice value={item.savedRunner}/>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
+ {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary>{item.remoteBinding?<p>远端 · {item.remoteBinding.accountId} · {item.remoteBinding.nativeSessionId??'原会话未报告'}{item.supersededBy?` · 已保留为历史，新绑定 ${item.supersededBy}`:''}</p>:<SavedRunnerNotice value={item.savedRunner}/>}{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured remoteUnsupported={item.remoteUnsupported} value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
  </section>;
 }

@@ -40,6 +40,7 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
  }
  function ensureUnique(binding:Binding){
   const options=binding.creation.configuration;
+  if(config.connections.some(c=>c.remoteBinding&&(c.id===options.id||c.accountId===options.accountId||options.mode==='live'&&c.mode==='live')))throw new Problem('historical_account_identity_requires_explicit_reconciliation',409);
   // A legacy URL does not prove which venue identity it owns. Never start a second
   // live node by assuming an unknown old identity is unrelated to the new address.
   if(config.connections.some(c=>c.kind!=='RUST_PROCESS'&&(c.id===options.id||c.accountId===options.accountId||options.mode==='live'&&c.mode==='live')))throw new Problem('historical_account_identity_requires_explicit_reconciliation',409);

@@ -36,7 +36,8 @@ def safe_name(name: str) -> bool:
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
 REMOTE_OWNER_MODULES = ('account-configurations.ts', 'account-runtime.ts', 'account-receipt-lock.ts',
-    'capital-account.ts', 'hyperliquid-account.ts', 'remote-account-supervisor.ts')
+    'capital-account.ts', 'hyperliquid-account.ts', 'remote-account-supervisor.ts',
+    'remote-account-client.ts', 'remote-account-ssh.ts')
 
 def cli_members(platform: str) -> set[str]:
     return {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',

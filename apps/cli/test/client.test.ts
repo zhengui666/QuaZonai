@@ -378,3 +378,12 @@ test('research get retains original advisory reports and evidence links without 
   try { let output: unknown; assert.equal(await run(['research', 'get', '42'], value => { output = value; }), 0); assert.deepEqual(output, detail); }
   finally { await config.close(); await api.close(); }
 });
+
+test('bodyless mutations carry explicit JSON and configured origin without changing supplied bytes', async () => {
+  const calls:Array<{method:string|undefined;body:string;type:string|undefined;origin:string|undefined}>=[];
+  const service=await server((request,response,bytes)=>{calls.push({method:request.method,body:bytes,type:request.headers['content-type'],origin:request.headers.origin});json(response,{});});
+  const {connect}=await import('../src/client.ts');const client=await connect(profile(service.origin));
+  try{await client.request('DELETE','/fixture');await client.request('GET','/fixture');await client.request('POST','/fixture','{"original":true}');
+   assert.deepEqual(calls,[{method:'DELETE',body:'{}',type:'application/json',origin:service.origin},{method:'GET',body:'',type:undefined,origin:service.origin},{method:'POST',body:'{"original":true}',type:'application/json',origin:service.origin}]);
+  }finally{await client.close();await service.close();}
+});
