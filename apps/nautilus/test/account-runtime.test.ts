@@ -1,3 +1,4 @@
+import {once} from 'node:events';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -165,4 +166,26 @@ test('mismatched, unbound or certified lifecycle claims remain unknown',async()=
  try{await runtime.start();assert.equal(runtime.strategyLifecycleCapability().supported,null);assert.equal(runtime.strategyLifecycleCapability().strategyVerified,null);}
  finally{await runtime.close();await rm(directory,{recursive:true,force:true});}
  }
+});
+
+test('native transport child retains receipt ownership after its controller exits', async () => {
+ const {spawn}=await import('node:child_process');
+ const {acquireAccountReceiptLock}=await import('../src/account-receipt-lock.ts');
+ const directory=await mkdtemp(join(tmpdir(),'qz-inherited-owner-'));let controller:ReturnType<typeof spawn>|undefined;let nativePid:number|undefined;
+ try{
+  const script=join(directory,'protocol.mjs'),binary=join(directory,'transport');
+  await writeFile(script,`import readline from 'node:readline';setInterval(()=>{},1000);readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);console.log(JSON.stringify({requestId:v.requestId,result:{pid:process.pid}}));});`);
+  await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+  const lockSource=new URL('../src/account-receipt-lock.ts',import.meta.url).href,runtimeSource=new URL('../src/account-runtime.ts',import.meta.url).href;
+  const config={id:'paper',clientId:'client',accountId:'account',mode:'paper',instruments:['TEST.SIM'],nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:null}}};
+  const code=`import {acquireAccountReceiptLock} from ${JSON.stringify(lockSource)};import {AccountRuntime} from ${JSON.stringify(runtimeSource)};const lock=await acquireAccountReceiptLock(${JSON.stringify(directory)});const runtime=new AccountRuntime(${JSON.stringify(binary)},${JSON.stringify(config)},'source',${JSON.stringify(directory)},lock.fd);await runtime.start();console.log(JSON.stringify(await runtime.request('PID')));process.stdin.resume();`;
+  controller=spawn(process.execPath,['--experimental-strip-types','--input-type=module','--eval',code],{stdio:['pipe','pipe','pipe']});
+  const [chunk]=await once(controller.stdout!,'data');nativePid=JSON.parse(String(chunk)).pid;assert.equal(typeof nativePid,'number');
+  const exited=once(controller,'exit');controller.kill('SIGKILL');await exited;
+  await assert.rejects(acquireAccountReceiptLock(directory),/account_receipts_owner_already_running/);
+  process.kill(nativePid!,'SIGKILL');nativePid=undefined;
+  let released:Awaited<ReturnType<typeof acquireAccountReceiptLock>>|undefined;
+  for(let attempt=0;attempt<100&&!released;attempt++){try{released=await acquireAccountReceiptLock(directory);}catch{await new Promise(resolve=>setTimeout(resolve,10));}}
+  assert.ok(released,'lock releases only once the retained child descriptor closes');await released.close();
+ }finally{controller?.kill('SIGKILL');if(nativePid)try{process.kill(nativePid,'SIGKILL');}catch{}await rm(directory,{recursive:true,force:true});}
 });
