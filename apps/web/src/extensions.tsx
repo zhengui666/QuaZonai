@@ -13,7 +13,7 @@ export default function Extensions() {
   async function toggle(item: ExtensionView, enabled: boolean) {
     if (pending[item.name]) return;
     setPending(old => ({ ...old, [item.name]: true })); setErrors(old => ({ ...old, [item.name]: undefined }));
-    try { const next = await api<ExtensionView>(`/extensions/${encodeURIComponent(item.name)}`, { method: 'PATCH', body: { enabled } }); cache.setQueryData<ExtensionView[]>(['/extensions'], old => old?.map(value => value.name === item.name ? next : value)); await Promise.all(['/datasets', '/data-sources'].map(path => cache.invalidateQueries({ queryKey: [path] }))); }
+    try { const next = await api<ExtensionView>(`/extensions/${encodeURIComponent(item.name)}`, { method: 'PATCH', body: { enabled } }); cache.setQueryData<ExtensionView[]>(['/extensions'], old => old?.map(value => value.name === item.name ? next : value)); await Promise.all(['/datasets', '/data-sources'].map(path => cache.invalidateQueries({ predicate: query => query.queryKey[0] === path || path === '/datasets' && typeof query.queryKey[0] === 'string' && (query.queryKey[0].startsWith('/datasets?') || query.queryKey[0].startsWith('/datasets/')) }))); }
     catch (error) { setErrors(old => ({ ...old, [item.name]: error })); await query.refetch(); }
     finally { setPending(old => ({ ...old, [item.name]: false })); }
   }

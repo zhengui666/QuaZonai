@@ -46,7 +46,7 @@ function DataPlugin({ source }: { source: DataSourceView }) {
           events.close(); observer.current = null; setBusy(undefined);
           if (state.outcome === 'completed') setNotice('已加载数据');
           else { setNotice(''); setError(new Error(state.source.error ?? '数据加载未完成')); }
-          void Promise.all(['/datasets', '/extensions', '/data-sources'].map(path => cache.invalidateQueries({ queryKey: [path] })));
+          void Promise.all(['/datasets', '/extensions', '/data-sources'].map(path => cache.invalidateQueries({ predicate: query => query.queryKey[0] === path || path === '/datasets' && typeof query.queryKey[0] === 'string' && (query.queryKey[0].startsWith('/datasets?') || query.queryKey[0].startsWith('/datasets/')) })));
         });
         events.onerror = () => {
           if (events.readyState === EventSource.CLOSED) {
@@ -59,7 +59,7 @@ function DataPlugin({ source }: { source: DataSourceView }) {
       cache.setQueryData<DataSourceView[]>(['/data-sources'], known => known?.map(item => item.name === next.name ? next : item));
       form.resetFields(); form.setFieldsValue(formValues(next));
       setNotice(next.enabled ? '已保存配置，可加载数据' : '已保存配置');
-      await Promise.all(['/datasets', '/extensions', '/data-sources'].map(path => cache.invalidateQueries({ queryKey: [path] })));
+      await Promise.all(['/datasets', '/extensions', '/data-sources'].map(path => cache.invalidateQueries({ predicate: query => query.queryKey[0] === path || path === '/datasets' && typeof query.queryKey[0] === 'string' && (query.queryKey[0].startsWith('/datasets?') || query.queryKey[0].startsWith('/datasets/')) })));
     } catch (failure) { setError(failure); setBusy(undefined); }
     finally { if (operation === 'save') setBusy(undefined); }
   }

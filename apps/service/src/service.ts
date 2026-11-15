@@ -208,10 +208,20 @@ export async function createService(options: ServiceOptions) {
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/orders/preview`, request => capital.previewOrder(request.params.id, request.body));
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
-  app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => {
+  const datasetView = ({ data, policy: _policy, strategy, ...view }: (typeof config.datasets)[number], summary = false) => {
     const researchSettings = view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
-    return { ...view, nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
-  }));
+    const { inputCoverage: _coverage, ...metadata } = view;
+    return { ...(summary ? metadata : view), nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
+  };
+  app.get<{ Querystring: { view?: string } }>(`${API}/datasets`, async request => {
+    if (request.query.view !== undefined && request.query.view !== 'summary') throw new Problem('dataset_view_invalid', 400);
+    return config.datasets.map(dataset => datasetView(dataset, request.query.view === 'summary'));
+  });
+  app.get<{ Params: { id: string } }>(`${API}/datasets/:id`, async request => {
+    const dataset = config.datasets.find(row => row.id === request.params.id);
+    if (!dataset) throw new Problem('dataset_not_found', 404);
+    return datasetView(dataset);
+  });
   // Read-only native file metadata; never admits a dataset or triggers backfill.
   app.post<{ Params: { id: string } }>(`${API}/datasets/:id/coverage`, async request => {
     const dataset = config.datasets.find(row => row.id === request.params.id);
