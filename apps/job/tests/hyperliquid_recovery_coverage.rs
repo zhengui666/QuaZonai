@@ -15,15 +15,15 @@ use nautilus_model::{
     enums::{AccountType, OmsType},
     identifiers::{AccountId, TraderId},
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     cell::RefCell,
     io::{Read, Write},
     net::TcpListener,
     rc::Rc,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     },
     thread,
     time::Duration,
