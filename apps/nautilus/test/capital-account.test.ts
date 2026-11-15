@@ -1,3 +1,4 @@
+import {once} from 'node:events';
 import { fencedBody } from './strategy-fence.ts';
 import assert from 'node:assert/strict';
 import type { NativeOrderPreview } from '../../../packages/contracts/src/native-order-preview.ts';
@@ -485,4 +486,51 @@ test('native Margin lost START remains uncertain across reopen without resending
     const rejected=await call('/strategy/commands',{...body,requestId:'new',expectedStrategyRevision:next.strategyRevision});
     assert.equal(rejected.error,'strategy_original_command_unsettled');assert.equal(starts,1);
   } finally {await account.close();await rm(directory,{recursive:true,force:true});}
+});
+
+for(const failedClose of [false,true])test(`kernel receipt ownership rejects competitors and retains UNKNOWN after process exit (failedClose=${failedClose})`, async () => {
+  const {spawn}=await import('node:child_process');
+  const directory=await mkdtemp(join(tmpdir(),'qz-receipt-owner-'));
+  let child:ReturnType<typeof spawn>|undefined;
+  try {
+    const seed=await createCapitalAccount(options,directory,'/never-execute');await seed.close();
+    const path=join(directory,'capital-receipts.json');const saved=JSON.parse(await readFile(path,'utf8'));
+    saved.strategyCommands={original:{original:{action:'START',requestId:'original'},receipt:{status:'UNCERTAIN',error:'original_unknown'}}};
+    await writeFile(path,JSON.stringify(saved));
+    const source=new URL('../src/capital-account.ts',import.meta.url).href;
+    const code=`import {createCapitalAccount} from ${JSON.stringify(source)};
+const runtime=${failedClose?"{isConnected:()=>false,request:async()=>({}),close:async()=>{throw Error('controlled-native-close-unknown');}}":"undefined"};
+const account=await createCapitalAccount(${JSON.stringify(options)},${JSON.stringify(directory)},'/never-execute',runtime);
+if(${failedClose}){try{await account.close();throw Error('close-should-fail');}catch(error){if(error.message!=='controlled-native-close-unknown')throw error;}
+try{await account.handle('/strategy/config',{method:'GET',headers:{'x-qz-client-id':'client'}},async()=>null);throw Error('closed-owner-access');}catch(error){if(error.message!=='account_receipts_owner_closed')throw error;}}
+console.log('READY');process.stdin.resume();`;
+    child=spawn(process.execPath,['--experimental-strip-types','--input-type=module','--eval',code],{stdio:['pipe','pipe','pipe']});
+    const ready=await Promise.race([once(child.stdout!,'data').then(([chunk])=>String(chunk)),once(child,'exit').then(([code])=>{throw Error('owner_exited:'+code);})]);assert.equal(ready.trim(),'READY');
+    const before=await readFile(path,'utf8');
+    await assert.rejects(createCapitalAccount(options,directory,'/never-execute'),/account_receipts_owner_already_running/);
+    assert.equal(await readFile(path,'utf8'),before);
+    const exited=once(child,'exit');child.kill('SIGKILL');await exited;
+    const reopened=await createCapitalAccount(options,directory,'/never-execute');
+    const retained=JSON.parse(await readFile(path,'utf8'));assert.deepEqual(retained.strategyCommands,saved.strategyCommands);assert.equal(retained.sourceId,saved.sourceId);
+    await reopened.close();await reopened.close();
+    await assert.rejects(reopened.handle('/strategy/config',{method:'GET',headers:{'x-qz-client-id':'client'}} as unknown as IncomingMessage,async()=>null),/account_receipts_owner_closed/);
+  } finally {child?.kill('SIGKILL');await rm(directory,{recursive:true,force:true});}
+});
+
+test('refresh finishing after close cannot write through a released receipt owner', async () => {
+ const directory=await mkdtemp(join(tmpdir(),'qz-closed-refresh-'));
+ const native=new NativeProtocol();Object.assign(native.snapshot,{account_semantics:'NATIVE_MARGIN'});
+ let release!:()=>void;let entered!:()=>void;const started=new Promise<void>(resolve=>entered=resolve);const held=new Promise<void>(resolve=>release=resolve);
+ const original=native.request.bind(native);native.request=async(operation,payload={})=>{if(operation==='ACCOUNT_SUMMARY'){entered();await held;}return original(operation,payload);};
+ const account=await createCapitalAccount({...options,accountSemantics:'NATIVE_MARGIN'},directory,'/never-execute',native);
+ let successor:Awaited<ReturnType<typeof createCapitalAccount>>|undefined;
+ try{
+  const cfg=(await account.handle('/strategy/config',request('GET'),async()=>null)).value as any;
+  const old=account.handle('/strategy/commands',request('POST'),async()=>({requestId:'late-start',action:'START',clientId:options.clientId,accountId:options.accountId,expectedAccountSourceId:cfg.accountSourceId,expectedStrategyRevision:cfg.strategyRevision})).then(()=>null,error=>error.message);
+  await started;await account.close();
+  successor=await createCapitalAccount({...options,accountSemantics:'NATIVE_MARGIN'},directory,'/never-execute');
+  const path=join(directory,'capital-receipts.json');const before=await readFile(path,'utf8');release();
+  assert.equal(await old,'account_receipts_owner_closed');assert.equal(await readFile(path,'utf8'),before);
+  assert.equal(native.requests.some(value=>value.operation==='STRATEGY_START'),false);
+ }finally{release();await successor?.close();await account.close();await rm(directory,{recursive:true,force:true});}
 });
