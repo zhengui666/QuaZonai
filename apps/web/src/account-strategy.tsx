@@ -60,7 +60,7 @@ export function LegacyAccountObservation({path,capability,unavailable=false}:{pa
 interface LifecycleCapability {supported?:boolean|null;configuredKind?:string|null;scope?:string|null;strategyVerified?:boolean|null;nativeSessionId?:string|null}
 export function StrategyLifecycleNotice({value,unavailable=false}:{value?:LifecycleCapability|null;unavailable?:boolean}){
  const observed=!unavailable&&value?.scope==='INSTALLED_DISPATCH_ONLY'&&value.strategyVerified===false&&!!value.nativeSessionId&&typeof value.supported==='boolean';
- return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'原生策略接线状态未知。':value.supported?'最近报告：已安装策略派发入口。':'最近报告：策略派发入口不可用。'}</p>
+ return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'原生策略接线状态未知。':value.supported?'最近报告：已安装策略派发入口。':'最近报告：未报告可用的策略派发入口。'}</p>
  {observed&&<p>原生报告类型：{value.configuredKind??'未提供'}；原会话：{value.nativeSessionId}。</p>}
  </section>;
 }

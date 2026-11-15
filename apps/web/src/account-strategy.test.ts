@@ -46,7 +46,7 @@ it('shows only observed current-session lifecycle facts, never treating declarat
  expect(html).toContain('最近报告：已安装策略派发入口');expect(html).toContain('original-session');expect(html).toContain('REGISTERED');expect(html).not.toContain('认证通过');
  for(const value of [undefined,{...fact,nativeSessionId:null},{...fact,strategyVerified:true},{...fact,supported:null}])expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value}))).toContain('状态未知');
  expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact,unavailable:true}))).toContain('状态未知');
- expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:{...fact,supported:false}}))).toContain('策略派发入口不可用');
+ expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:{...fact,supported:false}}))).toContain('未报告可用的策略派发入口');
  expect(mocks.submits).toBe(0);
 });
 
