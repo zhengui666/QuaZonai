@@ -11,6 +11,11 @@
 | `schema list` / `schema show NAME` | 查看业务 TypeScript 合同 |
 | `schema list --domain` / `schema show NAME --domain` | 查看原生科学 JSON Schema |
 | `datasets` | 查询数据集、ready 状态及研究设置 |
+| `datasets registry` | 读取各数据源及登记 revision |
+| `datasets register --file REQUEST.json` | 仅追加新 ID，文件含 requestId、expectedRevision、path；path 是服务端可读的 DatasetConfig JSON，不是客户端上传 |
+| `native-runner status` | 读取当前环境 revision，不构建或选择 |
+| `native-runner import --file REQUEST.json` | 显式检查可信可执行文件，含 requestId、expectedRevision、environmentId、sourceExecutable 及可选 expectedIdentity；会运行 capabilities，但不连接账户或选为全局默认 |
+| `native-runner build-status REQUEST_ID` | 读取原构建/导入任务，不重复执行 |
 | `research models` | 查询可选模型及推理等级、服务档位 |
 | `usage` | 查询用量；`null` 费用或 token 数不是零 |
 

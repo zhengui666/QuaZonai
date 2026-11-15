@@ -165,7 +165,7 @@ export async function createService(options: ServiceOptions) {
     facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
   }, context);
   const builds=nativeBuild.workbench(research,instances);
-  const work = workbench(research, config, builds.selectedTarget);
+  const work = workbench(research, config, builds.researchTarget);
   preparationOperations = { configuration: builds.configuration, build: builds.start, read: builds.read, select: builds.select, startResearch: work.startResearch };
   research.harness.resume();
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
