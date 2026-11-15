@@ -200,7 +200,7 @@ export async function createService(options: ServiceOptions) {
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/orders/preview`, request => capital.previewOrder(request.params.id, request.body));
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
-  const datasetView = ({ data, policy: _policy, strategy, ...view }: ServiceConfig['datasets'][number], summary = false) => {
+  const datasetView = ({ data, policy: _policy, strategy, ...view }: (typeof config.datasets)[number], summary = false) => {
     const researchSettings = view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
     const { inputCoverage: _coverage, ...metadata } = view;
     return { ...(summary ? metadata : view), nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
