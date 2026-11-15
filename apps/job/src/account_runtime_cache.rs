@@ -891,11 +891,10 @@ mod order_list_tests {
             );
             assert_eq!(serde_json::to_value(order)?, serde_json::to_value(&single)?);
         }
-        assert!(
-            db.load_order(&ClientOrderId::from("MISSING"))
-                .await?
-                .is_none()
-        );
+        assert!(db
+            .load_order(&ClientOrderId::from("MISSING"))
+            .await?
+            .is_none());
         assert_eq!(
             serde_json::to_value(load_state(&directory.path().join("native-cache"))?)?,
             serde_json::to_value(before)?
@@ -1259,12 +1258,10 @@ mod pin_guard_tests {
         assert!(!selected.records.contains_key("orders"));
         assert!(load_state(&root).is_err());
         let cache = Rc::new(RefCell::new(Cache::default()));
-        assert!(
-            factory
-                .install(cache.clone(), trader, UUID4::new(), CacheConfig::default())
-                .await
-                .is_err()
-        );
+        assert!(factory
+            .install(cache.clone(), trader, UUID4::new(), CacheConfig::default())
+            .await
+            .is_err());
         assert!(cache.borrow().account_ref(&id).is_none());
         assert_eq!(fs::read(&bad)?, b"invalid json");
         assert_eq!(fs::read(root.join("metadata.json"))?, before);

@@ -203,3 +203,17 @@ pub fn portfolio_from_market(
     }
     (directory, request, module("f64.const 0.01"))
 }
+
+/// Current official Bar strategy contract for process/data-path tests, not a profit test.
+pub fn native_bar_request(source: &NativeSimulationRequestV1) -> serde_json::Value {
+    let bar_type = &source.selection.bar_types[0];
+    let id = source.settings.fee_rates[0].instrument_id.clone();
+    serde_json::json!({"schema_version":1,"instrument_id":id,
+        "selectors":[{"data_type":"Bar","identifier":bar_type}],
+        "event_start_ns":source.selection.event_start_ns,"event_end_ns":source.selection.event_end_ns,
+        "available_end_ns":source.selection.decision_cutoff_ns,
+        "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L1_MBP",
+            "starting_balances":["100000 USD"],"base_currency":"USD","leverage":"1","maker_fee":"0","taker_fee":"0"},
+        "strategy":{"kind":"HURST_VPIN_DIRECTIONAL","bar_type":bar_type,"trade_size":"1000",
+            "hurst_window":8,"hurst_lags":[2,4],"hurst_enter":0.55,"hurst_exit":0.5,"vpin_window":2,"vpin_threshold":0.3,"max_holding_secs":60}})
+}

@@ -34,11 +34,9 @@ fn selected_graph_ignores_other_workspace_and_dev_only_model() {
         )
     );
     graph["resolve"]["nodes"][0]["deps"][1]["dep_kinds"][0]["kind"] = json!("build");
-    assert!(
-        identity::from_metadata(&graph, &root)
-            .unwrap_err()
-            .contains("ambiguous")
-    );
+    assert!(identity::from_metadata(&graph, &root)
+        .unwrap_err()
+        .contains("ambiguous"));
 }
 
 #[test]
@@ -74,9 +72,7 @@ fn git_revision_and_missing_selected_nodes_are_not_guessed() {
         "exact-revision"
     );
     graph["resolve"]["nodes"][0]["deps"][0]["pkg"] = json!("missing");
-    assert!(
-        identity::from_metadata(&graph, &root)
-            .unwrap_err()
-            .contains("node missing")
-    );
+    assert!(identity::from_metadata(&graph, &root)
+        .unwrap_err()
+        .contains("node missing"));
 }

@@ -8,10 +8,77 @@ mod native;
 use contracts::{
     catalogs::{FrozenMakerTakerFeesV1, RuntimeCatalogMetadataV1, MAKER_TAKER_FEES_FILE},
     execution::NativeDatasetSelectionV1,
-    science::{NativeSimulationRequestV1, NativeSimulationResultV1},
+    native_strategy::{NativeStrategyBacktestRequestV1, NativeStrategyBacktestResultV1},
+    science::NativeSimulationRequestV1,
     Id,
 };
-use nautilus_model::types::Money;
+use nautilus_backtest::engine::BacktestEngine;
+use nautilus_common::actor::DataActor;
+use nautilus_model::{
+    data::{Bar, BarType},
+    enums::OrderSide,
+    identifiers::InstrumentId,
+    types::{Money, Quantity},
+};
+use nautilus_trading::{
+    nautilus_strategy,
+    strategy::{StrategyConfig, StrategyCore},
+    Strategy,
+};
+
+// Fixed test instructions only; account, order lifecycle, matching and fees stay upstream.
+#[derive(Debug)]
+struct FeeRoundTrip {
+    core: StrategyCore,
+    bar_type: BarType,
+    seen: usize,
+}
+nautilus_strategy!(FeeRoundTrip);
+impl DataActor for FeeRoundTrip {
+    fn on_start(&mut self) -> anyhow::Result<()> {
+        self.subscribe_bars(self.bar_type, None, None);
+        Ok(())
+    }
+    fn on_bar(&mut self, _bar: &Bar) -> anyhow::Result<()> {
+        self.seen += 1;
+        let side = match self.seen {
+            2 => OrderSide::Buy,
+            5 => OrderSide::Sell,
+            _ => return Ok(()),
+        };
+        let order = self.order().market(
+            self.bar_type.instrument_id(),
+            side,
+            Quantity::from("1000"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        self.submit_order(order, None, None, None)
+    }
+}
+fn register_fee_round_trip(
+    engine: &mut BacktestEngine,
+    id: InstrumentId,
+    name: &str,
+    config: &Value,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(name == "fee-round-trip", "UNKNOWN_FEE_TEST_STRATEGY");
+    let bar_type: BarType = config["bar_type"].as_str().unwrap().parse()?;
+    anyhow::ensure!(
+        bar_type.instrument_id() == id,
+        "FEE_TEST_INSTRUMENT_MISMATCH"
+    );
+    engine.add_strategy(FeeRoundTrip {
+        core: StrategyCore::new_checked(StrategyConfig::default())?,
+        bar_type,
+        seen: 0,
+    })
+}
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{json, Value};
 use std::{
@@ -123,15 +190,35 @@ impl Fixture {
         command.output().unwrap()
     }
 
-    fn simulate(&self) -> Output {
-        native::command(
-            &[
-                "simulate".as_ref(),
-                "--catalog".as_ref(),
-                self.output().join("catalog").as_os_str(),
-            ],
-            &self.request,
-        )
+    fn native_request(&self, index: usize) -> Value {
+        let rate = &self.source.rates[index];
+        json!({"schema_version":1,"instrument_id":rate.instrument_id,
+            "selectors":[{"data_type":"Bar","identifier":self.request.selection.bar_types[index]}],
+            "event_start_ns":self.request.selection.event_start_ns,"event_end_ns":self.request.selection.event_end_ns,
+            "available_end_ns":self.request.selection.decision_cutoff_ns,
+            "venue":{"account_type":"MARGIN","oms_type":"NETTING","book_type":"L1_MBP",
+                "starting_balances":["100000 USD"],"base_currency":"USD","leverage":"1"},
+            "strategy":{"kind":"REGISTERED","name":"fee-round-trip","config":{"bar_type":self.request.selection.bar_types[index]}}})
+    }
+    fn replay(&self) -> Vec<NativeStrategyBacktestResultV1> {
+        self.source
+            .rates
+            .iter()
+            .enumerate()
+            .map(|(index, rate)| {
+                let mut request = self.native_request(index);
+                request["venue"]["maker_fee"] = json!(rate.maker.as_decimal().to_plain_string());
+                request["venue"]["taker_fee"] = json!(rate.taker.as_decimal().to_plain_string());
+                let request: NativeStrategyBacktestRequestV1 =
+                    serde_json::from_value(request).unwrap();
+                job::native_strategy::run_with_registration(
+                    &self.output().join("catalog"),
+                    request,
+                    Some(register_fee_round_trip),
+                )
+                .unwrap()
+            })
+            .collect()
     }
 }
 
@@ -156,31 +243,35 @@ fn explicit_original_fee_file_binds_new_catalog_and_enables_actual_native_replay
     assert_eq!(copied, f.source);
     assert_eq!(files(f.original.path()), original);
     assert_eq!(fs::read(&f.fee_file).unwrap(), original_fees);
-    let replay = f.simulate();
+    let results = f.replay();
     assert!(
-        replay.status.success(),
-        "{}",
-        String::from_utf8_lossy(&replay.stderr)
+        results
+            .iter()
+            .map(|r| r.canonical_result["orders"].as_array().unwrap().len())
+            .sum::<usize>()
+            >= 4
     );
-    let result: NativeSimulationResultV1 = serde_json::from_slice(&replay.stdout).unwrap();
-    assert_eq!(result.native_version, "0.69.0");
-    assert!(result.orders.get() >= 4);
-    assert_eq!(
-        result.summary.get("orders.open").map(String::as_str),
-        Some("0")
-    );
-    assert_eq!(
-        result.summary.get("orders.inflight").map(String::as_str),
-        Some("0")
-    );
+    for result in &results {
+        assert_eq!(result.native_version, "0.69.0");
+        assert_eq!(result.canonical_result["summary"]["orders.open"], "0");
+        assert_eq!(result.canonical_result["summary"]["orders.inflight"], "0");
+        // Each test strategy buys and sells the same quantity through native market orders.
+        assert_eq!(
+            result.canonical_result["fills"].as_array().unwrap().len(),
+            2
+        );
+    }
     let mut nonzero_fees = 0;
-    for value in result.canonical_result["fills"].as_array().unwrap() {
+    for value in results
+        .iter()
+        .flat_map(|r| r.canonical_result["fills"].as_array().unwrap())
+    {
         let fill = &value["event"]["Filled"];
         assert_eq!(fill["liquidity_side"], "TAKER");
         let quantity = Decimal::from_str(fill["last_qty"].as_str().unwrap()).unwrap();
         let price = Decimal::from_str(fill["last_px"].as_str().unwrap()).unwrap();
         // Independently declared fixture policy: 0.1% of each fill's USD
-        // notional, rounded to cents half-even by the official 0.67 model.
+        // notional, rounded to cents half-even by the official native model.
         let expected = (quantity * price * Decimal::from_str("0.001").unwrap())
             .round_dp_with_strategy(2, RoundingStrategy::MidpointNearestEven);
         let actual = Money::from_str(fill["commission"].as_str().unwrap()).unwrap();
@@ -209,9 +300,17 @@ fn data_only_preparation_does_not_manufacture_request_fees() {
         .join("catalog")
         .join(MAKER_TAKER_FEES_FILE)
         .exists());
-    let replay = f.simulate();
+    // Current native strategy contracts require explicit scenario fees even when a catalog exists.
+    let replay = native::command(
+        &[
+            "native-strategy-backtest".as_ref(),
+            "--catalog".as_ref(),
+            f.output().join("catalog").as_os_str(),
+        ],
+        &f.native_request(0),
+    );
     assert!(!replay.status.success());
-    assert!(String::from_utf8_lossy(&replay.stderr).contains("MAKER_TAKER_FEE_SOURCE_REQUIRED"));
+    assert!(String::from_utf8_lossy(&replay.stderr).contains("maker_fee"));
 }
 
 #[test]
