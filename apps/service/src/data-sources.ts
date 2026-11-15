@@ -20,7 +20,10 @@ export interface DataSourcePlugin {
   name: string; version?: string; fields: DataSourceField[];
   load(config: JsonObject, context: { dataDir: string; signal?: AbortSignal }): Promise<DatasetConfig[]>;
 }
+const registeredName = 'qz.data.registered';
+interface Registration { input: { expectedRevision: number; path: string }; receipt: { requestId: string; revision: number; datasetIds: string[] } }
 interface SavedSource {
+  registrations?: Record<string, Registration>;
   acquisition?: { manifestPath: string; planId: string }; revision?: number; taskId?: number; config: JsonObject; enabled: boolean; datasets: DatasetConfig[]; retainedDatasets?: DatasetConfig[]; lastLoadedAt: string | null; error: string | null;
 }
 interface Source extends SavedSource { name: string; version: string | null; fields: DataSourceField[]; plugin?: DataSourcePlugin }
@@ -87,14 +90,14 @@ export async function dataSources(config: ServiceConfig) {
   const base = structuredClone(config.datasets);
   let stored: Record<string, SavedSource> = {};
   const sources = new Map<string, Source>();
-  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, cryptohftdata].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
+  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, { name: registeredName, version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, cryptohftdata].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
   for (const entry of configured) {
     if (sources.has(entry.name)) throw new Problem('extension_name_conflict');
     const saved = stored[entry.name];
     const source: Source = { name: entry.name, version: entry.version ?? null, fields: [], enabled: saved?.enabled ?? entry.enabled,
       config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], retainedDatasets: saved ? datasets(saved.retainedDatasets ?? saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
     try {
-      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === cryptohftdata.name ? cryptohftdata : (await import(pathToFileURL(entry.module).href)).default, entry.name);
+      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === registeredName ? { name: registeredName, version: '1', fields: [], async load() { throw new Problem('data_source_append_only', 409); } } : entry.name === local.name ? local : entry.name === cryptohftdata.name ? cryptohftdata : (await import(pathToFileURL(entry.module).href)).default, entry.name);
       source.fields = source.plugin.fields; source.version = source.plugin.version ?? source.version;
     } catch { source.error = 'data_source_plugin_load_failed'; }
     sources.set(entry.name, source);
@@ -163,7 +166,7 @@ export async function dataSources(config: ServiceConfig) {
   }
   function viewOne(source: Source): DataSourceView {
     return structuredClone({ name: source.name, version: source.version, enabled: source.enabled,
-      state: source.error ? 'error' : source.enabled ? 'loaded' : 'disabled', fields: source.fields, config: source.config,
+      state: source.error ? 'error' : source.enabled ? 'loaded' : 'disabled', fields: source.fields, config: source.config, ...(source.name === registeredName ? { revision: source.revision ?? 1 } : {}),
       datasetIds: source.datasets.map(value => value.id), lastLoadedAt: source.lastLoadedAt, error: source.error, ...(source.acquisition ? { acquisition: source.acquisition } : {}) });
   }
   function assertOwnership(saved: Record<string, SavedSource>, name: string, replacement: SavedSource) {
@@ -200,6 +203,7 @@ export async function dataSources(config: ServiceConfig) {
     return viewOne(found(next.name));
   }
   const save = async (name: string, body: unknown) => {
+    if (name === registeredName) throw new Problem('data_source_append_only', 409);
     const source = found(name); const value = object(body, 'data_source');
     if (Object.keys(value).some(key => !['config', 'enabled'].includes(key)) || typeof value.enabled !== 'boolean') throw new Problem('data_source_update_invalid');
     if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
@@ -207,6 +211,7 @@ export async function dataSources(config: ServiceConfig) {
     return persist({ ...found(name), config: settings, enabled: value.enabled, error: null });
   };
   const toggle = async (name: string, enabled: boolean) => {
+    if (name === registeredName) throw new Problem('data_source_append_only', 409);
     if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
     return persist({ ...found(name), enabled }, false);
   };
@@ -257,6 +262,7 @@ export async function dataSources(config: ServiceConfig) {
   });
   const extension = defineExtension({ name: 'qz.data-source-runtime', tasks: [Refresh, CancelRefresh] });
   const refresh = async (name: string) => {
+    if (name === registeredName) throw new Problem('data_source_append_only', 409);
     const source = found(name); if (!source.enabled) throw new Problem('data_source_disabled', 409);
     if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
     const runtime = connected();
@@ -274,6 +280,51 @@ export async function dataSources(config: ServiceConfig) {
     }, context);
     await synchronize(); return { taskId: taskId as number };
   };
+  // Register a new identity only. File contents are captured once on successful publication;
+  // retrying the original request returns its receipt without reopening the source file.
+  async function registerDatasets(value: unknown) {
+    const body = object(value, 'dataset_registration');
+    if (Object.keys(body).some(key => !['requestId', 'expectedRevision', 'path'].includes(key))
+      || typeof body.requestId !== 'string' || !body.requestId.trim()
+      || typeof body.path !== 'string' || !body.path.trim()
+      || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 1) throw new Problem('dataset_registration_invalid', 422);
+    const requestId = body.requestId;
+    const input = { expectedRevision: Number(body.expectedRevision), path: body.path };
+    const runtime = connected();
+    const replay = (saved: SavedSource) => {
+      const previous = saved.registrations?.[`request:${requestId}`];
+      if (!previous) return undefined;
+      if (canonical(previous.input) !== canonical(input)) throw new Problem('request_id_conflict', 409);
+      return { requestId: previous.receipt.requestId, revision: previous.receipt.revision, datasetIds: [...previous.receipt.datasetIds] };
+    };
+    const initial = (await runtime.harness.snapshot(State, context))!.sources[registeredName] as unknown as SavedSource;
+    const prior = replay(initial); if (prior) return prior;
+    if (initial.revision !== input.expectedRevision) throw new Problem('data_source_revision_conflict', 409);
+    let loaded: DatasetConfig[];
+    try { loaded = await readDatasetConfig(resolve(config.dataDir, input.path)); }
+    catch { throw new Problem('dataset_registration_file_invalid', 422); }
+    if (!loaded.length) throw new Problem('dataset_registration_empty', 422);
+    const receipt = await runtime.harness.commit(async tx => {
+      const state = await tx.doc(State);
+      const saved = state.sources[registeredName] as unknown as SavedSource;
+      const prior = replay(saved); if (prior) return prior;
+      assertBusinessAdmission(await tx.doc(Application));
+      if (saved.revision !== input.expectedRevision) throw new Problem('data_source_revision_conflict', 409);
+      if (!Number.isSafeInteger(input.expectedRevision + 1)) throw new Problem('data_source_revision_exhausted', 409);
+      const ids = new Set(loaded.map(dataset => dataset.id));
+      for (const source of Object.values(state.sources) as unknown as SavedSource[]) {
+        if ([...source.datasets, ...(source.retainedDatasets ?? [])].some(dataset => ids.has(dataset.id))) throw new Problem('data_source_dataset_id_conflict', 409);
+      }
+      const receipt = { requestId, revision: input.expectedRevision + 1, datasetIds: loaded.map(dataset => dataset.id) };
+      saved.datasets = [...saved.datasets, ...loaded];
+      saved.retainedDatasets = [...(saved.retainedDatasets ?? []), ...loaded];
+      saved.revision = receipt.revision;
+      saved.registrations = { ...saved.registrations, [`request:${requestId}`]: { input, receipt } };
+      return receipt;
+    }, context);
+    await synchronize();
+    return receipt;
+  }
   async function taskStatus(name: string, requestedId?: number) {
     const source = found(name); const id = requestedId ?? source.taskId;
     if (!id) return { taskId: null, status: 'idle', source: viewOne(source) };
@@ -283,7 +334,7 @@ export async function dataSources(config: ServiceConfig) {
     return { taskId: id, status: task.state.status,
       ...(task.state.status === 'terminal' ? { outcome: task.state.outcome.status } : {}), source: viewOne(found(name)) };
   }
-  return { extension, taskStatus,
+  return { extension, taskStatus, registerDatasets,
     async connect(value: ResearchHost) {
       host = value;
       await host.harness.commit(async tx => {
@@ -313,6 +364,7 @@ export async function dataSources(config: ServiceConfig) {
 }
 export function registerDataSources(app: FastifyInstance, sources: Awaited<ReturnType<typeof dataSources>>) {
   app.get(`${API}/data-sources`, sources.view);
+  app.post(`${API}/data-sources/qz.data.registered/datasets`, request => sources.registerDatasets(request.body));
   app.put<{ Params: { name: string } }>(`${API}/data-sources/:name`, request => sources.save(request.params.name, request.body));
   app.post<{ Params: { name: string } }>(`${API}/data-sources/:name/refresh`, async (request, reply) => reply.code(202).send(await sources.refresh(request.params.name)));
 }
