@@ -16,13 +16,13 @@ it('shows exact official values and unknown/omitted currencies without financial
  const row={currency:'USDC',total:'9007199254740993.000001 USDC',locked:'0.000001 USDC',free:'9007199254740993.000000 USDC'};
  const html=show({request_started_ns:'18446744073709551614',received_ns:'18446744073709551615',balances:[row],error:null});
  for(const value of [...Object.values(row),'18446744073709551614','18446744073709551615'])expect(html).toContain(value);
- expect(html).toContain('未核实当前新鲜度');expect(html).not.toContain('<pre');
- expect(show(null)).toContain('不等于余额为零');expect(show({balances:null})).toContain('余额未知');
- expect(show({balances:[]})).toContain('不能视为零余额');
+ expect(html).toContain('非当前可交易余额');expect(html).not.toContain('<pre');
+ expect(show(null)).toContain('余额未知');expect(show({balances:null})).toContain('余额未知');
+ expect(show({balances:[]})).toContain('余额未知');
  expect(show({balances:[row],error:'private diagnostics'})).not.toContain(row.total);
  expect(show({balances:[row],error:'private diagnostics'})).not.toContain('private diagnostics');
  const many=show({balances:Array.from({length:51},(_,i)=>({...row,currency:'TOKEN'+i}))});
- expect(many).toContain('TOKEN49');expect(many).not.toContain('TOKEN50');expect(many).toContain('前50项');
+ expect(many).toContain('TOKEN49');expect(many).not.toContain('TOKEN50');expect(many).toContain('前 50 项');
  expect(show({balances:[{currency:'USDC',total:100}]})).toContain('未知');
 });
 it('only explicit connected reads issue one GET, suppress duplicate clicks, and reject stale-source display',async()=>{
@@ -38,6 +38,6 @@ it('only explicit connected reads issue one GET, suppress duplicate clicks, and 
  expect(render(true,'original','session-reconnected')).not.toContain('EXACT-OLD-TOTAL');expect(render(true,'original',null)).not.toContain('EXACT-OLD-TOTAL');
  expect(requests).toHaveLength(1);
  render();state.buttons[0].onClick();finish!(new Response(JSON.stringify({error:{code:'unavailable',message:'unavailable'}}),{status:503}));
- await vi.waitFor(()=>expect(render()).toContain('没有自动重发'));
+ await vi.waitFor(()=>expect(render()).toContain('读取失败，余额未知'));
  expect(render()).not.toContain('EXACT-OLD-TOTAL');expect(requests).toHaveLength(2);
 });

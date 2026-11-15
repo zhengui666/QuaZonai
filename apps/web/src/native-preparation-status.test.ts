@@ -12,7 +12,7 @@ it('preserves terminal unknown as uncertainty rather than success or definite no
 });
 it('shows saved selection separately without executable paths or arbitrary identity diagnostics',()=>{
  const runner={kind:'RUST_PROCESS',id:'owner',binary:'/private/runner',capabilities:{identity:{nautilusVersion:'0.69.0',precision:'high',nautilusSource:'path+file:///private/source',private:'secret'},account:{compiled:true,registration:false},research:{configuredRunFactory:true}}} as any;
- const html=renderToStaticMarkup(createElement(SelectedRunnerStatus,{runner}));expect(html).toContain('0.69.0');expect(html).toContain('high');expect(html).toContain('不表示上方每个历史准备请求');expect(html).toContain('旧账户不自动改绑');expect(html).not.toContain('/private');expect(html).not.toContain('secret');expect(html).not.toContain('<pre');
+ const html=renderToStaticMarkup(createElement(SelectedRunnerStatus,{runner}));expect(html).toContain('0.69.0');expect(html).toContain('high');expect(html).toContain('当前明确选用的产物');expect(html).toContain('账户入口编译');expect(html).toContain('未编入');expect(html).not.toContain('/private');expect(html).not.toContain('secret');expect(html).not.toContain('<pre');
 });
 it('explains only known preparation failure categories without exposing arbitrary diagnostics or promising no execution',()=>{
  const view=(message:string)=>({requestId:'original',taskId:42,state:{status:'terminal',outcome:{status:'failed',error:{message}}}});

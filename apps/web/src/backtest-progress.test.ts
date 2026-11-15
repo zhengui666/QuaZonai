@@ -12,7 +12,7 @@ it('shows actual member counts without estimating a percentage', () => {
   expect(markup).toContain('首个权益快照');
 });
 it('labels a running curve provisional and omits finished list progress', () => {
-  expect(render({ curve: [{ at: '2026-10-29T00:00:00Z', value: '100' }] })).toContain('回测尚未结束');
+  expect(render({ curve: [{ at: '2026-10-29T00:00:00Z', value: '100' }] })).toContain('回测未结束');
   expect(render({ status: 'COMPUTED' }, true)).toBe('');
 });
 

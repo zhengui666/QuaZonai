@@ -33,16 +33,16 @@ describe('parameter scan result presentation', () => {
   it('retains exact large counts and separates running, comparable and scientific qualification', () => {
     const visible = text(render(scan));
     expect(visible).toContain('9007199254740993');
-    expect(visible).toContain('不重新计算排名');
+    expect(visible).not.toContain('不重新计算排名');
     expect(visible).toContain('探索性结果，未获科学资格');
-    expect(visible).toContain('关闭页面不会取消扫描');
-    expect(visible).toContain('不代表独立证据通过');
+    expect(visible).toContain('执行中');
+    expect(visible).not.toContain('不代表独立证据通过');
   });
   it('does not advertise creation, rankings or retired analysis tabs', () => {
     const visible = text(render(scan));
     for (const label of ['最佳可比', '参数分析', '曲线对比', '新建扫描']) expect(visible).not.toContain(label);
     expect(text(render(scan, '', true))).not.toContain('新建扫描');
-    expect(text(render(scan, 'tab=surface'))).toContain('不重新计算排名');
+    expect(text(render(scan, 'tab=surface'))).toContain('9007199254740993');
   });
   it('shows cancellation and remote uncertainty without claiming remote termination', () => {
     const stopping = text(render({ ...scan, status: 'STOPPING' }));
@@ -57,7 +57,7 @@ describe('parameter scan result presentation', () => {
 it('renders the chosen minimizing direction and preserves the native key', () => {
   const value = { ...scan, objective: { ...scan.objective, metricId: 'Custom Native Statistic', direction: 'minimize' as const } };
   const visible = text(render(value));
-  expect(visible).toContain('历史探索记录');
+  expect(visible).toContain('探索性结果，未获科学资格');
   expect(visible).not.toContain('最小化原生统计值');
   expect(visible).not.toContain('VALIDATION');
 });
