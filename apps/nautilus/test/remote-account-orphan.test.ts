@@ -17,7 +17,7 @@ async function eventually(check:()=>Promise<boolean>){for(let n=0;n<150;n++){if(
 async function ready(child:ChildProcess):Promise<{pid:number}>{
  return new Promise((resolve,reject)=>{let buffer='';const timer=setTimeout(()=>finish(Error('fixture_start_timeout')),5000);
  const finish=(error?:Error,value?:{pid:number})=>{clearTimeout(timer);child.stdout?.off('data',data);child.off('exit',exit);error?reject(error):resolve(value!);};
- const data=(chunk:Buffer)=>{buffer+=chunk.toString();if(buffer.includes('\n')){try{finish(undefined,JSON.parse(buffer.split('\n')[0]!));}catch{finish(Error('fixture_bad_ready'));}};
+ const data=(chunk:Buffer)=>{buffer+=chunk.toString();if(buffer.includes('\n')){try{finish(undefined,JSON.parse(buffer.split('\n')[0]!));}catch{finish(Error('fixture_bad_ready'));}}};
  const exit=()=>finish(Error('fixture_exited_before_ready'));child.stdout!.on('data',data);child.once('exit',exit);child.once('error',error=>finish(error));
  });
 }
