@@ -11,6 +11,8 @@ import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../
 export interface AccountOptions {
   id: string; clientId: string; accountId: string; mode: 'paper' | 'live';
   nativeStrategy: NativeAccountStrategyConfig;
+  /** Explicit official Margin account; not a claim about exchange abstraction. */
+  accountSemantics?: 'NATIVE_MARGIN';
   instruments: string[]; accountAddress?: string; network?: 'mainnet' | 'testnet';
   /** Omit to retain all products during recovery. Narrow only after resolving out-of-scope orders. */
   executionProductTypes?: ('SPOT' | 'PERP' | 'OUTCOME')[];
@@ -133,7 +135,7 @@ export class AccountRuntime implements NativeAccountRuntime {
       });
       try {
         const boot = await this.send('BOOT', { config: { client_id: this.options.clientId, account_id: this.options.accountId,
-          mode: this.options.mode, account_address: this.options.accountAddress ?? null, testnet: this.options.network === 'testnet',
+          mode: this.options.mode, account_semantics: this.options.accountSemantics ?? null, account_address: this.options.accountAddress ?? null, testnet: this.options.network === 'testnet',
           execution_product_types: this.options.executionProductTypes ?? null,
           native_strategy: this.options.nativeStrategy,
           instruments: this.options.instruments, starting_balance: this.options.startingBalance ?? '0', paper_fee_rate: this.options.paperFeeRate ?? null,

@@ -17,7 +17,7 @@ export function accountConfigurationField(text:string,key:string,value:string):s
  const config=accountConfigurationInput(text);
  const deployment={...((config.nativeStrategy??{}) as Record<string,unknown>)};
  const strategy={...((deployment.strategy??{}) as Record<string,unknown>)};
- if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress'].includes(key)){
+ if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics'].includes(key)){
   if(value==='')delete config[key];else config[key]=value;
  }else if(key==='instruments')config.instruments=value.split('\n').filter(line=>line!=='');
  else if(key==='instrument_id')deployment.instrument_id=value;
@@ -46,6 +46,7 @@ export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrum
  <label style={{display:'block'}}>订阅标的（每行一个原生 InstrumentId）<AccountInstrumentsInput disabled={disabled} value={instrumentsDraft??(Array.isArray(config.instruments)?config.instruments.join('\n'):'')} onChange={value=>onInstrumentsChange?.(value)}/></label>
  <label style={{display:'block'}}>策略标的（须在订阅列表内）<Input aria-label="策略标的" disabled={disabled} value={deployment?.instrument_id??''} onChange={event=>edit('instrument_id',event.target.value)}/></label>
  {config.mode==='paper'?<>{field('startingBalance','模拟初始余额（USDC 原值）')}{field('paperFeeRate','模拟费率（原始小数，非百分数）')}</>:field('accountAddress','公开账户地址（不是私钥）')}
+ {config.mode==='live'&&<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>此选项不识别或切换交易所账户 abstraction，不保证现货隔离余额。原生账户、风险与执行由 Nautilus 负责。旧账户不得改语义或另建同地址账户绕过未决订单。保存只写配置，不连接、不启动策略；实际启动仍须当前运行器与账户状态验证。</p></>}
  {deployment?.strategy?.kind==='REGISTERED'&&<label style={{display:'block'}}>已编入运行器的策略名称<Input aria-label="已编入运行器的策略名称" disabled={disabled} value={deployment.strategy.name??''} onChange={event=>edit('name',event.target.value)}/></label>}
  <p>自定义策略参数没有可用 schema，不能推测字段。请在下方高级配置中按原策略合同填写 config；其他原生策略类型也保留高级入口。选择模式不清除其他字段，提交仍由原保存合同校验。</p>
  </fieldset>;

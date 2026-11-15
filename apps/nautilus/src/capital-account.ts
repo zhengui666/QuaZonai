@@ -61,12 +61,13 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   suppliedRuntime?: NativeAccountRuntime, suppliedReader?: Pick<HyperliquidAccountReader, 'account' | 'ledger'>,
   syncDirectory = async (directory: string) => { const root = await open(directory, 'r'); try { await root.sync(); } finally { await root.close(); } }) {
   options = { ...options };
+  if (options.accountSemantics !== undefined && (options.accountSemantics !== 'NATIVE_MARGIN' || options.mode !== 'live')) fail('account_semantics_invalid',422);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(options.id) || !options.clientId || !options.accountId || !options.instruments.length) fail('account_configuration_invalid', 422);
   if (options.mode === 'paper' && (options.paperFeeRate == null || units(options.paperFeeRate) < 0n || units(options.startingBalance ?? '0') <= 0n)) fail('paper_balance_and_explicit_fee_required', 422);
   if (options.mode === 'live' && !options.accountAddress) fail('hyperliquid_master_account_required', 422);
   await mkdir(directory, { recursive: true });
   const statePath = join(directory, 'capital-receipts.json');
-  const identity = { mode: options.mode, network: options.network ?? 'mainnet', accountId: options.accountId, accountAddress: options.accountAddress?.toLowerCase() ?? null, currency: 'USDC' as const };
+  const identity = { mode: options.mode, network: options.network ?? 'mainnet', accountId: options.accountId, accountAddress: options.accountAddress?.toLowerCase() ?? null, currency: 'USDC' as const, ...(options.accountSemantics ? {accountSemantics: options.accountSemantics} : {}) };
   let state: AccountState;
   try { state = JSON.parse(await readFile(statePath, 'utf8')) as AccountState; if (state.schema_version !== 2 || !state.sourceId) fail('account_receipts_version_unsupported');
     if (canonical(state.identity) !== canonical(identity)) fail('account_receipts_physical_identity_mismatch'); }
@@ -90,7 +91,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   await save();
   if (state.strategyConfiguration) options.nativeStrategy = nativeAccountStrategyConfiguration(state.strategyConfiguration);
   const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory);
-  const reader = options.mode === 'live' ? suppliedReader ?? new HyperliquidAccountReader(options.accountAddress!, options.network) : null;
+  const nativeMargin = options.accountSemantics === 'NATIVE_MARGIN';
+  const reader = options.mode === 'live' && !nativeMargin ? suppliedReader ?? new HyperliquidAccountReader(options.accountAddress!, options.network) : null;
   let latest: NativeAccountSummary | null = null, proof: HyperliquidAccountProof | null = null, failure: string | null = 'account_runtime_not_started';
   let stopped = false;
   let pendingReverse = state.reverseTransferPending ?? false;
@@ -123,6 +125,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     const value = await runtime.request('ACCOUNT_SUMMARY');
     if (!Array.isArray(value.positions) || !Array.isArray(value.instruments) || !['open','inflight','active_local','emulated'].every(key => typeof (value.official_node_order_activity as Json | undefined)?.[key] === 'boolean') || typeof value.native_session_id!=='string' || value.native_account_id!==options.accountId
       || typeof value.sequence !== 'string' || typeof value.observation_id !== 'string') fail('account_native_snapshot_invalid');
+    if (nativeMargin && value.account_semantics !== 'NATIVE_MARGIN') fail('account_native_margin_protocol_unavailable');
     return value as unknown as NativeAccountSummary;
   }
   async function spotObservation() {
@@ -152,10 +155,10 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     const result = await runtime.request('CONTROL', { epoch: state.epoch, revision: state.revision, reserved_amount: '0', cash_buffer: options.cashBuffer ?? '0',
       mode: 'NORMAL', exit_id: null, exit_ids: [], minimum_interval_seconds: null, deadline: null,
       taker_fee_rate: reader ? proof?.spot_taker_fee_rate ?? null : options.paperFeeRate ?? null,
-      spot_free_cash: reader ? proof?.spot_free ?? null : latest?.cash ?? null, spot_total_cash: reader ? proof?.spot_total ?? null : latest?.cash ?? null,
+      spot_free_cash: nativeMargin ? null : reader ? proof?.spot_free ?? null : latest?.cash ?? null, spot_total_cash: nativeMargin ? null : reader ? proof?.spot_total ?? null : latest?.cash ?? null,
       spot_balances: reader ? proof?.balances ?? null : null,
-      spot_facts_asof_ns: reader && proof ? String(BigInt(Date.parse(proof.asof)) * 1_000_000n) : latest?.observed_at_ns ?? null,
-      spot_facts_valid_until_ns: reader && proof ? String(BigInt(Date.parse(proof.valid_until)) * 1_000_000n) : latest ? String(BigInt(latest.observed_at_ns) + 5_000_000_000n) : null });
+      spot_facts_asof_ns: nativeMargin ? null : reader && proof ? String(BigInt(Date.parse(proof.asof)) * 1_000_000n) : latest?.observed_at_ns ?? null,
+      spot_facts_valid_until_ns: nativeMargin ? null : reader && proof ? String(BigInt(Date.parse(proof.valid_until)) * 1_000_000n) : latest ? String(BigInt(latest.observed_at_ns) + 5_000_000_000n) : null });
     if (result.applied !== true) fail(typeof result.reason === 'string' ? result.reason : 'capital_native_fence_not_confirmed');
     // The official owner produces a new observation when control or spot
     // economic values change. Read it before publishing the corresponding
@@ -270,6 +273,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       lifecycleCapability: runtime.strategyLifecycleCapability?.() ?? null,
       accountObservation: runtime.accountObservationCapability?.() ?? null,
       pendingConfigurationRequests: Object.entries(state.strategyCommands ?? {}).filter(([, value]) => value.original.action === 'CONFIGURE' && value.receipt.status !== 'COMPLETED').map(([requestId]) => requestId),
+      accountSemantics: options.accountSemantics ?? 'LEGACY_SPOT', exchangeAbstraction: null,
       runnerValidated: false, note: 'Configuration only. REGISTERED names require a user-built account runner; saving never connects or starts trading.' };
   }
   async function verifyConfiguration(requestId: string) {
@@ -417,7 +421,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
     // Account/Portfolio/Risk consistency and freshness are not wired for START.
     // Never synthesize permission or substitute combined spot/perp account cash.
     // Keep the existing durable rejection code; reject before BOOT or trading.
-    if (command.action === 'START' && options.mode === 'live') {
+    if (command.action === 'START' && options.mode === 'live' && !nativeMargin) {
       const receipt: Json = { ...envelope(), requestId: command.requestId, action: command.action, status: 'REJECTED',
         result: { admission: 'REJECTED', started: false, reason: 'hyperliquid_native_spot_free_required' }, error: 'hyperliquid_native_spot_free_required' };
       commands[command.requestId] = { original: structuredClone(body), receipt };

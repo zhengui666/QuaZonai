@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage } from 'node:http';
 import { createCapitalAccount } from '../src/capital-account.ts';
+import { accountCreation, physicalAccount } from '../src/account-configurations.ts';
 import type { AccountOptions, NativeAccountRuntime, NativeAccountSnapshot } from '../src/account-runtime.ts';
 import { parseHyperliquidAccount, units } from '../src/hyperliquid-account.ts';
 import type { CapitalExitPlanningContext, CapitalExitPreview, CapitalExitView, CapitalExitPolicy } from '../../../packages/contracts/src/capital-exit.ts';
@@ -412,4 +413,76 @@ test('official spot facts remain separately bound and timed without changing por
     assert.equal((started.value as any).error,'hyperliquid_native_spot_free_required');
     assert.ok(native.requests.every(r=>r.operation==='ACCOUNT_SUMMARY'));
   } finally { await account.close(); await rm(directory,{recursive:true,force:true}); }
+});
+
+// Controlled transport only: these tests never instantiate or connect a live node.
+test('explicit native Margin delegates START without treating spot observation as permission', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-margin-'));
+  const native = Object.assign(new NativeProtocol(), { starts: 0, async start() { this.starts++; } });
+  Object.assign(native.snapshot, { account_semantics: 'NATIVE_MARGIN' });
+  const reader = { async account(): Promise<never> { throw new Error('spot_reader_must_not_authorize_margin'); }, async ledger() { return []; } };
+  const account = await createCapitalAccount({...options, accountSemantics:'NATIVE_MARGIN'}, directory, '/unused', native, reader);
+  const call = async (method: string, path: string, body: unknown = {}) => (await account.handle(path, request(method), async () => body)).value as Record<string, unknown>;
+  try {
+    assert.equal(native.starts, 0);
+    const config = await call('GET', '/strategy/config');
+    assert.equal(config.accountSemantics, 'NATIVE_MARGIN'); assert.equal(config.exchangeAbstraction, null);
+    const fence = await call('GET', '/strategy/fence');
+    const body = {requestId:'margin-original', action:'START',clientId:options.clientId,accountId:options.accountId,
+      expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision};
+    const result = await call('POST','/strategy/commands',body);
+    assert.equal(result.status,'COMPLETED'); assert.equal(native.starts,1);
+    const control = native.requests.find(row=>row.operation==='CONTROL')!;
+    assert.equal(control.payload.spot_balances,null);
+    assert.equal(control.payload.spot_free_cash,null); assert.equal(control.payload.spot_total_cash,null);
+    assert.equal(native.requests.filter(row=>row.operation==='STRATEGY_START').length,1);
+    assert.deepEqual(await call('POST','/strategy/commands',body),result);
+    assert.equal(native.starts,1);
+  } finally { await account.close(); await rm(directory,{recursive:true,force:true}); }
+});
+test('native Margin refuses old runner and cannot reinterpret retained legacy identity', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-margin-identity-'));
+  const native = new NativeProtocol();
+  let account = await createCapitalAccount(options,directory,'/unused',native);
+  await account.close();
+  try {
+    const path = join(directory,'capital-receipts.json');
+    const saved = JSON.parse(await readFile(path,'utf8'));
+    saved.strategyCommands = {original:{original:{requestId:'original',action:'START'},receipt:{status:'UNCERTAIN',error:'response_lost'}}};
+    const original = JSON.stringify(saved); await writeFile(path,original);
+    await assert.rejects(createCapitalAccount({...options,accountSemantics:'NATIVE_MARGIN'},directory,'/unused',native),/account_receipts_physical_identity_mismatch/);
+    assert.equal(await readFile(path,'utf8'),original);
+    assert.equal(physicalAccount(options),physicalAccount({...options,accountSemantics:'NATIVE_MARGIN'}));
+    assert.throws(()=>accountCreation({requestId:'invalid',configuration:{...options,accountSemantics:'GUESSED'}}),/account_semantics_invalid/);
+    const fresh = join(directory,'fresh');
+    account = await createCapitalAccount({...options,accountSemantics:'NATIVE_MARGIN'},fresh,'/unused',native);
+    const fence = (await account.request('/strategy/fence','GET','client')).value as any;
+    const result = (await account.request('/strategy/commands','POST','client',{requestId:'old-runner',action:'START',clientId:options.clientId,accountId:options.accountId,
+      expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision})).value as any;
+    assert.equal(result.status,'UNCERTAIN'); assert.equal(result.error,'account_native_margin_protocol_unavailable');
+    assert.equal(native.requests.some(row=>['CONTROL','STRATEGY_START'].includes(row.operation)),false);
+  } finally { await account.close(); await rm(directory,{recursive:true,force:true}); }
+});
+
+test('native Margin lost START remains uncertain across reopen without resending', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-margin-unknown-'));
+  const native = new NativeProtocol(); Object.assign(native.snapshot,{account_semantics:'NATIVE_MARGIN'});
+  const originalRequest = native.request.bind(native); let starts=0;
+  native.request = async (operation,payload={}) => {
+    if(operation==='STRATEGY_START'){starts++;throw new Error('response_lost');}
+    return originalRequest(operation,payload);
+  };
+  const configured = {...options,accountSemantics:'NATIVE_MARGIN' as const};
+  let account = await createCapitalAccount(configured,directory,'/unused',native);
+  const call = async (path:string,body?:Record<string,unknown>) => (await account.request(path,body?'POST':'GET','client',body)).value as any;
+  try {
+    const fence = await call('/strategy/fence');
+    const body={requestId:'original',action:'START',clientId:options.clientId,accountId:options.accountId,expectedAccountSourceId:fence.accountSourceId,expectedStrategyRevision:fence.strategyRevision};
+    const first=await call('/strategy/commands',body);assert.equal(first.status,'UNCERTAIN');assert.equal(starts,1);
+    await account.close(); account=await createCapitalAccount(configured,directory,'/unused',native);
+    assert.deepEqual(await call('/strategy/commands',body),first);assert.equal(starts,1);
+    const next=await call('/strategy/fence');
+    const rejected=await call('/strategy/commands',{...body,requestId:'new',expectedStrategyRevision:next.strategyRevision});
+    assert.equal(rejected.error,'strategy_original_command_unsettled');assert.equal(starts,1);
+  } finally {await account.close();await rm(directory,{recursive:true,force:true});}
 });
