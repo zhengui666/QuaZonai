@@ -44,7 +44,7 @@ export function inspectedRemoteOwner(value: unknown, expected: Identity): Record
   return { qualification: 'DECLARED_IDENTITY_MATCH_NOT_CONNECTED', protocol: response.protocol, identity: expected,
     account: { compiled: account.compiled, registration: account.registration, requiresExplicitStart: true },
     research: { singleStrategyRegistration: research.singleStrategyRegistration, configuredRunFactory: research.configuredRunFactory },
-    accountConnected: false, tradingStartRequested: false, sourceAttested: false, automaticRetry: false };
+    accountConnectionRequested: false, tradingStartRequested: false, sourceAttested: false, automaticRetry: false };
 }
 export async function inspectRemoteOwner(value: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const plan = remoteOwnerInspection(value);
