@@ -14,9 +14,9 @@ it('exposes real HTTP strategy command hooks separately from account observation
   expect(mocks.commands).toContain('strategy:account/a:START:/observations/account%2Fa/strategy/commands');
   expect(mocks.commands).toContain('strategy:account/a:STOP:/observations/account%2Fa/strategy/commands');
   expect(mocks.commands).toContain('strategy:account/a:RECOVER:/observations/account%2Fa/strategy/commands');
-  expect(mocks.submits).toBe(0); expect(html).toContain('连接账户进行恢复'); expect(html).toContain('不会自动连接');
+  expect(mocks.submits).toBe(0); expect(html).toContain('连接账户进行恢复'); expect(html).toContain('不连接、不交易');
   expect(html).toContain('启动实盘策略');expect(html).toContain('停止策略');expect(html).toContain('0.000000000000000001');
-  expect(html).toContain('REGISTERED');expect(html).toContain('仅保存配置');expect(html).toContain('不保证撤销全部订单');
+  expect(html).toContain('原生策略配置');expect(html).toContain('仅保存配置');expect(mocks.submits).toBe(0);
 });
 it('distinguishes confirmed STOP without durable receipt from a missing native reply',()=>{
  const base={requestId:'original',action:'STOP' as const,status:'UNCERTAIN' as const,error:null};
@@ -43,10 +43,10 @@ it('shows the temporary live gate without claiming a strategy started or hiding 
 it('shows only observed current-session lifecycle facts, never treating declaration as certification',()=>{
  const fact={supported:true,configuredKind:'REGISTERED',scope:'INSTALLED_DISPATCH_ONLY',strategyVerified:false,nativeSessionId:'original-session'};
  const html=renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact}));
- expect(html).toContain('最近一次读取到的原生会话报告');expect(html).toContain('缓存报告可能过时');expect(html).toContain('后台暂停轮询');expect(html).toContain('不证明会话持续在线');expect(html).toContain('已安装此策略的派发入口');expect(html).toContain('original-session');expect(html).toContain('不是认证');
- for(const value of [undefined,{...fact,nativeSessionId:null},{...fact,strategyVerified:true},{...fact,supported:null}])expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value}))).toContain('未知：');
- expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact,unavailable:true}))).toContain('未知：');
- expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:{...fact,supported:false}}))).toContain('未报告此策略的派发入口可用');
+ expect(html).toContain('最近报告：已安装策略派发入口');expect(html).toContain('original-session');expect(html).toContain('REGISTERED');expect(html).not.toContain('认证通过');
+ for(const value of [undefined,{...fact,nativeSessionId:null},{...fact,strategyVerified:true},{...fact,supported:null}])expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value}))).toContain('状态未知');
+ expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:fact,unavailable:true}))).toContain('状态未知');
+ expect(renderToStaticMarkup(createElement(StrategyLifecycleNotice,{value:{...fact,supported:false}}))).toContain('未报告可用的策略派发入口');
  expect(mocks.submits).toBe(0);
 });
 
@@ -58,8 +58,7 @@ it('requires observed summary support for START while preserving STOP and origin
  expect(accountSummaryStartAllowed({supported:true})).toBe(false);
  expect(accountSummaryStartAllowed({supported:true,nativeSessionId:'original'})).toBe(true);
  const html=renderToStaticMarkup(createElement(AccountObservationNotice,{value:old}));
- expect(html).toContain('自动资金观察不可用'); expect(html).toContain('不能热接管');
- expect(html).toContain('UNKNOWN');expect(html).toContain('停止策略、原订单分页和原回执入口保留');
+ expect(html).toContain('不支持有界账户观察');expect(html).toContain('不能启动策略');
  const stale=renderToStaticMarkup(createElement(AccountObservationNotice,{value:old,unavailable:true}));
  expect(stale).toContain('未知');expect(stale).not.toContain('原绑定运行器不支持有界账户观察：');
  expect(strategyResultText({requestId:'old',action:'RECOVER',status:'COMPLETED',receipt:{result:{accountObservation:old}},error:null})).toContain('不能热接管');
@@ -81,7 +80,7 @@ it('renders disabled paper START for legacy/unknown summary, without disabling S
 it('legacy full-history observation is explicit and disabled for unknown/current summary sessions',()=>{
  for(const capability of [undefined,{supported:true,nativeSessionId:'original'},{supported:false,nativeSessionId:'original'}]) {
   const html=renderToStaticMarkup(createElement(LegacyAccountObservation,{path:'/original/strategy',capability}));
-  expect(html).toContain('全部订单与成交历史');expect(html).toContain('不是有界读取');expect(html).toContain('不用于 START 准入');
+  expect(html).toContain('全历史读取');expect(html).toContain('阻塞原节点或耗尽内存');
   expect(html.includes('disabled=""')).toBe(capability?.supported!==false);
  }
  expect(mocks.submits).toBe(0);

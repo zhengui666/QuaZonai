@@ -106,7 +106,7 @@ it('shows readable official results, preserves nulls and never expands raw repor
   expect(visibleText(html)).toContain('暂不可评价'); expect(visibleText(html)).toContain('部分账户快照缺少估值');
   expect(html).not.toContain('999'); expect(html).not.toContain('internal_secret'); expect(html).not.toContain('not-visible');
   expect(html).not.toContain('<pre'); expect(html).not.toContain('canonicalResult');
-  expect(visibleText(html)).toContain('1 条已记录'); expect(visibleText(html)).toContain('明细尚未在此页面加载');
+  expect(visibleText(html)).toContain('1 条已记录'); expect(visibleText(html)).toContain('明细未加载');
 });
 
 it('renders original assessment stars, missing grades, historical scope and real evidence links without recalculating', async () => {
@@ -119,7 +119,7 @@ it('renders original assessment stars, missing grades, historical scope and real
   expect(visibleText(html)).toContain('未评级'); expect(visibleText(html)).toContain('0 / 5 星');
   expect(visibleText(html)).toContain('历史配置，不适用于当前输入'); expect(visibleText(html)).toContain('真实样本尚不足');
   expect(html).not.toContain('/api/v3/research/7/evidence/41'); expect(html).not.toContain('CPCV_NOT_RUN'); expect(html).not.toContain('ratingStatus'); expect(html).toContain('尚未完成组合净化交叉验证');
-  expect(visibleText(html)).toContain('不代表收益承诺或交易许可');
+  expect(visibleText(html)).toContain('证据不足，未评级');
 });
 
 it('keeps stopping available for live validation after a completed historical native result', async () => {
@@ -146,18 +146,18 @@ it('keeps static instrument scenarios visibly conditional in original native res
   const { ResearchAssessments } = await import('./research');
   const basis = { mode: 'STATIC_SCENARIO', ts_init_ns: '1795000000000000001', ts_event_ns: '1795000000000000000', scope: 'HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED' };
   const native = renderToStaticMarkup(createElement(NativeStrategyResultView, { value: { instrumentDefinition: basis, canonicalResult: {}, request: { instrument_definition: basis } } }));
-  expect(visibleText(native)).toContain('静态规格情景'); expect(visibleText(native)).toContain('未验证当时真实规格'); expect(visibleText(native)).not.toContain('1795000000000000001');
+  expect(visibleText(native)).toContain('静态规格情景'); expect(visibleText(native)).toContain('历史规格未验证'); expect(visibleText(native)).not.toContain('1795000000000000001');
   const report = renderToStaticMarkup(createElement(ResearchAssessments, { assessments: [{ taskId: 1, mode: 'SYNTHESIS', status: 'completed', configuration: 'CURRENT', error: null, result: { instrumentDefinitionAssumption: basis, judgment: { stars: 3, rationale: 'Conditional only' }, ratingStatus: 'RATED_CONDITIONAL_STATIC_SCENARIO' }, evidenceLinks: [] }] }));
-  expect(visibleText(report)).toContain('条件性情景评级'); expect(visibleText(report)).toContain('历史合约规格未核实');
+  expect(visibleText(report)).toContain('条件性情景评价'); expect(visibleText(report)).toContain('历史规格未核实');
 
 });
 
 it('shows original equity availability and observation scope without inventing annual performance', () => {
   const value = { equityPerformance: { source: 'NAUTILUS_PORTFOLIO_SNAPSHOTS', status: 'UNAVAILABLE', reason: 'UNPRICED_PORTFOLIO_SNAPSHOTS', observed_utc_days: '27', return_days: '26', unpriced_snapshot_count: '1' }, canonicalResult: {}, request: {} };
   const html = renderToStaticMarkup(createElement(NativeStrategyResultView, { value }));
-  expect(visibleText(html)).toContain('252 / 365 是年化频率，不是观测天数');
-  expect(visibleText(html)).toContain('短样本年化是外推');
-  expect(visibleText(html)).toContain('缺少权益证据时不替换为持仓收益');
+  expect(visibleText(html)).toContain('年化为外推，非实际全年收益');
+  expect(visibleText(html)).toContain('暂不可评价');
+  expect(visibleText(html)).toContain('尚无可用的账户权益统计');
   expect(visibleText(html)).toContain('部分账户快照缺少估值');
   expect(visibleText(html)).toContain('已观察天数'); expect(visibleText(html)).toContain('27');
 });

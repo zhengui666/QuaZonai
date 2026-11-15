@@ -76,8 +76,8 @@ function DeleteDialog({ command, back, close }: { command: DeletionCommand; back
   return <Modal title={`删除${record.label}？`} open destroyOnHidden maskClosable={!busy} closable={!busy} keyboard={!busy}
     okText={error ? '重试删除' : entry ? '核对原删除' : '确认删除'} cancelText="取消" confirmLoading={busy} okButtonProps={{ danger: true, disabled: busy }} cancelButtonProps={{ disabled: busy }}
     onOk={() => { void remove(); }} onCancel={() => { if (!busy) close(); }}>
-    <p>删除后将从列表移除，原始试验、证据与回执历史保留。运行中的任务或仍被使用的对象须先处理相关依赖。</p>
-    {entry && <p>此删除尚待核对，将沿用原始身份重试；找到记录不存在不代表已取得删除回执。</p>}
+    <p>从列表移除，历史保留。</p>
+    {entry && <p>删除结果待核对。</p>}
     <code>{command.id}</code><ErrorNotice error={error} />{entry && <DraftNotice saved={entry.persisted} />}
   </Modal>;
 }
@@ -89,7 +89,7 @@ export function DeleteRecord({ kind, id, back }: { kind: Kind; id: string; back?
 /** Always available after authentication, including a deleted object's 404 detail. No automatic writes. */
 export function DeletionRecovery() {
   const registry = useSyncExternalStore(subscribe, snapshot); const [selected, setSelected] = useState<DeletionCommand>();
-  return <>{registry.length > 0 && <section className="deletion-recovery" aria-label="待核对删除"><h2>待核对删除</h2><p>原删除结果未确认。请按原身份核对，收到匹配回执后才会结束此记录。</p>
+  return <>{registry.length > 0 && <section className="deletion-recovery" aria-label="待核对删除"><h2>待核对删除</h2><p>删除结果待核对。</p>
     {registry.map(value => <div className="deletion-recovery-row" key={value.path}><span>{records[value.kind].label} <code>{value.id}</code></span><Button disabled={value.busy} loading={value.busy} onClick={() => setSelected(value)}>核对删除{records[value.kind].label}</Button><DraftNotice saved={value.persisted} /></div>)}
   </section>}{selected && <DeleteDialog key={selected.path} command={selected} close={() => setSelected(undefined)} />}</>;
 }

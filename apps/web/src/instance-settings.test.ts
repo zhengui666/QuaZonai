@@ -27,7 +27,9 @@ describe('explicit trusted account compatibility form',()=>{
  });
  it('separates an artifact declaration from observed account capability and avoids certification claims',()=>{
   const declared=renderToStaticMarkup(createElement(AccountCompatibilityNotice,{declaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'}));
-  expect(declared).toContain('自报已声明');expect(declared).toContain('不是认证');expect(declared).toContain('不证明账户取消当前可用');expect(declared).toContain('清除当前产物选择');expect(declared).toContain('重新显式选择');expect(declared).toContain('不会修改产物');
-  const missing=renderToStaticMarkup(createElement(AccountCompatibilityNotice,{declaration:undefined}));expect(missing).toContain('未报告');expect(missing).toContain('不会据保存配置补充');
+  expect(declared).toContain('自报声明，未验证');
+  expect(declared).not.toContain('这不证明');
+  const missing=renderToStaticMarkup(createElement(AccountCompatibilityNotice,{declaration:undefined}));expect(missing).toContain('未声明');
+
  });
 });
