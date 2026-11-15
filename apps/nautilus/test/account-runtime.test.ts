@@ -206,3 +206,16 @@ test('live vault configuration is rejected before process spawn or receipt direc
     }
   } finally { await rm(directory,{recursive:true,force:true}); }
 });
+
+test('internal persisted trader identity reaches BOOT without changing legacy default',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-trader-boot-'));
+ try{
+  const script=join(directory,'protocol.mjs'),binary=join(directory,'runner');
+  await writeFile(script,`import readline from 'node:readline';let config;readline.createInterface({input:process.stdin}).on('line',line=>{const v=JSON.parse(line);if(v.operation==='BOOT')config=v.config;console.log(JSON.stringify({requestId:v.requestId,result:v.operation==='BOOT'?{native_session_id:'session'}:{config}}));if(v.operation==='SHUTDOWN')process.exit(0);});`);
+  await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
+  for(const trader of [undefined,'QZ-ACCOUNT-01900000000070008000000000000001']){
+   const runtime=new AccountRuntime(binary,{id:'paper',clientId:'c',accountId:'a',mode:'paper',instruments:['TEST.SIM'],nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:null}}},'source',directory,undefined,trader);
+   try{await runtime.start();const value=await runtime.request('READ_CONFIG');assert.equal((value.config as any).trader_id,trader);assert.equal((value.config as any).source_id,'source');}finally{await runtime.close();}
+  }
+ }finally{await rm(directory,{recursive:true,force:true});}
+});

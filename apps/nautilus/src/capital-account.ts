@@ -3,7 +3,7 @@ import {nativeStrategyControl,assertSameNativeStrategyControl,type NativeStrateg
 import { accountStrategyCommand, nativeAccountStrategyConfiguration } from '../../../packages/contracts/src/account-strategy.ts';
 import { nativeFixedRiskSizing } from '../../../packages/contracts/src/nautilus.ts';
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, rename } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AccountRuntime } from './account-runtime.ts';
@@ -24,7 +24,7 @@ interface Exit {
 }
 interface Command { original: unknown; state: 'PENDING' | 'UNCERTAIN' | 'ACCEPTED' | 'REJECTED'; error: string | null; exitId: string; result?: unknown }
 interface AccountState {
-  schema_version: 2; sourceId: string; revision: string; epoch: string;
+  schema_version: 2; sourceId: string; nativeTraderId?: string; revision: string; epoch: string;
   identity: { mode: 'paper' | 'live'; network: string; accountId: string; accountAddress: string | null; currency: 'USDC' };
   previews: Record<string, { original: unknown; preview: CapitalExitPreview; context: CapitalExitPlanningContext }>;
   commands: Record<string, Command>; exits: Record<string, Exit>; targets: Record<string, { original: Json; receipt: Json; epoch: string; budget_basis?: Json }>;
@@ -77,7 +77,12 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     state = { schema_version: 2, sourceId: id(), identity, revision: '1', epoch: '1', previews: {}, commands: {}, exits: {}, targets: {}, ledgerClaims: {}, reverseTransferPending: false };
+    // Never rename a retained native owner, even if its QZ receipt is absent.
+    let retainedNative = true;
+    try { await stat(join(directory, 'native-cache')); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; retainedNative = false; }
+    if (!retainedNative) state.nativeTraderId = `QZ-ACCOUNT-${state.sourceId.replaceAll('-', '')}`;
   }
+  if (state.nativeTraderId !== undefined && state.nativeTraderId !== `QZ-ACCOUNT-${state.sourceId.replaceAll('-', '')}`) fail('account_native_trader_identity_invalid');
   state.strategyRevision ??= '1';
   if (!/^\d+$/.test(state.strategyRevision)) fail('strategy_revision_invalid');
   let writeFailed = false;
@@ -93,7 +98,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   // Opening retained records never reinterprets their original control epoch.
   await save();
   if (state.strategyConfiguration) options.nativeStrategy = nativeAccountStrategyConfiguration(state.strategyConfiguration);
-  const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory, receiptOwner.fd);
+  const runtime = suppliedRuntime ?? new AccountRuntime(binary, options, state.sourceId, directory, receiptOwner.fd, state.nativeTraderId);
   const nativeMargin = options.accountSemantics === 'NATIVE_MARGIN';
   const reader = options.mode === 'live' && !nativeMargin ? suppliedReader ?? new HyperliquidAccountReader(options.accountAddress!, options.network) : null;
   let latest: NativeAccountSummary | null = null, proof: HyperliquidAccountProof | null = null, failure: string | null = 'account_runtime_not_started';
@@ -278,6 +283,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
       accountObservation: runtime.accountObservationCapability?.() ?? null,
       pendingConfigurationRequests: Object.entries(state.strategyCommands ?? {}).filter(([, value]) => value.original.action === 'CONFIGURE' && value.receipt.status !== 'COMPLETED').map(([requestId]) => requestId),
       accountSemantics: options.accountSemantics ?? 'LEGACY_SPOT', exchangeAbstraction: null,
+      nativeTraderId: state.nativeTraderId ?? 'QZ-ACCOUNT-001',
       runnerValidated: false, note: 'Configuration only. REGISTERED names require a user-built account runner; saving never connects or starts trading.' };
   }
   async function verifyConfiguration(requestId: string) {
