@@ -81,7 +81,9 @@ export class AccountRuntime implements NativeAccountRuntime {
   private sourceId: string;
   private dataDir: string;
   private pending = new Map<string, { resolve(value: Record<string, unknown>): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
-  constructor(binary: string, options: AccountOptions, sourceId: string, dataDir: string) {
+  private receiptOwnerFd?: number;
+  constructor(binary: string, options: AccountOptions, sourceId: string, dataDir: string, receiptOwnerFd?:number) {
+    this.receiptOwnerFd = receiptOwnerFd;
     this.binary = binary; this.options = options; this.sourceId = sourceId; this.dataDir = dataDir;
   }
   isConnected(): boolean { return this.child !== null || this.starting !== null; }
@@ -107,7 +109,8 @@ export class AccountRuntime implements NativeAccountRuntime {
         diagnostic = openSync(join(this.dataDir, `native-stderr-${randomUUID()}.log`), 'wx', 0o600);
       } catch { throw new Error('account_runtime_not_started_diagnostic_unavailable'); }
       let tail: Buffer = Buffer.alloc(0); let diagnosticOpen = true;
-      const child = spawn(this.binary, ['account-runtime'], { env, stdio: ['pipe', 'pipe', 'pipe'] }); this.child = child;
+      // The first three descriptors are always pipes; FD 3 retains the receipt lease.
+      const child = spawn(this.binary, ['account-runtime'], { env, stdio: ['pipe', 'pipe', 'pipe', this.receiptOwnerFd ?? 'ignore'] }) as ChildProcessWithoutNullStreams; this.child = child;
       const failed = () => {
         // A superseded process can emit error and then exit after its successor
         // has started. It has no authority over that generation's requests.
