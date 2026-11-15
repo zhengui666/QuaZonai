@@ -1281,3 +1281,46 @@ fn official_replay_frame_grouping_preserves_tied_selectors_and_strategy_callback
         );
     }
 }
+
+#[test]
+fn explicit_native_latency_changes_order_acceptance_and_fill_time() {
+    // Reuse the existing synthetic L2 regression catalog, never historical/OOS data.
+    let mut books = snapshot(SECOND, 2 * SECOND, "10.000000", "0.100000");
+    books.extend(snapshot(3 * SECOND, 4 * SECOND, "10.000000", "0.100000"));
+    books.extend(snapshot(6 * SECOND, 7 * SECOND, "10.000000", "0.100000"));
+    let dir = catalog(&books, &[]);
+    for (delay, expected_fill) in [(0, 2 * SECOND), (500_000_000, 4 * SECOND)] {
+        let mut input = request(9 * SECOND);
+        input.venue.latency_model = Some(
+            serde_json::from_value(json!({
+                "kind":"STATIC", "base_latency_ns":delay.to_string(),
+                "insert_latency_ns":"0", "update_latency_ns":"0", "delete_latency_ns":"0"
+            }))
+            .unwrap(),
+        );
+        let result = job::native_strategy::run(dir.path(), input).unwrap();
+        let orders = result.canonical_result["orders"].as_array().unwrap();
+        let first = orders
+            .iter()
+            .filter_map(|row| row.get("Limit"))
+            .map(|row| &row["core"])
+            .find(|core| core["ts_submitted"] == "2000000000")
+            .unwrap();
+        assert_eq!(first["side"], "BUY");
+        assert_eq!(first["quantity"], "0.010000");
+        assert_eq!(first["ts_accepted"], expected_fill.to_string());
+        assert_eq!(first["ts_closed"], expected_fill.to_string());
+        let fill = first["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|event| event.get("Filled"))
+            .unwrap();
+        assert_eq!(fill["ts_event"], expected_fill.to_string());
+        assert_eq!(fill["last_px"], "101.00");
+        // The official queue is drained on the next data cycle: 500 ms latency
+        // arrives between snapshots, but acceptance/fill is observed at 4 s,
+        // not an invented 2.5 s quote. Later strategy orders can differ.
+        eprintln!("native latency={delay} ns: first order submitted=2000000000 accepted/filled={expected_fill}");
+    }
+}
