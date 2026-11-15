@@ -1563,6 +1563,15 @@ fn ordinary_cancel_supported(
         && !has_registration
         && matches!(strategy, NativeCompiledStrategyV1::EmaCross { .. })
 }
+fn require_supported_account_scope(mode: &str, vault_configured: bool) -> Result<()> {
+    // QZ has no explicit vault identity contract. Never let upstream vault
+    // signing and our explicit query account silently name different owners.
+    ensure!(
+        mode != "live" || !vault_configured,
+        "account_native_vault_configuration_unsupported"
+    );
+    Ok(())
+}
 async fn run_config_owned(
     config: AccountRuntimeConfig,
     boot_id: String,
@@ -1618,6 +1627,15 @@ async fn run_config_owned(
                 && config.account_semantics.as_deref() == Some("NATIVE_MARGIN")),
         "account_native_semantics_invalid"
     );
+    let vault_key = if config.testnet {
+        "HYPERLIQUID_TESTNET_VAULT"
+    } else {
+        "HYPERLIQUID_VAULT"
+    };
+    require_supported_account_scope(
+        &config.mode,
+        std::env::var_os(vault_key).is_some_and(|value| !value.is_empty()),
+    )?;
     let ids: Vec<_> = config
         .instruments
         .iter()
@@ -1946,6 +1964,18 @@ async fn run_config_owned(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_vault_scope_is_rejected_without_resolving_credentials() {
+        assert!(require_supported_account_scope("live", false).is_ok());
+        assert!(require_supported_account_scope("paper", true).is_ok());
+        assert_eq!(
+            require_supported_account_scope("live", true)
+                .unwrap_err()
+                .to_string(),
+            "account_native_vault_configuration_unsupported"
+        );
+    }
+
     #[test]
     fn official_event_json_keeps_adjacent_nanoseconds() -> Result<()> {
         use nautilus_model::events::OrderCanceled;

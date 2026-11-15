@@ -90,6 +90,10 @@ export class AccountRuntime implements NativeAccountRuntime {
     if (this.starting) return this.starting;
     if (this.child) return;
     this.starting = (async () => {
+      // Vault signing is not an account mode supported by this configuration.
+      // Do not silently drop a vault intent or query a different physical owner.
+      const vaultKey = this.options.network === 'testnet' ? 'HYPERLIQUID_TESTNET_VAULT' : 'HYPERLIQUID_VAULT';
+      if (this.options.mode === 'live' && process.env[vaultKey]) throw new Error('account_native_vault_configuration_unsupported');
       const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR };
       for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS']) if (process.env[key]) env[key] = process.env[key];
