@@ -36,10 +36,10 @@ export function accountSummaryStartAllowed(value?:AccountObservationCapability|n
 export function AccountObservationNotice({value,unavailable=false}:{value?:AccountObservationCapability|null;unavailable?:boolean}) {
  const unsupported=!unavailable&&value?.supported===false&&!!value.nativeSessionId;
  return <section aria-label="有界账户观察能力"><h4>有界账户观察能力</h4><p>{unsupported
-  ?'原绑定运行器不支持有界账户观察：自动资金观察不可用，不能启动策略。需要明确安排升级；新版本不能热接管旧节点，不会自动重绑、迁移或清除订单、预留及 UNKNOWN。旧运行器内部的周期历史读取也未因此修复。'
-  :accountSummaryStartAllowed(value,unavailable)?'最近一次读取的原会话报告支持有界账户观察；这不是持续在线、策略兼容性或交易许可的证明。'
-  :'未知：尚未读取到当前会话的有界账户观察能力，或本次读取失败。不能据保存配置或策略派发能力推断可启动。'}</p>
- <p>停止策略、原订单分页和原回执入口保留，各自仍需原会话能力；查看不会连接或交易。这里只显示最近读取结果，后台暂停轮询，报告可能过时。</p></section>;
+  ?'原运行器不支持有界账户观察，不能启动策略。'
+  :accountSummaryStartAllowed(value,unavailable)?'最近报告：支持有界账户观察（非交易许可）。'
+  :'有界账户观察能力未知。'}</p>
+ </section>;
 }
 interface LegacyObservation {nativeSessionId:string;observedAtNs:string;receivedAt:string;observation:{cash:unknown;equity:unknown}}
 export function LegacyAccountObservation({path,capability,unavailable=false}:{path:string;capability?:AccountObservationCapability|null;unavailable?:boolean}) {
@@ -50,7 +50,7 @@ export function LegacyAccountObservation({path,capability,unavailable=false}:{pa
    void api<LegacyObservation>(`${path}/legacy-snapshot`,{method:'POST',body:{mode:'LEGACY_FULL_SNAPSHOT',expectedNativeSessionId:session,acknowledgeFullHistoryCost:true}})
     .then(setResult).catch(setError).finally(()=>{inFlight.current=false;setBusy(false);});};
  return <section aria-label="旧运行器单次全量观察"><h4>旧运行器单次全量观察</h4>
- <p>LEGACY_FULL_SNAPSHOT 会在原运行器读取全部订单与成交历史，可能占用大量内存并阻塞原节点；不是有界读取。仅明确点击后读一次，不连接、不重绑、不自动重发。旧运行器行情回调的全历史成本仍存在。此处仅展示原现金和权益，不返回历史明细，不用于 START 准入。</p>
+ <p>全历史读取可能阻塞原节点或耗尽内存。</p>
  <Button disabled={!session||busy} loading={busy} onClick={()=>confirm('读取一次旧版全历史快照？','原运行器可能因全部历史量过大而缓慢、超时或内存不足；可能影响同一节点响应。仅读取已连接的原会话，不启动策略；失败不自动重试。',read)}>明确读取一次旧版观察</Button>
  {!!error&&<p role="alert">本次观察未确认完成；没有自动重发，旧记录未清除。原运行器可能仍在处理请求，不应立即重复读取。</p>}
  {result&&<div><p>原会话：{result.nativeSessionId}；原观测纳秒：{result.observedAtNs}；接收时间：{result.receivedAt}。这是一次历史读数，不代表当前在线或可交易{result.nativeSessionId!==session?'，当前会话已变化或不可用':''}。</p>
@@ -60,9 +60,9 @@ export function LegacyAccountObservation({path,capability,unavailable=false}:{pa
 interface LifecycleCapability {supported?:boolean|null;configuredKind?:string|null;scope?:string|null;strategyVerified?:boolean|null;nativeSessionId?:string|null}
 export function StrategyLifecycleNotice({value,unavailable=false}:{value?:LifecycleCapability|null;unavailable?:boolean}){
  const observed=!unavailable&&value?.scope==='INSTALLED_DISPATCH_ONLY'&&value.strategyVerified===false&&!!value.nativeSessionId&&typeof value.supported==='boolean';
- return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'未知：尚未取得当前会话的 BOOT 能力事实，或本次读取不可用。保存的配置和声明不能代替实际观测。':value.supported?'最近一次读取到的原生会话报告已安装此策略的派发入口。':'最近一次读取到的原生会话未报告此策略的派发入口可用。'}</p>
+ return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'原生策略接线状态未知。':value.supported?'最近报告：已安装策略派发入口。':'最近报告：未报告可用的策略派发入口。'}</p>
  {observed&&<p>原生报告类型：{value.configuredKind??'未提供'}；原会话：{value.nativeSessionId}。</p>}
- <p>前台约每 3 秒读取一次，后台暂停轮询；缓存报告可能过时，不证明会话持续在线。这里只显示接线事实，不验证用户工厂、策略兼容性或交易结果。可信代码声明不是认证，也不是交易许可；查看不连接、不启动策略，不改变原命令准入。</p></section>;
+ </section>;
 }
 /** Edit only known deployment strings; opaque owner configuration is not interpreted. */
 export function strategyConfigurationField(text:string,field:'instrument_id'|'name',value:string){
@@ -76,11 +76,11 @@ export function strategyConfigurationField(text:string,field:'instrument_id'|'na
 }
 export function StrategyConfigurationFields({text,disabled,onChange}:{text:string;disabled:boolean;onChange:(value:string)=>void}){
  let config:{instrument_id?:unknown;strategy?:{kind?:unknown;name?:unknown}};
- try{const value:unknown=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))return <p>请先在高级配置中修正原对象，不生成替代配置。</p>;config=value;}catch{return <p>请先在高级配置中修正原对象，不生成替代配置。</p>;}
+ try{const value:unknown=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))return <p>请修正高级配置 JSON 对象。</p>;config=value;}catch{return <p>请修正高级配置 JSON 对象。</p>;}
  return <fieldset disabled={disabled}><legend>原生策略配置</legend>
  <label>策略标的（必须沿用此账户已绑定标的）<Input aria-label="编辑策略标的" disabled={disabled} value={typeof config.instrument_id==='string'?config.instrument_id:''} onChange={event=>onChange(strategyConfigurationField(text,'instrument_id',event.target.value))}/></label>
  {config.strategy?.kind==='REGISTERED'&&<label>已编入运行器的原策略名称<Input aria-label="编辑原策略名称" disabled={disabled} value={typeof config.strategy.name==='string'?config.strategy.name:''} onChange={event=>onChange(strategyConfigurationField(text,'name',event.target.value))}/></label>}
- <p>只修改原合同中的文本字段。自定义 config 没有可用 schema，保留高级入口且不猜测参数；未编辑字段保留，十进制字符串不转换为数字。保存不连接或启动策略。</p></fieldset>;
+ </fieldset>;
 }
 type StrategyEditIdentity={accountSourceId:string;strategyRevision:string};
 export type StrategyEditDraft=StrategyEditIdentity&{text:string;accountKey:string};
@@ -119,20 +119,20 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
   const supported = !!native && typeof status.data?.accountSourceId === 'string' && /^\d+$/.test(status.data.strategyRevision);
   const unsettled = !!requestId && (!receipt.data || ['PENDING', 'UNCERTAIN'].includes(receipt.data.status));
   return <section className="result-section"><h3>Nautilus 原生策略</h3>
-    <p>保存配置、连接恢复、启动交易是三个独立操作。REGISTERED 指向已编入账户运行器的原生 Rust 策略；名称与 config 原样提交，不表示运行器已支持。未知名称不能回退到示例策略。不要在参数中填写私钥或密码。</p>
+    <p>勿填写私钥或密码。</p>
     <AccountObservationNotice value={configuration.data?.accountObservation} unavailable={!!configuration.error}/>
     {configured&&<LegacyAccountObservation key={path} path={path} capability={configuration.data?.accountObservation} unavailable={!!configuration.error}/>}
     <StrategyLifecycleNotice value={configuration.data?.lifecycleCapability} unavailable={!!configuration.error}/>
     {configured&&value.mode==='live'&&<SpotBalanceObservation key={path} path={`/accounts/configurations/${encodeURIComponent(value.id)}`} sourceId={configuration.data?.accountSourceId} nativeSessionId={configuration.data?.accountObservation?.nativeSessionId} connected={!configuration.error&&configuration.data?.connected===true&&configuration.data?.accountObservation?.supported===true}/>}
     <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
-      <p>保留此账户已绑定标的。自定义策略格式为 instrument_id 与 strategy: {`{kind: "REGISTERED", name: "已注册名称", config: 任意JSON}`}。新增 Rust 策略类型须先构建部署账户运行器；仅改 config 参数不需要重新编译。</p>
+
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
       <StrategyConfigurationFields text={configurationText} onChange={editConfiguration} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending}/>
-      <details><summary>高级：完整原生策略配置</summary><p>未知字段与自定义参数按原合同编辑；裸 JSON 数字不保证超出 JavaScript 精度范围的原始词法，精确小数请沿原策略要求使用字符串。</p>
+      <details><summary>高级：完整原生策略配置</summary><p>精确小数请使用原策略要求的字符串格式。</p>
       <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => editConfiguration(event.target.value)} /></details>
       {editChanged&&<p role="alert">原账户或策略配置版本已变化。草稿保留，不能用新版本号覆盖原配置。请先核对，再明确放弃草稿采用最新配置。</p>}
       {edited&&<Button disabled={!!saveConfiguration.pending||saveConfiguration.busy} onClick={()=>confirm('放弃当前未保存草稿？','只放弃本地编辑并显示最近读取的原配置，不保存、不连接、不启动。',()=>{setEdited(undefined);setConfigurationError(undefined);void configuration.refetch();})}>放弃草稿，采用最新配置</Button>}
-      <p>仅断开状态允许保存；保存成功不代表参数已被原生运行器验证，更不会连接账户或发送订单。</p>
+      <p>仅断开时可保存。</p>
       <Button disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending || editChanged} loading={saveConfiguration.busy} onClick={() => {
         try { const payload = strategyEditSubmission(edited,configuration.data,commandIdentity,configurationText); setConfigurationError(undefined); void saveConfiguration.submit(payload); }
         catch (error) { setConfigurationError(error); }
@@ -143,8 +143,8 @@ export default function AccountStrategy({ value, configured=false }: { value: Pi
       <PendingCommand command={saveConfiguration} />
       {configurationReceipt && <p>{configurationReceipt.status === 'COMPLETED' ? '配置已保存，尚未连接或启动交易。' : '配置持久结果不确定；保留原请求，交易启动被阻止。请核对原配置回执，不要当作保存成功。'}</p>}
     </details>
-    <p>查看账户和重启服务不会自动连接。连接恢复不加载交易策略，不自动下单、改单或撤单；再次启动策略是独立操作。停止遵从上游配置，不保证撤销全部订单或清空持仓。资金退出请使用独立资金操作。</p>
-    {value.mode === 'live' && <p role="status">实盘启动暂不可用：官方现货余额观察尚未与 Account、Portfolio 和 Risk 的一致性及新鲜度接通。保存配置、明确恢复连接和停止仍是独立操作；不得用合并账户余额代替现货余额。</p>}
+
+    {value.mode === 'live' && <p role="status">实盘启动暂不可用：现货余额与风控尚未接通。</p>}
     <ErrorNotice error={status.error} retry={() => { void status.refetch(); }} />
     {native && <><Facts items={[["账户模式", value.mode === 'live' ? '实盘：可能产生真实订单' : '模拟盘'], ["策略", native.strategy_id ?? '未注册（仅恢复连接）'], ["状态", <Status value={native.state} />], ["标的", native.instrument_id], ["原生版本", native.native_version], ["策略控制修订", status.data!.strategyRevision]]} /><details><summary>账户原生策略完整配置</summary><pre>{JSON.stringify(native.config, null, 2)}</pre></details></>}
     <ErrorNotice error={fence.error} retry={() => { void fence.refetch(); }} />

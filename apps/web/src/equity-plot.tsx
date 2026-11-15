@@ -63,11 +63,11 @@ export default function EquityPlot({ points, currency, initialCapital }: { point
     <div className="section-heading equity-heading"><div><h3>{initialCapital === undefined ? '账户权益' : '回测表现'}</h3><span className="quiet">{currency} · UTC · <MetricLabel metricKey="records" label={`${ordered.length.toLocaleString('zh-CN')} 个记录点`} /></span></div>
     </div>
     <dl className="equity-summary"><div><dt><MetricLabel metricKey="endingEquity" /> <span>{currency}</span></dt><dd><Exact value={formatEquity(latest?.value)} /></dd></div></dl>
-    <p className="quiet">仅绘制原始账户权益；未提供上游收益与回撤序列，不在页面自行计算。</p>
-    {invalidTimes > 0 && <p className="error-text" role="status">{invalidTimes} 个记录时间无效，未绘制；原始记录见下方数据。</p>}
+
+    {invalidTimes > 0 && <p className="error-text" role="status">{invalidTimes} 个记录时间无效，未绘制。</p>}
     {drawable ? <><div className="equity-legend"><span><i /><MetricLabel metricKey="equity" label={`账户权益 / ${currency}`} /></span><Button size="small" type="text" onClick={() => chart.current?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 })}>重置区间</Button></div>
       <div ref={element} className="equity-chart" data-testid="equity-chart" role="img" aria-label={description} />
-      <p className="equity-caption quiet">{ordered[0]?.at.slice(0, 10)} — {ordered.at(-1)?.at.slice(0, 10)}<span>拖动底部选择区间</span></p></> : <Empty title={points.every(point => point.value === null) ? '权益数值未提供' : '数值无法绘制'} />}
+      <p className="equity-caption quiet">{ordered[0]?.at.slice(0, 10)} — {ordered.at(-1)?.at.slice(0, 10)}</p></> : <Empty title={points.every(point => point.value === null) ? '权益数值未提供' : '数值无法绘制'} />}
     <details className="curve-details"><summary>查看数据</summary><Table<EquityPoint> rowKey={(point, index) => `${point.at}/${index}`} size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={tablePoints} scroll={{ x: 450 }} columns={[{ title: '时间', render: (_value, point) => <Timestamp value={point.at} /> }, { title: <MetricLabel metricKey="equity" label={`权益 / ${currency}`} />, align: 'right', render: (_value, point) => <Exact value={point.value} /> }]} /></details>
   </section>;
 }

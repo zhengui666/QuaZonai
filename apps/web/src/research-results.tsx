@@ -39,9 +39,9 @@ export function NativeStrategyResultView({ value, researchId }: { value: NonNull
   const canonical = record(value.canonicalResult);
   const tables = [['orders', '订单'], ['fills', '成交'], ['positions', '持仓'], ['portfolio_snapshots', '权益快照']] as const;
   return <section className="research-result" aria-label="官方回测结果">
-    <header className="result-title"><div><span className="eyebrow">NAUTILUS · 历史回测</span><h3>让证据说明表现</h3></div><Tag>官方原值</Tag></header>
-    <p className="quiet">回测完成不等于样本外验证通过，也不构成模拟盘或实盘交易许可。</p>
-    {record(value.instrumentDefinition).mode === 'STATIC_SCENARIO' && <Alert type="warning" title="静态规格情景" description="未验证当时真实规格；不能当作实际历史可交易性或实盘证据。" />}
+    <header className="result-title"><div><span className="eyebrow">NAUTILUS · 历史回测</span><h3>回测结果</h3></div><Tag>官方原值</Tag></header>
+
+    {record(value.instrumentDefinition).mode === 'STATIC_SCENARIO' && <Alert type="warning" title="静态规格情景" description="历史规格未验证" />}
     <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={[
       { key: 'strategy', label: '策略', children: scalar(strategy.name ?? strategy.kind ?? request.name) },
       { key: 'instrument', label: '标的', children: scalar(request.instrument_id) },
@@ -54,7 +54,7 @@ export function NativeStrategyResultView({ value, researchId }: { value: NonNull
       { key: 'balance', label: '初始余额与币种', children: Array.isArray(venue.starting_balances) ? venue.starting_balances.filter(value => typeof value === 'string').slice(0, 20).join('；') || '未提供' : '当前报告未展开初始余额' },
       { key: 'maker', label: '挂单费率（原始小数）', children: scalar(venue.maker_fee) },
       { key: 'taker', label: '吃单费率（原始小数）', children: scalar(venue.taker_fee) },
-    ]} /><p className="result-footnote">以上是当前请求的假设，不以数据集全范围替代实际回放窗口，也不等于真实账户余额。</p></details>
+    ]} /></details>
     <section className="result-card"><h4>账户权益表现</h4>
       {equity.status !== 'AVAILABLE' && <Alert type="info" title="暂不可评价" description={unavailableReason(equity.reason ?? value.equityUnavailableReason)} />}
       <Table pagination={false} size="small" rowKey={(_, i) => String(i)} dataSource={statistics.filter(item => ['CAGR', 'Sharpe Ratio'].some(name => String(record(item).native_key).startsWith(name))).slice(0, 8).map(record)} columns={[
@@ -62,7 +62,7 @@ export function NativeStrategyResultView({ value, researchId }: { value: NonNull
         { title: '年化口径', dataIndex: 'annualization_days', render: value => `${scalar(value)} 天` },
         { title: '原值', dataIndex: 'value', render: value => equity.status === 'AVAILABLE' ? scalar(value) : '不可用' },
       ]} locale={{ emptyText: '尚无可用的账户权益统计' }} />
-      <p className="result-footnote">252 / 365 是年化频率，不是观测天数。短样本年化是外推；缺少权益证据时不替换为持仓收益，也不补零。</p>
+      <p className="result-footnote">年化为外推，非实际全年收益。</p>
       <Descriptions size="small" column={2} items={[
         { key: 'days', label: '已观察天数', children: scalar(equity.observed_utc_days) },
         { key: 'returns', label: '收益序列天数', children: scalar(equity.return_days) },
@@ -73,12 +73,12 @@ export function NativeStrategyResultView({ value, researchId }: { value: NonNull
       { title: '持仓数', dataIndex: 'total_positions', render: scalar },
       { title: '事件数', dataIndex: 'total_events', render: scalar },
       { title: '回放迭代', dataIndex: 'iterations', render: scalar },
-    ]} />{researchId ? <Pagination current={page} pageSize={20} total={total} onChange={next => { void loadPage(next); }} disabled={loading} showSizeChanger={false} hideOnSinglePage aria-label="官方运行记录分页" /> : total > 20 ? <p>仅展示前 20 条运行记录。</p> : null}<p className="result-footnote">运行计数不是收益指标，不用于评价策略优劣。</p></section>}
-    {value.canonicalResult === null && <Alert type="info" title="扩展报告未保留" description={`${unavailableReason(value.canonicalUnavailableReason)} 这不等于回测没有运行。`} />}
+    ]} />{researchId ? <Pagination current={page} pageSize={20} total={total} onChange={next => { void loadPage(next); }} disabled={loading} showSizeChanger={false} hideOnSinglePage aria-label="官方运行记录分页" /> : total > 20 ? <p>仅展示前 20 条运行记录。</p> : null}</section>}
+    {value.canonicalResult === null && <Alert type="info" title="扩展报告未保留" description={unavailableReason(value.canonicalUnavailableReason)} />}
     {tables.some(([key]) => canonical[key] !== undefined) && <section className="result-card"><h4>原始订单与账户证据</h4>{tables.map(([key, label]) => {
       const table = canonical[key]; if (table === undefined) return null;
       const manifest = record(table);
-      return <p key={key}><strong>{label}</strong> · {Array.isArray(table) ? `${table.length} 条已记录` : manifest.format === 'qz.native-table/v1' ? '已按页保存' : '已保留原始证据'}。明细尚未在此页面加载。</p>;
-    })}<p className="result-footnote">页面不会下载或展开整份大型报告；可以在对话中要求读取指定范围的原始记录。</p></section>}
+      return <p key={key}><strong>{label}</strong> · {Array.isArray(table) ? `${table.length} 条已记录` : manifest.format === 'qz.native-table/v1' ? '已按页保存' : '已保留原始证据'} · 明细未加载</p>;
+    })}</section>}
   </section>;
 }

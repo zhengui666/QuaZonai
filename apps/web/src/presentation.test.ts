@@ -27,7 +27,8 @@ describe('Chinese metric presentation', () => {
   it('does not explain request identities as money or individual exit amounts as account totals', () => {
     const markup = renderToStaticMarkup(createElement(Facts, { items: [['请求', 'original-request-id'], ['请求金额', '100.000000000000000001']] }));
     expect(markup).not.toContain('aria-label="解释：请求"');
-    expect(markup).toContain('aria-label="解释：请求金额"');
+    expect(markup).not.toContain('aria-label="解释：');
+    expect(markup).toContain('请求金额');
     expect(markup).toContain('original-request-id');
     expect(markup).toContain('100.000000000000000001');
     expect(factMetricKey('账户总预留')).toBe('reserved');
@@ -39,7 +40,7 @@ describe('Chinese metric presentation', () => {
     expect(markup).toContain('未识别指标');
     expect(markup).toContain('原始字段');
     expect(markup).toContain('9007199254740995.000000000000000001');
-    expect(markup).toContain('解释：未识别指标');
+    expect(markup).not.toContain('解释：');
     expect(markup).not.toContain(' open=');
   });
 });

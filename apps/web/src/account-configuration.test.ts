@@ -69,8 +69,8 @@ it('structured fields preserve exact identities, decimals and opaque factory par
 });
 it('renders ordinary account fields without inventing factory schema or submitting',()=>{
  let edits=0;const html=renderToStaticMarkup(createElement(AccountFields,{text:JSON.stringify({mode:'paper',nativeStrategy:{strategy:{kind:'REGISTERED'}}}),onChange:()=>edits++,disabled:false}));
- expect(html).toContain('本地账户名称');expect(html).toContain('模拟初始余额');expect(html).toContain('没有可用 schema');expect(html).toContain('已编入运行器的策略名称');expect(edits).toBe(0);
- expect(renderToStaticMarkup(createElement(AccountFields,{text:'{',onChange:()=>edits++,disabled:false}))).toContain('不会保存替代值');
+ expect(html).toContain('本地账户名称');expect(html).toContain('模拟初始余额');expect(html).not.toContain('没有可用 schema');expect(html).toContain('已编入运行器的策略名称');expect(edits).toBe(0);
+ expect(renderToStaticMarkup(createElement(AccountFields,{text:'{',onChange:()=>edits++,disabled:false}))).toContain('有效 JSON 对象');
 });
 
 import {AccountInstrumentsInput,accountConfigurationForSave} from './account-configuration';
@@ -94,7 +94,7 @@ it('keeps each instrument newline while editing and parses only the explicit sav
 import {SavedRunnerNotice} from './account-configuration';
 it('shows saved binding provenance without pretending the current runner or session was updated',()=>{
  const html=renderToStaticMarkup(createElement(SavedRunnerNotice,{value:{source:'SAVED_ACCOUNT_BINDING',nautilusVersion:'0.69.0',nautilusRevision:'634abcd',precision:'high',compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',compatibilityVerified:false}}));
- expect(html).toContain('0.69.0');expect(html).toContain('634abcd');expect(html).toContain('不会更新或重新绑定');expect(html).toContain('不是认证');expect(html).toContain('不是当前连接探测');
+ expect(html).toContain('0.69.0');expect(html).toContain('634abcd');expect(html).toContain('账户创建时的产物报告');expect(html).toContain('不是认证');expect(html).not.toContain('当前已连接');
  expect(renderToStaticMarkup(createElement(SavedRunnerNotice,{}))).toContain('未记录');
 });
 

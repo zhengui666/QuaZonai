@@ -35,7 +35,7 @@ export function accountConfigurationForSave(text:string,instrumentsDraft?:string
  return accountConfigurationInput(instrumentsDraft===undefined?text:accountConfigurationField(text,'instruments',instrumentsDraft));
 }
 export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrumentsChange}:{text:string;onChange:(text:string)=>void;disabled:boolean;instrumentsDraft?:string;onInstrumentsChange?:(value:string)=>void}){
- let config:Record<string,unknown>;try{config=accountConfigurationInput(text);}catch{return <p>高级配置尚不是有效对象，请先修正；不会保存替代值。</p>;}
+ let config:Record<string,unknown>;try{config=accountConfigurationInput(text);}catch{return <p>高级配置必须为有效 JSON 对象。</p>;}
  const deployment=config.nativeStrategy as {instrument_id?:string;strategy?:{kind?:string;name?:string}}|undefined;
  const edit=(key:string,value:string)=>onChange(accountConfigurationField(text,key,value));
  const field=(key:string,label:string)=><label style={{display:'block'}} key={key}>{label}<Input aria-label={label} disabled={disabled} value={String(config[key]??'')} onChange={event=>edit(key,event.target.value)}/></label>;
@@ -46,9 +46,9 @@ export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrum
  <label style={{display:'block'}}>订阅标的（每行一个原生 InstrumentId）<AccountInstrumentsInput disabled={disabled} value={instrumentsDraft??(Array.isArray(config.instruments)?config.instruments.join('\n'):'')} onChange={value=>onInstrumentsChange?.(value)}/></label>
  <label style={{display:'block'}}>策略标的（须在订阅列表内）<Input aria-label="策略标的" disabled={disabled} value={deployment?.instrument_id??''} onChange={event=>edit('instrument_id',event.target.value)}/></label>
  {config.mode==='paper'?<>{field('startingBalance','模拟初始余额（USDC 原值）')}{field('paperFeeRate','模拟费率（原始小数，非百分数）')}</>:field('accountAddress','公开账户地址（不是私钥）')}
- {config.mode==='live'&&<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>此选项不识别或切换交易所账户 abstraction，不保证现货隔离余额。原生账户、风险与执行由 Nautilus 负责。旧账户不得改语义或另建同地址账户绕过未决订单。保存只写配置，不连接、不启动策略；实际启动仍须当前运行器与账户状态验证。</p></>}
+ {config.mode==='live'&&<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>不切换交易所账户模式。</p></>}
  {deployment?.strategy?.kind==='REGISTERED'&&<label style={{display:'block'}}>已编入运行器的策略名称<Input aria-label="已编入运行器的策略名称" disabled={disabled} value={deployment.strategy.name??''} onChange={event=>edit('name',event.target.value)}/></label>}
- <p>自定义策略参数没有可用 schema，不能推测字段。请在下方高级配置中按原策略合同填写 config；其他原生策略类型也保留高级入口。选择模式不清除其他字段，提交仍由原保存合同校验。</p>
+
  </fieldset>;
 }
 const paperFields = [
@@ -85,17 +85,17 @@ function PaperParameters({text,onChange,disabled,onError}:{text:string;onChange:
  const scenario=(value??{}) as Record<string,unknown>;
  const edit=(key:string,value:string|boolean)=>{try{onChange(paperConfigurationField(text,key,value));onError(undefined);return true;}catch(error){onError(new Error(`${error instanceof Error?error.message:'模拟参数无效'}；未写入配置，输入已恢复为原 JSON 值。`));return false;}};
  return <fieldset disabled={disabled}><legend>官方 Sandbox 模拟参数（可选）</legend>
- <p>概率在离开输入框或按回车后写入同一份配置 JSON，其他字段即时写入，不启动账户。启用时请完整填写概率、种子及四项延迟；最终由官方模型校验。纳秒与种子保留整数文本，不换算。未配置时沿用现有官方默认模型，不代表真实成交保证。</p>
+
  {paperFields.map(([key,label])=><label key={key} style={{display:'block'}}>{label}{key==='prob_fill_on_limit'||key==='prob_slippage'?<PaperProbabilityInput label={label} value={scenario[key]} disabled={disabled} onCommit={value=>edit(key,value)}/>:<Input aria-label={label} value={String(scenario[key]??'')} disabled={disabled} onChange={event=>edit(key,event.target.value)}/>}</label>)}
  <Checkbox checked={scenario.queue_position===true} disabled={disabled} onChange={event=>edit('queue_position',event.target.checked)}>官方队列位置模拟</Checkbox>
  {value!==undefined&&<Button disabled={disabled} onClick={()=>{const next={...config};delete next.paperExecution;onChange(JSON.stringify(next,null,2));}}>移除整组可选模拟参数</Button>}
  </fieldset>;
 }
 export function SavedRunnerNotice({value}:{value?:SavedAccountRunnerReport}){
- return <section aria-label="原账户绑定产物"><h4>原账户绑定产物</h4>
- <p>来源：账户创建时保留的产物能力报告，不是当前连接探测。切换全局运行器不会更新或重新绑定此账户。</p>
+ return <section aria-label="原账户绑定产物"><h4>账户创建时的产物报告</h4>
+
  <dl><dt>Nautilus 版本</dt><dd>{value?.nautilusVersion??'未记录'}</dd><dt>上游修订</dt><dd>{value?.nautilusRevision??'未记录'}</dd><dt>精度</dt><dd>{value?.precision??'未记录'}</dd><dt>可信代码兼容约定</dt><dd>{value?.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?'声明仅在单节点上注册策略（不是认证）':'未记录声明'}</dd></dl>
- <p>这不证明文件仍可运行、会话在线或策略已验证；不会自动重建、连接、迁移旧账户或重发 UNKNOWN。</p></section>;
+ </section>;
 }
 export default function AccountConfiguration({enabled}:{enabled:boolean}){
  const records=useResource<Array<{id:string;unavailable?:string;savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
@@ -103,18 +103,18 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  const [text,setText]=useState(initialAccountDraft),[error,setError]=useState<unknown>(),[notice,setNotice]=useState('');
  const command=useCommand<{id:string}>('account-configuration',result=>{setNotice(`账户 ${result.id} 的配置已保存，尚未连接或启动策略。`);void records.refetch();},'/accounts/configurations');
  return <section><h3>保存账户配置，不连接或交易</h3>
- <p>使用上方已选用且包含账户能力的同一 Rust 启动器，不填写第二个 HTTP 地址。当前仅支持 Hyperliquid 的模拟盘或实盘账户。已有历史账户不会被新配置认领、清空或静默改绑。</p>
+
  <AccountFields text={text} onChange={setText} instrumentsDraft={instrumentsDraft} onInstrumentsChange={setInstrumentsDraft} disabled={!!command.pending||command.busy}/>
- <p>订阅标的保留逐行编辑文本，保存时忽略空行；未保存的标的草稿优先于高级配置。编辑高级配置将清除标的草稿并采用其中的原值。</p>
+
  <details><summary>高级：原生策略参数及完整配置</summary>
- <p>配置 JSON 需包含 id、clientId、accountId、mode（paper 或 live）、instruments 与 nativeStrategy。模拟盘需 startingBalance、paperFeeRate；实盘需 accountAddress，可选 network。nativeStrategy 为 instrument_id 和 strategy；自定义策略使用 kind: REGISTERED、已编入启动器的 name、原始 config JSON。不要输入私钥、密码或令牌，凭据仍由账户运行环境管理。</p>
+ <p>勿填写私钥、密码或令牌。</p>
  <Input.TextArea aria-label="新账户配置 JSON" autoSize={{minRows:8,maxRows:24}} value={text} disabled={!!command.pending} onChange={event=>{setText(event.target.value);setInstrumentsDraft(undefined);}}/></details>
  <PaperParameters text={text} onChange={setText} disabled={!!command.pending} onError={setError}/>
- {!enabled&&<p>当前尚未选用具有账户能力的构建产物，不能保存新账户。保存环境路径或完成研究构建不等于账户运行器可用。</p>}
+ {!enabled&&<p>请选择支持账户的运行器。</p>}
  <Button disabled={!enabled||command.busy} loading={command.busy} onClick={()=>{if(command.pending){void command.submit();return;}try{setError(undefined);void command.submit({configuration:accountConfigurationForSave(text,instrumentsDraft)});}catch(failure){setError(failure);}}}>{command.pending?'核实原账户保存请求':'仅保存新账户配置'}</Button>
  <PendingCommand command={command}/><ErrorNotice error={error??command.error??records.error}/>{notice&&<p>{notice}</p>}
- <p>配置保存不会连接。下方每个账户的恢复连接和策略启动均须独立明确操作；恢复连接不代表可交易。</p>
+
  <Button onClick={()=>void records.refetch()}>只读取已保存账户</Button>
- {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary><SavedRunnerNotice value={item.savedRunner}/>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。保留原身份，不创建替代节点。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
+ {records.data?.map(item=><details key={item.id}><summary>{item.id} · {item.accountConfiguration.mode}</summary><SavedRunnerNotice value={item.savedRunner}/>{item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}{item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured value={{id:item.id,mode:item.accountConfiguration.mode}}/>}</details>)}
  </section>;
 }

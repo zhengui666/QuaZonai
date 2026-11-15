@@ -10,7 +10,7 @@ vi.mock('./account-strategy',()=>({default:()=>null}));
 vi.mock('./ui',async importOriginal=>({...await importOriginal<typeof import('./ui')>(),useConfirm:()=>()=>{}}));
 it('account binding never exposes retired target delivery even from an old portfolio link or draft',()=>{
  const html=renderToStaticMarkup(createElement(Observations,{route:{page:'observations',creating:true,params:new URLSearchParams('portfolio=old')}}));
- expect(html).toContain('绑定已有账户');expect(html).toContain('不启动策略');
+ expect(html).toContain('绑定已有账户');expect(html).not.toContain('启动策略');
  expect(html).not.toContain('交付并观测');expect(html).not.toContain('按账户净值自动调整');expect(html).not.toContain('交付已有组合目标');
 });
 

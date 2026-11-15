@@ -15,8 +15,8 @@ it('edits only original deployment strings without rebuilding opaque owner param
 it('shows known original fields with original disabled state, never invents factory schema',()=>{
  let edits=0;const render=(text:string,disabled:boolean)=>renderToStaticMarkup(createElement(StrategyConfigurationFields,{text,disabled,onChange:()=>edits++}));
  const text=JSON.stringify({instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:{}}});
- const html=render(text,true);expect(html).toContain('编辑策略标的');expect(html).toContain('编辑原策略名称');expect(html).toContain('disabled');expect(html).toContain('没有可用 schema');expect(edits).toBe(0);
- expect(render('{',false)).toContain('不生成替代配置');expect(render('{"strategy":{"kind":"EMA_CROSS"}}',false)).not.toContain('编辑原策略名称');
+ const html=render(text,true);expect(html).toContain('编辑策略标的');expect(html).toContain('编辑原策略名称');expect(html).toContain('disabled');expect(html).not.toContain('没有可用 schema');expect(edits).toBe(0);
+ expect(render('{',false)).toContain('请修正高级配置 JSON 对象');expect(render('{"strategy":{"kind":"EMA_CROSS"}}',false)).not.toContain('编辑原策略名称');
 });
 
 import {strategyEditChanged,strategyEditSubmission} from './account-strategy';
