@@ -25,6 +25,7 @@ async function protocolReceiver() {
   // This local HTTP source tests actual service/SQLite protocol behavior, never exchange execution or financial evidence.
   const server = Fastify(); const envelope = { clientId: 'capital-client', accountId: 'capital-account', mode: 'paper' as const, currency: 'USDC' };
   let observationId = 'observation-original'; let controlRevision = '7'; let sequence = 0n; let blocked = false;
+  let supported = true, readable = true, unknownReserved = false;
   let loseNextStart = false; let allowReceipt = true; let current: CapitalExitView | null = null;
   const previews = new Map<string, CapitalExitPreview>(); const receipts = new Map<string, JsonObject>();
   const previewPosts: JsonObject[] = []; const startPosts: JsonObject[] = []; const actionPosts: JsonObject[] = []; const receiptGets: string[] = []; const targetPosts: JsonObject[] = [];
@@ -36,13 +37,13 @@ async function protocolReceiver() {
       bid_price: '50000', ask_price: '50001', quote_asof: new Date().toISOString(), fee_rate: '0.0004', reference_evidence_id: 'original-quote' }],
     capability: 'SUPPORTED', reason_codes: [], supported_policies: ['CASH_ONLY', 'NATURAL_RELEASE', 'BOUNDED_LIMIT'],
   };
-  server.get('/capabilities', () => ({ ...envelope, capitalExit: { version: 2, supported: true, readable: true,
+  server.get('/capabilities', () => ({ ...envelope, capitalExit: { version: 2, supported, readable,
     policies: ['CASH_ONLY', 'NATURAL_RELEASE', 'BOUNDED_LIMIT'], actions } }));
   server.get('/account', () => ({ ...envelope, accountSourceId: 'physical-source', observationId, controlRevision,
     sequence: String(++sequence), nativeClockNs: nowNs(), equity: '1000', cash: '100',
     positions: [{ instrumentId: 'BTC/USDC.HYPERLIQUID', quantity: '0.01', value: '500', pnl: null }] }));
   server.get('/capital-exits', () => ({ ...envelope, accountSourceId: 'physical-source', observationId, controlRevision,
-    reserved: current?.funds.reserved_amount.amount ?? '0', blocked, reason: blocked ? 'current_quote_unavailable' : null, exits: current ? [current] : [] }));
+    reserved: unknownReserved ? null : current?.funds.reserved_amount.amount ?? '0', blocked, reason: blocked ? 'current_quote_unavailable' : null, exits: current ? [current] : [] }));
   server.get('/capital-exits/planning-context', () => ({ ...envelope, context: plan }));
   server.get<{ Params: { exitId: string } }>('/capital-exits/:exitId', (request, reply) => current?.id === request.params.exitId ? { ...envelope, exit: current } : reply.code(404).send({ error: 'exit_not_found' }));
   server.post('/capital-exits/preview', request => {
@@ -77,9 +78,9 @@ async function protocolReceiver() {
   });
   server.post<{ Params: { exitId: string } }>('/capital-exits/:exitId/actions', request => {
     const body = object(request.body); actionPosts.push(json(body)); const command = object(body.command);
-    assert.equal(request.params.exitId, current!.id); assert.equal(command.action, 'PAUSE');
+    assert.equal(request.params.exitId, current!.id); assert.ok(['PAUSE', 'CANCEL'].includes(String(command.action)));
     controlRevision = String(BigInt(controlRevision) + 1n); current!.revision = String(BigInt(current!.revision) + 1n);
-    current!.account_control_revision = controlRevision; current!.command_id = String(body.requestId); current!.state = 'PAUSED';
+    current!.account_control_revision = controlRevision; current!.command_id = String(body.requestId); current!.state = command.action === 'PAUSE' ? 'PAUSED' : 'CANCELLED_RESERVED';
     current!.action_availability.PAUSE = { allowed: false, reason: 'already_paused' };
     const receipt = json({ ...body, status: 'ACCEPTED', result: current }); receipts.set(String(body.requestId), receipt); return receipt;
   });
@@ -101,7 +102,7 @@ async function protocolReceiver() {
   const url='rust-process://controlled/unbound';
   const connection: ConnectionConfig = { id: 'capital-connection', name: 'Existing cash account', url, clientId: envelope.clientId, accountId: envelope.accountId, mode: envelope.mode };
   const detach=await directAccountProtocol(connection,server);
-  return { nativePreviewPosts, malformedResponse() { malformedPreview = true; }, wrongIdentity() { wrongPreviewIdentity = true; }, submittedResponse() { falselySubmitted = true; }, connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
+  return { bindAlias: (alias: ConnectionConfig) => directAccountProtocol(alias, server), setReadState(s: boolean, r: boolean, unknown = false) { supported = s; readable = r; unknownReserved = unknown; blocked = false; }, nativePreviewPosts, malformedResponse() { malformedPreview = true; }, wrongIdentity() { wrongPreviewIdentity = true; }, submittedResponse() { falselySubmitted = true; }, connection, plan, previewPosts, startPosts, actionPosts, receiptGets, targetPosts,
     retainOriginal(requestId = 'original-lost-start') {
       current = { schema_version: 2, id: 'original-exit', revision: '1', account_source_id: 'physical-source', environment: 'PAPER', state: 'WAITING_CASH', preparation_state: 'WAITING_CASH', account_control_revision: controlRevision, command_id: requestId, reason_codes: [],
         policy: { kind: 'CASH_ONLY' }, scope: { kind: 'AMOUNT', amount: '100', currency: 'USDC' }, remaining_trading: 'FENCED_PENDING_TARGET',
@@ -145,6 +146,35 @@ test('account-only observation reads retained capital facts and can stop without
     remote.current!.funds.reserved_amount = money('99');
     const invalid = await state.service.app.inject({ url: path + '/' + remote.current!.id, headers: state.headers });
     assert.equal(invalid.statusCode, 422, invalid.body); assert.match(invalid.body, /capital_obligation_mismatch/);
+  } finally { await state.cleanup(); await remote.close(); }
+});
+
+test('retained cancellation, unknown funds and unreadable history remain bound to the same account', { timeout: 30_000 }, async () => {
+  const state = await setup(); const remote = await protocolReceiver(); remote.retainOriginal();
+  try {
+    const alias = { ...remote.connection, id: 'same-account-alias' };
+    const detachAlias = await remote.bindAlias(alias);
+    state.options.config.connections = [remote.connection, alias]; await state.restart();
+    const bind = async (connectionId: string) => state.service.work.startObservation({ requestId: connectionId, purpose: 'ACCOUNT_ONLY', mode: 'paper', connectionId });
+    const original = await bind(remote.connection.id);
+    try { await bind(alias.id); } finally { detachAlias(); }
+    const controls = (await state.service.research.harness.snapshot(Application, context))!.accountControls!;
+    assert.equal(accountKey(alias, controls), accountKey(remote.connection, controls));
+    const path = `/api/v3/observations/${original.id}/capital-exits`;
+    const read = async () => (await state.service.app.inject({ url: path, headers: state.headers })).json();
+    for (const action of ['PAUSE', 'CANCEL']) {
+      const result = await state.service.app.inject({ method: 'POST', url: path + '/commands', headers: state.headers,
+        payload: { requestId: action, action, exitId: remote.current!.id, expectedRevision: remote.current!.revision } });
+      assert.equal(result.statusCode, 202, result.body);
+      const value = await until(read, value => value.exits[0]?.state === (action === 'PAUSE' ? 'PAUSED' : 'CANCELLED_RESERVED'));
+      assert.equal(value.reserved, '100');
+    }
+    remote.setReadState(true, true, true); assert.equal((await read()).reserved, null);
+    remote.setReadState(false, true);
+    const readOnly = await read(); assert.equal(readOnly.capability, 'UNSUPPORTED'); assert.equal(readOnly.reserved, '100'); assert.equal(readOnly.exits[0].id, remote.current!.id);
+    remote.setReadState(false, false);
+    const historical = await read(); assert.equal(historical.capability, 'BLOCKED'); assert.equal(historical.reserved, null); assert.equal(historical.exits[0].id, remote.current!.id);
+    assert.deepEqual(remote.startPosts, []); assert.deepEqual(remote.previewPosts, []); assert.deepEqual(remote.targetPosts, []);
   } finally { await state.cleanup(); await remote.close(); }
 });
 
