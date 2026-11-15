@@ -1,31 +1,39 @@
 //! Exercise the actual native binary, protocol input and safe error channel.
 #[path = "support/market.rs"]
 mod market;
-use contracts::science::NativeSimulationResultV1;
+use contracts::native_strategy::NativeStrategyBacktestResultV1;
 use market::market;
 #[path = "support/command.rs"]
 mod native;
 use native::command;
 
 #[test]
-fn real_native_cli_replays_a_single_shared_account() {
+fn real_native_cli_replays_official_strategy_and_account() {
     let (directory, request) = market("0", 20);
     let result = command(
         &[
-            "simulate".as_ref(),
+            "native-strategy-backtest".as_ref(),
             "--catalog".as_ref(),
             directory.path().as_os_str(),
         ],
-        &request,
+        &market::native_bar_request(&request),
     );
     assert!(
         result.status.success(),
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let simulation: NativeSimulationResultV1 = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(simulation.consumed_target_points.get(), 2);
-    assert!(simulation.orders.get() >= 4);
+    let simulation: NativeStrategyBacktestResultV1 =
+        serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(simulation.data_rows_by_type["Bar"].get(), 20);
+    assert_eq!(
+        simulation.canonical_result["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(simulation.canonical_result["run"]["outcome"], "completed");
 }
 
 #[test]
@@ -42,7 +50,9 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     .unwrap();
     let files = catalog.list_parquet_files("data").unwrap();
     assert!(!files.is_empty());
-    let path = directory.path().join(&files[0]);
+    let path = directory
+        .path()
+        .join(files.iter().find(|path| path.contains("EUR")).unwrap());
     let original = std::fs::read(&path).unwrap();
     let mut corrupted = original.clone();
     let footer = corrupted.len() - 8;
@@ -50,11 +60,11 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     std::fs::write(&path, &corrupted).unwrap();
     let result = command(
         &[
-            "simulate".as_ref(),
+            "native-strategy-backtest".as_ref(),
             "--catalog".as_ref(),
             directory.path().as_os_str(),
         ],
-        &request,
+        &market::native_bar_request(&request),
     );
     assert_eq!(result.status.code(), Some(1));
     assert!(result.stdout.is_empty());
@@ -66,20 +76,21 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     std::fs::write(path, original).unwrap();
     let recovered = command(
         &[
-            "simulate".as_ref(),
+            "native-strategy-backtest".as_ref(),
             "--catalog".as_ref(),
             directory.path().as_os_str(),
         ],
-        &request,
+        &market::native_bar_request(&request),
     );
     assert!(recovered.status.success());
-    let result: NativeSimulationResultV1 = serde_json::from_slice(&recovered.stdout).unwrap();
-    assert_eq!(result.consumed_target_points.get(), 2);
+    let result: NativeStrategyBacktestResultV1 = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(result.data_rows_by_type["Bar"].get(), 20);
 }
 
 #[test]
 fn retired_ensemble_and_review_allocation_commands_are_not_executable() {
     for operation in [
+        "simulate",
         "native-walk-forward",
         "blend-targets",
         "capital-curve",

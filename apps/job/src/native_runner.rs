@@ -25,11 +25,17 @@ pub fn capabilities(
 /// thread-global senders/message-bus endpoints for the entire thread lifetime.
 #[cfg(feature = "account-runtime")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AccountCompatibility { Unspecified, TrustedStrategyOnlySingleNode }
+pub enum AccountCompatibility {
+    Unspecified,
+    TrustedStrategyOnlySingleNode,
+}
 #[cfg(feature = "account-runtime")]
 impl AccountCompatibility {
     pub fn declaration(self) -> Option<&'static str> {
-        match self { Self::Unspecified => None, Self::TrustedStrategyOnlySingleNode => Some("TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1") }
+        match self {
+            Self::Unspecified => None,
+            Self::TrustedStrategyOnlySingleNode => Some("TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1"),
+        }
     }
 }
 
@@ -59,7 +65,12 @@ pub fn main_with_hooks(
     configured: Option<ConfiguredRunFactory>,
     account: Option<AccountStrategyRegistration>,
 ) {
-    main_with_hooks_and_account_compatibility(registration, configured, account, AccountCompatibility::Unspecified)
+    main_with_hooks_and_account_compatibility(
+        registration,
+        configured,
+        account,
+        AccountCompatibility::Unspecified,
+    )
 }
 
 /// Explicit generated-entry choice. Existing entry points retain unspecified behavior.
@@ -72,18 +83,25 @@ pub fn main_with_hooks_and_account_compatibility(
 ) {
     match std::env::args().nth(1).as_deref() {
         Some("capabilities") => {
-            let mut value=capabilities(registration.is_some(),configured.is_some(),account.is_some());
-            value["account"]["compatibilityDeclaration"]=serde_json::json!(compatibility.declaration());
-            value["account"]["compatibilityVerified"]=serde_json::json!(false);
+            let mut value = capabilities(
+                registration.is_some(),
+                configured.is_some(),
+                account.is_some(),
+            );
+            value["account"]["compatibilityDeclaration"] =
+                serde_json::json!(compatibility.declaration());
+            value["account"]["compatibilityVerified"] = serde_json::json!(false);
             println!("{value}");
-        },
+        }
         Some("account-runtime") => {
             let result = on_account_thread(move |owner| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?;
                 runtime.block_on(crate::account_runtime::run_owned_registration(
-                    account, &owner, compatibility,
+                    account,
+                    &owner,
+                    compatibility,
                 ))
             });
             if let Err(error) = result {
