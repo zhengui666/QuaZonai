@@ -25,7 +25,7 @@ test('inspection only reports matching declared capabilities, strips unrelated s
   account:{compiled:true,registration:true,command:'account-runtime',requiresExplicitStart:true},
   research:{singleStrategyRegistration:true,configuredRunFactory:false},secret:'not returned'};
  const result=inspectedRemoteOwner(capabilities,expectedIdentity);
- assert.equal(result.qualification,'DECLARED_IDENTITY_MATCH_NOT_CONNECTED');
+ assert.equal(result.qualification,'DECLARED_IDENTITY_MATCH_INSPECTION_ONLY');
  assert.equal(result.accountConnectionRequested,false);assert.equal(result.tradingStartRequested,false);assert.equal(result.sourceAttested,false);
  assert.equal(result.secret,undefined);
  for(const mutation of [{running:true},{protocol:'other'},{identity:{...expectedIdentity,precision:'standard'}},

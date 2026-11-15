@@ -41,7 +41,7 @@ export function inspectedRemoteOwner(value: unknown, expected: Identity): Record
     || account.command !== 'account-runtime' || account.requiresExplicitStart !== true
     || typeof research.singleStrategyRegistration !== 'boolean' || typeof research.configuredRunFactory !== 'boolean') throw new CliError('remote_owner_capabilities_mismatch');
   // Return a bounded allowlist, not arbitrary executable stdout or sensitive diagnostics.
-  return { qualification: 'DECLARED_IDENTITY_MATCH_NOT_CONNECTED', protocol: response.protocol, identity: expected,
+  return { qualification: 'DECLARED_IDENTITY_MATCH_INSPECTION_ONLY', protocol: response.protocol, identity: expected,
     account: { compiled: account.compiled, registration: account.registration, requiresExplicitStart: true },
     research: { singleStrategyRegistration: research.singleStrategyRegistration, configuredRunFactory: research.configuredRunFactory },
     accountConnectionRequested: false, tradingStartRequested: false, sourceAttested: false, automaticRetry: false };

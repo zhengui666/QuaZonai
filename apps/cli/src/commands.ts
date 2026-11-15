@@ -14,7 +14,8 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   identity | logout | forget
   schema list [--domain] | schema show NAME [--domain]
   remote-owner inspect --file CONFIG.json
-    Executes only trusted remote owner capabilities over pinned-host SSH. No account connection, trading or compilation.
+    Requests trusted remote owner capabilities over pinned-host SSH; no connection/start command or compilation.
+    Trusted executable code may have side effects; SSH timeout does not prove remote termination.
   datasets | usage
   datasets registry | register --file REQUEST.json (append-only new IDs; requestId, expectedRevision, path)
   native-runner status | import --file REQUEST.json | build-status REQUEST_ID
