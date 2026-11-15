@@ -1,3 +1,4 @@
+import { registerImplementationSources } from '../../research/src/implementation-source.ts';
 import {createAccountStrategyCommand} from './account-strategy.ts';
 import type {NativeStrategyControlTransport} from './native-strategy-control-phases.ts';
 import {nativePreparationTools} from './native-preparation-tools.ts';
@@ -245,6 +246,11 @@ export async function createService(options: ServiceOptions) {
     const body = object(request.body);
     if (Object.keys(body).some(key => !['submissionId', 'instruction'].includes(key)) || ('instruction' in body && (typeof body.instruction !== 'string' || !body.instruction.trim())) || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
     return reply.code(202).send(await research.resume(Number(request.params.id), body.submissionId, body.instruction as string | undefined));
+  });
+  // Authenticated owner-only registration, never an Agent tool or arbitrary file reader.
+  app.post<{ Params: { id: string } }>(`${API}/research/:id/implementation-sources`, async request => {
+    const id = Number(request.params.id); await detail(id);
+    return research.harness.commit(tx => registerImplementationSources(tx, id as import('@earendil-works/pi-durable').ConversationId, request.body), context);
   });
   app.post(`${API}/research`, async (request, reply) => reply.code(202).send(await work.startResearch(request.body)));
   app.post<{ Params: { id: string } }>(`${API}/research/:id/stop`, async (request, reply) => {
