@@ -189,3 +189,20 @@ test('native transport child retains receipt ownership after its controller exit
   assert.ok(released,'lock releases only once the retained child descriptor closes');await released.close();
  }finally{controller?.kill('SIGKILL');if(nativePid)try{process.kill(nativePid,'SIGKILL');}catch{}await rm(directory,{recursive:true,force:true});}
 });
+
+test('live vault configuration is rejected before process spawn or receipt directory creation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-vault-scope-'));
+  try {
+    for (const network of ['mainnet', 'testnet'] as const) {
+      const key = network === 'testnet' ? 'HYPERLIQUID_TESTNET_VAULT' : 'HYPERLIQUID_VAULT';
+      const prior = process.env[key]; process.env[key] = 'controlled-test-vault-not-a-user-address';
+      const dataDir = join(directory, network);
+      const runtime = new AccountRuntime('/must-never-execute', {id:'live',clientId:'client',accountId:'account',mode:'live',network,accountSemantics:'NATIVE_MARGIN',accountAddress:'0x'+'1'.repeat(40),instruments:['TEST.HYPERLIQUID'],nativeStrategy:{instrument_id:'TEST.HYPERLIQUID',strategy:{kind:'REGISTERED',name:'owner',config:null}}}, 'source', dataDir);
+      try {
+        await assert.rejects(runtime.start(), /^Error: account_native_vault_configuration_unsupported$/);
+        assert.equal(runtime.isConnected(), false);
+        await assert.rejects(readFile(dataDir), {code:'ENOENT'});
+      } finally { if(prior===undefined)delete process.env[key];else process.env[key]=prior; await runtime.close(); }
+    }
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
