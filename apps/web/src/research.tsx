@@ -8,7 +8,7 @@ import { Alert, Button, Dropdown, Form, Input, Rate, Select, Table, Tabs } from 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, DatabaseIcon, DotsThreeIcon, FlaskIcon, PlusIcon } from '@phosphor-icons/react';
 import type { ResearchListItem } from '../../../packages/contracts/src/lists.ts';
-import type { DatasetView, ModelCatalog, ModelRef, ResearchDetail, ResearchReceipt, ServiceTier, SettingsView, TaskView } from '../../../packages/contracts/src/index.ts';
+import type { DatasetView, ModelCatalog, ModelRef, ResearchDetail, ResearchReceipt, ServiceTier, SettingsView, TaskView, ResearchNativeBacktests } from '../../../packages/contracts/src/index.ts';
 import { ApiError, api } from './api';
 import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import { NativeInputFacts } from './native-input';
@@ -79,10 +79,10 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
       <ResearchUncertainty detail={detail} /><ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
       <Tabs className="document-tabs" activeKey={tab} onChange={value => selectTab(value)} items={[
         { key: 'conversation', label: '对话', children: <div className="research-chat"><ResearchConversation key={detail.id} messages={detail.messages} researchId={detail.id} nextCursor={detail.messagesNextCursor} />{active && !detail.executionUncertain && <Alert type="info" title="研究正在进行" />}{detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}</div> },
-        { key: 'evidence', label: '结果与评价', children: <div className="evidence-content"><ResearchAssessments assessments={detail.assessments} researchId={detail.id} />
+        { key: 'evidence', label: '结果与评价', children: <div className="evidence-content"><ResearchAssessments assessments={detail.assessments} researchId={detail.id} /><NativeBacktestHistory key={detail.id} researchId={detail.id} active={active} />
           {nativeSettings.modality === 'TRADE_TICK' && <section className="result-section"><h3>逐笔输入与证据范围</h3><NativeInputFacts settings={nativeSettings} preparation={detail.dataset?.preparation} coverage={detail.final?.inputCoverage ?? detail.dataset?.inputCoverage} /></section>}
           {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? detail.executionUncertain ? '此前完成的回测结果' : 'Nautilus 官方策略历史回测' : '执行结果'}</h3></div>
-            {detail.final.nativeStrategyResult && <NativeStrategyResultView key={String(detail.final.nativeStrategyResult.resultTaskId ?? detail.submission?.id)} value={detail.final.nativeStrategyResult} researchId={detail.id} />}
+            {detail.final.reason === 'explicit_native_parameter_batch_completed_displaying_last_case_not_best' && <Alert type="info" title="下方为最后一组结果，不是最优或组合结果" description="请在原生回测记录中查看每组原始请求与结果。搜索表现不等于独立样本外有效。" />}{detail.final.nativeStrategyResult && <NativeStrategyResultView key={String(detail.final.nativeStrategyResult.resultTaskId ?? detail.submission?.id)} value={detail.final.nativeStrategyResult} researchId={detail.id} />}
             {detail.final.status !== 'COMPUTED' && <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? '原生执行中' : detail.final.status === 'FAILED' ? '原生执行失败' : undefined} />}
             <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={`研究 #${detail.id}${detail.final.trialId !== null ? ` / 试验 #${detail.final.trialId}` : ''}`} title="原生执行失败" />
             {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>研究结论</summary><p>{detail.final.reason}</p></details>}
@@ -96,6 +96,22 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
       ]} />
   </article>;
 }
+export function NativeBacktestHistory({ researchId, active }: { researchId: number; active: boolean }) {
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const cursor = cursors.at(-1);
+  const query = useResource<ResearchNativeBacktests>(`/research/${researchId}/native-backtests${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { poll: active ? 5000 : undefined });
+  return <section aria-label="原生回测记录"><h3>全部原生回测记录</h3><p>按执行任务顺序保留，包括失败或未完成的组；不代表排名或样本外验证。原始证据包含完整请求与 Nautilus 结果。</p>
+    <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
+    <Table loading={query.isPending} rowKey="taskId" size="small" pagination={false} dataSource={query.data?.items ?? []} columns={[
+      { title: '原始任务', dataIndex: 'taskId' }, { title: '状态', dataIndex: 'status', render: value => <Status value={value} /> },
+      { title: '原始请求与结果', render: (_value, row) => <a href={row.evidenceHref} target="_blank" rel="noreferrer">打开原始 JSON</a> },
+    ]} />
+    <Button disabled={cursors.length <= 1 || query.isFetching} onClick={() => setCursors(previous => previous.slice(0, -1))}>上一页</Button>
+    <Button disabled={!query.data?.nextCursor || query.isFetching} onClick={() => { if (query.data?.nextCursor) setCursors(previous => [...previous, query.data!.nextCursor]); }}>下一页</Button>
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button>
+  </section>;
+}
+
 export function ResearchRating({ value }: { value: unknown }) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5) return <span className="quiet">未评级</span>;
   return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value} / 5 星</span></span>;
@@ -300,7 +316,7 @@ function NewStudy({ route }: { route: Route }) {
     <PendingCommand command={command} />
     <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values: Record<string, unknown>) => { if (!command.pending) setDraftSaved(saveDraft('research', values)); }} onFinish={(values: Record<string, string>) => { try { const input = nativeResearchInput(values); setSpecError(undefined); void command.submit(input); } catch (error) { setSpecError(error); } }}  disabled={!!command.pending || command.busy}>
       <div className="form-section-heading"><FlaskIcon size={16} /><h2>研究问题</h2></div>
-      <Form.Item label="研究问题" name="goal" rules={[{ required: true, whitespace: true, message: '请输入研究问题' }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="例如：使用这个数据集运行 Nautilus 官方策略，使用原配置并展示原生回测报告。" /></Form.Item>
+      <Form.Item label="研究问题" extra="参数网格：写明策略、每个参数的候选值、窗口和成本。例如快周期 [8, 16]、慢周期 [32, 64]。QuaZonai 生成组合，Pi 编排，Nautilus 回测；每组原始结果保存在研究中，不自动选出最优。" name="goal" rules={[{ required: true, whitespace: true, message: '请输入研究问题' }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="例如：使用这个数据集运行 Nautilus 官方策略，使用原配置并展示原生回测报告。" /></Form.Item>
       <Form.Item label="公开论文检索主题（可选）" name="publicLiteratureTopics" extra="发送到公开检索服务；最多 3 行，每行 500 字" rules={[{ validator: (_rule, value?: string) => { try { publicLiteratureTopics(value); return Promise.resolve(); } catch { return Promise.reject(new Error('请输入最多 3 个公开主题，每行 1 个、最多 500 字，不含控制字符')); } } }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="market microstructure&#10;momentum transaction costs" /></Form.Item>
       <div className="form-section-heading"><DatabaseIcon size={16} /><h2>市场与数据</h2></div>
       <Form.Item label="数据集" name="datasetId" rules={[{ required: true, message: '请选择数据集' }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error('数据集尚未就绪')) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder="选择已登记数据集" options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>

@@ -22,14 +22,14 @@ function ParameterFacts({ values, copy = false }: { values: ParameterValues; cop
 function StaleNotice({ stale, at }: { stale: boolean; at: number }) { return stale && at ? <p className="quiet" role="status">连接未更新，下方保留上次读取记录：<Timestamp value={new Date(at).toISOString()} /></p> : null; }
 
 export default function ParameterScans({ route }: { route: Route }) {
-  if (route.creating) return <Empty title="自动参数扫描已退役" action={<a href={href(collection)}>查看历史记录</a>} />;
+  if (route.creating) return <Empty title="参数网格已接入原生研究" action={<a href={href('/research/new')}>新建参数网格研究</a>} />;
   return route.id ? <ScanDetail key={route.id} route={route} id={route.id} /> : <ScanList route={route} />;
 }
 
 function ScanList({ route }: { route: Route }) {
   const list = useListWorkspace<ParameterScanView>(route, collection, 'createdAt');
   return <section className="parameter-scans list-workspace" aria-label="参数扫描列表">
-    <header className="list-heading"><h1>历史参数扫描</h1></header>
+    <header className="list-heading"><h1>历史参数扫描</h1><a href={href('/research/new')}>新建参数网格研究</a></header><p>新研究由 QuaZonai 生成参数组合、Pi 编排、Nautilus 原生回测；下方仅保留旧记录。</p>
 
     <ListTools list={list} searchLabel="搜索参数扫描" placeholder="搜索扫描名称、来源或数据集" filters={[{ key: 'status', label: '执行状态' }, { key: 'mode', label: '扫描类型', options: [{ value: 'STRATEGY', label: '策略账户回测' }] }, { key: 'datasetId', label: '数据集' }]} />
     <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} /><StaleNotice stale={list.query.isError} at={list.query.dataUpdatedAt} />
