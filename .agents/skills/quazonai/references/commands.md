@@ -61,9 +61,9 @@
 | `observation start --file REQUEST.json` | `ObservationStart`，绑定已存在连接 |
 | `observation list` / `observation get ID` | 全部观测或指定观测 |
 | `observation refresh ID` / `observation stop ID` | 刷新账户事实或停止观测 |
-| `capital status OBSERVATION_ID` | 刷新并读取资金退出状态与命令状态 |
-| `capital preview OBSERVATION_ID --file REQUEST.json` | 退出计划预览；仍需要原 `requestId` |
-| `capital command OBSERVATION_ID --file REQUEST.json` | 提交资金退出动作；请求字段见账户参考 |
+| `capital status OBSERVATION_ID` | 读取能力、历史资金退出与原命令状态；不是可提现余额证明 |
+| `capital get OBSERVATION_ID EXIT_ID` | 读取既有资金退出记录；保留原 ID 与未知状态 |
+| `capital command OBSERVATION_ID --file STOP_REQUEST.json` | 仅旧记录 PAUSE/CANCEL 请求形状；依实际能力，当前原生适配可能拒绝，见账户参考 |
 
 ## 设置、扩展与维护
 
@@ -86,4 +86,4 @@
 
 账户命令：`account-strategy status OBSERVATION_ID`、`receipt OBSERVATION_ID REQUEST_ID`、`start OBSERVATION_ID --request-id ID --account-source-id SOURCE --expected-revision REV`、`stop OBSERVATION_ID --request-id ID`。START 的来源及修订不能自动更新。详见 [账户与资金](accounts.md)。
 
-`observation size ID --file SCENARIO.json` 与 `preview-order ID --file ORDER.json` 是只读能力，不提交订单。`capital context ID`、`capital get OBSERVATION_ID EXIT_ID` 读取现有退出信息；`observation cancel-protection ID` 是显式账户控制，不是回测功能。
+`observation size ID --file SCENARIO.json` 与 `preview-order ID --file ORDER.json` 是只读能力，不提交订单。`capital preview`、`capital context` 及新资金退出 START/RESUME/RECONCILE_WITHDRAWAL 不可用；`observation cancel-protection ID` 是显式账户控制，不是回测功能。
