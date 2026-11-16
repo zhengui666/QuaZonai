@@ -16,7 +16,7 @@ fn price(field: &Field) -> Result<String> {
     } else {
         records::scalar(field)?
     };
-    job::ticks::economic::context_decimal(&value)?;
+    crate::ticks::economic::context_decimal(&value)?;
     Ok(value)
 }
 
@@ -35,7 +35,7 @@ pub(super) fn run(
             && !research_revision.trim().is_empty(),
         "RECEIVED_CONTEXT_SOURCE_REQUIRED"
     );
-    let definitions = job::catalog::currencies::read_instruments(instruments_path)?;
+    let definitions = crate::catalog::currencies::read_instruments(instruments_path)?;
     let mut aliases: BTreeMap<String, InstrumentId> = json::<serde_json::Value>(instruments_path)?
         .get("symbol_ids")
         .map(|value| serde_json::from_value(value.clone()))

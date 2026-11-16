@@ -12,6 +12,7 @@ export type ImportedLauncherCapabilities = {
   schemaVersion: 1; protocol: 'quazonai-native-process-v1';
   identity: ImportedLauncherIdentity & { nautilusRevision?: string; jobVersion: string };
   research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
+  preparation?: { marketImport: boolean };
   account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false };
   running: false;
 };
@@ -23,6 +24,7 @@ function capabilities(value: unknown, expected?: ImportedLauncherIdentity): Impo
     || (v.identity.nautilusRevision !== undefined && typeof v.identity.nautilusRevision !== 'string')
     || !['standard', 'high'].includes(v.identity.precision)
     || typeof v.research?.singleStrategyRegistration !== 'boolean' || typeof v.research?.configuredRunFactory !== 'boolean'
+    || (v.preparation !== undefined && typeof v.preparation?.marketImport !== 'boolean')
     || typeof v.account?.compiled !== 'boolean' || typeof v.account?.registration !== 'boolean'
     || v.account.command !== 'account-runtime' || v.account.requiresExplicitStart !== true
     || (v.account.registration && !v.account.compiled)) throw new Error('rust_import_capabilities_invalid');
