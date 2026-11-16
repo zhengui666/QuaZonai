@@ -1,0 +1,59 @@
+name: Optional L2 development owner
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/job/src/bin/l2-development-owner.rs
+      - .github/workflows/development-owner.yml
+permissions:
+  contents: read
+jobs:
+  owner-artifact:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.SOURCE_REVISION }}
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-full
+          cache-bin: false
+          cache-workspace-crates: false
+      - name: Compile optional research owner and existing data importer in CI only
+        run: |
+          rustfmt --check --edition 2021 apps/job/src/bin/l2-development-owner.rs
+          cargo test --locked -p job --features development-owner,market-history --bin l2-development-owner
+          cargo build --locked -p job --features development-owner,market-history --bin l2-development-owner --bin market-history
+      - name: Inspect capabilities without opening data or starting a node
+        run: |
+          mkdir -p "$RUNNER_TEMP/owner-artifacts"
+          install -m755 target/debug/l2-development-owner "$RUNNER_TEMP/owner-artifacts/"
+          install -m755 target/debug/market-history "$RUNNER_TEMP/owner-artifacts/"
+          target/debug/l2-development-owner capabilities > "$RUNNER_TEMP/owner-artifacts/capabilities.json"
+          target/debug/market-history --help > /dev/null
+          python3 - "$RUNNER_TEMP/owner-artifacts/capabilities.json" <<'PY'
+          import json, sys
+          c = json.load(open(sys.argv[1]))
+          assert c['research']['configuredRunFactory'] is True
+          assert c['account']['compiled'] is False
+          assert c['account']['registration'] is False
+          assert c['running'] is False
+          assert c['identity']['nautilusVersion'] == '0.69.0'
+          assert c['identity']['precision'] == 'high'
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l2-development-owner-${{ env.SOURCE_REVISION }}
+          path: ${{ runner.temp }}/owner-artifacts
+          if-no-files-found: error
+          retention-days: 14
