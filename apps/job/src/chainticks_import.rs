@@ -112,7 +112,7 @@ fn import_report(args: ImportArgs) -> Result<serde_json::Value> {
         .into_iter()
         .map(|row| CustomData::from_arc(Arc::new(row)))
         .collect::<Vec<_>>();
-    let mut catalog = ParquetDataCatalog::new(args.output.join("catalog"), None, None, None, None);
+    let mut catalog = ParquetDataCatalog::new(&args.output.join("catalog"), None, None, None, None);
     let file = catalog.write_custom_data_batch(&originals, None, None, Some(false))?;
     let loaded = catalog.query_custom_data_dynamic(
         "ChainticksFillObservation",
