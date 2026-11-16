@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {createModels,fauxProvider,fauxAssistantMessage,fauxToolCall} from '@earendil-works/pi-ai';
+import {LiveDoc} from '@earendil-works/pi-durable';
 import {openResearch} from '../src/host.ts';
 import {NativeRemoteUncertainty,reconcileConfiguredFailure,reconcileNativeExecution} from '../src/native-execution.ts';
 import {NativeEvidencePart} from '../plugins/native-evidence.ts';
@@ -18,7 +19,8 @@ for (const variant of ['empty-venues','different-error','different-exit','signal
  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
  const tool=variant==='other-command'?'native_strategy_backtest':'native_configured_backtest';
- faux.setResponses([fauxAssistantMessage(fauxToolCall(tool,{}),{stopReason:'toolUse'}),fauxAssistantMessage('The original historical execution failed. No replacement is requested.')]);
+ let resumedContext='';
+ faux.setResponses([fauxAssistantMessage(fauxToolCall(tool,{}),{stopReason:'toolUse'}),(transcript)=>{resumedContext=JSON.stringify(transcript);return fauxAssistantMessage('The original historical execution failed. No replacement is requested.');}]);
  const options={database:join(dir,'research.sqlite'),models};let host=await openResearch(options);
  try{
   const receipt=await host.start('original',{goal:'Controlled failure',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:dir,nautilusTarget:target,[`${tool}_request`]:{schema_version:1,name:'owner',config:{}}},policy:{}});
@@ -42,6 +44,8 @@ for (const variant of ['empty-venues','different-error','different-exit','signal
    assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty,receipt.conversationId,String(owner),context),before);
   }else{
    for(let i=0;i<200;i++){const current=await host.harness.getTask(owner,context);if((current!.state as any).checkpoint?.phase==='reconcile')break;await new Promise(r=>setTimeout(r,10));}
+   for(let i=0;i<100;i++){if(JSON.stringify(await host.harness.snapshot(LiveDoc,receipt.conversationId,context)).includes('EXECUTION_RESULT_UNKNOWN'))break;await new Promise(r=>setTimeout(r,10));}
+   assert.match(JSON.stringify(await host.harness.snapshot(LiveDoc,receipt.conversationId,context)),/EXECUTION_RESULT_UNKNOWN/);
    await host.close();host=await openResearch(options);
    let reached!:()=>void,release!:()=>void;
    const atCommit=new Promise<void>(r=>{reached=r;}),hold=new Promise<void>(r=>{release=r;});
@@ -59,6 +63,16 @@ for (const variant of ['empty-venues','different-error','different-exit','signal
    const settled=await host.harness.waitForTask(owner,context);
    assert.equal(settled.state.outcome.status,'failed');
    assert.match(JSON.stringify(settled.state.outcome),/native_configured_configuration_rejected/);
+   await (await host.harness.submission(receipt.submissionId,context))!.wait(context);
+   assert.match(resumedContext,/EXECUTION_FAILED_AFTER_SOURCE_REVIEW/);
+   assert.match(resumedContext,/now definitively FAILED/);
+   assert.match(resumedContext,/Earlier UNKNOWN output/);
+   assert.match(resumedContext,/native_configured_configuration_rejected/);
+   assert.match(resumedContext,/No automatic resubmission was performed/);
+   const toolTasks=(await host.harness.commit(tx=>tx.scanTasks({kind:'pi.tool'},10),context)).items;
+   assert.equal(toolTasks.length,1);
+   const entries=(await host.harness.commit(tx=>tx.scanEntries({conversationId:receipt.conversationId},100),context)).items;
+   assert.match(JSON.stringify(entries.find(entry=>entry.kind==='pi.tool-result')),/EXECUTION_FAILED_AFTER_SOURCE_REVIEW/,'final tool result carries correction even if stream delivery races settlement');
    const facts=await host.harness.snapshot(NativeRemoteUncertainty,receipt.conversationId,String(owner),context);
    const fact=facts!.requests[0]!;assert.equal(fact.status,'FAILED');
    assert.equal((fact.configurationFailureReview as any).previousStatus,'UNKNOWN');

@@ -240,21 +240,41 @@ const NativeStrategyChild = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
 });
 
-/** Show committed uncertainty while the original task keeps waiting; never infer
- * business failure/rollback from a local process exit or private stderr. */
+/** Project the existing adopted failure receipt without reclassifying process exits. */
+function reviewedBacktestFailure(row: JsonObject, taskId: TaskId): string | undefined {
+  if (row.status !== 'FAILED' || !row.configurationFailureReview) return;
+  const evidence = row.configurationFailureReview as JsonObject;
+  const review = evidence.review as JsonObject;
+  return JSON.stringify({ status: 'EXECUTION_FAILED_AFTER_SOURCE_REVIEW', taskId, requestId: row.requestId,
+    nativeTaskId: review.nativeTaskId, error: row.error, previousStatus: evidence.previousStatus,
+    classification: review.classification, scope: evidence.scope,
+    message: 'The original execution is now definitively FAILED based on explicitly adopted source-review evidence, not pending or still computing. Earlier UNKNOWN output and the original native Task remain historical evidence. This is not a general claim of rollback or absence of side effects. No automatic resubmission was performed.' });
+}
+
+/** Show committed uncertainty and its reviewed resolution on the original tool. */
 async function waitForBacktest(id: TaskId<JsonObject>, api: ToolExecutionApi, context: Parameters<ToolExecutionApi['waitForTask']>[1]) {
   await api.commit(async tx => { await tx.doc(NativeRemoteUncertainty,api.conversationId,String(id),null); },context);
   const watch=await api.watchDoc(NativeRemoteUncertainty,api.conversationId,String(id),context);
   let previous='';
   watch?.start(async call=>{
     if(call.kind!=='value'||!call.value)return;
-    for(const row of call.value.requests)if(row.status==='UNKNOWN'){
-      const text=JSON.stringify({status:'EXECUTION_RESULT_UNKNOWN',taskId:id,requestId:row.requestId,
-        process:row.process??null,message:'Original execution result is unknown. Waiting for original evidence, not still claiming computation. No automatic resubmission; process exit does not establish rollback or absence of side effects.'});
-      if(text!==previous){previous=text;api.output(text+'\n');}
+    for(const row of call.value.requests){
+      const text=reviewedBacktestFailure(row,id) ?? (row.status==='UNKNOWN' ? JSON.stringify({status:'EXECUTION_RESULT_UNKNOWN',taskId:id,requestId:row.requestId,
+        process:row.process??null,message:'Original execution result is unknown. Waiting for original evidence, not still claiming computation. No automatic resubmission; process exit does not establish rollback or absence of side effects.'}) : undefined);
+      if(text && text!==previous){previous=text;api.output(text+'\n');}
     }
   });
-  try{return await api.waitForTask(id,context);}finally{await watch?.stop();}
+  try {
+    const settled = await api.waitForTask(id,context);
+    // A watcher notification may race settlement or restart. Put the committed
+    // resolution in the final tool error too, so the model cannot see only UNKNOWN.
+    if (settled.state.outcome.status === 'failed') {
+      const facts = await api.snapshot(NativeRemoteUncertainty,api.conversationId,String(id),context);
+      const reviewed = facts?.requests.map(row => reviewedBacktestFailure(row,id)).find(Boolean);
+      if (reviewed) throw new Error(reviewed);
+    }
+    return settled;
+  } finally { await watch?.stop(); }
 }
 
 export const nativeStrategyBacktestTool = defineTool({
