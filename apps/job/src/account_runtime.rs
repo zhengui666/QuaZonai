@@ -3785,6 +3785,17 @@ mod tests {
                     order.status().to_string(),
                     if denied { "DENIED" } else { "ACCEPTED" }
                 );
+                if denied {
+                    let expected = nautilus_model::events::OrderDeniedReason::InitialMarginExceedsFreeBalance {
+                        free_balance: Money::from("1000 USDC"),
+                        initial_margin: Money::from("1800 USDC"),
+                    }.to_string();
+                    let reason = order.events().iter().find_map(|event| match event {
+                        OrderEventAny::Denied(event) => Some(event.reason.to_string()),
+                        _ => None,
+                    });
+                    assert_eq!(reason.as_deref(), Some(expected.as_str()));
+                }
                 handle.stop();
                 Ok::<_, anyhow::Error>(())
             };
