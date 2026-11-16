@@ -82,7 +82,7 @@
 
 ## 原生扫描与账户策略
 
-扫描命令：`parameter-scan options/preview/create/list/get/stop/trials/surface/watch/wait`。请求与证据限制见 [原生研究](research-and-portfolios.md)。
+新参数网格通过 `research start` 或原研究的 `research resume` 提交意图；使用 `research native-backtests ID [--cursor CURSOR]` 分页列出原始任务，`research evidence ID TASK_ID` 读取各组原始请求与结果。旧 `parameter-scan list/get/stop/trials/watch/wait` 仅处理历史记录，不存在新的 options/preview/create/surface 入口。职责与证据限制见 [原生研究](research-and-portfolios.md)。
 
 账户命令：`account-strategy status OBSERVATION_ID`、`receipt OBSERVATION_ID REQUEST_ID`、`start OBSERVATION_ID --request-id ID --account-source-id SOURCE --expected-revision REV`、`stop OBSERVATION_ID --request-id ID`。START 的来源及修订不能自动更新。详见 [账户与资金](accounts.md)。
 
