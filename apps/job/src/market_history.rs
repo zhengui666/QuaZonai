@@ -35,6 +35,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Preserve one local chain-derived fill file as official CustomData observations, not market trades.
+    ChainticksObservations(crate::chainticks_import::ImportArgs),
     /// Convert an existing published-hour source into a new native L2 catalog, preserving both clocks.
     PublishedBooks {
         /// Exact official instrument ID from the source definitions; repeat to select several. Omit for all.
@@ -1837,6 +1839,7 @@ pub fn cli_main() {
         std::process::exit(2);
     }
     let result = match Arguments::parse().command {
+        Command::ChainticksObservations(args) => crate::chainticks_import::import(args),
         Command::PublishedBooks {
             instrument_ids,
             source,

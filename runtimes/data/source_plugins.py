@@ -158,6 +158,30 @@ def cryptohftdata_convert(args):
             "native_report": report, "research_qualified": False}
 
 
+def chainticks_options(parser):
+    native_options(parser)
+    parser.add_argument("--source", type=Path, required=True, help="one explicitly selected local Chainticks Parquet file")
+    parser.add_argument("--revision", required=True, help="original source revision, retained as declared")
+    parser.add_argument("--assume-source-local-time-utc", action="store_true", help="explicitly interpret timezone-free source node local_time as UTC")
+
+
+def chainticks_convert(args):
+    source = local_path(args.source)
+    if not source.is_file() or not args.revision.strip():
+        raise ValueError("an existing local source and explicit source revision are required")
+    command = ["chainticks-observations", "--source", str(source), "--revision", args.revision]
+    if args.assume_source_local_time_utc:
+        command.append("--assume-source-local-time-utc")
+    output = run_native(args, command, "market-history")
+    report = load_json(output / "import-report.json")
+    if (report.get("status") != "IMPORTED" or report.get("native_type") != "ChainticksFillObservation"
+            or type(report.get("written_observations")) is not int or report["written_observations"] <= 0
+            or report.get("readback_records") != report["written_observations"] or report.get("rejected_rows") != 0):
+        raise ValueError("Chainticks observation conversion incomplete; original source and artifacts retained")
+    return {"plugin": "chainticks-fill-observations", "status": "IMPORTED", "output": str(output),
+            "catalog_root": str(output / "catalog"), "native_report": report, "research_qualified": False}
+
+
 PLUGINS = {cryptohftdata.PLUGIN: source_plugin(cryptohftdata.PLUGIN, "CryptoHFTData Hyperliquid Parquet / Parquet.zst",
     {"inspect": Capability(cryptohftdata_options, lambda args: cryptohftdata.inspect(args.archive)),
      "plan": Capability(partial(cryptohftdata_options, plan=True), cryptohftdata_plan),
@@ -166,6 +190,15 @@ PLUGINS = {cryptohftdata.PLUGIN: source_plugin(cryptohftdata.PLUGIN, "CryptoHFTD
      "Native conversion preserves published trades, book snapshots, collector clocks and perpetual context; it creates no BARs",
      "Explicit market, symbols, UTC dates and optional hours select existing files; missing hourly paths remain reported",
      "Source download completeness does not establish exchange coverage, historical instrument definitions or research qualification"])}
+
+
+PLUGINS["chainticks-fill-observations"] = source_plugin("chainticks-fill-observations", "Chainticks local raw_json Parquet",
+    {"convert": Capability(chainticks_options, chainticks_convert)},
+    ["One explicitly selected existing local file; no download, discovery or automatic registration",
+     "Official CustomData fill observations, not a complete public market TradeTick feed; no deduplication or account-side volume aggregation",
+     "All observations retain source row/envelope and event/source-node clocks; timezone-free node times require an explicit UTC assumption",
+     "Maker, special, unknown and unsupported observations are preserved; rejected rows keep original source locations",
+     "Native round-trip is encoding evidence, not historical instrument, coverage, research or strategy qualification"])
 
 
 def plugin_descriptors():
