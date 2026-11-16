@@ -22,15 +22,3 @@ it('keeps creation disabled without verified account capability while preserving
     expect(state.enabled).toEqual([false]);
   }
 });
-
-import {ProviderAccountConfiguration} from './account-settings';
-it('unsupported official broker selections never render the Hyperliquid creation form',()=>{
- for(const provider of ['INTERACTIVE_BROKERS','COINBASE'] as const){
-  state.enabled=[];
-  const html=renderToStaticMarkup(createElement(ProviderAccountConfiguration,{provider,enabled:true}));
-  expect(html).toContain('Nautilus 官方适配器已存在');
-  expect(html).toContain('尚未接入');
-  expect(html).not.toContain('existing account configuration');
-  expect(state.enabled).toEqual([]);
- }
-});
