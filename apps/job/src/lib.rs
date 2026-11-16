@@ -58,3 +58,8 @@ mod account_queued_cancel;
 
 #[cfg(feature = "market-history")]
 pub mod market_history;
+
+#[cfg(feature = "market-history")]
+pub mod chainticks_fill;
+#[cfg(feature = "market-history")]
+pub mod chainticks_import;

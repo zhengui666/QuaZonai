@@ -33,9 +33,35 @@ pub struct NativeMarketImportResultV1 {
     pub report: serde_json::Value,
 }
 
+/// One explicitly selected local fill-observation source; not a market trade feed.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFillObservationImportRequestV1 {
+    pub schema_version: SchemaV1,
+    pub source_path: String,
+    pub source_revision: String,
+    pub output_path: String,
+    #[serde(default)]
+    pub assume_source_local_time_utc: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fill_observation_import_requires_source_and_explicit_clock_assumption() {
+        let mut value = serde_json::json!({"schema_version":1,"source_path":"/source.parquet","source_revision":"original","output_path":"/new"});
+        let request: NativeFillObservationImportRequestV1 =
+            serde_json::from_value(value.clone()).unwrap();
+        assert!(!request.assume_source_local_time_utc);
+        value["received_time"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<NativeFillObservationImportRequestV1>(value.clone()).is_err()
+        );
+        value.as_object_mut().unwrap().remove("received_time");
+        value.as_object_mut().unwrap().remove("source_revision");
+        assert!(serde_json::from_value::<NativeFillObservationImportRequestV1>(value).is_err());
+    }
     #[test]
     fn import_scope_is_explicit_and_timestamps_stay_strings() {
         let mut request = serde_json::json!({"schema_version":1,"manifest_path":"/input/source.json","instruments_path":"/input/instruments.json","output_path":"/output/new","start_seconds":"1778284800"});

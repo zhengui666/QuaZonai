@@ -17,7 +17,7 @@ account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "dep:nauti
 # Operator data preparation only; default scientific job images remain offline.
 catalog-prepare = ["dep:sha2"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
-market-history = ["dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+market-history = ["dep:arrow", "dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
 
@@ -66,6 +66,8 @@ nautilus-risk = { git = "https://github.com/nautechsystems/nautilus_trader.git",
 tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"], optional = true }
 # Native Parquet decoding uses the exact Arrow family of the official catalog.
 arrow-native = { package = "arrow-array", version = "=59.3.2" }
+# Required by the official custom-data Arrow derive macro.
+arrow = { version = "=59.3.2", default-features = false, optional = true }
 parquet = { version = "=59.3.2", default-features = false, features = ["arrow", "zstd"] }
 nautilus-serialization = { git = "https://github.com/nautechsystems/nautilus_trader.git", rev = "634e09456c949f488b2bfcf6b6897b33cbf218d7", default-features = false, features = ["arrow"] }
 sha2 = { version = "=0.10.9", optional = true }

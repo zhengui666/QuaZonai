@@ -22,12 +22,22 @@ class RegistryTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as stdout:
             self.assertEqual(plugins.main(["plugins"]), 0)
         result = json.loads(stdout.getvalue())
-        self.assertEqual([item["id"] for item in result], [cryptohftdata.PLUGIN])
+        self.assertEqual([item["id"] for item in result], [cryptohftdata.PLUGIN, "chainticks-fill-observations"])
         self.assertEqual(result[0]["capabilities"], ["convert", "inspect", "plan"])
         self.assertEqual(result[0]["public_network_operations"], [])
         self.assertEqual(result[0]["authentication"], "NONE")
         self.assertFalse(result[0]["admission"]["research_qualified"])
         self.assertFalse(result[0]["admission"]["registered_in_quazonai"])
+        self.assertEqual(result[1]["capabilities"], ["convert"])
+        self.assertEqual(result[1]["public_network_operations"], [])
+        self.assertFalse(result[1]["admission"]["research_qualified"])
+
+    def test_chainticks_source_requires_explicit_file_revision_and_timezone_choice(self):
+        args = plugins.parser().parse_args(["convert", "chainticks-fill-observations", "--source", "/source/one.parquet",
+                                           "--revision", "declared", "--output", "/output/new"])
+        self.assertEqual(args.source, Path("/source/one.parquet"))
+        self.assertFalse(args.assume_source_local_time_utc)
+        self.assertEqual(args.revision, "declared")
 
     def test_removed_lifecycle_operations_are_not_accepted(self):
         for operation in ("freeze", "verify", "prepare", "export-dataset"):

@@ -35,6 +35,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Preserve one local chain-derived fill file as official CustomData observations, not market trades.
+    ChainticksObservations(crate::chainticks_import::ImportArgs),
     /// Convert an existing published-hour source into a new native L2 catalog, preserving both clocks.
     PublishedBooks {
         /// Exact official instrument ID from the source definitions; repeat to select several. Omit for all.
@@ -1794,7 +1796,7 @@ pub fn native_market_import(
 
 // The original import-report.json remains unchanged. The Pi JSON transport uses
 // JavaScript numbers, so preserve large integer report metadata as decimal text.
-fn import_report_wire(value: serde_json::Value) -> serde_json::Value {
+pub(crate) fn import_report_wire(value: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
     const MAX_SAFE: u64 = 9_007_199_254_740_991;
     match value {
@@ -1837,6 +1839,7 @@ pub fn cli_main() {
         std::process::exit(2);
     }
     let result = match Arguments::parse().command {
+        Command::ChainticksObservations(args) => crate::chainticks_import::import(args),
         Command::PublishedBooks {
             instrument_ids,
             source,
