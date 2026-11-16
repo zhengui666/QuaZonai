@@ -5,6 +5,8 @@ import {prepareNativeMarketImport} from '../plugins/native-market-import.ts';
 test('import tool consumes generated original contract without coercing timestamps or allowing bar/resume options',()=>{
   const request={schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog-output',start_seconds:'1778284800',end_seconds:'1778288400',received_time:true,maximum_receive_delay_ns:'18446744073709551615',path_prefixes:['training/']};
   assert.deepEqual(prepareNativeMarketImport(request),request);
+  assert.throws(()=>prepareNativeMarketImport({...request,maximum_receive_delay_ns:null}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
+  assert.throws(()=>prepareNativeMarketImport({...request,received_time:false}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
   for(const extra of [{bar_seconds:1},{resume:true},{start_seconds:1778284800},{maximum_receive_delay_ns:18446744073709551615},{schema_version:2}]) {
     assert.throws(()=>prepareNativeMarketImport({...request,...extra}));
   }

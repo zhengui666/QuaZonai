@@ -21,7 +21,9 @@ const validate=compile(schema);
 export function prepareNativeMarketImport(args:unknown):JsonObject {
   validateNumbers(args);
   if(!validate.check(args))throw new Error('native_market_import_request_schema_invalid');
-  return args as JsonObject;
+  const request=args as JsonObject;
+  if((request.received_time===true)!=(request.maximum_receive_delay_ns!==undefined&&request.maximum_receive_delay_ns!==null))throw new Error('RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY');
+  return request;
 }
 const Child=defineDoc<{taskId:TaskId<JsonObject>|null}>({kind:'qz.native-market-import-child',version:1,scope:'task',initial:()=>({taskId:null}),checkpointWhen:(_v,_o,info)=>info.deltasSinceBase>=127});
 export const nativeMarketImportTool=defineTool({
