@@ -34,7 +34,7 @@ for (const variant of ['empty-venues','missing-fee-model','fee-without-node-erro
   }
   assert.equal(task.state.outcome.error.message,'nautilus_execution_unknown');
   const original=structuredClone(task.state),owner=task.input.ownerTaskId;
-  const review={nativeTaskId:task.id,ownerTaskId:owner,requestId:task.input.requestId,classification:feeReview&&variant!=='fee-wrong-classification'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:'Reviewed controlled native boundary: known configuration rejection before engine build, install, or replay. Not a claim of arbitrary user-code rollback.',sources:['controlled runner source']};
+  const review={nativeTaskId:task.id,ownerTaskId:owner,requestId:task.input.requestId,classification:feeReview&&variant!=='fee-wrong-classification'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:feeReview?'Reviewed controlled native boundary: missing fee model rejects engine construction before install or replay. Not a claim of arbitrary user-code rollback.':'Reviewed controlled native boundary: known configuration rejection before engine build, install, or replay. Not a claim of arbitrary user-code rollback.',sources:['controlled runner source']};
   const before=await host.harness.snapshot(NativeRemoteUncertainty,receipt.conversationId,String(owner),context);
   // Explicit evidence mismatch never mutates receipt or launches anything.
   await assert.rejects(reconcileConfiguredFailure(host.harness,receipt.conversationId,{...review,requestId:'0'.repeat(64)},context),/evidence_conflict/);
