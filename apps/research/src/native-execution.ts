@@ -1,3 +1,4 @@
+import {accountAdapterCapabilities} from '../../../packages/contracts/src/account-adapters.ts';
 import { TokenType } from '@streamparser/json';
 import type { Context } from '@earendil-works/chord';
 import { withoutAbortSignal } from '@earendil-works/chord/context';
@@ -128,6 +129,7 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
     || !item.capabilities.identity || typeof item.capabilities.research?.configuredRunFactory !== 'boolean' || typeof item.capabilities.research?.singleStrategyRegistration !== 'boolean'
     || typeof item.capabilities.account?.compiled !== 'boolean' || typeof item.capabilities.account?.registration !== 'boolean' || item.capabilities.account.command !== 'account-runtime' || item.capabilities.account.requiresExplicitStart !== true) throw new Error('native_process_target_invalid');
   const account=item.capabilities.account;
+  const adapters=accountAdapterCapabilities(account.adapters);
   if ((account.compatibilityDeclaration!==undefined || account.compatibilityVerified!==undefined) &&
     !((account.compatibilityDeclaration===null || account.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1') && account.compatibilityVerified===false)) throw new Error('native_process_target_invalid');
   // Durable Docs expose JSON proxies, which structuredClone cannot clone. Copy
@@ -137,7 +139,7 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
     identity:JSON.parse(canonical(item.capabilities.identity as never)),
     research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration},
     ...(item.capabilities.preparation === undefined ? {} : {preparation:{marketImport:item.capabilities.preparation.marketImport,...(item.capabilities.preparation.fillObservationImport===undefined?{}:{fillObservationImport:item.capabilities.preparation.fillObservationImport})}}),
-    account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
+    account:{...(adapters!==undefined?{adapters}:{}),compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
   }};
 }
 function processCapabilities(target: ProcessNativeTarget): NativeCapabilities {
