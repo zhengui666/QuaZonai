@@ -1,7 +1,7 @@
 import {defineDoc,defineExtension,defineTask,defineTool,type JsonObject,type TaskId} from '@earendil-works/pi-durable';
 import {compile,type Schema} from '@earendil-works/pi-schema';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,normalize} from 'node:path';
 import type {NativeTarget,NativeJson} from '../../../packages/contracts/src/nautilus.ts';
 import {studyInput,object} from '../src/trials.ts';
 import {validateNumbers} from '../src/input.ts';
@@ -45,7 +45,7 @@ export const NativeMarketImportTask=defineTask<{target:NativeTarget;request:Json
     const directory=await mkdtemp(join(process.env.PI_SCRATCH_DIR??process.env.QZ_SCRATCH_DIR??'/var/tmp','qz-market-import-'));
     try{
       const result=object(await withNativeRemoteTracking(task.id,runtime,context,()=>executeNativeValue(task.input.target,'native-market-import',task.input.request,[],directory,context)),'native_market_import_result');
-      if(result.schema_version!==1||result.research_qualified!==false||result.catalog_path!==join(String(task.input.request.output_path),'catalog')||typeof result.report_path!=='string'||object(result.report,'native_market_import_report').status!=='IMPORTED')throw new Error('native_market_import_result_invalid');
+      if(result.schema_version!==1||result.research_qualified!==false||typeof result.catalog_path!=='string'||normalize(result.catalog_path)!==join(String(task.input.request.output_path),'catalog')||typeof result.report_path!=='string'||object(result.report,'native_market_import_report').status!=='IMPORTED')throw new Error('native_market_import_result_invalid');
       await runtime.commit(()=>({status:'terminal',outcome:{status:'completed',result}}),context);
     }catch(error){
       await retainNativeRemoteUncertainty(error,task.id,runtime,context);if(runtime.signal.aborted)throw error;
