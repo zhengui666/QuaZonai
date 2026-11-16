@@ -5,10 +5,10 @@ import test from 'node:test';
 import { NativeStrategyBacktestTask } from '../../research/plugins/native-strategy-backtest.ts';
 import { setup, context, fauxAssistantMessage, fauxToolCall } from './support.ts';
 
-test('owner HTTP research exposes grid tools and pages every original native child across restart', async () => {
+test('owner HTTP research exposes grid tools and pages every original native child across restart', { timeout: 60_000 }, async () => {
   const state = await setup();
   try {
-    const binary = join(state.directory, 'native-protocol');
+    const binary = join(state.directory, 'native-protocol.mjs');
     await writeFile(binary, `#!${process.execPath}\nlet body='';for await(const c of process.stdin)body+=c;const request=JSON.parse(body);process.stdout.write(JSON.stringify({schema_version:1,request,native_version:'protocol',native_results:[{run_id:String(request.config.period)}],canonical_result:null,canonical_unavailable_reason:'PROTOCOL_TEST_ONLY'}));`, { mode: 0o755 });
     const dataset = state.options.config.datasets[0]!;
     dataset.data = { catalog: dataset.data.catalog!, nautilusTarget: { kind: 'RUST_PROCESS', id: 'parameter-test', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } } };
@@ -45,7 +45,7 @@ test('owner HTTP research exposes grid tools and pages every original native chi
     const conversation = await state.service.research.harness.conversation(receipt.conversationId, context);
     const failed = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { configured: true, request: grid.request, catalog: state.directory, target: '/missing-native-test' }, { ownership: { kind: 'conversation' } }), context);
     assert.equal((await state.service.research.harness.waitForTask(failed, context)).state.outcome.status, 'failed');
-    const uncertainBinary = join(state.directory, 'uncertain-native-protocol');
+    const uncertainBinary = join(state.directory, 'uncertain-native-protocol.mjs');
     await writeFile(uncertainBinary, `#!${process.execPath}\nfor await(const c of process.stdin){}process.exit(1);`, {mode: 0o755});
     const uncertain = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { configured: true, request: grid.request, catalog: state.directory, target: {...state.options.config.nativeProcess!, binary: uncertainBinary} }, { ownership: {kind: 'conversation'} }), context);
     const deadline = Date.now() + 5000;
