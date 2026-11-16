@@ -30,7 +30,7 @@ quazonai identity
 | 用户目标 | 先读取 | 操作参考 |
 | --- | --- | --- |
 | 自然语言研究、回测、追问或继续 | `datasets`、`research models`、`research get ID` | [原生研究与扫描](references/research-and-portfolios.md) |
-| 参数扫描与证据评级 | 原研究详情、`parameter-scan options --file QUERY.json` | [原生研究与扫描](references/research-and-portfolios.md) |
+| 参数扫描与证据评级 | 原研究详情、已登记数据与 runner 能力、`research native-backtests ID` | [原生研究与扫描](references/research-and-portfolios.md) |
 | 绑定账户、显式启停原生策略或资金退出 | `observation list`、`account-strategy status ID`、`capital status ID` | [账户与资金](references/accounts.md) |
 | 读取既有 PM/组合记录 | 实际 `--help`、`pm capabilities` | [保留的历史查询](references/pm.md) |
 | 查用量、设置、扩展或维护模式 | 对应 `get`、`list`、`status` | [命令索引](references/commands.md) |
