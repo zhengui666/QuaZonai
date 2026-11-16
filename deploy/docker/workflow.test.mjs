@@ -25,8 +25,22 @@ const results = ['success', 'failure', 'cancelled', 'skipped'];
 test('push CI no longer packages an unused bundled native runtime; explicit science checks remain', async () => {
   const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(ci, /\n  native-artifacts:/);
+  const scope = ci.split('\n  scope:\n')[1]?.split(/\n  [a-z-]+:\n/)[0];
   const science = ci.split('\n  science-core:\n')[1];
-  assert.match(science, /if: github\.event_name == 'workflow_dispatch'/);
+  const scopeCondition = scope?.match(/^    if: (.+)$/m)?.[1];
+  const scienceCondition = science?.match(/^    if: (.+)$/m)?.[1];
+  assert.ok(scopeCondition && scienceCondition);
+  const runScope = Function('github', `return (${scopeCondition});`);
+  const runScience = Function('needs', `return (${scienceCondition});`);
+  for (const event of ['pull_request', 'workflow_dispatch', 'push']) {
+    assert.equal(runScope({ event_name: event }), event !== 'push', event);
+    for (const changed of ['true', 'false']) {
+      const needs = { scope: { outputs: { science: changed } } };
+      assert.equal(runScience(needs), changed === 'true', `${event}/${changed}`);
+      assert.equal(runScope({ event_name: event }) && runScience(needs),
+        event !== 'push' && changed === 'true', `scheduled ${event}/${changed}`);
+    }
+  }
   assert.match(science, /native-build\.sh/);
 });
 
