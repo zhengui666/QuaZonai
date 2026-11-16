@@ -24,7 +24,7 @@ jobs:
           key: btc-training-observer-634e094
           cache-bin: false
           cache-workspace-crates: false
-          workspaces: runtimes/native/btc-training-launcher -> target-btc-training
+          workspaces: runtimes/native/btc-training-launcher -> ../../../target-btc-training
       - name: Parse and test isolated observer
         run: |
           cargo fmt --manifest-path runtimes/native/btc-training-observer/Cargo.toml --check
@@ -42,7 +42,8 @@ jobs:
           python3 - <<'PYCODE'
           import json
           p=json.load(open('btc-artifacts/capabilities.json'))
-          assert p['research']['configuredRunFactory'] and not p['account']['registration'] and not p['running']
+          assert p['research']['configuredRunFactory'] and not p['account']['registration'] and not p['account']['compiled'] and not p['running']
+          assert p['identity']['precision']=='high' and p['protocol']=='quazonai-native-process-v1'
           assert p['identity']['nautilusRevision']=='634e09456c949f488b2bfcf6b6897b33cbf218d7'
           PYCODE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
