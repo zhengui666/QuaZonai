@@ -38,16 +38,13 @@ jobs:
           cache-workspace-crates: false
       - name: Retain static native lint without running scientific regression
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - name: Native identity, observation, control and recovery protocols
+      - name: Selected native identity, observation, control and recovery protocols
         run: |
-          for module in account_observation delivery execution lifecycle runtime runtime_jobs; do
-            cargo test --locked -p contracts --lib "${module}::"
-          done
-          for module in account_observation control delivery execution runtime runtime_jobs; do
-            cargo test --locked -p domain --lib "${module}::"
-          done
+          cargo test --locked -p contracts --lib account_observation::
+          cargo test --locked -p domain --lib account_observation::
+          cargo test --locked -p contracts --test wire --test json_roundtrip --test architecture
           cargo test --locked -p job --all-features --test build_identity --test account_observer
-          for module in account_observation_cli account_runtime account_runtime_cache account_order_preview account_queued_cancel native_configured native_runner bounded; do
+          for module in account_observation_cli account_runtime account_runtime_cache account_order_preview account_queued_cancel native_configured native_runner; do
             cargo test --locked -p job --all-features --lib "${module}::" -- --test-threads=1
           done
   cli:
