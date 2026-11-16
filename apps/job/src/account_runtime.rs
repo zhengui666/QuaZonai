@@ -708,8 +708,18 @@ impl AccountController {
                 let order = self.order_factory().limit(
                     instrument,
                     OrderSide::Buy,
-                    nautilus_model::types::Quantity::from("1.00"),
-                    Price::from("1.00"),
+                    nautilus_model::types::Quantity::from_str(
+                        r.body
+                            .get("quantity")
+                            .and_then(Value::as_str)
+                            .unwrap_or("1.00"),
+                    )?,
+                    Price::from_str(
+                        r.body
+                            .get("price")
+                            .and_then(Value::as_str)
+                            .unwrap_or("1.00"),
+                    )?,
                     Some(TimeInForce::Gtc),
                     None,
                     Some(false),
@@ -2570,6 +2580,15 @@ mod tests {
         margin: bool,
         leverage: Decimal,
     ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
+        node_with_margin_scenario(directory, scoped, margin, leverage, None).await
+    }
+    async fn node_with_margin_scenario(
+        directory: &std::path::Path,
+        scoped: bool,
+        margin: bool,
+        leverage: Decimal,
+        margin_init: Option<Decimal>,
+    ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
         let ids = vec![
             InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"),
             InstrumentId::from("ETH-USDC-SPOT.HYPERLIQUID"),
@@ -2593,7 +2612,13 @@ mod tests {
             for currency in [Currency::USDC(), Currency::BTC(), Currency::ETH()] {
                 db.add_currency(&currency)?;
             }
-            db.add_instrument(&pair(&ids[0].to_string(), Currency::BTC()))?;
+            let mut instrument = pair(&ids[0].to_string(), Currency::BTC());
+            // Explicit offline scenario, not a reconstruction of Hyperliquid margin tiers.
+            if let (Some(rate), InstrumentAny::CurrencyPair(pair)) = (margin_init, &mut instrument)
+            {
+                pair.margin_init = rate;
+            }
+            db.add_instrument(&instrument)?;
             db.add_instrument(&pair(&ids[1].to_string(), Currency::ETH()))?;
             db.close()?;
         }
@@ -3718,6 +3743,60 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
         assert_explicit_strategy_start(false).await
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn explicit_margin_scenario_changes_native_order_admission() -> Result<()> {
+        // Identical explicit scenario and order; only native default leverage differs.
+        // This does not establish margin semantics for provider-loaded HL instruments.
+        for (leverage, denied) in [(Decimal::ONE, true), (Decimal::from(5), false)] {
+            let directory = tempfile::tempdir()?;
+            let (mut native, tx, replies) = node_with_margin_scenario(
+                directory.path(),
+                false,
+                true,
+                leverage,
+                Some(Decimal::ONE),
+            )
+            .await?;
+            let handle = native.handle();
+            let cache = native.kernel().cache();
+            let risk = native.kernel().risk_engine().clone();
+            let drive = async {
+                while !handle.is_running() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                publish_native_quote_size(&cache, "100.00", "100.00")?;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                risk.borrow_mut()
+                    .set_trading_state(nautilus_model::enums::TradingState::Active);
+                request(
+                    &tx,
+                    &replies,
+                    "TEST_RESTING_LIMIT",
+                    json!({"quantity":"20.00","price":"90.00"}),
+                )
+                .await?;
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                let borrowed = cache.borrow();
+                let order = borrowed
+                    .order(&ClientOrderId::from("fault-resting"))
+                    .ok_or_else(|| anyhow!("missing scenario order"))?;
+                assert_eq!(
+                    order.status().to_string(),
+                    if denied { "DENIED" } else { "ACCEPTED" }
+                );
+                handle.stop();
+                Ok::<_, anyhow::Error>(())
+            };
+            let (run, result) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive)
+            })
+            .await?;
+            run?;
+            result?;
+            native.dispose();
+        }
+        Ok(())
     }
     #[tokio::test(flavor = "current_thread")]
     async fn paper_margin_leverage_survives_official_cache_recovery() -> Result<()> {
