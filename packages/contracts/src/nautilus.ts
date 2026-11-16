@@ -102,6 +102,8 @@ export function nativeFixedRiskSizing(value: unknown): NativeFixedRiskSizingRequ
 export interface NativeRustEnvironment {
   kind: 'RUST_PROCESS'; id: string; cargoBinary: string; manifestPath: string; packageName: string;
   features?: string[]; backtestFactory?: string; accountFactory?: string;
+  /** Compile/register the existing source observation type for an explicit backtest factory only. */
+  chainticksFillObservations?: boolean;
   /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
   accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
 }

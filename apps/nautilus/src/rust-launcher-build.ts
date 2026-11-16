@@ -93,6 +93,7 @@ export async function buildRustLauncher(options: {
   const owner = selectedCargoGraph(ownerMetadata, ownerPackage.id);
   const copiedManifest = join(glue, 'apps/job/Cargo.toml');
   const features = options.factories.accountFactory ? ['account-runtime'] : [];
+  if (options.factories.chainticksFillObservations) features.push('chainticks-observations');
   if (nativeResolution(owner).find(p => p.name === 'nautilus-model')?.precision.includes('high-precision')) features.push('high-precision');
   await writeFile(copiedManifest, alignCopiedNativeManifest(activeCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), features), owner));
   const dependencies = `job = { path = ${JSON.stringify(join(glue, 'apps/job'))}, default-features = false, features = ${JSON.stringify(features)} }\nanyhow = "1"\nserde_json = "1"`;
