@@ -72,12 +72,16 @@ pub fn import(args: ImportArgs) -> Result<()> {
         };
         let parsed = (|| {
             let raw = scalar(field(&row, "raw_json")?)?;
-            let recorded = row
+            let recorded = match row
                 .get_column_iter()
                 .find(|(name, _)| name.as_str() == "recorded_at")
-                .map(|(_, value)| scalar(value))
-                .transpose()?;
-            parse_observation(&raw, &location, recorded.as_deref(), policy)
+                .map(|(_, value)| value)
+            {
+                None | Some(parquet::record::Field::Null) => None,
+                Some(parquet::record::Field::Str(value)) => Some(value.as_str()),
+                _ => anyhow::bail!("ARCHIVE_RECORDED_AT_STRING_OR_NULL_REQUIRED"),
+            };
+            parse_observation(&raw, &location, recorded, policy)
         })();
         match parsed {
             Ok(observation) => {
@@ -156,7 +160,7 @@ pub fn import(args: ImportArgs) -> Result<()> {
             row.source_row_zero_based
         );
     }
-    let report = json!({"schema_version":1,"status":if rejected==0 {"IMPORTED"} else {"INCOMPLETE"},"source":"Chainticks/perp-data","source_file":source_file,"source_revision":args.revision,"source_rows":source_rows,"written_observations":originals.len(),"readback_records":loaded.len(),"rejected_rows":rejected,"classifications":classifications,"native_type":"ChainticksFillObservation","native_file":file,"research_qualified":false,"deduplication":"NONE; all observations retain file and row identity; account-side fills are not market trade volume","clock_semantics":"ts_event=event.time ms converted to ns; ts_init=source node block.local_time, not local download or archive ingestion","naive_local_time_assumption":if args.assume_source_local_time_utc {"UTC_EXPLICIT"} else {"REJECT"},"ordering":"Stable ts_init ordering for native catalog only; not exchange execution order","registered_in_quazonai":false,"coverage":"UNVERIFIED; one explicitly selected source file, no listing/delisting or market completeness claim"});
+    let report = json!({"schema_version":1,"status":if rejected==0 {"IMPORTED"} else {"INCOMPLETE"},"source":"Chainticks/perp-data","source_file":source_file,"source_revision":args.revision,"source_rows":source_rows,"written_observations":originals.len(),"readback_records":loaded.len(),"rejected_rows":rejected,"classifications":classifications,"native_type":"ChainticksFillObservation","native_file":file,"research_qualified":false,"deduplication":"NONE; all observations retain file and row identity; account-side fills are not market trade volume","clock_semantics":"ts_event=event.time ms converted to ns; ts_init=source node block.local_time, not local download or archive ingestion","naive_local_time_assumption":if args.assume_source_local_time_utc {"UTC_EXPLICIT"} else {"REJECT"},"classification_scope":"dir and crossed only; liquidation, builderFee and twapId remain in original envelope, not distinct direction classes","clock_validation":"No synchrony or source-clock causality guarantee; negative source-node minus event delays are retained, not repaired","ordering":"Stable ts_init ordering for native catalog only; not exchange execution order","registered_in_quazonai":false,"coverage":"UNVERIFIED; one explicitly selected source file, no listing/delisting or market completeness claim"});
     fs::write(
         args.output.join("import-report.json"),
         serde_json::to_vec_pretty(&report)?,
