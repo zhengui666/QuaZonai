@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -212,4 +212,124 @@ qz_main apply-update --directory "$2" --no-backup`, 'option-test', script, root]
   const rejected = spawnSync('bash', [script, 'restore', root, '--directory', root, '--no-backup'], { encoding: 'utf8' });
   assert.notEqual(rejected.status, 0); assert.match(rejected.stderr, /only valid for update/);
   assert.deepEqual(await readdir(root), []);
+});
+
+for(const failure of ['none','idle','health','changed-installation','archive-parent-sync','root-sync'])test(`explicit failed-update recovery preserves original bytes and data (${failure})`,async t=>{
+ const root=await directory(t),release=join(root,'releases/v1.0.0/deployment');
+ await mkdir(release,{recursive:true});await mkdir(join(root,'work'));await mkdir(join(root,'data/accounts'),{recursive:true});await mkdir(join(root,'backups/retained'),{recursive:true});
+ const image=`sha256:${'a'.repeat(64)}`;
+ const previous={schema_version:5,version:'v1.0.0',revision:'b'.repeat(40),root,uid:process.getuid(),gid:process.getgid(),project:'fixture',image,bundle:release,port:8081};
+ await writeFile(join(root,'installation.json'),JSON.stringify(failure==='changed-installation'?{...previous,version:'v1.0.1'}:previous));
+ await symlink('releases/v1.0.0',join(root,'current'));
+ const pending=JSON.stringify({operation:'update',phase:'starting',previous,target:{...previous,version:'v1.1.0',revision:'c'.repeat(40)},backup:join(root,'backups/retained')},null,3)+'\n';
+ await writeFile(join(root,'pending.json'),pending);await writeFile(join(root,'data/accounts/original'),'UNKNOWN: original request bytes');await writeFile(join(root,'backups/retained/proof'),'keep backup');
+ const script=fileURLToPath(new URL('./manage.sh',import.meta.url));
+ const result=spawnSync('bash',['-c',`source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"
+sync() {
+ printf '%s\n' "$2" >> "$ROOT/sync-steps"
+ ${failure==='archive-parent-sync'?'[[ "$2" != "$ROOT/failed-updates" ]] || return 71;':':;'}
+ ${failure==='root-sync'?'[[ "$2" != "$ROOT" ]] || return 72;':':;'}
+ command sync "$@"
+}
+mv() {
+ if [[ "$*" == *pending.json* ]]; then
+  grep -Fx "$ROOT/failed-updates" "$ROOT/sync-steps" >/dev/null || return 73
+  grep -Fx "$ROOT" "$ROOT/sync-steps" >/dev/null || return 74
+ fi
+ command mv "$@"
+}
+qz_recovery_stop() { printf 'verify\nstop\n' >> "$ROOT/steps"; }
+qz_stop() { printf 'stop\n' >> "$ROOT/steps"; }
+qz_idle() { printf 'idle\n' >> "$ROOT/steps"; ${failure==='idle'?'qz_fail "controlled unresolved UNKNOWN";':':;'} }
+qz_start() { printf 'start\n' >> "$ROOT/steps"; ${failure==='health'?'qz_fail "controlled original health failure";':':;'} }
+qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'recover-test',script,root],{encoding:'utf8',timeout:20000});
+ assert.equal(await readFile(join(root,'data/accounts/original'),'utf8'),'UNKNOWN: original request bytes');assert.equal(await readFile(join(root,'backups/retained/proof'),'utf8'),'keep backup');
+ if(['archive-parent-sync','root-sync'].includes(failure)){
+  assert.equal(await readFile(join(root,'steps'),'utf8'),'verify\nstop\nidle\n');
+  const archives=await readdir(join(root,'failed-updates'));assert.equal(archives.length,1);
+  assert.equal(await readFile(join(root,'failed-updates',archives[0],'pending.original.json'),'utf8'),pending);
+ }
+ if(failure!=='none'){assert.notEqual(result.status,0,result.stdout);assert.equal(await readFile(join(root,'pending.json'),'utf8'),pending);}
+ else{
+  assert.equal(result.status,0,result.stderr);await assert.rejects(readFile(join(root,'pending.json')),{code:'ENOENT'});
+  const reference=JSON.parse(await readFile(join(root,'failed-update-recovery.json'),'utf8'));
+  assert.equal(await readFile(join(reference.archive,'pending.json'),'utf8'),pending);assert.equal(await readFile(join(reference.archive,'pending.original.json'),'utf8'),pending);
+  const audit=JSON.parse(await readFile(join(reference.archive,'recovery.json'),'utf8'));assert.equal(audit.data_replaced,false);assert.equal(audit.previous_version,'v1.0.0');assert.equal(audit.failed_version,'v1.1.0');
+  assert.equal(await readFile(join(root,'steps'),'utf8'),'verify\nstop\nidle\nstart\n');
+  assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
+ }
+});
+
+for (const state of ['true 0', 'false 0', 'false 143', 'false 137', 'wrong-image', 'missing']) test(`failed-update retry checks original container before maintenance (${state})`, async () => {
+ const script=fileURLToPath(new URL('./manage.sh',import.meta.url));
+ const result=spawnSync('bash',['-c',`source "$1"
+qz_compose() { ${state==='missing' ? ':' : "printf 'original-container\\n'"}; }
+qz_get() { printf 'previous-image\\n'; }
+docker() {
+ if [[ "$1" == image ]]; then printf 'original-image\\n'
+ elif [[ "$3" == '{{.Image}}' ]]; then printf '${state==='wrong-image'?'different-image':'original-image'}\\n'
+ else printf '%s\\n' '${state}' ; fi
+}
+qz_verify() { printf 'verify\\n'; }
+qz_stop() { printf 'stop\\n'; }
+qz_idle() { printf 'idle\\n'; }
+qz_start() { printf 'start\\n'; }
+qz_recovery_stop previous
+qz_idle previous
+qz_start previous`,'recovery-stop-test',script],{encoding:'utf8',timeout:20000});
+ if (['false 137','wrong-image','missing'].includes(state)) {
+  assert.notEqual(result.status,0);
+  assert.doesNotMatch(result.stdout,/idle|start/);
+ } else {
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(result.stdout,state==='true 0'?'verify\nstop\nidle\nstart\n':'idle\nstart\n');
+ }
+});
+
+test('failed recovery retries maintenance before restarting and archiving the original pending',async t=>{
+ const root=await directory(t),release=join(root,'releases/v1.0.0/deployment');
+ await mkdir(release,{recursive:true});await mkdir(join(root,'work'));await mkdir(join(root,'data'),{recursive:true});await mkdir(join(root,'backups/retained'),{recursive:true});
+ const previous={schema_version:5,version:'v1.0.0',revision:'b'.repeat(40),root,uid:process.getuid(),gid:process.getgid(),project:'fixture',image:`sha256:${'a'.repeat(64)}`,bundle:release,port:8081};
+ await writeFile(join(root,'installation.json'),JSON.stringify(previous));await symlink('releases/v1.0.0',join(root,'current'));
+ const pending=JSON.stringify({operation:'update',phase:'starting',previous,target:{...previous,version:'v1.1.0'},backup:join(root,'backups/retained')},null,2)+'\n';
+ await writeFile(join(root,'pending.json'),pending);await writeFile(join(root,'data/original'),'UNKNOWN original request');await writeFile(join(root,'backups/retained/proof'),'retained');await writeFile(join(root,'app-state'),'true 0\n');
+ const script=fileURLToPath(new URL('./manage.sh',import.meta.url));
+ const attempt=()=>spawnSync('bash',['-c',`source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"
+qz_compose() { printf 'original-container\n'; }
+docker() {
+ if [[ "$1" == image || "$3" == '{{.Image}}' ]]; then printf 'original-image\n'
+ else cat "$ROOT/app-state"; fi
+}
+qz_verify() { printf 'verify\n' >> "$ROOT/steps"; }
+qz_stop() { printf 'stop\n' >> "$ROOT/steps"; printf 'false 143\n' > "$ROOT/app-state"; }
+qz_idle() {
+ printf 'idle\n' >> "$ROOT/steps"
+ [[ -f "$ROOT/resolved" ]] || qz_fail 'controlled unresolved UNKNOWN'
+ printf 'idle-confirmed\n' > "$ROOT/idle-confirmed"
+}
+qz_start() {
+ [[ -f "$ROOT/idle-confirmed" ]] || qz_fail 'start before idle'
+ printf 'start\n' >> "$ROOT/steps"
+ printf 'true 0\n' > "$ROOT/app-state"
+ qz_verify "$1"
+}
+qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'retry-recovery-test',script,root],{encoding:'utf8',timeout:20000});
+ for(let n=0;n<2;n++){
+  const result=attempt();assert.notEqual(result.status,0,result.stdout);
+  assert.equal(await readFile(join(root,'pending.json'),'utf8'),pending);
+  assert.equal(await readFile(join(root,'app-state'),'utf8'),'false 143\n');
+  assert.doesNotMatch(await readFile(join(root,'steps'),'utf8'),/start/);
+ }
+ await writeFile(join(root,'resolved'),'resolved externally');
+ const result=attempt();assert.equal(result.status,0,result.stderr);
+ const reference=JSON.parse(await readFile(join(root,'failed-update-recovery.json'),'utf8'));
+ assert.equal(await readFile(join(reference.archive,'pending.json'),'utf8'),pending);
+ assert.equal(await readFile(join(reference.archive,'pending.original.json'),'utf8'),pending);
+ await assert.rejects(readFile(join(root,'pending.json')),{code:'ENOENT'});
+ assert.equal(await readFile(join(root,'steps'),'utf8'),'verify\nstop\nidle\nidle\nidle\nstart\nverify\n');
+ assert.equal(await readFile(join(root,'data/original'),'utf8'),'UNKNOWN original request');
+ assert.equal(await readFile(join(root,'backups/retained/proof'),'utf8'),'retained');
+ assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
 });

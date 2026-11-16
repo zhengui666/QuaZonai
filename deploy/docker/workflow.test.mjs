@@ -6,7 +6,7 @@ const workflow = await readFile(new URL('../../.github/workflows/release-version
 function condition(job) {
   const section = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z]+:\n/)[0];
   const value = section?.match(/^    if: \$\{\{ (.+) \}\}$/m)?.[1];
-  assert.ok(value, `${job} must explicitly handle its deliberately skipped formal-regression ancestor`);
+  assert.ok(value, `${job} must explicitly handle cancellation`);
   assert.match(value, /!cancelled\(\)/, `${job} must override implicit success() without running after cancellation`);
   return Function('needs', 'cancelled', 'inputs', `return (${value});`);
 }
@@ -25,8 +25,22 @@ const results = ['success', 'failure', 'cancelled', 'skipped'];
 test('push CI no longer packages an unused bundled native runtime; explicit science checks remain', async () => {
   const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(ci, /\n  native-artifacts:/);
+  const scope = ci.split('\n  scope:\n')[1]?.split(/\n  [a-z-]+:\n/)[0];
   const science = ci.split('\n  science-core:\n')[1];
-  assert.match(science, /if: github\.event_name == 'workflow_dispatch'/);
+  const scopeCondition = scope?.match(/^    if: (.+)$/m)?.[1];
+  const scienceCondition = science?.match(/^    if: (.+)$/m)?.[1];
+  assert.ok(scopeCondition && scienceCondition);
+  const runScope = Function('github', `return (${scopeCondition});`);
+  const runScience = Function('github', 'needs', `return (${scienceCondition});`);
+  for (const event of ['pull_request', 'workflow_dispatch', 'push']) {
+    assert.equal(runScope({ event_name: event }), event === 'workflow_dispatch', event);
+    for (const changed of ['true', 'false']) {
+      const needs = { scope: { outputs: { science: changed } } };
+      assert.equal(runScience({ event_name: event }, needs), event === 'workflow_dispatch' && changed === 'true', `${event}/${changed}`);
+      assert.equal(runScope({ event_name: event }) && runScience({ event_name: event }, needs),
+        event === 'workflow_dispatch' && changed === 'true', `scheduled ${event}/${changed}`);
+    }
+  }
   assert.match(science, /native-build\.sh/);
 });
 
@@ -80,10 +94,19 @@ test('science CI exercises original high-precision data and upstream strategies 
   for (const name of ['job source-tools catalog-prepare', 'job-high-precision catalog-prepare-high-precision market-history']) assert.ok(archive?.includes(name));
 });
 
-test('formal releases still require full regression and cancelled builds never proceed', () => {
+test('main and dev releases do not require science but cancelled builds never proceed', () => {
+  assert.doesNotMatch(workflow, /rust-regression|needs: regression|\n  regression:/);
+  assert.match(workflow, /needs: native-protocol/);
+  assert.match(workflow, /cargo clippy --locked --workspace --all-targets --all-features/);
+  assert.match(workflow, /--test build_identity --test account_observer/);
+  assert.match(workflow, /-p contracts --test wire --test json_roundtrip --test architecture/);
+  assert.match(workflow, /-p domain --lib account_observation::/);
+  assert.doesNotMatch(workflow, /make check-native-full|make check-science|--test native_strategy/);
+  assert.match(workflow, /Verify successful exact-push CI/);
+  assert.match(workflow, /release\.py verify --version/);
   const evaluate = condition('build');
   for (const regression of results) for (const branch of ['main', 'dev']) for (const cancelled of [false, true]) {
-    assert.equal(evaluate({ regression: { result: regression } }, () => cancelled, { branch }),
+    assert.equal(evaluate({ 'native-protocol': { result: regression } }, () => cancelled, { branch }),
       !cancelled && (branch === 'dev' || regression === 'success'), `${branch}/${regression}/cancelled=${cancelled}`);
   }
 });
