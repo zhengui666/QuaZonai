@@ -77,6 +77,7 @@ use utoipa::OpenApi;
     observed_spot::NativeObservedSpotBuildResultV1,
     native_walk_forward::NativeStrategyWalkForwardRequestV1,
     native_walk_forward::NativeStrategyWalkForwardResultV1,
+    market_import::NativeFillObservationImportRequestV1,
     market_import::NativeMarketImportRequestV1,
     market_import::NativeMarketImportResultV1,
     native_strategy::NativeConfiguredBacktestRequestV1,

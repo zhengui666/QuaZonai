@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {remoteNativeCapabilities,validateNativeTarget} from '../src/native-execution.ts';
 import type {ProcessNativeTarget} from '../../../packages/contracts/src/nautilus.ts';
 
-function target(preparation?: {marketImport:boolean}):ProcessNativeTarget {
+function target(preparation?: {marketImport:boolean;fillObservationImport?:boolean}):ProcessNativeTarget {
   return {kind:'RUST_PROCESS',id:'capability-contract',binary:'/not-executed',capabilities:{
     schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'0.69.0'},
     research:{singleStrategyRegistration:false,configuredRunFactory:true},
@@ -27,4 +27,13 @@ test('invalid preparation declarations are rejected rather than coerced',()=>{
     const bad=target();Object.assign(bad.capabilities,{preparation:value});
     assert.throws(()=>validateNativeTarget(bad),/native_process_target_invalid/);
   }
+});
+
+test('fill observations require their own explicit preparation capability',async()=>{
+  const old=validateNativeTarget(target({marketImport:true}));
+  assert.equal((await remoteNativeCapabilities(old)).commands.includes('native-fill-observation-import'),false);
+  const declared=validateNativeTarget(target({marketImport:true,fillObservationImport:true}));
+  assert.equal((await remoteNativeCapabilities(declared)).commands.includes('native-fill-observation-import'),true);
+  const bad=target();Object.assign(bad.capabilities,{preparation:{marketImport:true,fillObservationImport:'true'}});
+  assert.throws(()=>validateNativeTarget(bad),/native_process_target_invalid/);
 });

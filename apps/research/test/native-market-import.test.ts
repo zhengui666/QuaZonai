@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {prepareNativeMarketImport} from '../plugins/native-market-import.ts';
+import {prepareNativeMarketImport,prepareNativeFillObservationImport} from '../plugins/native-market-import.ts';
 
 test('import tool consumes generated original contract without coercing timestamps or allowing bar/resume options',()=>{
   const request={schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog-output',start_seconds:'1778284800',end_seconds:'1778288400',received_time:true,maximum_receive_delay_ns:'18446744073709551615',path_prefixes:['training/']};
@@ -49,4 +49,11 @@ test('ordinary intake exposes the import tool and preserves native capability re
     assert.doesNotMatch(encoded,/unknown tool|tool_not_found/i);
     assert.equal(tasks.items.filter(t=>t.kind==='qz.native.execution').length,0);
   }finally{await host.close();}
+});
+
+test('fill observation request preserves explicit provenance and timezone choice, without research or trade synthesis flags',()=>{
+  const request={schema_version:1,source_path:'/source/training.parquet',source_revision:'declared-source-revision',output_path:'/output/new',assume_source_local_time_utc:false};
+  assert.deepEqual(prepareNativeFillObservationImport(request),request);
+  for(const extra of [{bar_seconds:1},{deduplicate:true},{instruments_path:'/source/current.json'},{assume_source_local_time_utc:'true'}])assert.throws(()=>prepareNativeFillObservationImport({...request,...extra}));
+  const {source_revision,...missing}=request;assert.throws(()=>prepareNativeFillObservationImport(missing));
 });

@@ -62,6 +62,9 @@ enum Operation {
     /// Import explicitly mapped local trades into a new native catalog.
     #[cfg(feature = "market-history")]
     NativeMarketImport,
+    /// Import local account-side fill observations as official CustomData, not market trades.
+    #[cfg(feature = "market-history")]
+    NativeFillObservationImport,
     /// Run a user crate's official typed Nautilus configuration.
     NativeConfiguredBacktest {
         #[arg(long)]
@@ -134,6 +137,10 @@ fn run(
         Operation::NativeMarketImport => {
             native_output(|| job::market_history::native_market_import(input()?))
         }
+        #[cfg(feature = "market-history")]
+        Operation::NativeFillObservationImport => {
+            native_output(|| job::chainticks_import::native_fill_observation_import(input()?))
+        }
         Operation::NativeConfiguredBacktest { catalog } => {
             native_output(|| job::native_configured::run(&catalog, input()?, factory))
         }
@@ -193,6 +200,10 @@ mod tests {
 
     #[test]
     fn local_trade_import_is_only_available_when_compiled() {
+        assert_eq!(
+            Arguments::try_parse_from(["job", "native-fill-observation-import"]).is_ok(),
+            cfg!(feature = "market-history"),
+        );
         assert_eq!(
             Arguments::try_parse_from(["job", "native-market-import"]).is_ok(),
             cfg!(feature = "market-history"),

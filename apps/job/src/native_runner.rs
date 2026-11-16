@@ -13,7 +13,7 @@ pub fn capabilities(
         "schemaVersion":1,"identity":crate::build_identity(),
         "protocol":"quazonai-native-process-v1",
         "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured},
-        "preparation":{"marketImport":cfg!(feature="market-history")},
+        "preparation":{"marketImport":cfg!(feature="market-history"),"fillObservationImport":cfg!(feature="market-history")},
         "account":{"compiled":cfg!(feature="account-runtime"),"registration":account_registration,
             "command":"account-runtime","requiresExplicitStart":true},
         "running":false
@@ -137,6 +137,10 @@ mod tests {
         assert_eq!(value["running"], false);
         assert_eq!(
             value["preparation"]["marketImport"],
+            cfg!(feature = "market-history")
+        );
+        assert_eq!(
+            value["preparation"]["fillObservationImport"],
             cfg!(feature = "market-history")
         );
         assert_eq!(value["research"]["configuredRunFactory"], true);

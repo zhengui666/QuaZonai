@@ -34,7 +34,7 @@ pub struct ImportArgs {
     pub output: PathBuf,
 }
 
-pub fn import(args: ImportArgs) -> Result<()> {
+fn import_report(args: ImportArgs) -> Result<serde_json::Value> {
     ensure!(
         args.source.is_absolute() && args.source.is_file(),
         "EXISTING_ABSOLUTE_SOURCE_REQUIRED"
@@ -165,10 +165,42 @@ pub fn import(args: ImportArgs) -> Result<()> {
         args.output.join("import-report.json"),
         serde_json::to_vec_pretty(&report)?,
     )?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(report)
+}
+
+fn require_complete(report: &serde_json::Value) -> Result<()> {
     ensure!(
-        rejected == 0,
+        report["status"] == "IMPORTED",
         "INCOMPLETE_SOURCE_IMPORT; inspect original report and rejected-source-rows.jsonl"
     );
     Ok(())
+}
+
+pub fn import(args: ImportArgs) -> Result<()> {
+    let report = import_report(args)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    require_complete(&report)
+}
+
+pub fn native_fill_observation_import(
+    request: contracts::market_import::NativeFillObservationImportRequestV1,
+) -> Result<contracts::market_import::NativeMarketImportResultV1> {
+    let output = PathBuf::from(request.output_path);
+    let report = import_report(ImportArgs {
+        source: PathBuf::from(request.source_path),
+        revision: request.source_revision,
+        assume_source_local_time_utc: request.assume_source_local_time_utc,
+        output: output.clone(),
+    })?;
+    require_complete(&report)?;
+    Ok(contracts::market_import::NativeMarketImportResultV1 {
+        schema_version: request.schema_version,
+        catalog_path: output.join("catalog").to_string_lossy().into_owned(),
+        report_path: output
+            .join("import-report.json")
+            .to_string_lossy()
+            .into_owned(),
+        research_qualified: false,
+        report: crate::market_history::import_report_wire(report),
+    })
 }

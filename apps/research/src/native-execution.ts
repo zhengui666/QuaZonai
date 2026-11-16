@@ -19,7 +19,7 @@ import { JSONParser, JsonReader, jsonChunks, canonicalJsonDigest } from './nativ
 import { NativeTableReader } from './native-table.ts';
 import { canonical } from './documents.ts';
 
-export const nativeCommands = new Set(['native-market-import', 'review-source', 'native-strategy-backtest', 'native-configured-backtest', 'validate-capital-exit', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
+export const nativeCommands = new Set(['native-fill-observation-import', 'native-market-import', 'review-source', 'native-strategy-backtest', 'native-configured-backtest', 'validate-capital-exit', 'catalog-inspect', 'catalog-coverage', 'catalog-prefix-digest', 'catalog-factor-scope']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
 /** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
@@ -124,7 +124,7 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
   if (!value || typeof value !== 'object' || Array.isArray(value) || (value as {kind?:unknown}).kind !== 'RUST_PROCESS') return validateRemoteTarget(value);
   const item = value as ProcessNativeTarget;
   if (typeof item.id !== 'string' || !item.id.trim() || typeof item.binary !== 'string' || !isAbsolute(item.binary) || item.capabilities?.schemaVersion !== 1 || item.capabilities.protocol !== 'quazonai-native-process-v1' || item.capabilities.running !== false
-    || (item.capabilities.preparation !== undefined && typeof item.capabilities.preparation?.marketImport !== 'boolean')
+    || (item.capabilities.preparation !== undefined && (typeof item.capabilities.preparation?.marketImport !== 'boolean' || (item.capabilities.preparation.fillObservationImport !== undefined && typeof item.capabilities.preparation.fillObservationImport !== 'boolean')))
     || !item.capabilities.identity || typeof item.capabilities.research?.configuredRunFactory !== 'boolean' || typeof item.capabilities.research?.singleStrategyRegistration !== 'boolean'
     || typeof item.capabilities.account?.compiled !== 'boolean' || typeof item.capabilities.account?.registration !== 'boolean' || item.capabilities.account.command !== 'account-runtime' || item.capabilities.account.requiresExplicitStart !== true) throw new Error('native_process_target_invalid');
   const account=item.capabilities.account;
@@ -136,14 +136,15 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
     schemaVersion:1,protocol:'quazonai-native-process-v1',running:false,
     identity:JSON.parse(canonical(item.capabilities.identity as never)),
     research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration},
-    ...(item.capabilities.preparation === undefined ? {} : {preparation:{marketImport:item.capabilities.preparation.marketImport}}),
+    ...(item.capabilities.preparation === undefined ? {} : {preparation:{marketImport:item.capabilities.preparation.marketImport,...(item.capabilities.preparation.fillObservationImport===undefined?{}:{fillObservationImport:item.capabilities.preparation.fillObservationImport})}}),
     account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
   }};
 }
 function processCapabilities(target: ProcessNativeTarget): NativeCapabilities {
   const commands = [...nativeCommands].filter(command =>
     (command !== 'native-configured-backtest' || target.capabilities.research.configuredRunFactory) &&
-    (command !== 'native-market-import' || target.capabilities.preparation?.marketImport === true));
+    (command !== 'native-market-import' || target.capabilities.preparation?.marketImport === true) &&
+    (command !== 'native-fill-observation-import' || target.capabilities.preparation?.fillObservationImport === true));
   return {schemaVersion:1,implementationDigest:'rust-process:'+canonical(target.capabilities.identity as never),commands,buildIdentity:target.capabilities.identity};
 }
 

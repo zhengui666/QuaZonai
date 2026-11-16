@@ -1796,7 +1796,7 @@ pub fn native_market_import(
 
 // The original import-report.json remains unchanged. The Pi JSON transport uses
 // JavaScript numbers, so preserve large integer report metadata as decimal text.
-fn import_report_wire(value: serde_json::Value) -> serde_json::Value {
+pub(crate) fn import_report_wire(value: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
     const MAX_SAFE: u64 = 9_007_199_254_740_991;
     match value {
