@@ -118,3 +118,14 @@ export interface SavedAccountRunnerReport {
  compatibilityDeclaration:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'|null;
  compatibilityVerified:false|null;
 }
+
+/** Explicit review of retained legacy failure evidence; never permission to retry. */
+export interface NativeConfiguredFailureReview {
+  nativeTaskId: number;
+  ownerTaskId: number;
+  requestId: string;
+  classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD';
+  /** Human/source review of the original owner factory and pre-engine rejection path. */
+  sourceReview: string;
+  sources: string[];
+}

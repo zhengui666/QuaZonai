@@ -12,7 +12,7 @@ import { runNativeProcess, cancelNativeProcess, NativeProcessFailure, type Nativ
 import { Readable } from 'node:stream';
 import { Agent, fetch } from 'undici';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
-import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget, NativeExecutionTarget, ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget, NativeExecutionTarget, ProcessNativeTarget, NativeConfiguredFailureReview } from '../../../packages/contracts/src/nautilus.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { NativeEvidencePart, retainNativeEvidence, readNativeEvidence, readNativeEvidenceParts } from '../plugins/native-evidence.ts';
 import { JSONParser, JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
@@ -283,6 +283,64 @@ export function withNativeExecutionHost<T>(harness: Harness, conversationId: Con
 }
 type RemoteTaskInput = { target: NativeExecutionTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
 
+/** Explicit source-reviewed closure of the known legacy empty-venue failure.
+ * Exit status alone is never sufficient. The caller supplies the source review;
+ * persisted original identity, diagnostics and process observations are checked here.
+ * This is an adopted receipt, not a rewrite/retry of the terminal native Task. */
+export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'>, conversationId: ConversationId, value: unknown, context: Context) {
+  const review = value as NativeConfiguredFailureReview | null;
+  const invalid = () => Object.assign(new Error('native_configuration_failure_review_invalid'), {statusCode:422});
+  if (!review || typeof review !== 'object' || Array.isArray(review)
+    || Object.keys(review).some(key => !['nativeTaskId','ownerTaskId','requestId','classification','sourceReview','sources'].includes(key))
+    || !Number.isSafeInteger(review.nativeTaskId) || Number(review.nativeTaskId) < 1
+    || !Number.isSafeInteger(review.ownerTaskId) || Number(review.ownerTaskId) < 1
+    || typeof review.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(review.requestId)
+    || review.classification !== 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
+    || typeof review.sourceReview !== 'string' || !review.sourceReview.trim() || review.sourceReview.length > 8192
+    || !Array.isArray(review.sources) || !review.sources.length || review.sources.length > 16
+    || !review.sources.every(source => typeof source === 'string' && source.trim() && source.length <= 2048)) throw invalid();
+  return harness.commit(async tx => {
+    const conflict = () => Object.assign(new Error('native_configuration_failure_evidence_conflict'), {statusCode:409});
+    const task = await tx.task(review.nativeTaskId as TaskId);
+    const input = task?.input as unknown as RemoteTaskInput | undefined;
+    if (!task || task.kind !== NativeExecutionTask.definition.name || task.conversationId !== conversationId
+      || !input || input.ownerTaskId !== review.ownerTaskId || input.requestId !== review.requestId
+      || input.command !== 'native-configured-backtest' || !isProcessNativeTarget(input.target)
+      || task.state.status !== 'terminal' || task.state.outcome.status !== 'failed'
+      || task.state.outcome.error.message !== 'nautilus_execution_unknown') throw conflict();
+    const facts = await tx.doc(NativeRemoteUncertainty, conversationId, String(input.ownerTaskId), null);
+    const reference = facts.requests.find(row => row.requestId === input.requestId && row.taskId === input.ownerTaskId
+      && canonical(row.target ?? null) === canonical(input.target as unknown as JsonObject));
+    if (!reference) throw conflict();
+    // Idempotent readback remains available after Pi retires the owner task's documents.
+    if (reference.configurationFailureReview) {
+      if (canonical((reference.configurationFailureReview as JsonObject).review ?? null) !== canonical(review as unknown as JsonObject)) throw conflict();
+      return JSON.parse(JSON.stringify({nativeTaskId:task.id, ownerTaskId:input.ownerTaskId, requestId:input.requestId, status:'FAILED', review:reference.configurationFailureReview}));
+    }
+    const owner = await tx.task(input.ownerTaskId as TaskId);
+    if (!owner || owner.conversationId !== conversationId || owner.kind !== 'qz.native-strategy.backtest' || owner.state.status === 'terminal') throw conflict();
+    const checkpoint = owner.state.checkpoint as JsonObject;
+    if (checkpoint.phase !== 'reconcile' || checkpoint.nativeTaskId !== task.id) throw conflict();
+    const call = await tx.doc(NativeCalls, input.ownerTaskId as TaskId, input.basis, null);
+    if (call.taskId !== task.id || call.adoptedReceipt || reference.status !== 'UNKNOWN') throw conflict();
+    const process = reference.process as JsonObject | undefined;
+    const originalProcess = task.state.outcome.error.detail as JsonObject | undefined;
+    if (!process || canonical(process) !== canonical(originalProcess?.process ?? null)
+      || process.errorCategory !== 'native_process_failed' || process.exitObserved !== true || process.exitCode !== 1
+      || process.signal !== null || process.terminationRequested !== false) throw conflict();
+    const diagnostic = await tx.doc(NativeEvidencePart, conversationId, `${task.id}:private-native-stderr`, null);
+    if (diagnostic.data !== 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n') throw conflict();
+    const evidence = {review:review as unknown as JsonObject, reviewedAt:new Date().toISOString(),
+      previousStatus:reference.status, previousError:reference.error ?? null, process,
+      diagnosticPart:`${task.id}:private-native-stderr`, scope:'SOURCE_REVIEWED_BACKTEST_FAILURE_NOT_GENERAL_SIDE_EFFECT_ROLLBACK'};
+    const error = 'native_configured_configuration_rejected';
+    call.adoptedReceipt = {requestId:input.requestId,status:'FAILED',error};
+    reference.configurationFailureReview = evidence;
+    reference.status = 'FAILED'; reference.error = error;
+    return JSON.parse(JSON.stringify({nativeTaskId:task.id,ownerTaskId:input.ownerTaskId,requestId:input.requestId,status:'FAILED',review:evidence}));
+  }, context);
+}
+
 /** Recover the result of the same invocation after its technical Task settled UNKNOWN.
  * Ordinary deletion/stop reconciliation remains state-only. This is driven by a live science Task. */
 export async function reconcileNativeExecution(ownerTaskId: TaskId, runtime: ReceiptRuntime, nativeTaskId: TaskId<NativeJson>, context: Context): Promise<boolean> {
@@ -303,9 +361,12 @@ export async function reconcileNativeExecution(ownerTaskId: TaskId, runtime: Rec
   const native = state.status === 'COMPLETED' ? await retainNativeEvidence({ value: state.result }, async (index, data) => {
     await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${nativeTaskId}:${index}`, null)).data = data; return undefined; }, context);
   }) : null;
+  let adopted = false;
   await runtime.commit(async tx => {
     const call = await tx.doc(NativeCalls, ownerTaskId, input.basis, null);
     if (call.taskId !== nativeTaskId) throw new Error('native_reconciliation_identity_conflict');
+    // A source-reviewed receipt may have been adopted while this GET was pending.
+    if (call.adoptedReceipt) { adopted = true; return undefined; }
     if (!call.adoptedReceipt) {
       if (state.status === 'COMPLETED') call.adoptedReceipt = { requestId: input.requestId, status: 'COMPLETED', native: native! };
       else if (state.status === 'FAILED' || state.status === 'CANCELLED') call.adoptedReceipt = { requestId: input.requestId, status: state.status, error: state.status === 'FAILED' ? state.error : 'nautilus_execution_cancelled' };
@@ -319,7 +380,7 @@ export async function reconcileNativeExecution(ownerTaskId: TaskId, runtime: Rec
     if (state.status === 'RUNNING' && state.progress) (await tx.doc(NativeExecutionProgress, runtime.conversationId, String(nativeTaskId), null)).snapshots = state.progress.snapshots;
     return undefined;
   }, context);
-  return state.status === 'COMPLETED' || state.status === 'FAILED' || state.status === 'CANCELLED';
+  return adopted || state.status === 'COMPLETED' || state.status === 'FAILED' || state.status === 'CANCELLED';
 }
 
 /** UNKNOWN native Tasks are already terminal, so owned-child abort alone cannot cancel them. */

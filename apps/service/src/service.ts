@@ -1,3 +1,4 @@
+import { reconcileConfiguredFailure } from '../../research/src/native-execution.ts';
 import {remoteAccounts,assertRemoteAccountAccess} from './remote-accounts.ts';
 import { registerImplementationSources } from '../../research/src/implementation-source.ts';
 import {createAccountStrategyCommand} from './account-strategy.ts';
@@ -17,7 +18,7 @@ import { boundScienceTarget } from './science-binding.ts';
 import { nativeJob } from './native.ts';
 import { pathToFileURL } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { Cursor, Extension, TaskId } from '@earendil-works/pi-durable';
+import type { Cursor, Extension, TaskId, ConversationId } from '@earendil-works/pi-durable';
 import { openResearch } from '../../research/src/host.ts';
 import { API } from '../../../packages/contracts/src/index.ts';
 import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
@@ -261,6 +262,11 @@ export async function createService(options: ServiceOptions) {
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id/reviews`, async request => (await detail(Number(request.params.id))).reviews ?? []);
   app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, async request => { await detail(Number(request.params.id)); return research.diagnostics(Number(request.params.id)); });
+  app.post<{ Params: { id: string } }>(`${API}/research/:id/native-failure-review`, async request => {
+    const id = Number(request.params.id);
+    await detail(id);
+    return reconcileConfiguredFailure(research.harness, id as ConversationId, request.body, context);
+  });
   app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
     const body = object(request.body);
     if (Object.keys(body).some(key => !['submissionId', 'instruction'].includes(key)) || ('instruction' in body && (typeof body.instruction !== 'string' || !body.instruction.trim())) || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
