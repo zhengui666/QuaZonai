@@ -15,13 +15,49 @@ permissions:
   contents: read
   actions: read
 jobs:
+  native-protocol:
+    if: inputs.branch == 'main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-full
+          cache-bin: false
+          cache-workspace-crates: false
+      - name: Retain static native lint without running scientific regression
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Native identity, observation, control and recovery protocols
+        run: |
+          for module in account_observation delivery execution lifecycle runtime runtime_jobs; do
+            cargo test --locked -p contracts --lib "${module}::"
+          done
+          for module in account_observation control delivery execution runtime runtime_jobs; do
+            cargo test --locked -p domain --lib "${module}::"
+          done
+          cargo test --locked -p job --all-features --test build_identity --test account_observer
+          for module in account_observation_cli account_runtime account_runtime_cache account_order_preview account_queued_cancel native_configured native_runner bounded; do
+            cargo test --locked -p job --all-features --lib "${module}::" -- --test-threads=1
+          done
   cli:
     uses: ./.github/workflows/cli.yml
     with:
       version: ${{ inputs.version }}
       revision: ${{ inputs.revision }}
   build:
-    if: ${{ !cancelled() }}
+    needs: native-protocol
+    if: ${{ !cancelled() && (inputs.branch == 'dev' || needs['native-protocol'].result == 'success') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     permissions:
