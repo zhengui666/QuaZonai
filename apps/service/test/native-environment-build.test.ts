@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,rm,mkdir,rename} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,rename,writeFile,readFile,symlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
@@ -8,7 +8,7 @@ import {createModels,fauxProvider} from '@earendil-works/pi-ai';
 import {openResearch} from '../../research/src/host.ts';
 import {configDefaults} from '../src/config.ts';
 import {instanceSettings} from '../src/instance-settings.ts';
-import {nativeEnvironmentBuild} from '../src/native-environment-build.ts';
+import {nativeEnvironmentBuild,readPreparationDiagnostics} from '../src/native-environment-build.ts';
 
 // Controlled builder boundary only; actual Cargo compilation is covered separately.
 test('explicit build reuses original Pi ID; reads/save never build, artifact selection is separate and revision-fenced',async()=>{
@@ -87,4 +87,47 @@ test('real import failures expose bounded categories and only existing logs; ori
    await host.close();host=await openResearch(opts);const repeated=await builder.workbench(host,settings).startImport(request);assert.equal(repeated.taskId,original.taskId);assert.deepEqual(repeated.state,result.state);
   }
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
+
+// Original filesystem logs and real Durable lifecycle; the compiler boundary is controlled.
+test('build status returns bounded diagnostic evidence for running and failed original tasks',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qz-build-readable-'));const config=configDefaults({dataDir:dir});
+ let release!:()=>void,entered!:()=>void;const started=new Promise<void>(r=>{entered=r;});const wait=new Promise<void>(r=>{release=r;});let builds=0;
+ const original='x'.repeat(40000)+'\nerror[E0432]: unresolved import nautilus::Example\napi_key=private-test-key\nAuthorization: Bearer private-test-bearer\n-----BEGIN PRIVATE KEY-----\nprivate-key-body\n-----END PRIVATE KEY-----\n';
+ let log='';
+ const builder=nativeEnvironmentBuild(config,async options=>{builds++;await mkdir(options.directory,{recursive:true});log=join(options.directory,'build.log');await writeFile(log,original);entered();await wait;throw new Error('compile_failed');});
+ const models=createModels();models.setProvider(fauxProvider().provider);const host=await openResearch({database:join(dir,'research.sqlite'),models,extensions:[builder.extension]});const settings=await instanceSettings(config);
+ try{
+  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner'}});
+  const work=builder.workbench(host,settings),request={requestId:'compile-errors',expectedRevision:1};const task=await work.start(request);await started;
+  const running=await work.read(request.requestId);assert.equal(running.state.status,'running');
+  const diagnostic=running.diagnostics.files.find(f=>f.name==='build.log')!;
+  assert.equal(diagnostic.status,'available');assert.equal(diagnostic.truncated,true);assert.equal(diagnostic.redacted,true);assert.match(diagnostic.text!,/error\[E0432\]/);
+  assert.equal(diagnostic.totalBytes,Buffer.byteLength(original));assert.ok(Buffer.byteLength(diagnostic.text!)<=32768);
+  assert.doesNotMatch(JSON.stringify(running.diagnostics),/private-test|private-key-body/);
+  assert.equal(running.diagnostics.files.find(f=>f.name==='capabilities.stderr')!.status,'missing');
+  release();await host.harness.waitForTask(task.taskId,context);const failed=await work.read(request.requestId);assert.equal(failed.state.status,'terminal');if(failed.state.status==='terminal')assert.equal(failed.state.outcome.status,'failed');
+  assert.deepEqual(failed.diagnostics,running.diagnostics);assert.equal((await work.start(request)).taskId,task.taskId);assert.equal(builds,1);assert.equal(await readFile(log,'utf8'),original);
+  await symlink(log,join(dir,'capabilities.stdout'));const unavailable=await readPreparationDiagnostics(dir);assert.equal(unavailable.files.find(f=>f.name==='capabilities.stdout')!.status,'unavailable');
+ }finally{release();await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('diagnostic redaction precedes truncation and withholds oversized originals',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qz-diagnostic-boundaries-'));
+ const secrets=[
+  'password="first'+String.fromCharCode(92,10)+'private-escaped-newline"',
+  'password="first'+String.fromCharCode(10)+'private-trailing-escape'+String.fromCharCode(92),
+  '-----BEGIN PRIVATE KEY-----\n'+'private-body\n'.repeat(4000)+'-----END PRIVATE KEY-----',
+  'api_key='+ 'long-secret'.repeat(4000),
+  'HYPERLIQUID_PK=private-hyperliquid',
+  'QZ_HYPERLIQUID_TESTNET_PK=private-qz',
+  'password="first secret word\nsecond secret word"',
+  '"api_key": "json secret words"',
+  "password='unterminated\nprivate remaining value",
+ ];
+ try{
+  for(const original of secrets){await writeFile(join(dir,'build.log'),original);const result=await readPreparationDiagnostics(dir);const log=result.files[0]!;assert.equal(log.status,'available');assert.equal(log.redacted,true);assert.match(log.text!,/REDACTED/);assert.doesNotMatch(log.text!,/private-escaped-newline|private-trailing-escape|private-body|long-secret|private-hyperliquid|private-qz|secret word|json secret|unterminated|remaining value/);assert.equal(await readFile(join(dir,'build.log'),'utf8'),original);}
+  await writeFile(join(dir,'build.log'),'password="'+'private oversized '.repeat(70000));const result=await readPreparationDiagnostics(dir);assert.equal(result.files[0]!.status,'source_too_large');assert.equal(result.files[0]!.text,undefined);
+ }finally{await rm(dir,{recursive:true,force:true});}
 });
