@@ -286,3 +286,50 @@ qz_start previous`,'recovery-stop-test',script],{encoding:'utf8',timeout:20000})
   assert.equal(result.stdout,state==='true 0'?'verify\nstop\nidle\nstart\n':'idle\nstart\n');
  }
 });
+
+test('failed recovery retries maintenance before restarting and archiving the original pending',async t=>{
+ const root=await directory(t),release=join(root,'releases/v1.0.0/deployment');
+ await mkdir(release,{recursive:true});await mkdir(join(root,'work'));await mkdir(join(root,'data'),{recursive:true});await mkdir(join(root,'backups/retained'),{recursive:true});
+ const previous={schema_version:5,version:'v1.0.0',revision:'b'.repeat(40),root,uid:process.getuid(),gid:process.getgid(),project:'fixture',image:`sha256:${'a'.repeat(64)}`,bundle:release,port:8081};
+ await writeFile(join(root,'installation.json'),JSON.stringify(previous));await symlink('releases/v1.0.0',join(root,'current'));
+ const pending=JSON.stringify({operation:'update',phase:'starting',previous,target:{...previous,version:'v1.1.0'},backup:join(root,'backups/retained')},null,2)+'\n';
+ await writeFile(join(root,'pending.json'),pending);await writeFile(join(root,'data/original'),'UNKNOWN original request');await writeFile(join(root,'backups/retained/proof'),'retained');await writeFile(join(root,'app-state'),'true 0\n');
+ const script=fileURLToPath(new URL('./manage.sh',import.meta.url));
+ const attempt=()=>spawnSync('bash',['-c',`source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"
+qz_compose() { printf 'original-container\n'; }
+docker() {
+ if [[ "$1" == image || "$3" == '{{.Image}}' ]]; then printf 'original-image\n'
+ else cat "$ROOT/app-state"; fi
+}
+qz_verify() { printf 'verify\n' >> "$ROOT/steps"; }
+qz_stop() { printf 'stop\n' >> "$ROOT/steps"; printf 'false 143\n' > "$ROOT/app-state"; }
+qz_idle() {
+ printf 'idle\n' >> "$ROOT/steps"
+ [[ -f "$ROOT/resolved" ]] || qz_fail 'controlled unresolved UNKNOWN'
+ printf 'idle-confirmed\n' > "$ROOT/idle-confirmed"
+}
+qz_start() {
+ [[ -f "$ROOT/idle-confirmed" ]] || qz_fail 'start before idle'
+ printf 'start\n' >> "$ROOT/steps"
+ printf 'true 0\n' > "$ROOT/app-state"
+ qz_verify "$1"
+}
+qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'retry-recovery-test',script,root],{encoding:'utf8',timeout:20000});
+ for(let n=0;n<2;n++){
+  const result=attempt();assert.notEqual(result.status,0,result.stdout);
+  assert.equal(await readFile(join(root,'pending.json'),'utf8'),pending);
+  assert.equal(await readFile(join(root,'app-state'),'utf8'),'false 143\n');
+  assert.doesNotMatch(await readFile(join(root,'steps'),'utf8'),/start/);
+ }
+ await writeFile(join(root,'resolved'),'resolved externally');
+ const result=attempt();assert.equal(result.status,0,result.stderr);
+ const reference=JSON.parse(await readFile(join(root,'failed-update-recovery.json'),'utf8'));
+ assert.equal(await readFile(join(reference.archive,'pending.json'),'utf8'),pending);
+ assert.equal(await readFile(join(reference.archive,'pending.original.json'),'utf8'),pending);
+ await assert.rejects(readFile(join(root,'pending.json')),{code:'ENOENT'});
+ assert.equal(await readFile(join(root,'steps'),'utf8'),'verify\nstop\nidle\nidle\nidle\nstart\nverify\n');
+ assert.equal(await readFile(join(root,'data/original'),'utf8'),'UNKNOWN original request');
+ assert.equal(await readFile(join(root,'backups/retained/proof'),'utf8'),'retained');
+ assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
+});
