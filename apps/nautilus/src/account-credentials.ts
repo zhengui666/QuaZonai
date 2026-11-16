@@ -1,4 +1,7 @@
-/** Public configuration contains a reference only, never a credential value. */
+/** Public configuration contains a reference only, never a credential value.
+ * References neither attest signer identity/authorization nor pin the referenced secret value.
+ * Same-signer cross-process nonce ownership is not established by this mapping.
+ */
 export function validateAccountCredentialReference(mode: string, reference: unknown): asserts reference is string | undefined {
   if (reference !== undefined && (mode !== 'live' || typeof reference !== 'string' || !/^QZ_HYPERLIQUID_[A-Z0-9_]+_PK$/.test(reference))) {
     throw Object.assign(new Error('account_credential_reference_invalid'), {statusCode:422});
