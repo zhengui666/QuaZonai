@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import type {NativeTarget,NativeJson} from '../../../packages/contracts/src/nautilus.ts';
 import {studyInput,object} from '../src/trials.ts';
 import {validateNumbers} from '../src/input.ts';
+import {nativeToolText,nativeToolOutputLimits} from '../src/native-result-view.ts';
 import {executeNativeValue,nativeTargetForData,withNativeRemoteTracking,retainNativeRemoteUncertainty,nativeUncertainTaskId,reconcileNativeExecution,cancelUnsettledNativeExecutions} from '../src/native-execution.ts';
 
 const schemas=JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json',import.meta.url),'utf8')).components.schemas;
@@ -17,11 +18,16 @@ function resolve(value:unknown):unknown {
 }
 const schema=resolve(schemas.NativeMarketImportRequestV1) as Schema<JsonObject>;
 const validate=compile(schema);
+export function prepareNativeMarketImport(args:unknown):JsonObject {
+  validateNumbers(args);
+  if(!validate.check(args))throw new Error('native_market_import_request_schema_invalid');
+  return args as JsonObject;
+}
 const Child=defineDoc<{taskId:TaskId<JsonObject>|null}>({kind:'qz.native-market-import-child',version:1,scope:'task',initial:()=>({taskId:null}),checkpointWhen:(_v,_o,info)=>info.deltasSinceBase>=127});
 export const nativeMarketImportTool=defineTool({
-  name:'native_market_import',parameters:schema,replay:'safe',executionMode:'sequential',
+  name:'native_market_import',outputLimits:nativeToolOutputLimits,parameters:schema,replay:'safe',executionMode:'sequential',
   description:'Import explicitly owner-specified existing local manifest and native instrument definitions into a NEW TradeTick catalog using the installed Nautilus native importer. No network acquisition, account-fill normalization, bars, trading, auto-registration or research qualification. Source-specific semantics and permission must already be declared in the manifest; raw account fills are not market trades. Use only authorized training paths/windows. Preserve incomplete outputs and original receipts; never retry an uncertain execution into another output directory to hide its state. Read the native report before separately registering any prepared dataset. A runner must explicitly declare preparation.marketImport.',
-  prepareArguments(args){validateNumbers(args);if(!validate.check(args))throw new Error('native_market_import_request_schema_invalid');return args as JsonObject;},
+  prepareArguments:prepareNativeMarketImport,
   async execute(args,api,context){
     const input=await studyInput(api,context);
     if(input.mode==='LITERATURE_ONLY')throw new Error('literature_only_native_execution_forbidden');
@@ -30,7 +36,7 @@ export const nativeMarketImportTool=defineTool({
     const id=await api.commit(async tx=>{const child=await tx.doc(Child,api.taskId);child.taskId??=await tx.createTask(NativeMarketImportTask,{target,request:args},{ownership:{kind:'task',taskId:api.taskId}});return child.taskId;},context);
     const task=await api.waitForTask(id,context);
     if(task.state.outcome.status!=='completed')throw new Error(task.state.outcome.status==='failed'?task.state.outcome.error.message:'native_market_import_aborted');
-    return {output:[{type:'text',text:JSON.stringify(task.state.outcome.result)}]};
+    return {output:[{type:'text',text:nativeToolText(task.state.outcome.result,id)}]};
   },
 });
 export const NativeMarketImportTask=defineTask<{target:NativeTarget;request:JsonObject},{phase:'compute'}|{phase:'reconcile';nativeTaskId:TaskId<NativeJson>},JsonObject>({
