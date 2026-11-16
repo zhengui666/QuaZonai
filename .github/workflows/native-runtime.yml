@@ -68,7 +68,9 @@ jobs:
           cargo test --locked -p job --lib native_runner
           cargo test --locked -p job --features market-history --lib native_runner
       - name: Build optional importer for owner training acceptance
-        run: cargo build --locked -p job --features market-history --bin job
+        run: |
+          cargo build --locked -p job --features market-history --bin job
+          target/debug/job capabilities | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["preparation"]["marketImport"] is True; assert c["account"]["registration"] is False'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-market-import-runner
