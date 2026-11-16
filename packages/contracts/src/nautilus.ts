@@ -1,3 +1,4 @@
+import type {AccountAdapterCapability} from './account-adapters.ts';
 /** A string is an explicit local executable for the independent worker and
  * scientific tests. Application configuration admits remote targets only. */
 export type RemoteNativeTarget = { id: string; url: string; tokenEnv?: string; credentialRef?: string };
@@ -10,7 +11,7 @@ export type ProcessNativeTarget = {
     research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
     /** Absent on older runners: never infer data preparation from research support. */
     preparation?: { marketImport: boolean; fillObservationImport?: boolean };
-    account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
+    account: { adapters?: AccountAdapterCapability[]; compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
 }
 export type NativeExecutionTarget = RemoteNativeTarget | ProcessNativeTarget;
 export type NativeTarget = string | NativeExecutionTarget;

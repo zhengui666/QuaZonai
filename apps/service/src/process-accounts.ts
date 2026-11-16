@@ -36,6 +36,13 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
  }
  function ensureCapability(binding:Binding){
   if(!binding.runner.capabilities.account.compiled)throw new Problem('native_runner_account_not_compiled',409);
+  const options=binding.creation.configuration;
+  const adapters=binding.runner.capabilities.account.adapters;
+  // Older runners are Hyperliquid-only; never infer another adapter from compiled=true.
+  if(adapters!==undefined){
+   const adapter=adapters.find(row=>row.id===(options.adapter??'HYPERLIQUID'));
+   if(!adapter?.compiled||!adapter.modes.includes(options.mode)||!adapter.accountTypes.includes(options.accountSemantics==='NATIVE_MARGIN'?'MARGIN':'CASH'))throw new Problem('native_runner_account_adapter_not_supported',409);
+  }
   if(binding.creation.configuration.nativeStrategy.strategy.kind==='REGISTERED'&&!binding.runner.capabilities.account.registration)throw new Problem('native_runner_account_registration_missing',409);
  }
  function ensureUnique(binding:Binding){

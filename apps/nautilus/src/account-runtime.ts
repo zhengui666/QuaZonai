@@ -1,3 +1,4 @@
+import type {AccountAdapter} from '../../../packages/contracts/src/account-adapters.ts';
 import {accountCredentialEnvironment} from './account-credentials.ts';
 import type {NativeSessionBinding} from '../../../packages/contracts/src/native-strategy-control.ts';
 import type { NativeAccountStrategyConfig } from '../../../packages/contracts/src/account-strategy.ts';
@@ -10,6 +11,7 @@ import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../
 
 /** One configured physical account in the existing remote native worker. */
 export interface AccountOptions {
+  adapter?: AccountAdapter;
   id: string; clientId: string; accountId: string; mode: 'paper' | 'live';
   nativeStrategy: NativeAccountStrategyConfig;
   /** Name of an existing runner environment secret; never the private key itself. */

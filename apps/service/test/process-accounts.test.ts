@@ -80,3 +80,15 @@ test('direct process account configuration preserves identity, never launches on
  await assert.rejects(readFile(join(dir,'accounts','alias','process-binding.json')),/ENOENT/);
  }finally{await manager.close();await rm(dir,{recursive:true,force:true});}
  });
+
+test('explicit adapter capability gates save without spawning or fabricating another venue',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qz-hl-capability-'));
+ const config=configDefaults({dataDir:dir,nativeProcess:{kind:'RUST_PROCESS',id:'owner',binary:'/not-running',capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{},research:{singleStrategyRegistration:false,configuredRunFactory:false},account:{compiled:true,registration:false,command:'account-runtime',requiresExplicitStart:true,adapters:[{id:'HYPERLIQUID',compiled:true,modes:['live'],accountTypes:['MARGIN']}]},running:false}}});
+ const manager=await processAccounts(config);
+ const configuration={id:'test',adapter:'HYPERLIQUID',clientId:'client',accountId:'paper',mode:'paper',instruments:['TEST.SIM'],startingBalance:'1000',paperFeeRate:'0.001',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'EMA_CROSS',trade_size:'1',fast_period:2,slow_period:3}}};
+ try{
+  await assert.rejects(manager.create({requestId:'test',configuration}),/adapter_not_supported/);
+  await assert.rejects(readFile(join(dir,'accounts','test','configuration.json')),/ENOENT/);
+  assert.equal((await manager.list()).length,0);
+ }finally{await manager.close();await rm(dir,{recursive:true,force:true});}
+});
