@@ -309,4 +309,135 @@ mod tests {
             Some(&row)
         );
     }
+
+    #[test]
+    fn configured_factory_replays_observations_via_official_actor_without_orders() {
+        use crate::native_configured::{ConfiguredNativeRun, run};
+        use contracts::{SchemaV1, native_strategy::NativeConfiguredBacktestRequestV1};
+        use nautilus_backtest::config::{BacktestRunConfig, BacktestVenueConfig};
+        use nautilus_common::{
+            actor::{DataActor, DataActorConfig, DataActorCore},
+            nautilus_actor,
+        };
+        use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+        use nautilus_model::enums::{AccountType, BookType, OmsType};
+        use nautilus_model::{data::CustomData, identifiers::ActorId};
+        use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+        use std::{
+            path::Path,
+            sync::{Arc, Mutex},
+        };
+
+        static RECEIVED: Mutex<Vec<ChainticksFillObservation>> = Mutex::new(Vec::new());
+        #[derive(Debug)]
+        struct Observer {
+            core: DataActorCore,
+            data_type: nautilus_model::data::DataType,
+        }
+        nautilus_actor!(Observer);
+        impl DataActor for Observer {
+            fn on_start(&mut self) -> Result<()> {
+                self.subscribe_data(self.data_type.clone(), None, None);
+                Ok(())
+            }
+            fn on_data(&mut self, value: &CustomData) -> Result<()> {
+                let row = value
+                    .data
+                    .as_any()
+                    .downcast_ref::<ChainticksFillObservation>()
+                    .context("EXPECTED_SOURCE_OBSERVATION")?;
+                assert_eq!(self.clock().timestamp_ns(), row.ts_init);
+                RECEIVED.lock().unwrap().push(row.clone());
+                Ok(())
+            }
+        }
+        fn factory(root: &Path, name: &str, _: &Value) -> Result<ConfiguredNativeRun> {
+            ensure!(name == "source-observer", "UNKNOWN_OBSERVER");
+            register_observation_type();
+            let mut catalog = ParquetDataCatalog::new(root, None, None, None, None);
+            let data = catalog.query_custom_data_dynamic(
+                "ChainticksFillObservation",
+                None,
+                None,
+                None,
+                None,
+                None,
+                true,
+            )?;
+            let nautilus_model::data::Data::Custom(first) = &data[0] else {
+                anyhow::bail!("EXPECTED_CUSTOM")
+            };
+            let data_type = first.data_type.clone();
+            // The pinned upstream BacktestDataConfig rejects Custom. Its public install
+            // hook and oneshot engine accept preloaded CustomData; no replacement replay.
+            let venue = BacktestVenueConfig::builder()
+                .name("SIM")
+                .oms_type(OmsType::Netting)
+                .account_type(AccountType::Margin)
+                .book_type(BookType::L1_MBP)
+                .starting_balances(vec!["1000 USD".into()])
+                .fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()))
+                .build()?;
+            let config = BacktestRunConfig::builder()
+                .venues(vec![venue])
+                .data(Vec::new())
+                .raise_exception(true)
+                .dispose_on_completion(false)
+                .build()?;
+            Ok(ConfiguredNativeRun {
+                config,
+                install: Box::new(move |engine| {
+                    engine.add_data(data, None, true, true)?;
+                    engine.add_actor(Observer {
+                        core: DataActorCore::new(DataActorConfig {
+                            actor_id: Some(ActorId::from("SOURCE-OBSERVER")),
+                            ..Default::default()
+                        }),
+                        data_type,
+                    })?;
+                    Ok(())
+                }),
+            })
+        }
+        let root = tempfile::tempdir().unwrap();
+        register_observation_type();
+        let first = parse_observation(
+            &envelope().to_string(),
+            &location(),
+            None,
+            NaiveTimePolicy::AssumeUtc,
+        )
+        .unwrap();
+        let mut second = first.clone();
+        second.source_row_zero_based += 1;
+        second.ts_init = (first.ts_init.as_u64() + 1_000_000_000).into();
+        // Keep the original event timestamp unchanged: availability, not event order,
+        // determines replay. This unit test makes no source completeness claim.
+        let mut catalog = ParquetDataCatalog::new(root.path(), None, None, None, None);
+        catalog
+            .write_custom_data_batch(
+                &[
+                    CustomData::from_arc(Arc::new(first.clone())),
+                    CustomData::from_arc(Arc::new(second.clone())),
+                ],
+                None,
+                None,
+                Some(false),
+            )
+            .unwrap();
+        RECEIVED.lock().unwrap().clear();
+        let result = run(
+            root.path(),
+            NativeConfiguredBacktestRequestV1 {
+                schema_version: SchemaV1,
+                name: "source-observer".into(),
+                config: Value::Null,
+            },
+            Some(factory),
+        )
+        .unwrap();
+        assert_eq!(*RECEIVED.lock().unwrap(), vec![first, second]);
+        assert_eq!(result.native_results.as_array().unwrap().len(), 1);
+        assert_eq!(result.native_results[0]["total_orders"], 0);
+    }
 }
