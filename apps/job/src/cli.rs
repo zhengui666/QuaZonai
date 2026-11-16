@@ -1,7 +1,7 @@
 //! One-process native science entrypoints. No database or delivery authority.
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{io::Write, path::PathBuf};
 
 use crate as job;
@@ -195,7 +195,7 @@ pub fn main_with_native_hooks(
 
 #[cfg(test)]
 mod tests {
-    use super::{Arguments, public_error_code, public_failure};
+    use super::{public_error_code, public_failure, Arguments};
     use clap::Parser;
 
     #[test]
@@ -293,15 +293,13 @@ mod tests {
             assert!(Arguments::try_parse_from(["job", command]).is_ok());
         }
         assert!(Arguments::try_parse_from(["job", "allocate"]).is_err());
-        assert!(
-            Arguments::try_parse_from([
-                "job",
-                "verify-native",
-                "--output",
-                "unused-output-directory",
-            ])
-            .is_err()
-        );
+        assert!(Arguments::try_parse_from([
+            "job",
+            "verify-native",
+            "--output",
+            "unused-output-directory",
+        ])
+        .is_err());
     }
 
     #[test]

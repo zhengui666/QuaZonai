@@ -1,9 +1,9 @@
 use super::{Report, Stream};
-use crate::catalog::aggregation::HistoricalTradeBars;
 pub(super) use crate::catalog::aggregation::with_bar_precision;
-pub(super) use crate::source_market::{Encoding, scalar, timestamp};
+use crate::catalog::aggregation::HistoricalTradeBars;
 use crate::source_market::{decimal, field, price_with_precision, quantity};
-use anyhow::{Context, Result, ensure};
+pub(super) use crate::source_market::{scalar, timestamp, Encoding};
+use anyhow::{ensure, Context, Result};
 use nautilus_core::UnixNanos;
 #[cfg(test)]
 use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
@@ -462,19 +462,17 @@ mod tests {
             ("ask", "1.4", "4"),
             ("ask", "1.3", "5"),
         ] {
-            assert!(
-                snapshots
-                    .push(
-                        &stream,
-                        flat_row(side, price, size),
-                        encoding,
-                        event,
-                        receipt,
-                        &mut report
-                    )
-                    .unwrap()
-                    .is_empty()
-            );
+            assert!(snapshots
+                .push(
+                    &stream,
+                    flat_row(side, price, size),
+                    encoding,
+                    event,
+                    receipt,
+                    &mut report
+                )
+                .unwrap()
+                .is_empty());
         }
         let data = snapshots
             .push(
@@ -514,18 +512,16 @@ mod tests {
                 .push(&stream, row, encoding, 1, 2, &mut report)
                 .unwrap();
         }
-        assert!(
-            snapshots
-                .push(
-                    &stream,
-                    flat_row("noop", "0", "0"),
-                    encoding,
-                    3,
-                    4,
-                    &mut report
-                )
-                .is_err()
-        );
+        assert!(snapshots
+            .push(
+                &stream,
+                flat_row("noop", "0", "0"),
+                encoding,
+                3,
+                4,
+                &mut report
+            )
+            .is_err());
         assert_eq!(snapshots.finish(&stream, &mut report).unwrap().len(), 1);
         let mut snapshots = FlatSnapshots::default();
         for row in [flat_row("bid", "1.1", "2"), flat_row("bid", "1.1", "3")] {

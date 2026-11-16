@@ -1,10 +1,10 @@
 //! Single-file, local source preparation using the official custom-data catalog.
 use crate::chainticks_fill::{
-    ChainticksFillObservation, NaiveTimePolicy, SourceLocation, parse_observation,
-    register_observation_type,
+    parse_observation, register_observation_type, ChainticksFillObservation, NaiveTimePolicy,
+    SourceLocation,
 };
 use crate::source_market::{field, scalar};
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use clap::Args;
 use nautilus_model::data::{CustomData, Data};
 use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;

@@ -1,5 +1,5 @@
 //! Chain-derived fill observations, not reconstructed public market trades.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, NaiveDateTime};
 use nautilus_core::UnixNanos;
 use nautilus_hyperliquid::{
@@ -220,13 +220,11 @@ mod tests {
     #[test]
     fn naive_time_requires_opt_in_and_missing_time_names_source_row() {
         let raw = envelope().to_string();
-        assert!(
-            format!(
-                "{:#}",
-                parse_observation(&raw, &location(), None, NaiveTimePolicy::Reject).unwrap_err()
-            )
-            .contains("EXPLICIT_UTC")
-        );
+        assert!(format!(
+            "{:#}",
+            parse_observation(&raw, &location(), None, NaiveTimePolicy::Reject).unwrap_err()
+        )
+        .contains("EXPLICIT_UTC"));
         let mut value = envelope();
         value["event"].as_object_mut().unwrap().remove("time");
         let error = format!(
@@ -312,8 +310,8 @@ mod tests {
 
     #[test]
     fn configured_factory_replays_observations_via_official_actor_without_orders() {
-        use crate::native_configured::{ConfiguredNativeRun, run};
-        use contracts::{SchemaV1, native_strategy::NativeConfiguredBacktestRequestV1};
+        use crate::native_configured::{run, ConfiguredNativeRun};
+        use contracts::{native_strategy::NativeConfiguredBacktestRequestV1, SchemaV1};
         use nautilus_backtest::config::{BacktestRunConfig, BacktestVenueConfig};
         use nautilus_common::{
             actor::{DataActor, DataActorConfig, DataActorCore},
