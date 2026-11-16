@@ -349,3 +349,25 @@ This loads a bounded selection in memory; it is not a streaming adapter. The
 factory still specifies the bound catalog, window and subscription. Source
 observations are not market TradeTicks, and do not provide execution liquidity,
 deduplication, complete coverage, historical instrument rules or a strategy.
+
+### Explicit research source authoring
+
+The optional service configuration `research.codingWorkspace` names an existing
+source-only directory accessible to the service. No default workspace or host
+mount is created. It enables official Pi Durable `read`, `write`, and `edit` in
+native research conversations, with an official `NodeExecutionEnv`; literature
+and assessment conversations do not receive these tools. The directory is shared,
+so concurrent studies must use separate source files and preserve each other's
+work. Files survive service restart. Do not place credentials or held-out data in
+this source workspace. Path checks prevent these tools following outside paths
+or symlinks; the workspace is not an operating-system sandbox. Unrestricted
+`bash` is not enabled.
+
+Source authoring does not configure a toolchain, compile, rebind a runner, or
+connect an account. Set the existing explicit owner Rust environment to the
+intended project separately, and use the existing `native_runner_build` and
+original build-status task, then per-research runner binding. Cargo build scripts
+retain their existing execution semantics; these file-tool boundaries do not
+sandbox compiled owner code or establish OOS isolation for arbitrary code. Keep
+separate native execution data scope. The container still cannot see unmounted
+host toolchains. Never report source-writing verification as a successful build.
