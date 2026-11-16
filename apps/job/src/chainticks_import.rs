@@ -112,7 +112,7 @@ fn import_report(args: ImportArgs) -> Result<serde_json::Value> {
         .into_iter()
         .map(|row| CustomData::from_arc(Arc::new(row)))
         .collect::<Vec<_>>();
-    let mut catalog = ParquetDataCatalog::new(&args.output.join("catalog"), None, None, None, None);
+    let mut catalog = create_catalog(&args.output)?;
     let file = catalog.write_custom_data_batch(&originals, None, None, Some(false))?;
     let loaded = catalog.query_custom_data_dynamic(
         "ChainticksFillObservation",
@@ -203,4 +203,22 @@ pub fn native_fill_observation_import(
         research_qualified: false,
         report: crate::market_history::import_report_wire(report),
     })
+}
+
+fn create_catalog(output: &std::path::Path) -> Result<ParquetDataCatalog> {
+    let root = output.join("catalog");
+    fs::create_dir(&root).context("NEW_NATIVE_CATALOG_DIRECTORY_REQUIRED")?;
+    Ok(ParquetDataCatalog::new(&root, None, None, None, None))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn new_custom_catalog_root_exists_before_official_constructor_and_is_not_replaced() {
+        let output = tempfile::tempdir().unwrap();
+        let catalog = super::create_catalog(output.path()).unwrap();
+        assert!(output.path().join("catalog").is_dir());
+        drop(catalog);
+        assert!(super::create_catalog(output.path()).is_err());
+    }
 }
