@@ -333,3 +333,35 @@ qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'retry-recovery-test',script,
  assert.equal(await readFile(join(root,'backups/retained/proof'),'utf8'),'retained');
  assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
 });
+
+for (const blocked of [false, true, 'live']) test(`exited-backtest update inspects stopped originals using candidate only (blocked=${blocked})`, async t => {
+  const root = await directory(t);
+  for (const name of ['data', 'bundle', 'work']) await mkdir(join(root, name));
+  const old = {schema_version:5,version:'v0.0.0-ci.1',revision:'b'.repeat(40),root,uid:process.getuid(),gid:process.getgid(),project:'recovery-test',port:8081,image:`sha256:${'a'.repeat(64)}`,bundle:join(root,'bundle')};
+  const candidate = {...old,version:'v0.0.0-ci.2',revision:'c'.repeat(40)};
+  for (const [name,value] of [['installation.json',old],['candidate.json',candidate],['bundle/release.json',candidate]]) await writeFile(join(root,name),JSON.stringify(value));
+  await writeFile(join(root,'bundle/json.awk'),await readFile(new URL('./json.awk',import.meta.url)));
+  await writeFile(join(root,'data/original'),'original durable records');
+  const run = selection => spawnSync('bash',['-c',`source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"; QZ_BUNDLE="$ROOT/bundle"; QZ_BACKUP_POLICY=skip; QZ_EXITED_BACKTEST=$3
+qz_prepare() { QZ_PREPARED="$ROOT/candidate.json"; }
+qz_stop() { echo stop >> "$ROOT/calls"; }
+qz_idle() { echo old-idle >> "$ROOT/calls"; return 90; }
+quazonai() { echo '{}'; }
+qz_compose() { [[ "$1" == "$ROOT/candidate.json" ]] || return 91; shift;
+  if [[ "$*" == *exited-preflight* ]]; then echo preflight >> "$ROOT/calls"; ${blocked === 'live' ? 'return 26;' : `echo '{"nativeFailure":{"conversationId":9,"ownerTaskId":24,"nativeTaskId":27,"submissionId":17},"maintenanceEpoch":"original"}'; return;`} fi
+  printf '%s\\n' "$*" >> "$ROOT/calls"; ${blocked ? 'return 27;' : ':'}
+}
+qz_start() { echo start >> "$ROOT/calls"; }
+qz_apply_update "$ROOT"`,'exited-backtest-test',fileURLToPath(new URL('./manage.sh',import.meta.url)),root,selection],{encoding:'utf8',timeout:20000});
+  const result=run('9:24:27:17');
+  assert.equal(result.status,blocked === 'live' ? 26 : blocked ? 27 : 0,result.stderr);
+  assert.equal(await readFile(join(root,'calls'),'utf8'),'preflight\n'+(blocked === 'live' ? '' : 'stop\nrun --rm --no-deps app maintenance exited-backtest {"nativeFailure":{"conversationId":9,"ownerTaskId":24,"nativeTaskId":27,"submissionId":17},"maintenanceEpoch":"original"}\n'+(blocked?'':'start\n')));
+  assert.equal(await readFile(join(root,'data/original'),'utf8'),'original durable records');
+  if (blocked) {
+    const pending=JSON.parse(await readFile(join(root,'pending.json'),'utf8'));
+    assert.equal(pending.phase,'preparing');assert.equal(pending.exited_backtest,'9:24:27:17');
+    const retry=run('9:24:28:17');assert.notEqual(retry.status,0);assert.match(retry.stderr,/original exited-backtest selection/);
+    assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),old);
+  } else assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),candidate);
+});

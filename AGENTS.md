@@ -132,6 +132,8 @@ Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版
 | 启动远程 Nautilus 适配 | `npm --prefix apps/nautilus start` |
 | 使用开发 CLI | `npm --prefix apps/cli start -- --help` |
 
+升级时若旧版本无法停靠已退出的空 venue 原生回测，可显式使用部署管理器 `apply-update --resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION`。须先用现有维护入口进入 DRAINING；部署管理器通过原 CLI/API 确认除该研究等待链外无其他活动后，才正常关闭原 app。目标发行版随后检查同一维护 epoch、原进程退出证据和唯一等待链；保留原任务、UNKNOWN、提交、数据与外部 Nautilus。启动后先恢复同一维护 epoch，再通过研究的原生失败复核 API 完成对账，不会自动重发或把退出当成取消。其他未完成工作仍阻止升级。
+
 科学计算需要配置真实远程实例和数据路径；不得以虚构结果冒充原生运行完成。只运行当前需求必要的检查，不盲目执行 Makefile 中所有历史目标。
 
 ## 原生条件订单预览
