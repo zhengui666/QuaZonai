@@ -1,4 +1,4 @@
-# 原生研究、参数扫描与证据评级
+# 原生研究、历史扫描与证据解读
 
 ## 自然语言研究
 
@@ -29,33 +29,28 @@ quazonai research resume "$research_id" --submission-id "$terminal_submission_id
 
 用 instruction 回答追问、修改研究方向或在已结束/停止的研究中继续；仍在运行的任务不要重建。保留新回执身份。Web 研究页显示同一 Pi 消息并支持回复，CLI 没有另一个聊天发送命令。
 
-## 参数扫描
+## 历史参数扫描
 
-先请求来源的实际选项，将 `{ "sourceKind":"research", "researchId":实际整数ID }` 保存为 query.json：
+参数生成、新建扫描、排名与 surface 已退役。CLI 仅保留已有扫描的 list/get/trials/watch/wait 和显式 stop；不要调用 options、preview、create 或按旧 ParameterScanStart 类型构造新请求。旧类型及记录存在不表示仍可执行。
 
 ```sh
-quazonai parameter-scan options --file query.json
-quazonai schema show ParameterScanStart
-quazonai parameter-scan preview --file scan.json
-quazonai parameter-scan create --file scan.json
-quazonai parameter-scan wait "$scan_id" --timeout 60
+quazonai parameter-scan list
 quazonai parameter-scan get "$scan_id"
 quazonai parameter-scan trials "$scan_id"
+quazonai parameter-scan wait "$scan_id" --timeout 60
 ```
 
-scan.json 按合同提供 requestId、name、source={kind:"research",researchId}、mode:"STRATEGY"、axes、objective、execution={concurrency}。axis.key 仅使用 options 返回的现有数值路径；domain 使用 values 字符串数组或 range 的 start/end/step 字符串。不是新策略 DSL，非扫描字段继续沿用原请求。
-
-objective.metricId 使用 options 返回的实际标识、partition:"FULL_SELECTION" 和用户选择的 maximize/minimize。权益统计使用独立的 `equity-performance:252:原生统计名` 或 `equity-performance:365:原生统计名`，不要把它们替换成同名 canonical key。候选统计列表只是建议，不按指标名字猜方向或改变数值符号。当前合同没有 batchSize。读回缺失原因、失败、未决和 comparable 数量，不把缺失值补零。原生 run.outcome=stopped 的结果保留为 STOPPED，不进入完整窗口排名。排名标记 UNQUALIFIED_EXPLORATORY，不是样本外证明，也不是实盘许可。
+仅使用已有扫描 ID；停止须获用户授权，随后读回原状态。保留原请求、失败、STOPPED 和 UNKNOWN，不重新生成参数、重新排名或重发未决执行。历史排名不是样本外证明或实盘许可。新研究使用显式配置的原生 Rust 策略回测；先核实 runner、数据目录和实际可用工具，不以旧扫描替代。
 
 ## 官方权益统计与收益口径
 
 查看 `equity_performance` 的真实 source、status/reason、币种、快照覆盖、收益日数与频率。它直接读取 Nautilus 官方 portfolio_returns，并调用官方 CAGR/Sharpe 的 252 与 365 两种频率；没有权益证据时保持不可用，不退回持仓收益冒充权益。canonical 默认统计可能使用持仓收益，不能按名称视为日权益收益。官方跨日延续也不等于每天实际观测，短样本年化不是已实现年收益。
 
-通过研究 Agent 选择 WF 目标时，可明确 `metric_source:"EQUITY_PERFORMANCE"`、`annualization_days:252` 或 `365` 及该频率对应的 `native_key`。未选时保留原 canonical 语义，不静默改变目标。股票常用频率与全天候市场频率只是计算假设，必须与用户目的及报告口径一致。
+解读已有 WF 结果时，保留原 `metric_source`、`annualization_days` 与 `native_key`，不静默改变原 canonical 语义。历史字段不是当前可创建 WF 的接口承诺。股票常用频率与全天候市场频率只是计算假设，必须与用户目的及报告口径一致。
 
 ## 防过拟合与 AI 综合意见
 
-通过研究 Agent 请求逻辑预评估、明确候选/方法的 walk-forward、邻近参数及成本敏感性，然后读取实际研究结果。它们是研究工具，不是独立 CLI 子命令。原生回测和统计由 Nautilus 执行；逻辑分析与综合星级是模型判断，不是 Nautilus 官方评分。
+可向研究 Agent 提出逻辑预评估、明确候选/方法的 walk-forward、邻近参数及成本敏感性要求；这些是研究方法要求，不保证当前实例提供自动执行工具。先核实该研究实际暴露的工具及 runner 能力，缺失时明确报告，不能调用已退役扫描或把保留的插件源码当可用能力。原生回测和统计由 Nautilus 执行；逻辑分析与综合星级是模型判断，不是 Nautilus 官方评分。
 
 逻辑预评估应先于对应数值运行，事先说明候选、窗口和优化目标。不得将全区间敏感性当新的样本外测试，不得在看完结果后声称事前注册。检查任务来源、运行状态、窗口、费用、缺失证据和限制；不能只凭任务 COMPLETED 或星级宣称验证通过。证据不足时保持星级不可用，AI 星级不表示获利概率、独立审计或交易授权。
 
