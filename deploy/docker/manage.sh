@@ -165,7 +165,8 @@ qz_deploy() {
     qz_activate "$root" "$file"
 }
 qz_apply_update() {
-    local root=$1 old candidate phase=preparing backup_policy=${QZ_BACKUP_POLICY:-required} saved_policy backup=null
+    local root=$1 old candidate phase=preparing backup_policy=${QZ_BACKUP_POLICY:-required} saved_policy saved_recovery backup=null
+    local QZ_EXITED_BACKTEST=${QZ_EXITED_BACKTEST:-}
     qz_configuration "$root"; old="$QZ_WORK/old.json"; cp "$QZ_CONFIG" "$old"
     qz_manifest "$QZ_BUNDLE/release.json"
     if [[ -e "$root/pending.json" ]]; then
@@ -176,21 +177,42 @@ qz_apply_update() {
         saved_policy=${saved_policy:-required}
         [[ "$saved_policy" == "$backup_policy" ]] || qz_fail 'Retry with the original backup policy; --no-backup cannot change a pending update.'
     fi
+    if [[ -e "$root/pending.json" ]]; then
+        saved_recovery=$(qz_get "$root/pending.json" exited_backtest 2>/dev/null) || saved_recovery=
+        [[ "${saved_recovery:-}" == "$QZ_EXITED_BACKTEST" ]] || qz_fail 'Retry with the original exited-backtest selection.'
+    fi
     qz_prepare "$root" "$old"; candidate=$QZ_PREPARED
     if [[ ! -e "$root/pending.json" && $(qz_get "$old" version) == "$(qz_get "$candidate" version)" ]]; then qz_verify "$old"; return; fi
     [[ $(printf '%s\n%s\n' "$(qz_get "$old" version)" "$(qz_get "$candidate" version)" | sort -V | tail -n1) == "$(qz_get "$candidate" version)" ]] || qz_fail 'Use an explicit matching restore for a downgrade.'
     if [[ "$phase" == preparing ]]; then
-        printf '{"operation":"update","phase":"preparing","backup_policy":%s,"previous":%s,"target":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" | qz_save "$root/pending.json"
+        printf '{"operation":"update","phase":"preparing","backup_policy":%s,"exited_backtest":%s,"previous":%s,"target":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_quote "$QZ_EXITED_BACKTEST")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" | qz_save "$root/pending.json"
+        local conversation owner native submission selection checked
+        if [[ -n "$QZ_EXITED_BACKTEST" ]]; then
+            command -v quazonai >/dev/null || qz_fail 'Install/login the matching CLI and enter maintenance before exited-backtest recovery.'
+            IFS=: read -r conversation owner native submission <<< "$QZ_EXITED_BACKTEST"
+            printf -v selection '{"conversationId":%s,"ownerTaskId":%s,"nativeTaskId":%s,"submissionId":%s}' "$conversation" "$owner" "$native" "$submission"
+            # Existing authenticated HTTP reads only. The owner must first enter
+            # maintenance to close admission; never stop first to find activity.
+            quazonai maintenance status --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-maintenance.json"
+            quazonai research get "$conversation" --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-research.json"
+            quazonai research evidence "$conversation" "$owner" --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-owner.json"
+            printf '{"selection":%s,"status":%s,"detail":%s,"owner":%s}\n' "$selection" "$(cat "$QZ_WORK/live-maintenance.json")" "$(cat "$QZ_WORK/live-research.json")" "$(cat "$QZ_WORK/live-owner.json")" > "$QZ_WORK/live-upgrade.json"
+            checked=$(qz_compose "$candidate" run --rm --no-deps -T app maintenance exited-preflight < "$QZ_WORK/live-upgrade.json")
+        fi
         qz_stop "$old"
-        # Refusal leaves the original app stopped, original DB untouched and the
-        # original target recorded. Explicit start resumes only the old release.
-        qz_idle "$old"
+        # Refusal retains the original DB, pending target and maintenance epoch.
+        # Explicit start resumes only the old release, still in maintenance.
+        if [[ -n "$QZ_EXITED_BACKTEST" ]]; then
+            qz_compose "$candidate" run --rm --no-deps app maintenance exited-backtest "$checked"
+        else
+            qz_idle "$old"
+        fi
         if [[ "$backup_policy" == required ]]; then
             qz_backup "$old"; backup=$(qz_quote "$QZ_BACKUP")
         else
             printf 'Explicit --no-backup: preserving original data in place without creating a recovery point.\n'
         fi
-        printf '{"operation":"update","phase":"starting","backup_policy":%s,"previous":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" "$backup" | qz_save "$root/pending.json"
+        printf '{"operation":"update","phase":"starting","backup_policy":%s,"exited_backtest":%s,"previous":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup_policy")" "$(qz_quote "$QZ_EXITED_BACKTEST")" "$(qz_raw "$old")" "$(qz_raw "$candidate")" "$backup" | qz_save "$root/pending.json"
     elif [[ "$phase" != starting ]]; then qz_fail 'Unknown pending update phase.'; fi
     qz_activate "$root" "$candidate"
 }
@@ -288,6 +310,7 @@ qz_unpack() {
 qz_help() {
     printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH|recover-failed-update [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
+      '--resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION requires existing maintenance enter and matching authenticated CLI; permits only the original exited empty-venue backtest wait chain during update; it does not reconcile or retry it.' \
       '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
       'Native environments are owner-managed; deployment only starts/updates app and preserves external services and data.' \
       'Only schema-5 installations are supported; prior formats are not migrated.'
@@ -296,12 +319,15 @@ qz_main() {
     local command=${1:---help} root="$HOME/.local/share/quazonai" argument= name
     shift || true
     if [[ "$command" == --help || "$command" == -h ]]; then qz_help; return; fi
-    QZ_PORT=8081; QZ_BACKUP_POLICY=required
+    QZ_PORT=8081; QZ_BACKUP_POLICY=required; QZ_EXITED_BACKTEST=
     while (($#)); do
         case "$1" in
           --directory|--port) (($#>=2)) || qz_fail 'Missing option value.'; name=$1
             case "$name" in --directory) root=$2;; --port) QZ_PORT=$2;; esac; shift 2;;
           --no-backup) QZ_BACKUP_POLICY=skip; shift;;
+          --resume-exited-backtest) (($#>=2)) || qz_fail 'Missing exited-backtest selection.'
+            [[ "$2" =~ ^[1-9][0-9]*:[1-9][0-9]*:[1-9][0-9]*:[1-9][0-9]*$ ]] || qz_fail 'Use CONVERSATION:OWNER:NATIVE:SUBMISSION original identifiers.'
+            QZ_EXITED_BACKTEST=$2; shift 2;;
           --local-runtime) qz_fail 'Nautilus runtime management has been removed. Configure and manage your external native environment separately.';;
           --help|-h) qz_help; return;;
           -*) qz_fail "Unknown option: $1";;
@@ -309,6 +335,7 @@ qz_main() {
         esac
     done
     [[ "$QZ_BACKUP_POLICY" == required || "$command" == update || "$command" == apply-update ]] || qz_fail '--no-backup is only valid for update/apply-update.'
+    [[ -z "$QZ_EXITED_BACKTEST" || "$command" == update || "$command" == apply-update ]] || qz_fail '--resume-exited-backtest is only valid for updates.'
     root=${root/#\~/$HOME}; root=$(realpath -m "$root")
     [[ "$root" != / && "$root" != "$HOME" ]] || qz_fail 'Select a dedicated installation directory.'
     [[ "$QZ_PORT" =~ ^[0-9]{1,5}$ ]] || qz_fail 'Select numeric ports.'
@@ -329,6 +356,7 @@ qz_main() {
         exec 9>&-
         local update_options=()
         if [[ "$QZ_BACKUP_POLICY" == skip ]]; then update_options+=(--no-backup); fi
+        if [[ -n "$QZ_EXITED_BACKTEST" ]]; then update_options+=(--resume-exited-backtest "$QZ_EXITED_BACKTEST"); fi
         bash "$QZ_WORK/deployment/manage.sh" apply-update --directory "$root" "${update_options[@]}";;
       start|restart) qz_configuration "$root"
         if [[ -e "$root/pending.json" ]]; then [[ $(qz_get "$root/pending.json" phase) == preparing ]] || qz_fail 'Retry the recorded installation/update target.'; fi
