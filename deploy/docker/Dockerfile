@@ -99,6 +99,11 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
 ENTRYPOINT ["/usr/bin/tini", "--", "node", "--experimental-strip-types", "/opt/quazonai/apps/nautilus/src/main.ts"]
 
 FROM execution-base AS application
+# Owner-supplied official Rust toolchains execute inside this container; these
+# are native linker/development dependencies, not a second worker or a host shim.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 COPY --from=application-source / /
 COPY --from=web /build/apps/web/dist/ ./web/

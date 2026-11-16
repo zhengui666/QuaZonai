@@ -371,3 +371,23 @@ retain their existing execution semantics; these file-tool boundaries do not
 sandbox compiled owner code or establish OOS isolation for arbitrary code. Keep
 separate native execution data scope. The container still cannot see unmounted
 host toolchains. Never report source-writing verification as a successful build.
+
+### Container-owned Rust compilation
+
+The application image includes the native C linker, pkg-config and OpenSSL
+headers needed by its existing Rust builder. This does not install/select an
+owner toolchain, enable account execution, or replace the separately configured
+Nautilus service. An operator must expose a real, matching Cargo/rustc toolchain
+read-only inside the application container and configure its actual Cargo path;
+a host-execution wrapper is not that toolchain. Cargo's offline source cache must
+be a separate writable, credential-free directory. Do not mount a credentialed
+host Cargo home or OOS/account data into a source workspace.
+
+Explicit builds share the QZ-owned `dataDir/native-build-cache` through the
+existing product builder and Cargo's own locking, while preserving separate
+request directories, owner source/lock files and original Pi task outcomes.
+Cache reuse is not a disk-space guarantee. Check free space and measured build
+cost before admission; a mounted compiler or successful capabilities inspection
+is not proof that a new strategy was compiled or run. The opt-in native CI builds
+inside the application container with networking disabled and records image,
+cache and output sizes; it does not run market-data research or publish/deploy.
