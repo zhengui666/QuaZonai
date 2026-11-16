@@ -1,9 +1,9 @@
 use super::{Report, Stream};
-use anyhow::{ensure, Context, Result};
-pub(super) use job::catalog::aggregation::with_bar_precision;
-use job::catalog::aggregation::HistoricalTradeBars;
-use job::source_market::{decimal, field, price_with_precision, quantity};
-pub(super) use job::source_market::{scalar, timestamp, Encoding};
+use crate::catalog::aggregation::HistoricalTradeBars;
+pub(super) use crate::catalog::aggregation::with_bar_precision;
+pub(super) use crate::source_market::{Encoding, scalar, timestamp};
+use crate::source_market::{decimal, field, price_with_precision, quantity};
+use anyhow::{Context, Result, ensure};
 use nautilus_core::UnixNanos;
 #[cfg(test)]
 use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
@@ -98,7 +98,7 @@ pub(super) fn read_rows(
 ) -> Result<()> {
     match format {
         "parquet" | "parquet-zstd" => {
-            for row in job::source_market::parquet_rows(path, format)? {
+            for row in crate::source_market::parquet_rows(path, format)? {
                 consume(row?)?;
             }
         }
@@ -152,7 +152,10 @@ fn bar_type(id: InstrumentId, seconds: u32) -> Result<BarType> {
     ))?)
 }
 
-fn recorded_snapshot(snapshot: job::source_market::BookSnapshot, report: &mut Report) -> Vec<Data> {
+fn recorded_snapshot(
+    snapshot: crate::source_market::BookSnapshot,
+    report: &mut Report,
+) -> Vec<Data> {
     report.empty_books += u64::from(snapshot.empty);
     report.one_sided_books += u64::from(snapshot.one_sided);
     snapshot.into_data()
@@ -166,13 +169,13 @@ fn snapshot(
     report: &mut Report,
 ) -> Result<Vec<Data>> {
     Ok(recorded_snapshot(
-        job::source_market::snapshot(encoding, sides, at, init)?,
+        crate::source_market::snapshot(encoding, sides, at, init)?,
         report,
     ))
 }
 
 #[derive(Default)]
-pub(super) struct FlatSnapshots(job::source_market::FlatSnapshots);
+pub(super) struct FlatSnapshots(crate::source_market::FlatSnapshots);
 
 impl FlatSnapshots {
     pub(super) fn push(
@@ -459,17 +462,19 @@ mod tests {
             ("ask", "1.4", "4"),
             ("ask", "1.3", "5"),
         ] {
-            assert!(snapshots
-                .push(
-                    &stream,
-                    flat_row(side, price, size),
-                    encoding,
-                    event,
-                    receipt,
-                    &mut report
-                )
-                .unwrap()
-                .is_empty());
+            assert!(
+                snapshots
+                    .push(
+                        &stream,
+                        flat_row(side, price, size),
+                        encoding,
+                        event,
+                        receipt,
+                        &mut report
+                    )
+                    .unwrap()
+                    .is_empty()
+            );
         }
         let data = snapshots
             .push(
@@ -509,16 +514,18 @@ mod tests {
                 .push(&stream, row, encoding, 1, 2, &mut report)
                 .unwrap();
         }
-        assert!(snapshots
-            .push(
-                &stream,
-                flat_row("noop", "0", "0"),
-                encoding,
-                3,
-                4,
-                &mut report
-            )
-            .is_err());
+        assert!(
+            snapshots
+                .push(
+                    &stream,
+                    flat_row("noop", "0", "0"),
+                    encoding,
+                    3,
+                    4,
+                    &mut report
+                )
+                .is_err()
+        );
         assert_eq!(snapshots.finish(&stream, &mut report).unwrap().len(), 1);
         let mut snapshots = FlatSnapshots::default();
         for row in [flat_row("bid", "1.1", "2"), flat_row("bid", "1.1", "3")] {

@@ -1,5 +1,6 @@
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
+import nativeMarketImport from '../plugins/native-market-import.ts';
 import { assertResearchRunSettled } from './research-configuration.ts';
 import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -76,6 +77,7 @@ export async function openResearch(options: {
     }
     registry.install(researchAssessment);
     registry.install(nativeStrategyBacktest);
+    registry.install(nativeMarketImport);
     registry.install(nativeResearchExtension(registry.snapshot().installed().find(extension => extension.name === 'qz.research') ?? researchTools));
     registry.install(defineExtension({ name: 'qz.research-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, ReviewSourceValidationTask] }));
     await mkdir(dirname(resolve(options.database)), { recursive: true });

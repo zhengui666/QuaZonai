@@ -1,4 +1,4 @@
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use nautilus_model::{
     data::{
         Bar, Data, DataBatch, FundingRateUpdate, HasTsInit, IndexPriceUpdate, MarkPriceUpdate,
@@ -97,15 +97,16 @@ impl Writer {
             None,
         )?;
         if verify_only {
-            job::catalog::currencies::load(&root)?;
+            crate::catalog::currencies::load(&root)?;
             let saved: serde_json::Value =
                 serde_json::from_reader(fs::File::open(root.join("currencies.json"))?)?;
             ensure!(
-                saved == serde_json::to_value(job::catalog::currencies::definitions(instruments))?,
+                saved
+                    == serde_json::to_value(crate::catalog::currencies::definitions(instruments))?,
                 "RESUME_CURRENCY_DEFINITIONS_CHANGED"
             );
         } else {
-            job::catalog::currencies::write(&root, instruments)?;
+            crate::catalog::currencies::write(&root, instruments)?;
         }
         let mut instruments = instruments.to_vec();
         instruments.sort_by_key(|i| (i.id(), Instrument::ts_init(i)));
@@ -185,7 +186,7 @@ impl Writer {
             }
             // Split contiguous native encodings, not all equal precisions across intervening versions.
             for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
-                job::catalog::publish::publish_batch(&self.catalog, items, self.verify_only)?;
+                crate::catalog::publish::publish_batch(&self.catalog, items, self.verify_only)?;
                 self.last_written
                     .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
                 *self
@@ -224,7 +225,7 @@ impl Writer {
 
     pub(super) fn verify_trade_count(&mut self, count: u64) -> Result<()> {
         let mut actual = 0_u64;
-        let mut session = job::catalog::file_batch_session(
+        let mut session = crate::catalog::file_batch_session(
             &self.catalog,
             CatalogQuery::new(NautilusDataType::TradeTick),
             None,
@@ -364,11 +365,13 @@ mod tests {
             1_u64.into(),
         )
         .unwrap();
-        assert!(writer
-            .push(Data::Trade(overflow))
-            .unwrap_err()
-            .to_string()
-            .contains("COHORT_LIMIT"));
+        assert!(
+            writer
+                .push(Data::Trade(overflow))
+                .unwrap_err()
+                .to_string()
+                .contains("COHORT_LIMIT")
+        );
         assert!(writer.counts.is_empty());
         assert!(!output.join("import-report.json").exists());
     }

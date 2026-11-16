@@ -13,6 +13,7 @@ pub fn capabilities(
         "schemaVersion":1,"identity":crate::build_identity(),
         "protocol":"quazonai-native-process-v1",
         "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured},
+        "preparation":{"marketImport":cfg!(feature="market-history")},
         "account":{"compiled":cfg!(feature="account-runtime"),"registration":account_registration,
             "command":"account-runtime","requiresExplicitStart":true},
         "running":false
@@ -134,6 +135,10 @@ mod tests {
     fn inspection_reports_compiled_hooks_not_live_readiness() {
         let value = super::capabilities(false, true, false);
         assert_eq!(value["running"], false);
+        assert_eq!(
+            value["preparation"]["marketImport"],
+            cfg!(feature = "market-history")
+        );
         assert_eq!(value["research"]["configuredRunFactory"], true);
         assert_eq!(value["account"]["registration"], false);
         assert_eq!(value["account"]["requiresExplicitStart"], true);
@@ -146,7 +151,7 @@ mod owner_thread_tests {
     fn fresh_owner_thread_does_not_inherit_callers_native_sender() {
         std::thread::spawn(|| {
             use nautilus_common::runner::{
-                set_exec_cmd_sender, try_get_trading_cmd_sender, SyncTradingCommandSender,
+                SyncTradingCommandSender, set_exec_cmd_sender, try_get_trading_cmd_sender,
             };
             set_exec_cmd_sender(std::sync::Arc::new(SyncTradingCommandSender));
             assert!(try_get_trading_cmd_sender().is_some());

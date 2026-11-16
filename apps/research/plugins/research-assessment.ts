@@ -121,6 +121,10 @@ export const exposureReadTool = defineTool({
       if (source?.conversationId === sourceConversation && source.state.status === 'terminal' && source.state.outcome.status === 'completed'
         && (source.kind === 'qz.native-strategy.backtest' || !isReview && source.kind === 'qz.research.assessment')) {
         view = source.kind === 'qz.native-strategy.backtest' ? nativeResultView(object(source.state.outcome.result, 'native_result'), args.taskId) : object(source.state.outcome.result, 'assessment_result');
+      } else if (!isReview && isSummary && source?.conversationId === sourceConversation && source.kind === 'qz.native-market-import'
+        && source.state.status === 'terminal' && source.state.outcome.status === 'completed') {
+        // Preparation reports are metadata only, never a backtest or exposure table.
+        view = object(source.state.outcome.result, 'native_market_import_result');
       } else if (!isReview && isSummary) {
         const run = (await tx.doc(NativeSensitivity, api.conversationId)).runs.find(run => run.toolTaskId === args.taskId);
         if (!run) throw new Error('assessment_evidence_task_unavailable');

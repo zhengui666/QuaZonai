@@ -1,10 +1,16 @@
 name: Native scientific image
 on:
   workflow_dispatch:
+    inputs:
+      verify_market_import:
+        description: Verify local TradeTick import contracts and product integration only
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   image-and-core:
+    if: ${{ !inputs.verify_market_import }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -21,3 +27,60 @@ jobs:
           docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
             --build-context "native=$RUNNER_TEMP/native-artifacts" \
             --tag "quazonai-owner-native:${{ github.sha }}" .
+  verify-market-import:
+    if: ${{ inputs.verify_market_import }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-market-import
+          cache-bin: false
+          cache-workspace-crates: false
+      - name: Generate original native contracts
+        run: |
+          make generate-native-schema
+          git diff --exit-code -- contracts/generated/domain-v1.openapi.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-market-import-schema
+          path: contracts/generated/domain-v1.openapi.json
+      - name: Native import and contract unit tests
+        run: |
+          cargo test --locked -p contracts market_import
+          cargo test --locked -p job --features market-history --lib market_history
+          cargo test --locked -p job --features market-history --lib cli::tests::local_trade_import
+          cargo test --locked -p job --lib cli::tests::local_trade_import
+          cargo test --locked -p job --lib native_runner
+          cargo test --locked -p job --features market-history --lib native_runner
+      - name: Build optional importer for owner training acceptance
+        run: |
+          cargo build --locked -p job --features market-history --bin job
+          target/debug/job capabilities | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["preparation"]["marketImport"] is True; assert c["account"]["registration"] is False'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-market-import-runner
+          path: target/debug/job
+          retention-days: 3
+      - name: Product types and capability contract
+        run: |
+          npm ci --prefix apps/service --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
+          npm --prefix apps/research run typecheck
+          cd apps/research
+          node --experimental-strip-types --test test/native-preparation-capability.test.ts test/native-market-import.test.ts test/research-assessment.test.ts
+          node --experimental-strip-types -e 'await import("./plugins/native-market-import.ts")'

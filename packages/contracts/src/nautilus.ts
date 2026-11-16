@@ -8,6 +8,8 @@ export type ProcessNativeTarget = {
   /** Exact result of the explicitly inspected user-built runner, not a claimed live state. */
   capabilities: { schemaVersion: 1; protocol: 'quazonai-native-process-v1'; identity: NativeJson;
     research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
+    /** Absent on older runners: never infer data preparation from research support. */
+    preparation?: { marketImport: boolean };
     account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
 }
 export type NativeExecutionTarget = RemoteNativeTarget | ProcessNativeTarget;

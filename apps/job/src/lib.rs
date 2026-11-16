@@ -55,3 +55,6 @@ pub mod native_runner;
 
 #[cfg(feature = "account-runtime")]
 mod account_queued_cancel;
+
+#[cfg(feature = "market-history")]
+pub mod market_history;

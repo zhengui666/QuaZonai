@@ -1,7 +1,7 @@
 //! One-process native science entrypoints. No database or delivery authority.
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{io::Write, path::PathBuf};
 
 use crate as job;
@@ -59,6 +59,9 @@ enum Operation {
         #[arg(long)]
         catalog: PathBuf,
     },
+    /// Import explicitly mapped local trades into a new native catalog.
+    #[cfg(feature = "market-history")]
+    NativeMarketImport,
     /// Run a user crate's official typed Nautilus configuration.
     NativeConfiguredBacktest {
         #[arg(long)]
@@ -127,6 +130,10 @@ fn run(
         Operation::CatalogFactorScope { catalog } => {
             output(&job::catalog::catalog_factor_scope(&catalog)?)
         }
+        #[cfg(feature = "market-history")]
+        Operation::NativeMarketImport => {
+            native_output(|| job::market_history::native_market_import(input()?))
+        }
         Operation::NativeConfiguredBacktest { catalog } => {
             native_output(|| job::native_configured::run(&catalog, input()?, factory))
         }
@@ -181,8 +188,16 @@ pub fn main_with_native_hooks(
 
 #[cfg(test)]
 mod tests {
-    use super::{public_error_code, public_failure, Arguments};
+    use super::{Arguments, public_error_code, public_failure};
     use clap::Parser;
+
+    #[test]
+    fn local_trade_import_is_only_available_when_compiled() {
+        assert_eq!(
+            Arguments::try_parse_from(["job", "native-market-import"]).is_ok(),
+            cfg!(feature = "market-history"),
+        );
+    }
 
     #[test]
     fn hyper_network_collection_is_not_a_cli_operation() {
@@ -267,13 +282,15 @@ mod tests {
             assert!(Arguments::try_parse_from(["job", command]).is_ok());
         }
         assert!(Arguments::try_parse_from(["job", "allocate"]).is_err());
-        assert!(Arguments::try_parse_from([
-            "job",
-            "verify-native",
-            "--output",
-            "unused-output-directory",
-        ])
-        .is_err());
+        assert!(
+            Arguments::try_parse_from([
+                "job",
+                "verify-native",
+                "--output",
+                "unused-output-directory",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

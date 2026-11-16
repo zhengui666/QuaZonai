@@ -20,6 +20,7 @@ pub mod factors;
 pub mod forward;
 pub mod lifecycle;
 pub mod native_strategy;
+pub mod market_import;
 pub mod native_walk_forward;
 pub mod observed_spot;
 pub mod portfolio;
@@ -76,6 +77,8 @@ use utoipa::OpenApi;
     observed_spot::NativeObservedSpotBuildResultV1,
     native_walk_forward::NativeStrategyWalkForwardRequestV1,
     native_walk_forward::NativeStrategyWalkForwardResultV1,
+    market_import::NativeMarketImportRequestV1,
+    market_import::NativeMarketImportResultV1,
     native_strategy::NativeConfiguredBacktestRequestV1,
     native_strategy::NativeConfiguredBacktestResultV1,
     native_strategy::NativeStrategyBacktestRequestV1,
