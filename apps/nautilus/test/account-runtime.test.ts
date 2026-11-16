@@ -215,7 +215,7 @@ test('internal persisted trader identity reaches BOOT without changing legacy de
   await writeFile(binary,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,{mode:0o700});
   for(const trader of [undefined,'QZ-ACCOUNT-01900000000070008000000000000001']){
    const runtime=new AccountRuntime(binary,{id:'paper',clientId:'c',accountId:'a',mode:'paper',instruments:['TEST.SIM'],nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner',config:null}}},'source',directory,undefined,trader);
-   try{await runtime.start();const value=await runtime.request('READ_CONFIG');assert.equal((value.config as any).trader_id,trader);assert.equal((value.config as any).source_id,'source');}finally{await runtime.close();}
+   try{await runtime.start();const value=await runtime.request('READ_CONFIG');assert.equal((value.config as any).trader_id,trader);assert.equal(Object.hasOwn(value.config as object,'paper_leverage'),false);assert.equal((value.config as any).source_id,'source');}finally{await runtime.close();}
   }
  }finally{await rm(directory,{recursive:true,force:true});}
 });

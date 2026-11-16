@@ -15,13 +15,14 @@ export function accountCreation(value: unknown): AccountCreation {
   const row = value as Record<string, unknown>;
   if (Object.keys(row).some(key => !['requestId', 'configuration'].includes(key)) || typeof row.requestId !== 'string' || !row.requestId.trim()) invalid('account_creation_request_invalid');
   const config = row.configuration as AccountOptions;
-  if (!config || typeof config !== 'object' || Array.isArray(config) || Object.keys(config).some(key => !['id','clientId','accountId','mode','nativeStrategy','instruments','accountAddress','network','executionProductTypes','startingBalance','cashBuffer','paperFeeRate','risk','paperExecution','accountSemantics'].includes(key))) invalid('account_configuration_invalid');
+  if (!config || typeof config !== 'object' || Array.isArray(config) || Object.keys(config).some(key => !['id','clientId','accountId','mode','nativeStrategy','instruments','accountAddress','network','executionProductTypes','startingBalance','cashBuffer','paperFeeRate','risk','paperExecution','accountSemantics','paperLeverage'].includes(key))) invalid('account_configuration_invalid');
   if (typeof config.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(config.id) || typeof config.clientId !== 'string' || !config.clientId.trim() || typeof config.accountId !== 'string' || !config.accountId.trim()
     || !['paper','live'].includes(config.mode) || config.network !== undefined && !['mainnet','testnet'].includes(config.network)
     || !Array.isArray(config.instruments) || !config.instruments.length || !config.instruments.every(id => typeof id === 'string' && id.trim())) invalid('account_configuration_invalid');
   if (config.mode === 'live' && (typeof config.accountAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(config.accountAddress))) invalid('hyperliquid_master_account_required');
   if (config.mode === 'paper' && (typeof config.startingBalance !== 'string' || !/^(?:[0-9]+)(?:\.[0-9]+)?$/.test(config.startingBalance) || !/[1-9]/.test(config.startingBalance) || typeof config.paperFeeRate !== 'string' || !/^[0-9]+(?:\.[0-9]+)?$/.test(config.paperFeeRate))) invalid('paper_balance_and_explicit_fee_required');
-  if (config.accountSemantics !== undefined && (config.accountSemantics !== 'NATIVE_MARGIN' || config.mode !== 'live')) invalid('account_semantics_invalid');
+  if (config.accountSemantics !== undefined && config.accountSemantics !== 'NATIVE_MARGIN') invalid('account_semantics_invalid');
+  if (config.paperLeverage !== undefined && (config.mode !== 'paper' || config.accountSemantics !== 'NATIVE_MARGIN' || typeof config.paperLeverage !== 'string' || !/^[0-9]+(?:\.[0-9]+)?$/.test(config.paperLeverage) || !/[1-9]/.test(config.paperLeverage))) invalid('paper_leverage_requires_margin');
   nativeAccountStrategyConfiguration(config.nativeStrategy);
   if (!config.instruments.includes(config.nativeStrategy.instrument_id)) invalid('account_strategy_instrument_not_configured');
   return structuredClone(row) as unknown as AccountCreation;

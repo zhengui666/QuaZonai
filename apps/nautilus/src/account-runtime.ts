@@ -19,6 +19,8 @@ export interface AccountOptions {
   startingBalance?: string; cashBuffer?: string; paperFeeRate?: string;
   risk?: NativeAccountRiskConfig;
   paperExecution?: NativePaperExecutionConfig;
+  /** Official Sandbox default leverage; requires explicit paper Margin semantics. */
+  paperLeverage?: string;
 }
 export interface NativeInstrument {
   instrument_id: string; base_currency: string; quote_currency: string;
@@ -149,6 +151,7 @@ export class AccountRuntime implements NativeAccountRuntime {
           native_strategy: this.options.nativeStrategy,
           instruments: this.options.instruments, starting_balance: this.options.startingBalance ?? '0', paper_fee_rate: this.options.paperFeeRate ?? null,
           risk: this.options.risk ?? {}, paper_execution: this.options.paperExecution ?? null,
+          ...(this.options.paperLeverage === undefined ? {} : {paper_leverage: this.options.paperLeverage}),
           ...(this.nativeTraderId ? {trader_id:this.nativeTraderId} : {}), source_id: this.sourceId, data_dir: this.dataDir } }, 60_000);
         this.nativeSessionId = typeof boot.native_session_id === 'string' ? boot.native_session_id : null;
         this.ordinaryVenueCancel = boot.ordinary_venue_cancel === true;

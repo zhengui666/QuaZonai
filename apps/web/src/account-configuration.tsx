@@ -20,8 +20,9 @@ export function accountConfigurationField(text:string,key:string,value:string):s
  const config=accountConfigurationInput(text);
  const deployment={...((config.nativeStrategy??{}) as Record<string,unknown>)};
  const strategy={...((deployment.strategy??{}) as Record<string,unknown>)};
- if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics'].includes(key)){
+ if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics','paperLeverage'].includes(key)){
   if(value==='')delete config[key];else config[key]=value;
+  if((key==='mode'&&value!=='paper')||(key==='accountSemantics'&&value!=='NATIVE_MARGIN'))delete config.paperLeverage;
  }else if(key==='instruments')config.instruments=value.split('\n').filter(line=>line!=='');
  else if(key==='instrument_id')deployment.instrument_id=value;
  else if(key==='name')strategy.name=value;
@@ -49,7 +50,8 @@ export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrum
  <label style={{display:'block'}}>订阅标的（每行一个原生 InstrumentId）<AccountInstrumentsInput disabled={disabled} value={instrumentsDraft??(Array.isArray(config.instruments)?config.instruments.join('\n'):'')} onChange={value=>onInstrumentsChange?.(value)}/></label>
  <label style={{display:'block'}}>策略标的（须在订阅列表内）<Input aria-label="策略标的" disabled={disabled} value={deployment?.instrument_id??''} onChange={event=>edit('instrument_id',event.target.value)}/></label>
  {config.mode==='paper'?<>{field('startingBalance','模拟初始余额（USDC 原值）')}{field('paperFeeRate','模拟费率（原始小数，非百分数）')}</>:field('accountAddress','公开账户地址（不是私钥）')}
- {config.mode==='live'&&<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>不切换交易所账户模式。</p></>}
+ {<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder={config.mode==='paper'?'现金模拟账户（默认）':'旧现货语义（保持实盘启动保护）'} options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>保存不启动策略，不切换交易所账户模式。</p></>}
+ {config.mode==='paper'&&config.accountSemantics==='NATIVE_MARGIN'&&<>{field('paperLeverage','模拟默认杠杆（原生十进制，留空为 1）')}<p>直接交给 Nautilus Sandbox；保证金取决于原生合约规则，不是持仓名义额上限，也不设置实盘杠杆。</p></>}
  {deployment?.strategy?.kind==='REGISTERED'&&<label style={{display:'block'}}>已编入运行器的策略名称<Input aria-label="已编入运行器的策略名称" disabled={disabled} value={deployment.strategy.name??''} onChange={event=>edit('name',event.target.value)}/></label>}
 
  </fieldset>;
@@ -101,7 +103,7 @@ export function SavedRunnerNotice({value}:{value?:SavedAccountRunnerReport}){
  </section>;
 }
 export default function AccountConfiguration({enabled}:{enabled:boolean}){
- const records=useResource<Array<{id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
+ const records=useResource<Array<{id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown;paperLeverage?:string;accountSemantics?:string}}>>('/accounts/configurations');
  const [instrumentsDraft,setInstrumentsDraft]=useState<string>();
  const [text,setText]=useState(initialAccountDraft),[error,setError]=useState<unknown>(),[notice,setNotice]=useState('');
  const command=useCommand<{id:string}>('account-configuration',result=>{setNotice(`账户 ${result.id} 的配置已保存，尚未连接或启动策略。`);void records.refetch();},'/accounts/configurations');
@@ -123,7 +125,7 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  </section>;
 }
 
-export type SavedAccountItem={id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}};
+export type SavedAccountItem={id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown;paperLeverage?:string;accountSemantics?:string}};
 export function SavedAccountPanel({item}:{item:SavedAccountItem}){
  const [open,setOpen]=useState(false),[visited,setVisited]=useState(false);
  const prefix=`/accounts/configurations/${encodeURIComponent(item.id)}/strategy`;
@@ -132,6 +134,7 @@ export function SavedAccountPanel({item}:{item:SavedAccountItem}){
  <summary>{item.id} · {item.accountConfiguration.mode}</summary>
  {visited&&<ResourceActivity.Provider value={open}>
  {item.remoteBinding?<p>远端 · {item.remoteBinding.accountId} · {item.remoteBinding.nativeSessionId??'原会话未报告'}{item.supersededBy?` · 已保留为历史，新绑定 ${item.supersededBy}`:''}</p>:<SavedRunnerNotice value={item.savedRunner}/>}
+ {item.accountConfiguration.mode==='paper'&&item.accountConfiguration.accountSemantics==='NATIVE_MARGIN'&&<p>模拟 Margin 默认杠杆：{item.accountConfiguration.paperLeverage??'1'}（保存值，不是当前持仓杠杆）</p>}
  {item.accountConfiguration.paperExecution!==undefined&&<pre aria-label="已保存的官方模拟参数原值">{JSON.stringify(item.accountConfiguration.paperExecution,null,2)}</pre>}
  {open&&fetching>0&&<p role="status">正在刷新，以下可能仍是上次读数。</p>}
  {item.unavailable?<p>原账户未就绪：{item.unavailable}。</p>:<AccountStrategy configured remoteUnsupported={item.remoteUnsupported} value={{id:item.id,mode:item.accountConfiguration.mode}}/>}

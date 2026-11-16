@@ -88,6 +88,7 @@ pub struct AccountRuntimeConfig {
     #[serde(default)]
     pub risk: AccountRiskConfig,
     pub paper_execution: Option<PaperExecutionConfig>,
+    pub paper_leverage: Option<String>,
     pub source_id: String,
     pub trader_id: Option<String>,
     pub data_dir: PathBuf,
@@ -1572,6 +1573,18 @@ fn require_supported_account_scope(mode: &str, vault_configured: bool) -> Result
     );
     Ok(())
 }
+fn native_paper_leverage(config: &AccountRuntimeConfig) -> Result<Decimal> {
+    let Some(value) = &config.paper_leverage else {
+        return Ok(Decimal::ONE);
+    };
+    ensure!(
+        config.mode == "paper" && config.account_semantics.as_deref() == Some("NATIVE_MARGIN"),
+        "paper_leverage_requires_margin"
+    );
+    let leverage = Decimal::from_str(value)?;
+    ensure!(leverage > Decimal::ZERO, "paper_leverage_positive_required");
+    Ok(leverage)
+}
 async fn run_config_owned(
     config: AccountRuntimeConfig,
     boot_id: String,
@@ -1623,10 +1636,10 @@ async fn run_config_owned(
     );
     ensure!(
         config.account_semantics.is_none()
-            || (config.mode == "live"
-                && config.account_semantics.as_deref() == Some("NATIVE_MARGIN")),
+            || config.account_semantics.as_deref() == Some("NATIVE_MARGIN"),
         "account_native_semantics_invalid"
     );
+    let paper_leverage = native_paper_leverage(&config)?;
     let vault_key = if config.testnet {
         "HYPERLIQUID_TESTNET_VAULT"
     } else {
@@ -1748,7 +1761,10 @@ async fn run_config_owned(
             "account_native_initial_cash_positive"
         );
         let balances = cache_factory
-            .restored_balances(&account)?
+            .restored_balances_for_type(
+                &account,
+                Some(config.account_semantics.as_deref() == Some("NATIVE_MARGIN")),
+            )?
             .unwrap_or(vec![Money::from_decimal(initial, Currency::USDC())?]);
         let models = config
             .paper_execution
@@ -1766,7 +1782,12 @@ async fn run_config_owned(
                 venue: Venue::from("HYPERLIQUID"),
                 starting_balances: balances,
                 base_currency: Some(Currency::USDC()),
-                account_type: AccountType::Cash,
+                account_type: if config.account_semantics.as_deref() == Some("NATIVE_MARGIN") {
+                    AccountType::Margin
+                } else {
+                    AccountType::Cash
+                },
+                default_leverage: paper_leverage,
                 fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
                     fee_rate, fee_rate,
                 ))),
@@ -2293,6 +2314,30 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn paper_leverage_uses_explicit_native_margin_only() -> Result<()> {
+        let mut config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "client_id":"test", "account_id":"HYPERLIQUID-001", "mode":"paper",
+            "account_semantics":"NATIVE_MARGIN", "paper_leverage":"5.125",
+            "native_strategy":{"instrument_id":"BTC-USDC-PERP.HYPERLIQUID","strategy":{"kind":"EMA_CROSS","trade_size":"1","fast_period":2,"slow_period":3}},
+            "instruments":["BTC-USDC-PERP.HYPERLIQUID"], "source_id":"unused", "data_dir":"/tmp/unused"
+        }))?;
+        assert_eq!(
+            super::native_paper_leverage(&config)?,
+            Decimal::new(5125, 3)
+        );
+        config.mode = "live".into();
+        assert!(super::native_paper_leverage(&config).is_err());
+        config.mode = "paper".into();
+        config.account_semantics = None;
+        assert!(super::native_paper_leverage(&config).is_err());
+        config.account_semantics = Some("NATIVE_MARGIN".into());
+        config.paper_leverage = Some("0".into());
+        assert!(super::native_paper_leverage(&config).is_err());
+        config.paper_leverage = None;
+        assert_eq!(super::native_paper_leverage(&config)?, Decimal::ONE);
+        Ok(())
+    }
     #[tokio::test]
     async fn live_rejects_paper_scenario_before_connecting() {
         let config: super::AccountRuntimeConfig = serde_json::from_value(serde_json::json!({
@@ -2517,6 +2562,14 @@ mod tests {
         scoped: bool,
         margin: bool,
     ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
+        node_with_leverage(directory, scoped, margin, Decimal::ONE).await
+    }
+    async fn node_with_leverage(
+        directory: &std::path::Path,
+        scoped: bool,
+        margin: bool,
+        leverage: Decimal,
+    ) -> Result<(LiveNode, mpsc::SyncSender<Request>, Replies)> {
         let ids = vec![
             InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID"),
             InstrumentId::from("ETH-USDC-SPOT.HYPERLIQUID"),
@@ -2575,6 +2628,7 @@ mod tests {
                 Box::new(SandboxExecutionClientConfig {
                     account_id: account,
                     venue: Venue::from("HYPERLIQUID"),
+                    default_leverage: leverage,
                     account_type: if margin {
                         AccountType::Margin
                     } else {
@@ -2647,6 +2701,7 @@ mod tests {
                 paper_fee_rate: Some("0.001".into()),
                 risk: AccountRiskConfig::default(),
                 paper_execution: None,
+                paper_leverage: None,
                 source_id: Id::new().to_string(),
                 trader_id: None,
                 data_dir: directory.into(),
@@ -3663,6 +3718,48 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn signal_on_start_orders_only_after_explicit_start() -> Result<()> {
         assert_explicit_strategy_start(false).await
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn paper_margin_leverage_survives_official_cache_recovery() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for _ in 0..2 {
+            let (mut native, _, _) =
+                node_with_leverage(directory.path(), false, true, Decimal::new(5125, 3)).await?;
+            let handle = native.handle();
+            let cache = native.kernel().cache();
+            let drive = async {
+                while !handle.is_running()
+                    || cache
+                        .borrow()
+                        .account_ref(&AccountId::from("HYPERLIQUID-001"))
+                        .is_none()
+                {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let borrowed = cache.borrow();
+                let Some(nautilus_model::accounts::AccountAny::Margin(account)) =
+                    borrowed.account_ref(&AccountId::from("HYPERLIQUID-001"))
+                else {
+                    bail!("expected native margin")
+                };
+                assert_eq!(
+                    account.get_leverage(&InstrumentId::from("BTC-USDC-SPOT.HYPERLIQUID")),
+                    Decimal::new(5125, 3)
+                );
+                assert!(borrowed.orders(None, None, None, None, None).is_empty());
+                handle.stop();
+                Ok::<_, anyhow::Error>(())
+            };
+            let (run, result) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(native.run_with_mode(NodeRunMode::Hosted), drive)
+            })
+            .await?;
+            run?;
+            result?;
+            native.dispose();
+        }
+        Ok(())
     }
     #[tokio::test(flavor = "current_thread")]
     async fn native_margin_lifecycle_uses_official_sandbox_only() -> Result<()> {
