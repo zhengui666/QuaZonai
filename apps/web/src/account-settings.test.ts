@@ -16,7 +16,7 @@ it('exposes the existing account form without connecting accounts or accepting k
   expect(html).toContain('/settings?section=instances');
 });
 it('keeps creation disabled without verified account capability while preserving the form', () => {
-  for(const [compiled,success] of [[false,true],[true,false]]){
+  for(const [compiled,success] of [[false,true],[true,false]] as const){
     state.compiled=compiled;state.success=success;state.enabled=[];
     expect(renderToStaticMarkup(createElement(AccountSettings))).toContain('existing account configuration');
     expect(state.enabled).toEqual([false]);
