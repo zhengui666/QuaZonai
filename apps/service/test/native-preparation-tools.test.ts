@@ -39,7 +39,10 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
   assert.equal(count,1);
   const settingsBefore=settings.view(), datasetsBefore=structuredClone(config.datasets);
   const scopedBody={requestId:'scoped-without-global-selection',runnerBuildRequestId:'original-build',expectedRunnerRevision:1,goal:'New scoped discussion only',datasetId:'fixture',model};
-  faux.setResponses([fauxAssistantMessage('Scoped study, no native execution.')]);
+  faux.setResponses([
+   fauxAssistantMessage(fauxToolCall('native_strategy_brief',{}),{stopReason:'toolUse'}),
+   transcript=>{const message=transcript.messages.find(m=>m.role==='toolResult'&&m.toolName==='native_strategy_brief');assert.ok(message?.role==='toolResult');assert.equal(message.isError,false);const text=message.content.filter(p=>p.type==='text').map(p=>p.text).join('');assert.equal(JSON.parse(text).datasetId,'fixture');return fauxAssistantMessage('Scoped study, no native execution.');}
+  ]);
   const scoped=await work.startResearch(scopedBody);await (await host.harness.submission(scoped.submissionId,context))!.wait(context);
   const scopedInput=(await host.harness.snapshot(Study,scoped.conversationId,context))!.input!;
   assert.equal((scopedInput.data.nautilusTarget as any).binary,join(dir,'runner-1'));

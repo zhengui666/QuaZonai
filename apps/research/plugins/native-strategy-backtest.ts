@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { executeNativeValue, nativeTargetForData, withNativeRemoteTracking, cancelUnsettledNativeExecutions, retainNativeRemoteUncertainty, nativeUncertainTaskId, reconcileNativeExecution, type NativeScanContext, type NativeScanCheckpoint, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import { validateNumbers } from '../src/input.ts';
-import { object, studyInput } from '../src/trials.ts';
+import { object, studyDatasetId, studyInput } from '../src/trials.ts';
 import { Study, canonical } from '../src/documents.ts';
 import { ResearchConfiguration, assertResearchRunSettled, registeredNativeStrategyRequest, registeredNativeResearchRequest } from '../src/research-configuration.ts';
 import { executionVersions } from '../src/native-result-version.ts';
@@ -553,7 +553,7 @@ export const nativeStrategyBriefTool = defineTool({
   async execute(_args, api, context) {
     const input = await studyInput(api, context);
     const request = input.data.native_strategy_backtest_request === undefined ? null : registeredNativeStrategyRequest(input);
-    return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, specification: input.specification ?? null,
+    return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, datasetId: await studyDatasetId(api, context), specification: input.specification ?? null,
       request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
       scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };

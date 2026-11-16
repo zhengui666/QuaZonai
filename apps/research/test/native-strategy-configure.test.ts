@@ -57,7 +57,7 @@ process.stdout.write(JSON.stringify(result));`,{mode:0o755});
   const calls=async()=> (await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
   const models = createModels(); const faux = fauxProvider(); models.setProvider(faux.provider);
   const call = (name: string, args = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
-  faux.setResponses([call('native_strategy_brief'), call('native_strategy_catalog', { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 }), call('native_strategy_catalog', { cursor }), call('native_strategy_configure', { request }),
+  faux.setResponses([call('native_strategy_brief'), transcript => { const message = transcript.messages.find(m => m.role === 'toolResult' && m.toolName === 'native_strategy_brief'); assert.ok(message?.role === 'toolResult'); const brief = JSON.parse(message.content.filter(p => p.type === 'text').map(p => p.text).join('')); assert.equal(brief.datasetId, null, 'No registered admission identity must not be guessed from a catalog path.'); return call('native_strategy_catalog', { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 }); }, call('native_strategy_catalog', { cursor }), call('native_strategy_configure', { request }),
     call('native_strategy_backtest'), fauxAssistantMessage('Historical computation only; no independent qualification or live order.')]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);

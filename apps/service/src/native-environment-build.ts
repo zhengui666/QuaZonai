@@ -1,4 +1,5 @@
-import {mkdir,stat} from 'node:fs/promises';
+import {mkdir,stat,open} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {defineDoc,defineExtension,defineTask,type JsonObject,type TaskId} from '@earendil-works/pi-durable';
@@ -32,6 +33,31 @@ async function preparationDiagnostics(directory:string){
  }
  return files;
 }
+/** Bounded views of the original task logs, not new execution or task state. */
+export async function readPreparationDiagnostics(directory:string) {
+ const limitBytes=32768,maxSourceBytes=1048576;
+ const files=[];
+ for(const name of ['build.log','capabilities.stdout','capabilities.stderr']){
+  let file;
+  try{
+   file=await open(join(directory,name),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+   const info=await file.stat();if(!info.isFile())continue;
+   // Never redact an isolated tail: the credential/PEM prefix may precede it.
+   // Larger originals remain on disk, explicitly unavailable to this bounded view.
+   if(info.size>maxSourceBytes){files.push({name,status:'source_too_large',totalBytes:info.size,truncated:true});continue;}
+   const buffer=Buffer.alloc(info.size);
+   const {bytesRead}=await file.read(buffer,0,buffer.length,0);
+   const original=buffer.subarray(0,bytesRead).toString('utf8');
+   const redacted=original.replace(/-----BEGIN [^\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^\n]*PRIVATE KEY-----|$)/g,'[REDACTED PRIVATE KEY]')
+    .replace(/(Bearer\s+)[^\s"']+/gi,'$1[REDACTED]')
+    .replace(/(\b[\w-]*(?:api[_-]?key|access[_-]?token|secret|password|private[_-]?key|_PK)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\r\n]*)/gi,'$1[REDACTED]');
+   const output=Buffer.from(redacted),offset=Math.max(0,output.length-limitBytes);
+   files.push({name,status:'available',text:output.subarray(offset).toString('utf8'),totalBytes:info.size,truncated:offset>0,redacted:redacted!==original});
+  }catch(error){files.push({name,status:(error as NodeJS.ErrnoException).code==='ENOENT'?'missing':'unavailable'});}
+  finally{await file?.close();}
+ }
+ return {limitBytes,maxSourceBytes,selection:'REDACTED_TAIL',redaction:'RECOGNIZABLE_CREDENTIAL_PATTERNS_ONLY',originalFilesPreserved:true,files};
+}
 /** Original official Pi task owns construction and uncertainty. No parallel job ledger. */
 export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLauncher,importRunner=importRustLauncher){
  const Build=defineTask<Input,{phase:'compile'|'unknown'},JsonObject>({name:'qz.native-environment-build',version:1,initial:()=>({phase:'compile'}),phases:{
@@ -61,7 +87,7 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
   async function read(requestId:string){
    const original=(await host.harness.snapshot(BuildRequests,context))?.requests[requestId];if(!original)throw new Problem('native_build_request_not_found',404);
    const task=await host.harness.getTask(original.taskId as TaskId<JsonObject>,context);if(!task)throw new Problem('native_build_task_missing',409);
-   return {requestId,taskId:task.id,input:original.input,state:task.state,connected:false,strategyStarted:false};
+   return {requestId,taskId:task.id,input:original.input,state:task.state,diagnostics:await readPreparationDiagnostics(join(config.dataDir,'native-builds',String(task.id))),connected:false,strategyStarted:false};
   }
   async function start(value:unknown,importing=false){
    const body=object(value);if(Object.keys(body).some(k=>!(importing?['requestId','expectedRevision','environmentId','sourceExecutable','expectedIdentity']:['requestId','expectedRevision']).includes(k))||typeof body.requestId!=='string'||!body.requestId.trim()||!Number.isSafeInteger(body.expectedRevision))throw new Problem('native_build_request_invalid',422);

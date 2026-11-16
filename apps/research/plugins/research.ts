@@ -2,7 +2,7 @@ import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, hook, section, ToolTask } from '@earendil-works/pi-durable';
 import type { Extension } from '@earendil-works/pi-durable';
 import { Study } from '../src/documents.ts';
-import { object, studyInput } from '../src/trials.ts';
+import { object, studyDatasetId, studyInput } from '../src/trials.ts';
 import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
 import { LiteratureDoc } from '../src/literature-document.ts';
 import { literatureInstructions, literatureOnlyInstructions, literatureTools } from '../src/literature-tools.ts';
@@ -43,7 +43,7 @@ export function researchExtension(search?: Parameters<typeof literatureTools>[0]
             instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(selected) ? selected.length : null,
             memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
-          goal: input.goal, specification: input.specification ?? null, data, policy, stopped: study?.final !== null,
+          goal: input.goal, datasetId: await studyDatasetId(api, context), specification: input.specification ?? null, data, policy, stopped: study?.final !== null,
           campaign: campaign?.binding ? { binding: campaign.binding, state: campaign.state, intake: campaign.intake, hypotheses: campaign.hypotheses,
             trials: campaign.trials, budgetMovements: campaign.budgetMovements, resourceMeasurements: campaign.resourceMeasurements,
             orchestration: campaign.orchestration, latestComparison: campaign.comparisons.at(-1) ?? null } : null,
