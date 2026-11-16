@@ -116,6 +116,8 @@ test('build status returns bounded diagnostic evidence for running and failed or
 test('diagnostic redaction precedes truncation and withholds oversized originals',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-diagnostic-boundaries-'));
  const secrets=[
+  'password="first'+String.fromCharCode(92,10)+'private-escaped-newline"',
+  'password="first'+String.fromCharCode(10)+'private-trailing-escape'+String.fromCharCode(92),
   '-----BEGIN PRIVATE KEY-----\n'+'private-body\n'.repeat(4000)+'-----END PRIVATE KEY-----',
   'api_key='+ 'long-secret'.repeat(4000),
   'HYPERLIQUID_PK=private-hyperliquid',
@@ -125,7 +127,7 @@ test('diagnostic redaction precedes truncation and withholds oversized originals
   "password='unterminated\nprivate remaining value",
  ];
  try{
-  for(const original of secrets){await writeFile(join(dir,'build.log'),original);const result=await readPreparationDiagnostics(dir);const log=result.files[0]!;assert.equal(log.status,'available');assert.equal(log.redacted,true);assert.match(log.text!,/REDACTED/);assert.doesNotMatch(log.text!,/private-body|long-secret|private-hyperliquid|private-qz|secret word|json secret|unterminated|remaining value/);assert.equal(await readFile(join(dir,'build.log'),'utf8'),original);}
+  for(const original of secrets){await writeFile(join(dir,'build.log'),original);const result=await readPreparationDiagnostics(dir);const log=result.files[0]!;assert.equal(log.status,'available');assert.equal(log.redacted,true);assert.match(log.text!,/REDACTED/);assert.doesNotMatch(log.text!,/private-escaped-newline|private-trailing-escape|private-body|long-secret|private-hyperliquid|private-qz|secret word|json secret|unterminated|remaining value/);assert.equal(await readFile(join(dir,'build.log'),'utf8'),original);}
   await writeFile(join(dir,'build.log'),'password="'+'private oversized '.repeat(70000));const result=await readPreparationDiagnostics(dir);assert.equal(result.files[0]!.status,'source_too_large');assert.equal(result.files[0]!.text,undefined);
  }finally{await rm(dir,{recursive:true,force:true});}
 });

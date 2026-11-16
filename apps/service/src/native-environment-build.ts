@@ -50,7 +50,7 @@ export async function readPreparationDiagnostics(directory:string) {
    const original=buffer.subarray(0,bytesRead).toString('utf8');
    const redacted=original.replace(/-----BEGIN [^\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^\n]*PRIVATE KEY-----|$)/g,'[REDACTED PRIVATE KEY]')
     .replace(/(Bearer\s+)[^\s"']+/gi,'$1[REDACTED]')
-    .replace(/(\b[\w-]*(?:api[_-]?key|access[_-]?token|secret|password|private[_-]?key|_PK)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\r\n]*)/gi,'$1[REDACTED]');
+    .replace(/(\b[\w-]*(?:api[_-]?key|access[_-]?token|secret|password|private[_-]?key|_PK)["']?\s*[=:]\s*)(?:"(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|'(?:\\[\s\S]|[^'\\])*(?:'|\\?$)|[^\r\n]*)/gi,'$1[REDACTED]');
    const output=Buffer.from(redacted),offset=Math.max(0,output.length-limitBytes);
    files.push({name,status:'available',text:output.subarray(offset).toString('utf8'),totalBytes:info.size,truncated:offset>0,redacted:redacted!==original});
   }catch(error){files.push({name,status:(error as NodeJS.ErrnoException).code==='ENOENT'?'missing':'unavailable'});}
