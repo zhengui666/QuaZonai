@@ -1,6 +1,6 @@
 ---
 name: quazonai
-description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、运行官方原生策略回测、参数扫描和证据评级、观测 paper/live 账户并显式控制已配置策略、处理资金退出，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
+description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、运行官方原生策略回测、参数扫描和证据评级、观测 paper/live 账户并显式控制已配置策略、读取历史资金退出记录，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
 ---
 
 # Quazonai
@@ -31,7 +31,7 @@ quazonai identity
 | --- | --- | --- |
 | 自然语言研究、回测、追问或继续 | `datasets`、`research models`、`research get ID` | [原生研究与扫描](references/research-and-portfolios.md) |
 | 参数扫描与证据评级 | 原研究详情、`parameter-scan options --file QUERY.json` | [原生研究与扫描](references/research-and-portfolios.md) |
-| 绑定账户、显式启停原生策略或资金退出 | `observation list`、`account-strategy status ID`、`capital status ID` | [账户与资金](references/accounts.md) |
+| 绑定账户、显式启停原生策略或查询历史资金退出 | `observation list`、`account-strategy status ID`、`capital status ID` | [账户与资金](references/accounts.md) |
 | 读取既有 PM/组合记录 | 实际 `--help`、`pm capabilities` | [保留的历史查询](references/pm.md) |
 | 查用量、设置、扩展或维护模式 | 对应 `get`、`list`、`status` | [命令索引](references/commands.md) |
 
@@ -71,6 +71,6 @@ quazonai research get "$research_id"
 
 报告所用实例、资源 ID、当前状态、关键结果、阻塞原因，以及请求/回执文件位置。未完成时附下一条读取原对象的命令。
 
-区分历史回测、AI 建议和账户事实。paper/live 观测只绑定已有账户；研究完成不自动启动账户策略，策略启动回执不代表成交，资金退出命令被接收不代表资金已到账。
+区分历史回测、AI 建议和账户事实。paper/live 观测只绑定已有账户；研究完成不自动启动账户策略，策略启动回执不代表成交，历史资金退出记录不代表当前可提现余额；策略 STOPPED 不代表已清仓或已提现，当前版本不提供新资金退出规划或自动提现。
 
 仅在用户操作范围内执行停止、删除和账户控制。`delete` 隐藏符合条件的非活动对象并保留证据；它不停止远端工作、不清仓。遇到活动状态或依赖阻塞，报告原因，不自行追加停止或删除关联资源。
