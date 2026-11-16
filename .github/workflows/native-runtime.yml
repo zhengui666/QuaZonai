@@ -1,10 +1,34 @@
-name: Native market import verification
+name: Native scientific image
 on:
   workflow_dispatch:
+    inputs:
+      verify_market_import:
+        description: Verify local TradeTick import contracts and product integration only
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
-  verify:
+  image-and-core:
+    if: ${{ !inputs.verify_market_import }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build optional owner-managed native adapter explicitly
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          bash deploy/docker/native-build.sh release "$RUNNER_TEMP/native-artifacts"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Assemble optional adapter, never publish or install it with QuaZonai
+        run: |
+          docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
+            --build-context "native=$RUNNER_TEMP/native-artifacts" \
+            --tag "quazonai-owner-native:${{ github.sha }}" .
+  verify-market-import:
+    if: ${{ inputs.verify_market_import }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -27,7 +51,9 @@ jobs:
           cache-bin: false
           cache-workspace-crates: false
       - name: Generate original native contracts
-        run: make generate-native-schema
+        run: |
+          make generate-native-schema
+          git diff --exit-code -- contracts/generated/domain-v1.openapi.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-market-import-schema
