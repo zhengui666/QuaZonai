@@ -25,7 +25,7 @@ type BacktestConfig = RemoteNativeTarget & { token?: string };
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string; config?: JsonObject }
 export interface ServiceConfig {
   host: string; port: number; dataDir: string;
-  research: { database: string; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
+  research: { database: string; codingWorkspace?: string; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
   /** Runtime source snapshots for existing mandates; excluded from new admissions. */
   retainedDatasets?: DatasetConfig[];
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
@@ -67,6 +67,7 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
     console.warn(`Retired built-in research module skipped: ${path}`);
     return false;
   });
+  if (config.research.codingWorkspace) config.research.codingWorkspace = resolve(base, config.research.codingWorkspace);
   config.research.providerModules = config.research.providerModules?.map((path) => resolve(base, path));
   config.extensions = config.extensions.map((extension) => ({ ...extension, module: resolve(base, extension.module) }));
   if (config.staticDir) config.staticDir = resolve(base, config.staticDir);
