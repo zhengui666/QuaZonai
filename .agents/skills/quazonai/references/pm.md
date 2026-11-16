@@ -1,6 +1,6 @@
 # 保留的历史查询与控制
 
-新研究使用 `research` 和原生参数扫描，不新建旧 PM mandate、campaign、因子或组合。先看实际 `quazonai --help`、`pm capabilities`，不可把仍存在的历史类型当可创建能力。
+新研究使用 `research` 中显式配置的原生 Rust 策略回测；参数扫描仅保留历史查询和停止，不新建旧 PM mandate、campaign、因子或组合。先看实际 `quazonai --help`、`pm capabilities`，不可把仍存在的历史类型当可创建能力。
 
 保留的读取包括 `pm list/get/decision/history/events`、`campaign get/trials/compare`、`strategy versions/assessments`、`pm cycle/capacity`。仅使用已有对象真实 ID，空结果不补造。
 
