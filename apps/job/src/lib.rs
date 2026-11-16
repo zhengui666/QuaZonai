@@ -11,6 +11,8 @@ pub fn build_identity() -> serde_json::Value {
         "jobVersion": env!("CARGO_PKG_VERSION"),
     })
 }
+#[cfg(feature = "account-runtime")]
+mod account_adapter;
 pub mod account_observation_cli;
 pub mod account_observer;
 #[cfg(feature = "account-runtime")]
