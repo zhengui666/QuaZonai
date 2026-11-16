@@ -124,8 +124,8 @@ export interface NativeConfiguredFailureReview {
   nativeTaskId: number;
   ownerTaskId: number;
   requestId: string;
-  classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD';
-  /** Human/source review of the original owner factory and pre-engine rejection path. */
+  classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD' | 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL';
+  /** Human/source review of the original owner factory and the classified rejection boundary. */
   sourceReview: string;
   sources: string[];
 }
