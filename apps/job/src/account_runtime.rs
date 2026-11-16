@@ -713,13 +713,15 @@ impl AccountController {
                             .get("quantity")
                             .and_then(Value::as_str)
                             .unwrap_or("1.00"),
-                    )?,
+                    )
+                    .map_err(anyhow::Error::msg)?,
                     Price::from_str(
                         r.body
                             .get("price")
                             .and_then(Value::as_str)
                             .unwrap_or("1.00"),
-                    )?,
+                    )
+                    .map_err(anyhow::Error::msg)?,
                     Some(TimeInForce::Gtc),
                     None,
                     Some(false),
@@ -3828,9 +3830,10 @@ mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(30)).await;
                 let borrowed = cache.borrow();
-                let Some(nautilus_model::accounts::AccountAny::Margin(account)) =
-                    borrowed.account_ref(&AccountId::from("HYPERLIQUID-001"))
-                else {
+                let account = borrowed
+                    .account_ref(&AccountId::from("HYPERLIQUID-001"))
+                    .ok_or_else(|| anyhow!("missing native account"))?;
+                let nautilus_model::accounts::AccountAny::Margin(account) = &*account else {
                     bail!("expected native margin")
                 };
                 assert_eq!(
