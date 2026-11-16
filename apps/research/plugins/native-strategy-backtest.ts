@@ -1,8 +1,8 @@
 import { isNativeTable } from '../src/native-table.ts';
-import { nativeResultView, nativeToolText, nativeToolOutputLimits } from '../src/native-result-view.ts';
+import { nativeResultView, nativeToolText, nativeToolOutputLimits, nativeToolMaxBytes } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
 import { defineDoc, defineExtension, defineTask, defineTool, type JsonObject, type TaskId, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { bool, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
+import { arr, bool, int, str, obj, opt, compile, type Schema } from '@earendil-works/pi-schema';
 import { readFile } from 'node:fs/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -338,6 +338,176 @@ export const nativeConfiguredBacktestTool = defineTool({
   },
 });
 
+/** Explicit cases only: Pi owns orchestration; Nautilus owns each independent run.
+ * No range expansion, optimization, ranking, shared account or rewritten metrics. */
+const NativeParameterChildren = defineDoc<{ taskIds: TaskId<JsonObject>[] }>({
+  kind: 'qz.native-parameter-children', version: 1, scope: 'task', initial: () => ({ taskIds: [] }),
+  checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 127,
+});
+const nativeParameterRequestSchema = { anyOf: [nativeStrategyRequestSchema, nativeConfiguredRequestSchema] } as Schema<JsonObject>;
+export function prepareNativeParameterBatch(args: unknown): { configured: boolean; requests: JsonObject[] } {
+  validateNumbers(args);
+  if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('native_parameter_batch_invalid');
+  const value = args as Record<string, unknown>;
+  if (typeof value.configured !== 'boolean' || !Array.isArray(value.requests) || !value.requests.length) throw new Error('native_parameter_batch_requires_explicit_requests');
+  const validator = value.configured ? validateConfiguredRequest : validateRequest;
+  if (!value.requests.every(request => validator.check(request))) throw new Error('native_parameter_batch_request_schema_invalid');
+  return structuredClone(value) as { configured: boolean; requests: JsonObject[] };
+}
+/** QuaZonai expands explicit value axes; Nautilus still owns every calculation. */
+const parameterGridSchema = obj({
+  configured: bool(), request: nativeParameterRequestSchema,
+  axes: arr(obj({ path: arr(str()), values: arr({} as Schema<JsonValue>) })),
+  offset: int({ minimum: 0 }), pageSize: int({ minimum: 1 }),
+});
+const validateParameterGrid = compile(parameterGridSchema);
+export function prepareNativeParameterGrid(args: unknown) {
+  validateNumbers(args);
+  if (!validateParameterGrid.check(args)) throw new Error('native_parameter_grid_schema_invalid');
+  const value = structuredClone(args) as { configured: boolean; request: JsonObject; axes: { path: string[]; values: JsonValue[] }[]; offset: number; pageSize: number };
+  const validator = value.configured ? validateConfiguredRequest : validateRequest;
+  if (!validator.check(value.request)) throw new Error('native_parameter_grid_request_schema_invalid');
+  if (!value.axes.length || !Number.isSafeInteger(value.offset) || !Number.isSafeInteger(value.pageSize)) throw new Error('native_parameter_grid_invalid');
+  let total = 1;
+  for (const [index, axis] of value.axes.entries()) {
+    if (!axis.path.length || !axis.values.length) throw new Error('native_parameter_grid_empty_axis');
+    let parent: unknown = value.request;
+    for (const key of axis.path) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key) || !parent || typeof parent !== 'object' || !Object.hasOwn(parent, key)) throw new Error('native_parameter_grid_path_missing');
+      parent = (parent as Record<string, unknown>)[key];
+    }
+    if (value.axes.slice(0, index).some(other => axis.path.slice(0, Math.min(axis.path.length, other.path.length)).every((key, i) => key === other.path[i]))) throw new Error('native_parameter_grid_overlapping_axes');
+    total *= axis.values.length;
+    if (!Number.isSafeInteger(total)) throw new Error('native_parameter_grid_count_unsafe');
+  }
+  return { ...value, total };
+}
+export function nativeParameterGridPage(args: unknown): JsonObject {
+  const grid = prepareNativeParameterGrid(args);
+  const validator = grid.configured ? validateConfiguredRequest : validateRequest;
+  const requests: JsonObject[] = [];
+  let next = grid.offset;
+  for (; next < grid.total && requests.length < grid.pageSize; next++) {
+    const request = structuredClone(grid.request);
+    let remainder = next;
+    for (const axis of [...grid.axes].reverse()) {
+      const selected = remainder % axis.values.length;
+      remainder = Math.floor(remainder / axis.values.length);
+      let parent = request as Record<string, JsonValue>;
+      for (const key of axis.path.slice(0, -1)) parent = parent[key] as Record<string, JsonValue>;
+      parent[axis.path.at(-1)!] = structuredClone(axis.values[selected]!);
+    }
+    if (!validator.check(request)) throw new Error(`native_parameter_grid_case_${next}_schema_invalid`);
+    if (Buffer.byteLength(JSON.stringify([...requests, request]), 'utf8') > nativeToolMaxBytes - 1024) {
+      if (!requests.length) throw new Error('native_parameter_grid_request_exceeds_output_budget');
+      break;
+    }
+    requests.push(request);
+  }
+  return { configured: grid.configured, requests, offset: grid.offset, totalCandidates: grid.total,
+    nextOffset: next < grid.total ? next : null, candidatesSource: 'QUAZONAI_CARTESIAN_GRID',
+    execution: 'NOT_EXECUTED_PASS_REQUESTS_TO_NATIVE_PARAMETER_BATCH', ranking: null, best: null };
+}
+export const nativeParameterGridTool = defineTool({
+  name: 'native_parameter_grid', parameters: parameterGridSchema, outputLimits: nativeToolOutputLimits,
+  description: 'QuaZonai generates Cartesian combinations of explicit axis values over an existing complete native request. Paths are arrays of exact existing object keys (array indices as strings); axes cannot overlap. Last axis varies fastest, input order and exact JSON values are retained. No numeric range arithmetic, execution, ranking or statistics. Read every page with unchanged request/axes and nextOffset, declare the complete candidates and their purposes before validation, then pass the generated requests to native_parameter_batch. Batch execution uses Pi Tasks and Nautilus native calculations. Do not claim this generator is Nautilus native or that a selected candidate is independent OOS evidence.',
+  prepareArguments(args) { const { total: _total, ...prepared } = prepareNativeParameterGrid(args); return prepared; }, replay: 'safe',
+  async execute(args) { return { output: [{ type: 'text', text: JSON.stringify(nativeParameterGridPage(args)) }] }; },
+});
+
+export const nativeParameterBatchTool = defineTool({
+  name: 'native_parameter_batch', outputLimits: nativeToolOutputLimits,
+  description: 'Run an explicit list of complete native requests, in order, on the unchanged registered catalog/executor. configured=false uses upstream strategy requests; true uses installed Rust factory requests. Pi Durable orchestrates independent child Tasks, each calling Nautilus BacktestNode and preserving its original results. This is NOT a Nautilus grid generator or optimizer: the research Agent/owner supplies all candidates and their purposes before execution, optionally using QuaZonai native_parameter_grid to generate combinations. Declare these exact requests in native_strategy_logic_review before running a validation study. No automatic parameter combinations, ranking, winner selection, aggregate performance, OOS qualification or trading permission. A failure stops later cases; UNKNOWN remains on the original Task without replacement. Read each returned Task with the existing native evidence readers, then request native_strategy_assessment_report.',
+  parameters: obj({ configured: bool(), requests: arr(nativeParameterRequestSchema) }),
+  prepareArguments: prepareNativeParameterBatch, replay: 'safe', executionMode: 'sequential',
+  async execute(args, api, context) {
+    const { configured, requests } = prepareNativeParameterBatch(args);
+    const input = await studyInput(api, context);
+    if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
+    // Validate every case before the first execution, preserving the admitted data binding.
+    for (const request of requests) {
+      const binding = structuredClone(input);
+      delete binding.data.native_configured_backtest_request;
+      delete binding.data.native_strategy_backtest_request;
+      binding.data[configured ? 'native_configured_backtest_request' : 'native_strategy_backtest_request'] = request;
+      registeredNativeResearchRequest(binding);
+    }
+    let completedCount = 0;
+    let lastResult: JsonObject | null = null;
+    for (const [index, request] of requests.entries()) {
+      const id = await api.commit(async tx => {
+        const children = await tx.doc(NativeParameterChildren, api.taskId);
+        if (children.taskIds[index]) return children.taskIds[index]!;
+        await assertResearchRunSettled(tx, api.conversationId);
+        const study = await tx.doc(Study, api.conversationId);
+        if (study.trials.length) throw new Error('research_already_final');
+        const id = await tx.createTask(NativeStrategyBacktestTask, {
+          request, configured, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
+        }, { ownership: { kind: 'task', taskId: api.taskId } });
+        children.taskIds.push(id);
+        const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
+        if (configuration.evaluationTaskId) configuration.previousTaskIds = [...(configuration.previousTaskIds ?? []), configuration.evaluationTaskId];
+        configuration.evaluationTaskId = id;
+        configuration.request = request;
+        configuration.configuredByTaskId = api.taskId;
+        study.input!.data[configured ? 'native_configured_backtest_request' : 'native_strategy_backtest_request'] = request;
+        delete study.input!.data[configured ? 'native_strategy_backtest_request' : 'native_configured_backtest_request'];
+        study.final = null;
+        return id;
+      }, context);
+      const settled = await waitForBacktest(id, api, context);
+      if (settled.state.outcome.status !== 'completed') {
+        const outcome = settled.state.outcome;
+        throw new Error(`native_parameter_batch_case_${index}_failed: ${'error' in outcome && outcome.error ? outcome.error.message : 'aborted'}; originalTaskId=${id}; later cases not started`);
+      }
+      const result = configured ? nativeConfiguredResult(settled.state.outcome.result, request) : nativeStrategyResult(settled.state.outcome.result, request);
+      lastResult = result;
+      completedCount += 1;
+      api.output(nativeToolText(nativeResultView(result, id), id) + '\n');
+    }
+    await api.commit(async tx => {
+      const study = await tx.doc(Study, api.conversationId);
+      study.final = { taskId: api.taskId, trialId: null, comparedTrials: [], status: 'COMPUTED',
+        reason: 'explicit_native_parameter_batch_completed_displaying_last_case_not_best',
+        scientificClaim: 'HISTORICAL_NATIVE_BACKTEST_NOT_INDEPENDENT_QUALIFICATION', result: lastResult };
+    }, context);
+    return { output: [{ type: 'text', text: JSON.stringify({
+      displayedCase: requests.length - 1, displayMeaning: 'LAST_REQUEST_NOT_BEST_OR_COMBINED_RESULT',
+      scope: 'EXPLICIT_CANDIDATES_PI_ORCHESTRATED_NAUTILUS_RUNS', completedCount, batchTaskId: api.taskId,
+      reader: 'native_parameter_batch_read', offset: 0,
+      candidatesSource: 'CALLER_SUPPLIED', ranking: null, best: null,
+      evidence: 'ORIGINAL_CHILD_TASK_RESULTS', qualification: 'NOT_INDEPENDENT_OOS_OR_TRADING_PERMISSION',
+    }) }] };
+  },
+});
+
+/** Read retained Pi child identities without executing or ranking anything. */
+export const nativeParameterBatchReadTool = defineTool({
+  name: 'native_parameter_batch_read', outputLimits: nativeToolOutputLimits,
+  description: 'Page original candidate Task references from a native_parameter_batch invocation in this conversation, including partial, failed or uncertain batches. Follow nextOffset; child Tasks retain unchanged requests and native results. No execution or ranking.',
+  parameters: obj({ batchTaskId: int({ minimum: 0 }), offset: int({ minimum: 0 }), pageSize: int({ minimum: 1 }) }), replay: 'safe',
+  async execute(args, api, context) {
+    for (const value of Object.values(args)) if (!Number.isSafeInteger(value)) throw new Error('native_parameter_batch_page_invalid');
+    const owner = await api.commit(tx => tx.task(args.batchTaskId as TaskId), context);
+    if (!owner || owner.conversationId !== api.conversationId) throw new Error('native_parameter_batch_not_found');
+    const children = await api.snapshot(NativeParameterChildren, args.batchTaskId as TaskId, context);
+    if (!children) throw new Error('native_parameter_batch_not_found');
+    const rows: JsonObject[] = [];
+    let next = args.offset;
+    for (; next < children.taskIds.length && rows.length < args.pageSize; next++) {
+      const id = children.taskIds[next]!;
+      const child = await api.commit(tx => tx.task(id), context);
+      const row = { index: next, taskId: id, status: child?.state.status === 'terminal' ? child.state.outcome.status : child?.state.status ?? 'missing' };
+      if (Buffer.byteLength(JSON.stringify([...rows, row])) > nativeToolMaxBytes - 1024) break;
+      rows.push(row);
+    }
+    return { output: [{ type: 'text', text: JSON.stringify({ batchTaskId: args.batchTaskId,
+      totalStarted: children.taskIds.length, offset: args.offset, rows, nextOffset: next < children.taskIds.length ? next : null,
+      scope: 'ORIGINAL_PI_TASK_REFERENCES_NOT_RANKING', resultReader: 'native_assessment_read_exposure',
+    }) }] };
+  },
+});
+
 export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; configured?: boolean; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
@@ -389,4 +559,4 @@ export const nativeStrategyBriefTool = defineTool({
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
   },
 });
-export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask, NativeStrategyCatalogTask], tools: [nativeStrategyBriefTool, nativeStrategyCatalogTool, nativeStrategyConfigureTool, nativeStrategyBacktestTool, nativeConfiguredConfigureTool, nativeConfiguredBacktestTool] });
+export default defineExtension({ name: 'qz.native-strategy-backtest', tasks: [NativeStrategyBacktestTask, NativeStrategyCatalogTask], tools: [nativeStrategyBriefTool, nativeStrategyCatalogTool, nativeStrategyConfigureTool, nativeStrategyBacktestTool, nativeConfiguredConfigureTool, nativeConfiguredBacktestTool, nativeParameterGridTool, nativeParameterBatchTool, nativeParameterBatchReadTool] });

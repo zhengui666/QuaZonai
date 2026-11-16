@@ -5,7 +5,7 @@ import type {NativeStrategyControlTransport} from './native-strategy-control-pha
 import {nativePreparationTools} from './native-preparation-tools.ts';
 import {processAccounts} from './process-accounts.ts';
 import {nativeEnvironmentBuild} from './native-environment-build.ts';
-import { researchTaskEvidence } from './research-assessments.ts';
+import { researchTaskEvidence, readResearchNativeBacktests } from './research-assessments.ts';
 import { accountStrategyWorkbench } from './account-strategy.ts';
 import { cancelNativeProtection } from './downstream.ts';
 import Fastify from 'fastify';
@@ -249,6 +249,7 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
   app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/messages`, request => researchMessagePage(research, Number(request.params.id), request.query.cursor));
   app.get<{ Params: { id: string }; Querystring: { resultTaskId: string; offset?: string } }>(`${API}/research/:id/native-runs`, request => researchNativeRuns(research,Number(request.params.id),Number(request.query.resultTaskId),Number(request.query.offset??'0')));
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/native-backtests`, request => readResearchNativeBacktests(research, Number(request.params.id), request.query.cursor));
   app.get<{ Params: { id: string; taskId: string } }>(`${API}/research/:id/evidence/:taskId`, request => researchTaskEvidence(research, Number(request.params.id), Number(request.params.taskId)));
   app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
     const id = Number(request.params.id);

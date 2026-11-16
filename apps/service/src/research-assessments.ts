@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
-import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, Cursor, TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput } from '../../research/src/documents.ts';
 import { Study, canonical } from '../../research/src/documents.ts';
@@ -65,5 +65,26 @@ export async function researchTaskEvidence(host: ResearchHost, id: number, taskI
     const study = await tx.doc(Study, id as ConversationId);
     if (!study.input || study.deletedAt) throw new Problem('research_evidence_not_found', 404);
     return { taskId, kind: task.kind, input: task.input, state: task.state };
+  }, context);
+}
+
+/** Page official child Tasks, including failed/unfinished cases, without ranking. */
+export async function readResearchNativeBacktests(host: ResearchHost, id: number, encoded?: string): Promise<import('../../../packages/contracts/src/index.ts').ResearchNativeBacktests> {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Problem('research_not_found', 404);
+  let cursor: Cursor | undefined;
+  if (encoded !== undefined) {
+    try {
+      const value = JSON.parse(Buffer.from(encoded, 'base64url').toString());
+      if (value.conversationId !== id || !value.cursor || typeof value.cursor !== 'object' || Array.isArray(value.cursor) || !Number.isSafeInteger(value.cursor.after) || (value.cursor.order !== undefined && value.cursor.order !== 'ascending')) throw new Error();
+      cursor = value.cursor;
+    } catch { throw new Problem('research_native_cursor_invalid', 422); }
+  }
+  return host.harness.commit(async tx => {
+    const study = await tx.doc(Study, id as ConversationId);
+    if (!study.input || study.deletedAt) throw new Problem('research_not_found', 404);
+    const page = await tx.scanTasks({ conversationId: id as ConversationId, kind: 'qz.native-strategy.backtest', order: 'ascending' }, 20, cursor);
+    return { items: page.items.map(task => ({ taskId: task.id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
+      evidenceHref: `/api/v3/research/${id}/evidence/${task.id}` })),
+      nextCursor: page.next ? Buffer.from(JSON.stringify({ conversationId: id, cursor: page.next })).toString('base64url') : null };
   }, context);
 }

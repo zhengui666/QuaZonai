@@ -274,7 +274,10 @@ test('delete commands retain exact original identities, send once with empty JSO
     assert.equal(code, 0);
     for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /portfolio list.*delete ID/]) assert.match(help, line);
     assert.doesNotMatch(help, /replay-ticks|tick-replay/);
-    assert.match(help, /Historical scan records only; no parameter generation, ranking, or new scans/);
+    assert.match(help, /Historical scan records only\. For new grids use research start --goal/);
+    assert.match(help, /QuaZonai generates combinations, Pi orchestrates, Nautilus backtests/);
+    assert.match(help, /research native-backtests ID.*research evidence ID TASK_ID/);
+    assert.match(help, /no automatic winner or OOS qualification/);
     assert.doesNotMatch(help, /parameter-scan (?:create|start|preview|options|retry|heatmap)/);
   } finally { await config.close(); await api.close(); }
 });

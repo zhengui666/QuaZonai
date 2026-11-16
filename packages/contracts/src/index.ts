@@ -215,3 +215,9 @@ export const API = '/api/v3';
 export type { ListPage, ListCriterion, ResearchListItem, FactorListItem, ListPerformance, PortfolioListItem, TickReplayListItem, AllocationListItem } from './lists.ts';
 
 export interface NativeEnvironmentSettingsUpdate { expectedRevision: number; environment: import('./nautilus.ts').NativeRustEnvironment | null }
+
+/** Original native backtest Tasks, paged without selection or rewritten statistics. */
+export interface ResearchNativeBacktests {
+  items: { taskId: number; status: string; evidenceHref: string }[];
+  nextCursor: string | null;
+}
