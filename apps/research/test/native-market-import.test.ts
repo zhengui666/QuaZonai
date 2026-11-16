@@ -28,3 +28,23 @@ test('oversized preparation metadata has a working same-conversation summary rea
   conversationId=2;
   await assert.rejects(()=>exposureReadTool.execute({taskId:7,path:'$.summary',offset:0,pageSize:3},api as any,context),/assessment_evidence_task_unavailable/);
 });
+
+import {createModels,fauxProvider,fauxAssistantMessage,fauxToolCall} from '@earendil-works/pi-ai';
+import {openResearch} from '../src/host.ts';
+import {MemoryStorage} from '@earendil-works/pi-durable';
+
+test('ordinary intake exposes the import tool and preserves native capability rejection',async()=>{
+  const models=createModels(),faux=fauxProvider();models.setProvider(faux.provider);
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_market_import',{schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog-output'}),{stopReason:'toolUse'}),fauxAssistantMessage('Capability is not available; no import was started.')]);
+  const host=await openResearch({database:'/tmp/import-capability.sqlite',storage:new MemoryStorage(),models});
+  try {
+    const admission=await host.start('import-tool-intake',{goal:'Check explicit local preparation capability only.',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:'/source/catalog',nautilusTarget:{kind:'RUST_PROCESS',id:'no-import',binary:'/not-started',capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'capability-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}}},policy:{}});
+    await (await host.harness.submission(admission.submissionId,context))!.wait(context);
+    const tasks=await host.harness.commit(tx=>tx.scanTasks({conversationId:admission.conversationId},100),context);
+    const entries=await host.harness.commit(tx=>tx.scanEntries({conversationId:admission.conversationId},100),context);
+    const encoded=JSON.stringify(entries);
+    assert.match(encoded,/native_market_import_not_available/);
+    assert.doesNotMatch(encoded,/unknown tool|tool_not_found/i);
+    assert.equal(tasks.items.filter(t=>t.kind==='qz.native.execution').length,0);
+  }finally{await host.close();}
+});
