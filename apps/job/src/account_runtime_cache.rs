@@ -74,6 +74,13 @@ impl AccountCacheFactory {
         Ok(())
     }
     pub fn restored_balances(&self, account: &AccountId) -> Result<Option<Vec<Money>>> {
+        self.restored_balances_for_type(account, None)
+    }
+    pub fn restored_balances_for_type(
+        &self,
+        account: &AccountId,
+        expected_margin: Option<bool>,
+    ) -> Result<Option<Vec<Money>>> {
         let root = self.directory.join("native-cache");
         if !root.exists() {
             return Ok(None);
@@ -95,6 +102,12 @@ impl AccountCacheFactory {
             .cloned()
             .map(|value| {
                 let account: AccountAny = serde_json::from_value(value)?;
+                if let Some(expected) = expected_margin {
+                    ensure!(
+                        matches!(&account, AccountAny::Margin(_)) == expected,
+                        "account_native_retained_account_type_mismatch"
+                    );
+                }
                 Ok(account.balances().into_values().map(|b| b.total).collect())
             })
             .transpose()

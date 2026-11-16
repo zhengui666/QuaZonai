@@ -105,3 +105,16 @@ it('native Margin is explicit configuration only and clearing it preserves old f
  expect(accountConfigurationInput(accountConfigurationField(JSON.stringify(opted),'accountSemantics',''))).toEqual(original);
  expect(opted).not.toHaveProperty('automaticStrategyStart');
 });
+
+it('keeps paper leverage decimal text and preserves other native configuration',()=>{
+ const original={mode:'paper',accountSemantics:'NATIVE_MARGIN',nativeStrategy:{strategy:{kind:'REGISTERED',name:'owner'}},paperExecution:{random_seed:'18446744073709551615'}};
+ const edited=accountConfigurationInput(accountConfigurationField(JSON.stringify(original),'paperLeverage','5.125'));
+ expect(edited).toEqual({...original,paperLeverage:'5.125'});
+ expect(accountConfigurationInput(accountConfigurationField(JSON.stringify(edited),'paperLeverage',''))).toEqual(original);
+});
+
+it('removes paper-only leverage when explicitly changing mode or semantics',()=>{
+ const text=JSON.stringify({mode:'paper',accountSemantics:'NATIVE_MARGIN',paperLeverage:'5'});
+ expect(accountConfigurationInput(accountConfigurationField(text,'mode','live'))).not.toHaveProperty('paperLeverage');
+ expect(accountConfigurationInput(accountConfigurationField(text,'accountSemantics',''))).not.toHaveProperty('paperLeverage');
+});

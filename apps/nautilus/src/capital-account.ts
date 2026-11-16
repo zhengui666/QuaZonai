@@ -62,7 +62,8 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   suppliedRuntime?: NativeAccountRuntime, suppliedReader?: Pick<HyperliquidAccountReader, 'account' | 'ledger'>,
   syncDirectory = async (directory: string) => { const root = await open(directory, 'r'); try { await root.sync(); } finally { await root.close(); } }) {
   options = { ...options };
-  if (options.accountSemantics !== undefined && (options.accountSemantics !== 'NATIVE_MARGIN' || options.mode !== 'live')) fail('account_semantics_invalid',422);
+  if (options.accountSemantics !== undefined && options.accountSemantics !== 'NATIVE_MARGIN') fail('account_semantics_invalid',422);
+  if (options.paperLeverage !== undefined && (options.mode !== 'paper' || options.accountSemantics !== 'NATIVE_MARGIN' || typeof options.paperLeverage !== 'string' || !/^[0-9]+(?:\.[0-9]+)?$/.test(options.paperLeverage) || !/[1-9]/.test(options.paperLeverage))) fail('paper_leverage_requires_margin',422);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(options.id) || !options.clientId || !options.accountId || !options.instruments.length) fail('account_configuration_invalid', 422);
   if (options.mode === 'paper' && (options.paperFeeRate == null || units(options.paperFeeRate) < 0n || units(options.startingBalance ?? '0') <= 0n)) fail('paper_balance_and_explicit_fee_required', 422);
   if (options.mode === 'live' && !options.accountAddress) fail('hyperliquid_master_account_required', 422);
