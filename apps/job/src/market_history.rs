@@ -1788,8 +1788,31 @@ pub fn native_market_import(
             .to_string_lossy()
             .into_owned(),
         research_qualified: false,
-        report: serde_json::to_value(report)?,
+        report: import_report_wire(serde_json::to_value(report)?),
     })
+}
+
+// The original import-report.json remains unchanged. The Pi JSON transport uses
+// JavaScript numbers, so preserve large integer report metadata as decimal text.
+fn import_report_wire(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    const MAX_SAFE: u64 = 9_007_199_254_740_991;
+    match value {
+        Value::Number(number)
+            if number.as_u64().is_some_and(|v| v > MAX_SAFE)
+                || number.as_i64().is_some_and(|v| v < -(MAX_SAFE as i64)) =>
+        {
+            Value::String(number.to_string())
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(import_report_wire).collect()),
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, import_report_wire(value)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn trade_memory_limit() -> Result<()> {
@@ -1951,6 +1974,26 @@ pub fn cli_main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_report_wire_preserves_nanoseconds_without_changing_original_report() {
+        let original = serde_json::json!({
+            "event_start_ns": 1_778_284_800_894_778_251_u64,
+            "source_rows": 4924,
+            "nested": [u64::MAX, -9_007_199_254_740_992_i64, 9_007_199_254_740_991_u64],
+            "status": "IMPORTED"
+        });
+        let wire = import_report_wire(original.clone());
+        assert_eq!(wire["event_start_ns"], "1778284800894778251");
+        assert_eq!(wire["nested"][0], "18446744073709551615");
+        assert_eq!(wire["nested"][1], "-9007199254740992");
+        assert_eq!(wire["nested"][2], 9_007_199_254_740_991_u64);
+        assert_eq!(wire["source_rows"], 4924);
+        assert_eq!(
+            original["event_start_ns"].as_u64(),
+            Some(1_778_284_800_894_778_251)
+        );
+    }
 
     #[test]
     fn typed_import_counter_preserves_exact_units() {

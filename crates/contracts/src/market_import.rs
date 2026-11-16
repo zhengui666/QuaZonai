@@ -28,7 +28,8 @@ pub struct NativeMarketImportResultV1 {
     pub catalog_path: String,
     pub report_path: String,
     pub research_qualified: bool,
-    /// Unmodified report from the existing market-history importer.
+    /// Report projection: integers outside the JavaScript safe range are exact decimal strings.
+    /// The original importer JSON remains unchanged at report_path.
     pub report: serde_json::Value,
 }
 
