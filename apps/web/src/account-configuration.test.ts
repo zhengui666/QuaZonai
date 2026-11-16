@@ -105,3 +105,9 @@ it('native Margin is explicit configuration only and clearing it preserves old f
  expect(accountConfigurationInput(accountConfigurationField(JSON.stringify(opted),'accountSemantics',''))).toEqual(original);
  expect(opted).not.toHaveProperty('automaticStrategyStart');
 });
+
+it('retains only the credential reference and clears it when switching to paper',()=>{
+ const draft=accountConfigurationField(JSON.stringify({mode:'live'}),'credentialEnv','QZ_HYPERLIQUID_ONE_PK');
+ expect(JSON.parse(draft).credentialEnv).toBe('QZ_HYPERLIQUID_ONE_PK');
+ expect(JSON.parse(accountConfigurationField(draft,'mode','paper')).credentialEnv).toBeUndefined();
+});
