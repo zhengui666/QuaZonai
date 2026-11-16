@@ -99,6 +99,8 @@ test('main and dev releases do not require science but cancelled builds never pr
   assert.match(workflow, /needs: native-protocol/);
   assert.match(workflow, /cargo clippy --locked --workspace --all-targets --all-features/);
   assert.match(workflow, /--test build_identity --test account_observer/);
+  assert.match(workflow, /-p contracts --test wire --test json_roundtrip --test architecture/);
+  assert.match(workflow, /-p domain --lib account_observation::/);
   assert.doesNotMatch(workflow, /make check-native-full|make check-science|--test native_strategy/);
   assert.match(workflow, /Verify successful exact-push CI/);
   assert.match(workflow, /release\.py verify --version/);
