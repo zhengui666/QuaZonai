@@ -1,0 +1,11 @@
+[package]
+name="qz-second-bar-launcher"
+version="0.1.0"
+edition="2024"
+publish=false
+[workspace]
+[dependencies]
+owner_strategy={package="qz-private-second-bar-factory",path="../btc-training-observer"}
+job={path="../../../apps/job",default-features=false,features=["high-precision"]}
+anyhow="=1.0.104"
+serde_json="=1.0.154"

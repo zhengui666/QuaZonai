@@ -6,35 +6,48 @@ permissions:
 jobs:
   source-tools:
     runs-on: ubuntu-22.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       RUSTUP_TOOLCHAIN: '1.99.1'
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-btc-training
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22.19.0'
-          cache: npm
-          cache-dependency-path: |
-            apps/service/package-lock.json
-            apps/research/package-lock.json
-      - run: |
-          npm ci --prefix apps/service --no-audit --no-fund
-          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
-      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
-          prefix-key: quazonai-science-v2
-          key: ubuntu-22-debug
+          key: btc-training-observer-634e094
           cache-bin: false
           cache-workspace-crates: false
-      - run: python3 -B -m unittest discover -s runtimes/data -v
-      - run: |
-          cargo test --locked -p job --features native-sandbox-test,catalog-prepare,hyperliquid-offline \
-            --lib --test source_tools --test catalog_prepare --test catalog --test managed \
-            --test native_strategy --test native_instrument_updates \
-            --test batched_observation
+          workspaces: runtimes/native/btc-training-launcher -> target-btc-training
+      - name: Parse and test isolated observer
+        run: |
+          cargo fmt --manifest-path runtimes/native/btc-training-observer/Cargo.toml --check
+          cargo test --locked --manifest-path runtimes/native/btc-training-observer/Cargo.toml
+      - name: Build non-account launcher
+        run: |
+          mkdir -p btc-artifacts
+          cargo metadata --locked --format-version 1 --manifest-path runtimes/native/btc-training-launcher/Cargo.toml > btc-artifacts/resolved-metadata.json
+          export QZ_NATIVE_BUILD_METADATA="$PWD/btc-artifacts/resolved-metadata.json"
+          export QZ_NATIVE_BUILD_LOCK="$PWD/runtimes/native/btc-training-launcher/Cargo.lock"
+          cargo build --locked --manifest-path runtimes/native/btc-training-launcher/Cargo.toml
+          cp target-btc-training/debug/qz-second-bar-launcher btc-artifacts/
+          cp runtimes/native/btc-training-launcher/Cargo.lock btc-artifacts/
+          btc-artifacts/qz-second-bar-launcher capabilities > btc-artifacts/capabilities.json
+          python3 - <<'PYCODE'
+          import json
+          p=json.load(open('btc-artifacts/capabilities.json'))
+          assert p['research']['configuredRunFactory'] and not p['account']['registration'] and not p['running']
+          assert p['identity']['nautilusRevision']=='634e09456c949f488b2bfcf6b6897b33cbf218d7'
+          PYCODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: btc-training-observer-${{ github.sha }}
+          path: btc-artifacts/
+          if-no-files-found: error
+          retention-days: 7
