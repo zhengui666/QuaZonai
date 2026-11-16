@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { openResearch } from '../src/host.ts';
-import { prepareNativeParameterBatch, nativeParameterBatchReadTool } from '../plugins/native-strategy-backtest.ts';
+import { nativeParameterGridTool, nativeParameterGridPage, prepareNativeParameterGrid, prepareNativeParameterBatch, nativeParameterBatchReadTool } from '../plugins/native-strategy-backtest.ts';
 import { Study } from '../src/documents.ts';
 import { ResearchConfiguration } from '../src/research-configuration.ts';
 import type { ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -20,6 +20,47 @@ test('batch requires explicit complete candidates, never expands a grid', () => 
   assert.throws(() => prepareNativeParameterBatch({ configured: true, requests: [requests[0], { config: {} }] }), /schema_invalid/);
 });
 
+const grid = { configured: true, request: requests[0]!, axes: [{ path: ['config', 'period'], values: [2, 3, 4] }], offset: 0, pageSize: 3 };
+test('QZ grid preserves exact values and deterministic Cartesian order across pages', () => {
+  const twoAxes = { ...grid, axes: [...grid.axes, { path: ['config', 'precision'], values: ['0.000000000000000019', '0.000000000000000023'] }], pageSize: 2 };
+  const all = [0, 2, 4].flatMap(offset => nativeParameterGridPage({ ...twoAxes, offset }).requests as any[]);
+  assert.deepEqual(all.map(x => [x.config.period, x.config.precision]), [2, 3, 4].flatMap(x => twoAxes.axes[1]!.values.map(y => [x, y])));
+  assert.equal(nativeParameterGridPage(twoAxes).nextOffset, 2);
+  assert.equal(nativeParameterGridPage({ ...twoAxes, offset: 4 }).nextOffset, null);
+  assert.deepEqual(nativeParameterGridPage(grid).requests, requests);
+  assert.equal(grid.request.config.period, 2, 'base request remains unchanged');
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, axes: [] }), /invalid/);
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, axes: [{ path: ['config'], values: [] }] }), /empty_axis/);
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, axes: [{ path: ['config', '__proto__'], values: [1] }] }), /path_missing/);
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, axes: [{ path: ['missing'], values: [1] }] }), /path_missing/);
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, axes: [...grid.axes, { path: ['config'], values: [{}] }] }), /overlapping/);
+  assert.throws(() => nativeParameterGridPage({ ...grid, axes: [{ path: ['schema_version'], values: [2] }] }), /schema_invalid/);
+  assert.throws(() => prepareNativeParameterGrid({ ...grid, offset: Number.MAX_SAFE_INTEGER + 1 }), /invalid/);
+});
+
+test('grid tool prepare-to-execute preserves the strict public argument schema', async () => {
+  const prepared = nativeParameterGridTool.prepareArguments!(grid);
+  assert.equal(Object.hasOwn(prepared, 'total'), false);
+  const result = await nativeParameterGridTool.execute(prepared, {} as any, context);
+  assert.deepEqual(JSON.parse((result.output![0] as any).text).requests, requests);
+});
+
+test('grid pages are byte bounded without materializing the entire product', () => {
+  const values = Array.from({ length: 2000 }, (_, i) => String(i).padEnd(100, 'x'));
+  const large = { ...grid, axes: [{ path: ['config', 'precision'], values }], pageSize: 2000 };
+  let offset = 0;
+  const seen: unknown[] = [];
+  for (;;) {
+    const page = nativeParameterGridPage({ ...large, offset });
+    assert.ok(Buffer.byteLength(JSON.stringify(page), 'utf8') <= 50 * 1024);
+    seen.push(...(page.requests as any[]).map(x => x.config.precision));
+    if (page.nextOffset === null) break;
+    assert.ok(Number(page.nextOffset) > offset);
+    offset = Number(page.nextOffset);
+  }
+  assert.deepEqual(seen, values);
+});
+
 // Official Pi orchestration with an actual local protocol process. This verifies
 // dispatch/recovery, not numerical Nautilus behavior or strategy profitability.
 for (const failSecond of [false, true]) test(`explicit batch retains independent child results and stops after failure=${failSecond}`, async () => {
@@ -28,7 +69,7 @@ for (const failSecond of [false, true]) test(`explicit batch retains independent
   await writeFile(binary, `#!${process.execPath}\nimport{appendFileSync}from'node:fs';let body='';for await(const c of process.stdin)body+=c;const request=JSON.parse(body);appendFileSync(${JSON.stringify(calls)},JSON.stringify({request,command:process.argv[2],args:process.argv.slice(3)})+'\\n');const echoed=${failSecond}&&request.config.period===3?{...request,name:'wrong::Factory'}:request;process.stdout.write(JSON.stringify({schema_version:1,request:echoed,native_version:'0.69.0',native_results:[{run_id:String(request.config.period)}],canonical_result:null,canonical_unavailable_reason:'PROTOCOL_TEST_ONLY'}));`, { mode: 0o755 });
   const target: ProcessNativeTarget = { kind: 'RUST_PROCESS', id: 'batch-protocol', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol-only', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } };
   const models = createModels(), faux = fauxProvider(); models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_parameter_batch', { configured: true, requests }), { stopReason: 'toolUse' }), fauxAssistantMessage('Explicit batch finished; no automatic ranking or OOS claim.')]);
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_parameter_grid', grid), { stopReason: 'toolUse' }), fauxAssistantMessage(fauxToolCall('native_parameter_batch', { configured: true, requests: nativeParameterGridPage(grid).requests }), { stopReason: 'toolUse' }), fauxAssistantMessage('Explicit batch finished; no automatic ranking or OOS claim.')]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
   const input = { goal: 'Run the explicit installed Rust factory candidates, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target }, policy: {} };
@@ -101,7 +142,7 @@ test('batch reference reader pages large candidate lists without truncating or r
   let offset = 0; const seen: number[] = [];
   for (;;) {
     const result = await read({ batchTaskId: 1, offset, pageSize: 10000 }, api, context);
-    const text = result.output[0].text;
+    const text = result.output![0].text;
     assert.ok(Buffer.byteLength(text) <= 50 * 1024);
     const page = JSON.parse(text);
     assert.equal(page.totalStarted, ids.length);
