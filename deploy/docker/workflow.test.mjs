@@ -6,7 +6,7 @@ const workflow = await readFile(new URL('../../.github/workflows/release-version
 function condition(job) {
   const section = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z]+:\n/)[0];
   const value = section?.match(/^    if: \$\{\{ (.+) \}\}$/m)?.[1];
-  assert.ok(value, `${job} must explicitly handle its deliberately skipped formal-regression ancestor`);
+  assert.ok(value, `${job} must explicitly handle cancellation`);
   assert.match(value, /!cancelled\(\)/, `${job} must override implicit success() without running after cancellation`);
   return Function('needs', 'cancelled', 'inputs', `return (${value});`);
 }
@@ -94,11 +94,14 @@ test('science CI exercises original high-precision data and upstream strategies 
   for (const name of ['job source-tools catalog-prepare', 'job-high-precision catalog-prepare-high-precision market-history']) assert.ok(archive?.includes(name));
 });
 
-test('formal releases still require full regression and cancelled builds never proceed', () => {
+test('main and dev releases do not require science but cancelled builds never proceed', () => {
+  assert.doesNotMatch(workflow, /rust-regression|needs: regression|\n  regression:/);
+  assert.match(workflow, /Verify successful exact-push CI/);
+  assert.match(workflow, /release\.py verify --version/);
   const evaluate = condition('build');
   for (const regression of results) for (const branch of ['main', 'dev']) for (const cancelled of [false, true]) {
     assert.equal(evaluate({ regression: { result: regression } }, () => cancelled, { branch }),
-      !cancelled && (branch === 'dev' || regression === 'success'), `${branch}/${regression}/cancelled=${cancelled}`);
+      !cancelled, `${branch}/${regression}/cancelled=${cancelled}`);
   }
 });
 
