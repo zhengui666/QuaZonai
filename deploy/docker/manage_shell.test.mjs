@@ -239,7 +239,7 @@ mv() {
  fi
  command mv "$@"
 }
-qz_verify() { printf 'verify\n' >> "$ROOT/steps"; }
+qz_recovery_stop() { printf 'verify\nstop\n' >> "$ROOT/steps"; }
 qz_stop() { printf 'stop\n' >> "$ROOT/steps"; }
 qz_idle() { printf 'idle\n' >> "$ROOT/steps"; ${failure==='idle'?'qz_fail "controlled unresolved UNKNOWN";':':;'} }
 qz_start() { printf 'start\n' >> "$ROOT/steps"; ${failure==='health'?'qz_fail "controlled original health failure";':':;'} }
@@ -258,5 +258,31 @@ qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'recover-test',script,root],{
   const audit=JSON.parse(await readFile(join(reference.archive,'recovery.json'),'utf8'));assert.equal(audit.data_replaced,false);assert.equal(audit.previous_version,'v1.0.0');assert.equal(audit.failed_version,'v1.1.0');
   assert.equal(await readFile(join(root,'steps'),'utf8'),'verify\nstop\nidle\nstart\n');
   assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
+ }
+});
+
+for (const state of ['true 0', 'false 0', 'false 143', 'false 137', 'wrong-image', 'missing']) test(`failed-update retry checks original container before maintenance (${state})`, async () => {
+ const script=fileURLToPath(new URL('./manage.sh',import.meta.url));
+ const result=spawnSync('bash',['-c',`source "$1"
+qz_compose() { ${state==='missing' ? ':' : "printf 'original-container\\n'"}; }
+qz_get() { printf 'previous-image\\n'; }
+docker() {
+ if [[ "$1" == image ]]; then printf 'original-image\\n'
+ elif [[ "$3" == '{{.Image}}' ]]; then printf '${state==='wrong-image'?'different-image':'original-image'}\\n'
+ else printf '%s\\n' '${state}' ; fi
+}
+qz_verify() { printf 'verify\\n'; }
+qz_stop() { printf 'stop\\n'; }
+qz_idle() { printf 'idle\\n'; }
+qz_start() { printf 'start\\n'; }
+qz_recovery_stop previous
+qz_idle previous
+qz_start previous`,'recovery-stop-test',script],{encoding:'utf8',timeout:20000});
+ if (['false 137','wrong-image','missing'].includes(state)) {
+  assert.notEqual(result.status,0);
+  assert.doesNotMatch(result.stdout,/idle|start/);
+ } else {
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(result.stdout,state==='true 0'?'verify\nstop\nidle\nstart\n':'idle\nstart\n');
  }
 });

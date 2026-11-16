@@ -194,6 +194,20 @@ qz_apply_update() {
     elif [[ "$phase" != starting ]]; then qz_fail 'Unknown pending update phase.'; fi
     qz_activate "$root" "$candidate"
 }
+# Recovery can be retried after a graceful stop without starting unresolved work.
+qz_recovery_stop() {
+    local file=$1 id expected observation
+    id=$(qz_compose "$file" ps --all --quiet app)
+    [[ -n "$id" && "$id" != *$'\n'* ]] || qz_fail 'Expected the original application container for recovery.'
+    expected=$(docker image inspect --format '{{.Id}}' "$(qz_get "$file" image)")
+    [[ $(docker inspect --format '{{.Image}}' "$id") == "$expected" ]] || qz_fail 'Recovery application differs from the original previous image.'
+    observation=$(docker inspect --format '{{.State.Running}} {{.State.ExitCode}}' "$id")
+    case "$observation" in
+      true\ *) qz_verify "$file"; qz_stop "$file";;
+      'false 0'|'false 143') :;; # Already gracefully stopped by an earlier attempt.
+      *) qz_fail 'Recovery requires a running or gracefully stopped original app; reconcile abnormal exits.';;
+    esac
+}
 # Explicit abandonment of a failed update only after the original application
 # has independently been restored. Does not restore, migrate, or delete data.
 qz_recover_failed_update() {
@@ -206,11 +220,10 @@ qz_recover_failed_update() {
     [[ -L "$root/current" && $(realpath -e "$root/current") == "$(realpath -e "$(qz_get "$previous" bundle)/..")" ]] || qz_fail 'Current release must already point to the original previous bundle.'
     [[ $(qz_get "$pending" target.version) != "$(qz_get "$previous" version)" ]] || qz_fail 'Failed target and original version must differ.'
     cp -- "$pending" "$QZ_WORK/original-pending.json"
-    qz_verify "$previous"
     # Inspect only with the app writer stopped, through official maintenance.
     # A refusal leaves pending untouched and may leave the app stopped.
     # It never cancels unresolved work; recovery does not imply global venue idle.
-    qz_stop "$previous"; qz_idle "$previous"
+    qz_recovery_stop "$previous"; qz_idle "$previous"
     cmp -s "$pending" "$QZ_WORK/original-pending.json" || qz_fail 'Pending changed during recovery; preserving all records.'
     [[ $(qz_raw "$QZ_CONFIG") == "$(qz_raw "$previous")" ]] || qz_fail 'Installation changed during recovery.'
     mkdir -p "$root/failed-updates"
