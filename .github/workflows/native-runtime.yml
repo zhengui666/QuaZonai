@@ -91,7 +91,7 @@ jobs:
         with:
           name: native-observation-owner
           path: |
-            ${{ runner.temp }}/observation-owner/build/launcher/qz-owner-launcher
+            ${{ runner.temp }}/observation-owner/build/bin/qz-owner-launcher
             ${{ runner.temp }}/observation-owner/build/build.log
             ${{ runner.temp }}/observation-owner/build-result.json
           retention-days: 3
