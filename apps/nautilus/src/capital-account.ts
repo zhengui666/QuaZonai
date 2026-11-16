@@ -1,3 +1,4 @@
+import {validateAccountCredentialReference} from './account-credentials.ts';
 import {acquireAccountReceiptLock} from './account-receipt-lock.ts';
 import {nativeStrategyControl,assertSameNativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import { accountStrategyCommand, nativeAccountStrategyConfiguration } from '../../../packages/contracts/src/account-strategy.ts';
@@ -62,6 +63,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   suppliedRuntime?: NativeAccountRuntime, suppliedReader?: Pick<HyperliquidAccountReader, 'account' | 'ledger'>,
   syncDirectory = async (directory: string) => { const root = await open(directory, 'r'); try { await root.sync(); } finally { await root.close(); } }) {
   options = { ...options };
+  validateAccountCredentialReference(options.mode, options.credentialEnv);
   if (options.accountSemantics !== undefined && (options.accountSemantics !== 'NATIVE_MARGIN' || options.mode !== 'live')) fail('account_semantics_invalid',422);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(options.id) || !options.clientId || !options.accountId || !options.instruments.length) fail('account_configuration_invalid', 422);
   if (options.mode === 'paper' && (options.paperFeeRate == null || units(options.paperFeeRate) < 0n || units(options.startingBalance ?? '0') <= 0n)) fail('paper_balance_and_explicit_fee_required', 422);
@@ -70,7 +72,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   const receiptOwner=await acquireAccountReceiptLock(directory);
   try {
   const statePath = join(directory, 'capital-receipts.json');
-  const identity = { mode: options.mode, network: options.network ?? 'mainnet', accountId: options.accountId, accountAddress: options.accountAddress?.toLowerCase() ?? null, currency: 'USDC' as const, ...(options.accountSemantics ? {accountSemantics: options.accountSemantics} : {}) };
+  const identity = { mode: options.mode, network: options.network ?? 'mainnet', accountId: options.accountId, accountAddress: options.accountAddress?.toLowerCase() ?? null, currency: 'USDC' as const, ...(options.accountSemantics ? {accountSemantics: options.accountSemantics} : {}), ...(options.credentialEnv ? {credentialEnv: options.credentialEnv} : {}) };
   let state: AccountState;
   try { state = JSON.parse(await readFile(statePath, 'utf8')) as AccountState; if (state.schema_version !== 2 || !state.sourceId) fail('account_receipts_version_unsupported');
     if (canonical(state.identity) !== canonical(identity)) fail('account_receipts_physical_identity_mismatch'); }

@@ -20,12 +20,13 @@ export function accountConfigurationField(text:string,key:string,value:string):s
  const config=accountConfigurationInput(text);
  const deployment={...((config.nativeStrategy??{}) as Record<string,unknown>)};
  const strategy={...((deployment.strategy??{}) as Record<string,unknown>)};
- if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics'].includes(key)){
+ if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics','credentialEnv'].includes(key)){
   if(value==='')delete config[key];else config[key]=value;
  }else if(key==='instruments')config.instruments=value.split('\n').filter(line=>line!=='');
  else if(key==='instrument_id')deployment.instrument_id=value;
  else if(key==='name')strategy.name=value;
  else throw Error('未知账户字段');
+ if(key==='mode'&&value==='paper')delete config.credentialEnv;
  if(key==='name')deployment.strategy=strategy;
  if(key==='name'||key==='instrument_id')config.nativeStrategy=deployment;
  return JSON.stringify(config,null,2);
@@ -49,7 +50,7 @@ export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrum
  <label style={{display:'block'}}>订阅标的（每行一个原生 InstrumentId）<AccountInstrumentsInput disabled={disabled} value={instrumentsDraft??(Array.isArray(config.instruments)?config.instruments.join('\n'):'')} onChange={value=>onInstrumentsChange?.(value)}/></label>
  <label style={{display:'block'}}>策略标的（须在订阅列表内）<Input aria-label="策略标的" disabled={disabled} value={deployment?.instrument_id??''} onChange={event=>edit('instrument_id',event.target.value)}/></label>
  {config.mode==='paper'?<>{field('startingBalance','模拟初始余额（USDC 原值）')}{field('paperFeeRate','模拟费率（原始小数，非百分数）')}</>:field('accountAddress','公开账户地址（不是私钥）')}
- {config.mode==='live'&&<><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>不切换交易所账户模式。</p></>}
+ {config.mode==='live'&&<>{field('credentialEnv','现有签名凭据引用（环境变量名，可留空）')}<p>只填写运行环境已配置的 QZ_HYPERLIQUID_…_PK 名称，不是私钥。留空沿用当前网络的宿主凭据；保存不读取凭据、不连接账户。不同引用不保证不同签名者，同一签名者不得跨运行实例并发使用。</p><label>账户语义<Select aria-label="账户语义" disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder="旧现货语义（保持实盘启动保护）" options={[{value:'NATIVE_MARGIN',label:'显式使用 Nautilus 原生 Margin 账户'}]}/></label><p>不切换交易所账户模式。</p></>}
  {deployment?.strategy?.kind==='REGISTERED'&&<label style={{display:'block'}}>已编入运行器的策略名称<Input aria-label="已编入运行器的策略名称" disabled={disabled} value={deployment.strategy.name??''} onChange={event=>edit('name',event.target.value)}/></label>}
 
  </fieldset>;
