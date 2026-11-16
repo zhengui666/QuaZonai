@@ -53,3 +53,9 @@ runs:
           REVISION=${{ inputs.revision }}
         cache-from: type=gha,scope=quazonai-node
         cache-to: type=gha,mode=max,scope=quazonai-node
+    - name: Verify final image imports and isolated service startup
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        QZ_SMOKE_IMAGE: ${{ inputs.image }}
+      run: bash deploy/docker/application-smoke.sh "$QZ_SMOKE_IMAGE"

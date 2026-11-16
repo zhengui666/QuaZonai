@@ -55,3 +55,12 @@ test('application normalizes source glue directories and files before the non-ro
   assert.ok(application.includes('find native-glue apps/nautilus -type f -exec chmod 644 {} +'));
   assert.ok(application.indexOf('RUN find') < application.indexOf('USER node'));
 });
+
+test('application includes complete remote glue and final-image smoke stays isolated', () => {
+  const docker = readFileSync(resolve(root, 'deploy/docker/Dockerfile'), 'utf8');
+  const applicationSources = docker.split('FROM scratch AS application-source\n')[1].split('\nFROM application-source AS nautilus-source')[0];
+  for (const name of ['remote-account-client.ts','remote-account-ssh.ts','remote-account-supervisor.ts']) assert.ok(applicationSources.includes(`apps/nautilus/src/${name}`),name);
+  const smoke = readFileSync(resolve(root, 'deploy/docker/application-smoke.sh'), 'utf8');
+  for(const invariant of ['--network none','--read-only','--tmpfs /smoke','/health/live','/api/v3/accounts/configurations','apps/service/src/service.ts','remote-account-supervisor.ts','entrypoint.sh serve']) assert.ok(smoke.includes(invariant),invariant);
+  assert.doesNotMatch(smoke,/--volume|--mount|docker build|cargo|npm/);
+});
