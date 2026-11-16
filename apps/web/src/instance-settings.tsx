@@ -1,5 +1,5 @@
 import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
-import AccountConfiguration from './account-configuration';
+import { href } from './router';
 import { Button, Form, Input, Select } from 'antd';
 import { useEffect, useState } from 'react';
 import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
@@ -118,7 +118,7 @@ export default function InstanceSettings() {
     {build&&<PreparationStatus value={build}/>}
     {saved?.runner&&<><AccountCompatibilityNotice declaration={saved.runner.capabilities.account.compatibilityDeclaration}/><SelectedRunnerStatus runner={saved.runner}/></>}
 
-    <AccountConfiguration enabled={saved?.runner?.capabilities.account.compiled===true}/>
+    <p><a href={href('/settings?section=accounts')}>前往账户设置，添加或查看账户配置</a></p>
     {notice && <p>{notice}</p>}{error !== undefined && <ErrorNotice error={error} />}
     {discovery !== undefined && <pre>{JSON.stringify(discovery,null,2)}</pre>}
   </div>;
