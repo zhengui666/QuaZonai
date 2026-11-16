@@ -38,11 +38,12 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
     mode=LITERATURE_ONLY with datasetId admits only descriptive metadata and approved public literature; no native execution or sealed data.
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
+  research native-backtests ID [--cursor CURSOR] | research evidence ID TASK_ID
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]
   parameter-scan list [--file QUERY.json] | get ID | stop ID
   parameter-scan trials ID [--file QUERY.json]
   parameter-scan watch ID [--timeout SECONDS] | parameter-scan wait ID [--timeout SECONDS]
-    Historical scan records only; no parameter generation, ranking, or new scans.
+    Historical scan records only. For new grids use research start --goal with strategy, explicit parameter values, window and costs. QuaZonai generates combinations, Pi orchestrates, Nautilus backtests. Read every page with research native-backtests, then research evidence for each Task; no automatic winner or OOS qualification.
   portfolio list | get ID | delete ID
   portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
@@ -130,7 +131,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (positionals[0] === 'client') positionals.shift();
   if (values.version) { process.stdout.write('quazonai 3.0.0-dev.1\n'); return 0; }
   if (values.help || positionals.length === 0) { process.stdout.write(help); return 0; }
-  if (positionals.length > 3 && !((positionals[0] === 'capital' && positionals[1] === 'get' || positionals[0] === 'account-strategy' && positionals[1] === 'receipt') && positionals.length === 4)) throw new CliError('unexpected_argument');
+  if (positionals.length > 3 && !((positionals[0] === 'research' && positionals[1] === 'evidence' || positionals[0] === 'capital' && positionals[1] === 'get' || positionals[0] === 'account-strategy' && positionals[1] === 'receipt') && positionals.length === 4)) throw new CliError('unexpected_argument');
   const [group, action, id, exitId] = positionals;
   if (group === 'remote-account') {
     if (id) throw new CliError('unexpected_argument');
@@ -206,7 +207,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       method = 'POST'; path = `/strategies/${resourceId(id)}/${action}`; body = file.bytes;
     } else throw new CliError('unknown_strategy_command');
   } else if (group === 'research') {
-    if (action === 'models') path = '/research/models';
+    if (action === 'native-backtests') path = `/research/${researchId(id)}/native-backtests${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
+    else if (action === 'evidence') path = `/research/${researchId(id)}/evidence/${researchId(exitId)}`;
+    else if (action === 'models') path = '/research/models';
     else if (action === 'list') {
       if (values.cursor) object(JSON.parse(values.cursor));
       path = `/research${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
