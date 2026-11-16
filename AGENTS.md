@@ -275,8 +275,15 @@ owner library does not need to depend on QuaZonai. Bin-only/private functions
 cannot be reflected into a library or automatically attached to an existing
 running process.
 
-Generate into a separate QZ-owned writable directory. Do not edit the owner's
-source or lockfile. A copied lockfile is only a starting point, not proof that
+Generate into a separate QZ-owned writable directory. Default builds do not edit the owner's
+source or lockfile. The explicit research `prepareOwnerLock=true` build option
+is an exception for Cargo.lock only: official `cargo metadata --offline` resolves
+the configured owner workspace inside `research.codingWorkspace` before the
+existing locked preflight. No hand-written lockfile, update-all, download,
+compilation or node execution occurs in that preparation step. Compatible locked
+dependencies are retained by Cargo; dependency changes and preflight stderr are
+visible in `preflight.log`. Do not use it concurrently with another study editing
+or building the same owner. Saving/inspecting settings never prepares a lock. A copied lockfile is only a starting point, not proof that
 new glue dependencies resolve. Dependencies, upstream source/revision, precision
 features and toolchain must be verified against the actual resulting build.
 The glue source currently references its tested upstream revision; do not

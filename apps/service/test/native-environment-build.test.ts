@@ -131,3 +131,22 @@ test('diagnostic redaction precedes truncation and withholds oversized originals
   await writeFile(join(dir,'build.log'),'password="'+'private oversized '.repeat(70000));const result=await readPreparationDiagnostics(dir);assert.equal(result.files[0]!.status,'source_too_large');assert.equal(result.files[0]!.text,undefined);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('explicit offline owner preparation is scope-gated, original-ID idempotent and exposes preflight stderr',async()=>{
+ const {RustPreparationError}=await import('../../nautilus/src/rust-launcher-build.ts');
+ const dir=await mkdtemp(join(tmpdir(),'qz-preflight-task-'));const config=configDefaults({dataDir:dir});
+ let calls=0;const builder=nativeEnvironmentBuild(config,async options=>{calls++;assert.equal(options.prepareOwnerLockIn,dir);throw new RustPreparationError('owner_lock_preparation',{stderr:'error: no matching package named missing_crate found\napi_key=do-not-show'});});
+ const models=createModels();models.setProvider(fauxProvider().provider);const host=await openResearch({database:join(dir,'research.sqlite'),models,extensions:[builder.extension]});const settings=await instanceSettings(config);
+ try {
+  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner'}});
+  const work=builder.workbench(host,settings),request={requestId:'prepare-owner',expectedRevision:1,prepareOwnerLock:true};
+  await assert.rejects(work.start(request),/research_coding_workspace_required/);assert.equal(calls,0);
+  config.research.codingWorkspace=dir;
+  const task=await work.start(request);await host.harness.waitForTask(task.taskId,context);
+  const result=await work.read(request.requestId);assert.equal(result.state.status,'terminal');
+  if(result.state.status==='terminal'&&result.state.outcome.status==='failed')assert.equal(result.state.outcome.error.message,'rust_preflight_failed:owner_lock_preparation');else assert.fail('Expected explicit failure');
+  const log=result.diagnostics.files.find(file=>file.name==='preflight.log')!;assert.match(log.text!,/missing_crate/);assert.doesNotMatch(log.text!,/do-not-show/);
+  assert.equal((await work.start(request)).taskId,task.taskId);assert.equal(calls,1);
+  await assert.rejects(work.start({...request,prepareOwnerLock:false}),/request_id_conflict/);
+ }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
