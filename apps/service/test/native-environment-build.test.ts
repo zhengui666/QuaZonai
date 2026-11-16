@@ -14,11 +14,11 @@ import {nativeEnvironmentBuild} from '../src/native-environment-build.ts';
 test('explicit build reuses original Pi ID; reads/save never build, artifact selection is separate and revision-fenced',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-build-task-'));const config=configDefaults({dataDir:dir});await mkdir(dir,{recursive:true});
  let builds=0;const caps={schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'test-protocol',nautilusSource:'test-only',precision:'high'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false};
- const builder=nativeEnvironmentBuild(config,async options=>{builds++;assert.equal(options.source.packageName,'owner');return {executable:join(dir,'fixed-test-artifact'),manifestPath:join(dir,'generated/Cargo.toml'),capabilities:caps,qualification:'COMPILED_NOT_CONNECTED'};});
+ const builder=nativeEnvironmentBuild(config,async options=>{builds++;assert.equal(options.source.packageName,'owner');assert.equal(options.factories.chainticksFillObservations,true);assert.equal(options.factories.accountFactory,undefined);return {executable:join(dir,'fixed-test-artifact'),manifestPath:join(dir,'generated/Cargo.toml'),capabilities:caps,qualification:'COMPILED_NOT_CONNECTED'};});
  const models=createModels();models.setProvider(fauxProvider().provider);const opts={database:join(dir,'research.sqlite'),models,extensions:[builder.extension]};
  let host=await openResearch(opts),settings=await instanceSettings(config);let work=builder.workbench(host,settings);
  try{
-  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner',backtestFactory:'owner::factory'}});
+  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner',backtestFactory:'owner::factory',chainticksFillObservations:true}});
   settings.view();assert.equal(builds,0);assert.equal(config.nativeProcess,undefined);
   const body={requestId:'build-original',expectedRevision:1};const first=await work.start(body);await host.harness.waitForTask(first.taskId,context);
   assert.equal(builds,1);assert.equal(config.nativeProcess,undefined,'Compilation never connects or selects an artifact.');

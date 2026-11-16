@@ -64,6 +64,7 @@ jobs:
           cargo test --locked -p contracts market_import
           cargo test --locked -p job --features market-history --lib market_history
           cargo test --locked -p job --features market-history --lib chainticks
+          cargo test --locked -p job --features chainticks-observations --lib chainticks
           cargo test --locked -p job --features market-history --lib cli::tests::local_trade_import
           cargo test --locked -p job --lib cli::tests::local_trade_import
           cargo test --locked -p job --lib native_runner

@@ -330,3 +330,22 @@ not measured exchange latency or calibrated queue/impact execution. They neither
 supply missing order books nor certify historical fees, fills or profitability.
 This limited wiring does not claim all upstream fill models or versions are
 supported. Account runtime configuration and existing account history are unchanged.
+
+### Explicit Chainticks observation use in owner factories
+
+`NativeRustEnvironment.chainticksFillObservations=true` requires an explicit
+`backtestFactory`. The generated launcher compiles the existing
+`chainticks-observations` data-type feature and registers that Arrow type before
+calling the owner factory's config function. Omission does not enable it; this
+selection does not enable account-runtime or force a precision change. Saving a
+selection does not rebuild or connect an existing runner.
+
+The pinned upstream BacktestDataConfig does not accept Custom data. A reviewed
+owner factory may use the existing install hook, official catalog
+`query_custom_data_dynamic`, `BacktestEngine.add_data`, and an official
+DataActor/Strategy subscription in oneshot mode. The owner can read the original
+fields through `CustomData.data.to_json()` without duplicating the source type.
+This loads a bounded selection in memory; it is not a streaming adapter. The
+factory still specifies the bound catalog, window and subscription. Source
+observations are not market TradeTicks, and do not provide execution liquidity,
+deduplication, complete coverage, historical instrument rules or a strategy.

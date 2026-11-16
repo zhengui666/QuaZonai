@@ -86,3 +86,12 @@ test('account compatibility is an explicit declaration, never inferred from a fa
  assert.match(declared,/AccountCompatibility::TrustedStrategyOnlySingleNode/);
  assert.throws(()=>renderRustLauncher({backtestFactory:'backtest',accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'}),/declaration_invalid/);
 });
+
+test('source observations are explicit, registered before factory configuration, and never add an account hook', () => {
+  const selected = renderRustLauncher({ backtestFactory: 'research', chainticksFillObservations: true });
+  assert.ok(selected.indexOf('job::chainticks_fill::register_observation_type()') < selected.indexOf('owner_strategy::research::config'));
+  assert.doesNotMatch(selected, /fn account|LiveNode/);
+  assert.doesNotMatch(renderRustLauncher({ backtestFactory: 'research' }), /chainticks_fill/);
+  assert.doesNotMatch(renderRustLauncher({ backtestFactory: 'research', chainticksFillObservations: false }), /chainticks_fill/);
+  assert.throws(() => renderRustLauncher({ accountFactory: 'account', chainticksFillObservations: true }), /observation_backtest_factory_required/);
+});

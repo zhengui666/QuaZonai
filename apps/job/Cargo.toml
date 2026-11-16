@@ -17,7 +17,8 @@ account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "dep:nauti
 # Operator data preparation only; default scientific job images remain offline.
 catalog-prepare = ["dep:sha2"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
-market-history = ["dep:arrow", "dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+chainticks-observations = ["dep:arrow", "dep:nautilus-hyperliquid"]
+market-history = ["chainticks-observations", "dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
 
