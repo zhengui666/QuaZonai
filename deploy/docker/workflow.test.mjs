@@ -31,14 +31,14 @@ test('push CI no longer packages an unused bundled native runtime; explicit scie
   const scienceCondition = science?.match(/^    if: (.+)$/m)?.[1];
   assert.ok(scopeCondition && scienceCondition);
   const runScope = Function('github', `return (${scopeCondition});`);
-  const runScience = Function('needs', `return (${scienceCondition});`);
+  const runScience = Function('github', 'needs', `return (${scienceCondition});`);
   for (const event of ['pull_request', 'workflow_dispatch', 'push']) {
-    assert.equal(runScope({ event_name: event }), event !== 'push', event);
+    assert.equal(runScope({ event_name: event }), event === 'workflow_dispatch', event);
     for (const changed of ['true', 'false']) {
       const needs = { scope: { outputs: { science: changed } } };
-      assert.equal(runScience(needs), changed === 'true', `${event}/${changed}`);
-      assert.equal(runScope({ event_name: event }) && runScience(needs),
-        event !== 'push' && changed === 'true', `scheduled ${event}/${changed}`);
+      assert.equal(runScience({ event_name: event }, needs), event === 'workflow_dispatch' && changed === 'true', `${event}/${changed}`);
+      assert.equal(runScope({ event_name: event }) && runScience({ event_name: event }, needs),
+        event === 'workflow_dispatch' && changed === 'true', `scheduled ${event}/${changed}`);
     }
   }
   assert.match(science, /native-build\.sh/);
