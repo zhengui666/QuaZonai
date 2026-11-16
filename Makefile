@@ -4,7 +4,7 @@ RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
 PROFILE ?= debug
 CARGO_PROFILE_FLAG := $(if $(filter release,$(PROFILE)),--release,)
-SCIENCE_FEATURES := job/native-sandbox-test,job/catalog-prepare,job/hyperliquid-offline
+SCIENCE_FEATURES := job/native-sandbox-test,job/account-runtime,job/catalog-prepare,job/hyperliquid-offline
 QZ_JOB_BINARY ?= $(abspath $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/$(PROFILE)/job)
 
 check: check-ts check-web check-deploy
