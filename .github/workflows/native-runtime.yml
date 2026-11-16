@@ -80,20 +80,39 @@ jobs:
             target/debug/job
             target/debug/market-history
           retention-days: 3
-      - name: Compile actual opt-in owner launcher through product builder
+      - name: Build application native compilation environment
         run: |
-          export QZ_TEST_CARGO="$(rustup which cargo)"
-          export QZ_TEST_OBSERVATION_BUILD="$RUNNER_TEMP/observation-owner"
-          export QZ_TEST_NATIVE_TARGET="$GITHUB_WORKSPACE/target"
-          node --experimental-strip-types --test --test-name-pattern='actual generated observation launcher' apps/nautilus/test/rust-launcher-build.test.ts
+          docker build --target application --file deploy/docker/Dockerfile --tag qz-research-builder:${{ github.sha }} .
+          docker image inspect qz-research-builder:${{ github.sha }} --format 'application_image_bytes={{.Size}}'
+      - name: Compile actual owner with product builder inside application container
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/observation-container" "$RUNNER_TEMP/container-cargo" "$RUNNER_TEMP/container-target"
+          cp -a "$HOME/.cargo/registry" "$HOME/.cargo/git" "$RUNNER_TEMP/container-cargo/"
+          toolchain=$(dirname "$(dirname "$(rustup which cargo)")")
+          df -B1 "$RUNNER_TEMP"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,size=1073741824 \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/qz,readonly" \
+            --mount "type=bind,src=$toolchain,dst=/rust,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/container-cargo,dst=/cargo" \
+            --mount "type=bind,src=$RUNNER_TEMP/container-target,dst=/target" \
+            --mount "type=bind,src=$RUNNER_TEMP/observation-container,dst=/acceptance" \
+            --env CARGO_HOME=/cargo --env QZ_TEST_CARGO=/rust/bin/cargo \
+            --env PATH=/rust/bin:/usr/local/bin:/usr/bin:/bin --env RUSTC=/rust/bin/rustc \
+            --env QZ_TEST_OBSERVATION_BUILD=/acceptance/owner --env QZ_TEST_NATIVE_TARGET=/target \
+            --workdir /qz --entrypoint node qz-research-builder:${{ github.sha }} \
+            --experimental-strip-types --test --test-name-pattern='actual generated observation launcher' apps/nautilus/test/rust-launcher-build.test.ts
+          du -sb "$RUNNER_TEMP/container-target" "$RUNNER_TEMP/container-cargo" "$RUNNER_TEMP/observation-container"
+          df -B1 "$RUNNER_TEMP"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: native-observation-owner
           path: |
-            ${{ runner.temp }}/observation-owner/build/bin/qz-owner-launcher
-            ${{ runner.temp }}/observation-owner/build/build.log
-            ${{ runner.temp }}/observation-owner/build-result.json
+            ${{ runner.temp }}/observation-container/owner/build/bin/qz-owner-launcher
+            ${{ runner.temp }}/observation-container/owner/build/build.log
+            ${{ runner.temp }}/observation-container/owner/build-result.json
           retention-days: 3
       - name: Local source dispatch unit tests
         run: python3 -m unittest discover -s runtimes/data -p test_source_plugins.py
