@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, stripVTControlCharacters } from 'node:util';
 const require = createRequire(new URL('../../apps/service/package.json', import.meta.url));
 const { openNodeSqliteStorage } = await import(require.resolve('@earendil-works/pi-durable/storage/sqlite/node'));
 // Chord exports are import-only. Resolve its declared public import target.
@@ -97,7 +97,9 @@ async function exitedBacktest(storage, selection) {
     || process.signal !== null || process.terminationRequested !== false) fail();
   const call = await doc('qz.native-call', {kind:'task',taskId:ownerTaskId}, input.basis);
   const stderr = await doc('qz.native-evidence-part', scope, `${nativeTaskId}:private-native-stderr`);
-  if (call?.taskId !== nativeTaskId || call.adoptedReceipt || stderr?.data !== 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n') fail();
+  const knownRejection = typeof stderr?.data === 'string' && (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
+    || /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(stderr.data)));
+  if (call?.taskId !== nativeTaskId || call.adoptedReceipt || !knownRejection) fail();
   return {tasks:new Set([ownerTaskId, tool.id, generation.id]), submissionId};
 }
 export async function requireIdle(configPath, options = {}) {
