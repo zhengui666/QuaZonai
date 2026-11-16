@@ -1990,6 +1990,20 @@ mod tests {
         assert_eq!(wire["nested"][2], 9_007_199_254_740_991_u64);
         assert_eq!(wire["source_rows"], 4924);
         assert_eq!(
+            import_report_wire(serde_json::json!(-9_007_199_254_740_991_i64)),
+            serde_json::json!(-9_007_199_254_740_991_i64)
+        );
+        assert_eq!(
+            import_report_wire(serde_json::json!(i64::MIN)),
+            serde_json::json!("-9223372036854775808")
+        );
+        for value in [1.0_f64, 0.125_f64, 1e20_f64] {
+            assert_eq!(
+                import_report_wire(serde_json::json!(value)),
+                serde_json::json!(value)
+            );
+        }
+        assert_eq!(
             original["event_start_ns"].as_u64(),
             Some(1_778_284_800_894_778_251)
         );
