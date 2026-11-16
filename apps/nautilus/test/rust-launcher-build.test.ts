@@ -197,3 +197,44 @@ impl DataActor for Observer {
   assert.equal(caps.running, false);
   await writeFile(join(root, 'build-result.json'), JSON.stringify(result), { flag: 'wx' });
 });
+
+test('official Cargo offline resolver repairs stale owner lock without running build scripts', {skip: !process.env.QZ_TEST_CARGO}, async () => {
+  const {mkdtemp,mkdir,writeFile,readFile,rm,symlink} = await import('node:fs/promises');
+  const {tmpdir} = await import('node:os'); const {join} = await import('node:path');
+  const {execFile} = await import('node:child_process'); const {promisify} = await import('node:util');
+  const {discoverRustEnvironment} = await import('../src/rust-environment.ts');
+  const {prepareResearchOwnerLock} = await import('../src/rust-launcher-build.ts');
+  const run=promisify(execFile), root=await mkdtemp(join(tmpdir(),'qz-offline-lock-'));
+  try {
+    const owner=join(root,'owner'), dependency=join(root,'dependency');
+    for(const [path,name] of [[owner,'owner'],[dependency,'local_dependency']]) {
+      await mkdir(join(path!,'src'),{recursive:true});
+      await writeFile(join(path!,'src/lib.rs'),'pub fn value() {}');
+      await writeFile(join(path!,'Cargo.toml'),`[package]\nname="${name}"\nversion="0.1.0"\nedition="2021"\n[workspace]\n`);
+    }
+    await writeFile(join(owner,'build.rs'),'fn main() { panic!("metadata must not execute build.rs"); }');
+    const source={cargoBinary:process.env.QZ_TEST_CARGO!,manifestPath:join(owner,'Cargo.toml'),packageName:'owner'};
+    const discovery=await discoverRustEnvironment(source);
+    await prepareResearchOwnerLock(discovery,root);
+    const original=await readFile(join(owner,'Cargo.lock'),'utf8');
+    await writeFile(source.manifestPath,(await readFile(source.manifestPath,'utf8'))+'\n[dependencies]\nlocal_dependency={path="../dependency"}\n');
+    await assert.rejects(run(source.cargoBinary,['metadata','--offline','--locked','--format-version','1','--manifest-path',source.manifestPath],{cwd:owner}), /lock/);
+    assert.equal(await readFile(join(owner,'Cargo.lock'),'utf8'),original);
+    const priorPath=process.env.PATH, priorRustc=process.env.RUSTC;
+    let prepared;
+    try {process.env.PATH='/nonexistent';process.env.RUSTC='/nonexistent/rustc';prepared=await prepareResearchOwnerLock(discovery,root);}
+    finally {process.env.PATH=priorPath;if(priorRustc===undefined)delete process.env.RUSTC;else process.env.RUSTC=priorRustc;}
+    assert.match(prepared.stderr,/local_dependency/);
+    const repaired=await readFile(join(owner,'Cargo.lock'),'utf8');assert.notEqual(repaired,original);
+    await run(source.cargoBinary,['metadata','--offline','--locked','--format-version','1','--manifest-path',source.manifestPath],{cwd:owner});
+    await prepareResearchOwnerLock(discovery,root);assert.equal(await readFile(join(owner,'Cargo.lock'),'utf8'),repaired);
+    await assert.rejects(prepareResearchOwnerLock(discovery,dependency),/outside_research_workspace/);
+    await rm(join(owner,'Cargo.lock'));await symlink(join(root,'absent.lock'),join(owner,'Cargo.lock'));
+    await assert.rejects(prepareResearchOwnerLock(discovery,root),/symlink/);
+    await rm(join(owner,'Cargo.lock'));await writeFile(join(owner,'Cargo.lock'),repaired);
+    await writeFile(source.manifestPath,(await readFile(source.manifestPath,'utf8'))+'qz_nonexistent_dependency_897236="=99.99.99"\n');
+    await assert.rejects(prepareResearchOwnerLock(discovery,root),error=>{
+      assert.match(String(error),/owner_lock_preparation/);assert.match(String((error as Error).cause),/offline|no matching package/);return true;
+    });
+  } finally {await rm(root,{recursive:true,force:true});}
+});

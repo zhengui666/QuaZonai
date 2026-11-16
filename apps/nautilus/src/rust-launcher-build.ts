@@ -1,13 +1,47 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, copyFile, mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { cp, copyFile, mkdir, open, readFile, realpath, lstat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, sep, join, delimiter } from 'node:path';
 import { discoverRustEnvironment, materializeRustLauncher, renderRustLauncher, type RustEnvironmentSource, type RustFactoryModules } from './rust-environment.ts';
 
 import { pathToFileURL } from 'node:url';
 import { selectedCargoGraph, alignCopiedNativeManifest, activeCopiedNativeManifest, type CargoResolvedMetadata } from './rust-native-dependencies.ts';
 const execute = promisify(execFile);
+export class RustPreparationError extends Error {
+  readonly original: unknown;
+  constructor(stage: string, original: unknown) {
+    super(`rust_preflight_failed:${stage}`, { cause: original });
+    this.original = original;
+  }
+}
+async function preflight<T>(stage: string, operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); } catch (error) { throw new RustPreparationError(stage, error); }
+}
+/** Uses Cargo's resolver, not a hand-written lockfile or an update-all command. */
+export async function prepareResearchOwnerLock(discovery: Awaited<ReturnType<typeof discoverRustEnvironment>>, codingWorkspace: string, signal?: AbortSignal) {
+  const root = await realpath(codingWorkspace);
+  for (const path of [await realpath(discovery.workspaceRoot), await realpath(discovery.source.manifestPath)]) {
+    const within = relative(root, path);
+    if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new Error('rust_owner_lock_outside_research_workspace');
+  }
+  const lockPath = join(discovery.workspaceRoot, 'Cargo.lock');
+  try {
+    const info = await lstat(lockPath);
+    if (info.isSymbolicLink()) throw new Error('rust_owner_lock_symlink_not_supported');
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const rustc = await realpath(join(dirname(discovery.source.cargoBinary), process.platform === 'win32' ? 'rustc.exe' : 'rustc'));
+  return preflight('owner_lock_preparation', async () => {
+    const env = { ...process.env, RUSTC: rustc, PATH: `${dirname(rustc)}${delimiter}${process.env.PATH ?? ''}`, CARGO_NET_OFFLINE: 'true' };
+    const compiler = await execute(rustc, ['-vV'], { env, signal, maxBuffer: 64 * 1024 });
+    const host = /^host: (\S+)$/m.exec(compiler.stdout)?.[1];
+    if (!host) throw new Error('rust_build_compiler_host_missing');
+    return execute(discovery.source.cargoBinary,
+      ['metadata', '--offline', '--filter-platform', host, '--format-version', '1', '--manifest-path', discovery.source.manifestPath,
+        ...(discovery.source.features?.length ? ['--features', discovery.source.features.join(',')] : [])],
+      { cwd: dirname(discovery.source.manifestPath), env, signal, maxBuffer: 32 * 1024 * 1024 });
+  });
+}
 type ResolvedMetadata = {
   packages: { id: string; name: string; version: string; source: string | null; manifest_path?: string }[];
   resolve: { nodes: { id: string; features: string[] }[] } | null;
@@ -49,8 +83,9 @@ export async function buildRustLauncher(options: {
   /** QZ-owned compiler cache only; never an owner project target directory. */
   targetDirectory?: string;
   signal?: AbortSignal;
+  prepareOwnerLockIn?: string;
 }): Promise<{ executable: string; manifestPath: string; capabilities: unknown; qualification: 'COMPILED_NOT_CONNECTED' }> {
-  const discovery = await discoverRustEnvironment(options.source);
+  const discovery = await preflight('manifest_discovery', () => discoverRustEnvironment(options.source));
   if (!discovery.libraryTarget) throw new Error('rust_environment_public_library_required');
   const binaryName = `qz-owner-launcher-${randomUUID()}`;
   const main = renderRustLauncher(options.factories);
@@ -86,8 +121,12 @@ export async function buildRustLauncher(options: {
     for (const pkg of parsed.packages) if (pkg.name.startsWith('nautilus-') && pkg.source === null) pkg.manifest_path = await realpath(pkg.manifest_path);
     return parsed;
   };
+  if (options.prepareOwnerLockIn) {
+    const prepared = await prepareResearchOwnerLock(discovery, options.prepareOwnerLockIn, options.signal);
+    await writeFile(join(directory, 'preflight.log'), `owner_lock_preparation: Cargo offline resolver; existing lock entries retained where compatible.\n${prepared.stderr}`);
+  }
   const originalLock = await readFile(join(discovery.workspaceRoot, 'Cargo.lock'));
-  const ownerMetadata = await metadata(discovery.source.manifestPath, true, discovery.source.features);
+  const ownerMetadata = await preflight('owner_locked_metadata', () => metadata(discovery.source.manifestPath, true, discovery.source.features));
   const ownerPackage = ownerMetadata.packages.find(p => p.manifest_path === discovery.source.manifestPath);
   if (!ownerPackage) throw new Error('rust_build_owner_package_missing');
   const owner = selectedCargoGraph(ownerMetadata, ownerPackage.id);
@@ -98,7 +137,7 @@ export async function buildRustLauncher(options: {
   await writeFile(copiedManifest, alignCopiedNativeManifest(activeCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), features), owner));
   const dependencies = `job = { path = ${JSON.stringify(join(glue, 'apps/job'))}, default-features = false, features = ${JSON.stringify(features)} }\nanyhow = "1"\nserde_json = "1"`;
   const materialized = await materializeRustLauncher(discovery, join(directory, 'launcher'), main, dependencies, binaryName);
-  const generatedMetadata = await metadata(materialized.manifestPath, false);
+  const generatedMetadata = await preflight('launcher_metadata', () => metadata(materialized.manifestPath, false));
   const launcher = generatedMetadata.packages.find(p => p.manifest_path === materialized.manifestPath);
   if (!launcher) throw new Error('rust_build_launcher_package_missing');
   const generated = selectedCargoGraph(generatedMetadata, launcher.id);
