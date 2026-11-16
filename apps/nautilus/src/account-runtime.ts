@@ -1,3 +1,4 @@
+import {accountCredentialEnvironment} from './account-credentials.ts';
 import type {NativeSessionBinding} from '../../../packages/contracts/src/native-strategy-control.ts';
 import type { NativeAccountStrategyConfig } from '../../../packages/contracts/src/account-strategy.ts';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -11,6 +12,8 @@ import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../
 export interface AccountOptions {
   id: string; clientId: string; accountId: string; mode: 'paper' | 'live';
   nativeStrategy: NativeAccountStrategyConfig;
+  /** Name of an existing runner environment secret; never the private key itself. */
+  credentialEnv?: string;
   /** Explicit official Margin account; not a claim about exchange abstraction. */
   accountSemantics?: 'NATIVE_MARGIN';
   instruments: string[]; accountAddress?: string; network?: 'mainnet' | 'testnet';
@@ -103,7 +106,7 @@ export class AccountRuntime implements NativeAccountRuntime {
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS']) if (process.env[key]) env[key] = process.env[key];
       // The scientific child environment remains isolated. Only this explicitly
       // configured account process receives its native venue credential names.
-      if (this.options.mode === 'live') for (const key of ['HYPERLIQUID_PK', 'HYPERLIQUID_TESTNET_PK']) if (process.env[key]) env[key] = process.env[key];
+      Object.assign(env, accountCredentialEnvironment(this.options, process.env));
       // A private, per-process bounded tail, never a public receipt/error.
       let diagnostic: number;
       try {
