@@ -80,6 +80,21 @@ jobs:
             target/debug/job
             target/debug/market-history
           retention-days: 3
+      - name: Compile actual opt-in owner launcher through product builder
+        run: |
+          export QZ_TEST_CARGO="$(rustup which cargo)"
+          export QZ_TEST_OBSERVATION_BUILD="$RUNNER_TEMP/observation-owner"
+          export QZ_TEST_NATIVE_TARGET="$GITHUB_WORKSPACE/target"
+          node --experimental-strip-types --test --test-name-pattern='actual generated observation launcher' apps/nautilus/test/rust-launcher-build.test.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-observation-owner
+          path: |
+            ${{ runner.temp }}/observation-owner/build/launcher/qz-owner-launcher
+            ${{ runner.temp }}/observation-owner/build/build.log
+            ${{ runner.temp }}/observation-owner/build-result.json
+          retention-days: 3
       - name: Local source dispatch unit tests
         run: python3 -m unittest discover -s runtimes/data -p test_source_plugins.py
       - name: Product types and capability contract

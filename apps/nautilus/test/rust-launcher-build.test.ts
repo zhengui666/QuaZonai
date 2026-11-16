@@ -92,3 +92,108 @@ test('actual binary identity must match resolved source/version/precision', () =
     assert.throws(() => verifyLauncherIdentity(resolved(), mismatch), /binary_identity_mismatch/);
   }
 });
+
+test('actual generated observation launcher compiles without an account hook', async t => {
+  const cargo = process.env.QZ_TEST_CARGO;
+  const root = process.env.QZ_TEST_OBSERVATION_BUILD;
+  if (!cargo || !root) { t.skip('requires explicit actual Cargo and an isolated retained build directory'); return; }
+  const { mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { join, resolve } = await import('node:path');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execute = promisify(execFile);
+  const { buildRustLauncher } = await import('../src/rust-launcher-build.ts');
+  await mkdir(root); // Never overwrite a previous compilation or acceptance artifact.
+  const owner = join(root, 'owner'); await mkdir(join(owner, 'src'), { recursive: true });
+  const glue = resolve(import.meta.dirname, '../../..');
+  const manifest = await readFile(join(glue, 'apps/job/Cargo.toml'), 'utf8');
+  const nativeNames = ['nautilus-backtest', 'nautilus-common', 'nautilus-core', 'nautilus-execution', 'nautilus-model', 'nautilus-persistence'];
+  const dependencies = nativeNames.map(name => {
+    const line = manifest.split('\n').find(line => line.startsWith(`${name} = `));
+    assert.ok(line, name);
+    return line.replace(/, optional = true/g, '');
+  });
+  await writeFile(join(owner, 'Cargo.toml'), `[package]\nname="source-observation-owner"\nversion="0.0.0"\nedition="2024"\n[workspace]\n[dependencies]\nanyhow="=1.0.104"\nserde_json="=1.0.154"\n${dependencies.join('\n')}\n`);
+  // An ordinary test-owned native factory, not a research strategy or replacement runtime.
+  // Retained output allows the same actually compiled launcher to be exercised on an
+  // explicitly selected training catalog without uploading the user's source records.
+  await writeFile(join(owner, 'src/lib.rs'), `
+use anyhow::{Context, Result, ensure};
+use nautilus_backtest::{config::{BacktestRunConfig, BacktestVenueConfig}, engine::BacktestEngine};
+use nautilus_common::{actor::{DataActor, DataActorConfig, DataActorCore}, nautilus_actor};
+use nautilus_core::UnixNanos;
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+use nautilus_model::{data::{CustomData, Data, DataType}, enums::{AccountType, BookType, OmsType}, identifiers::ActorId};
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+use serde_json::{Value, json};
+use std::path::Path;
+fn time(value: &Value, key: &str) -> Result<UnixNanos> {
+    Ok(value[key].as_str().context("explicit nanosecond string required")?.parse::<u64>()?.into())
+}
+pub mod observer {
+    use super::*;
+    pub fn config(root: &Path, name: &str, value: &Value) -> Result<BacktestRunConfig> {
+        ensure!(name == "source-observer", "UNKNOWN_FACTORY");
+        ensure!(root.canonicalize()? == Path::new(value["catalog"].as_str().context("catalog required")?).canonicalize()?, "CATALOG_MUST_MATCH_BOUND_ROOT");
+        let venue = BacktestVenueConfig::builder().name("SIM").oms_type(OmsType::Netting)
+            .account_type(AccountType::Margin).book_type(BookType::L1_MBP)
+            .starting_balances(vec!["1000 USD".into()])
+            .fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero())).build()?;
+        Ok(BacktestRunConfig::builder().venues(vec![venue]).data(Vec::new())
+            .start(time(value,"start_ns")?).end(time(value,"end_ns")?)
+            .raise_exception(true).dispose_on_completion(false).build()?)
+    }
+    pub fn install(engine: &mut BacktestEngine, _: &str, value: &Value) -> Result<()> {
+        let mut catalog = ParquetDataCatalog::new(Path::new(value["catalog"].as_str().context("catalog required")?), None, None, None, None);
+        // Registration belongs to the generated launcher. This owner does not redeclare
+        // the concrete source type or import job to get its implementation.
+        let data = catalog.query_custom_data_dynamic("ChainticksFillObservation", None,
+            Some(time(value,"start_ns")?), Some(time(value,"end_ns")?), None, None, true)?;
+        let Data::Custom(first) = data.first().context("EMPTY_SELECTED_SOURCE")? else { anyhow::bail!("EXPECTED_CUSTOM") };
+        let data_type = first.data_type.clone();
+        let selected = data.len();
+        let report = value["report"].as_str().context("explicit new report required")?.to_owned();
+        ensure!(!Path::new(&report).exists(), "REPORT_ALREADY_EXISTS");
+        engine.add_data(data, None, true, true)?;
+        engine.add_actor(Observer { core: DataActorCore::new(DataActorConfig {
+            actor_id: Some(ActorId::from("SOURCE-OBSERVER")), ..Default::default()
+        }), data_type, selected, count: 0, report, first: None, last: None })?;
+        Ok(())
+    }
+}
+#[derive(Debug)]
+struct Observer { core: DataActorCore, data_type: DataType, selected: usize, count: usize,
+    report: String, first: Option<Value>, last: Option<Value> }
+nautilus_actor!(Observer);
+impl DataActor for Observer {
+    fn on_start(&mut self) -> Result<()> { self.subscribe_data(self.data_type.clone(), None, None); Ok(()) }
+    fn on_data(&mut self, data: &CustomData) -> Result<()> {
+        let value: Value = serde_json::from_str(&data.data.to_json()?)?;
+        ensure!(self.clock().timestamp_ns().as_u64() == value["ts_init"].as_u64().context("integer clock required")?, "CALLBACK_CLOCK_MISMATCH");
+        self.count += 1;
+        if self.first.is_none() { self.first = Some(value.clone()); }
+        self.last = Some(value);
+        Ok(())
+    }
+    fn on_stop(&mut self) -> Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&self.report)?;
+        serde_json::to_writer(&mut file, &json!({"selected":self.selected,"callbacks":self.count,
+            "first":self.first,"last":self.last,"scope":"SOURCE_OBSERVATION_REPLAY_NOT_STRATEGY_RESEARCH"}))?;
+        Ok(())
+    }
+}
+`);
+  await execute(cargo, ['generate-lockfile', '--offline', '--manifest-path', join(owner, 'Cargo.toml')], { cwd: owner, maxBuffer: 8 * 1024 * 1024 });
+  const result = await buildRustLauncher({
+    source: { cargoBinary: cargo, manifestPath: join(owner, 'Cargo.toml'), packageName: 'source-observation-owner' },
+    factories: { backtestFactory: 'observer', chainticksFillObservations: true },
+    glueSourceRoot: glue, directory: join(root, 'build'),
+    ...(process.env.QZ_TEST_NATIVE_TARGET ? { targetDirectory: process.env.QZ_TEST_NATIVE_TARGET } : {}),
+  });
+  const caps = result.capabilities as { research: { configuredRunFactory: boolean }; account: { compiled: boolean; registration: boolean }; running: boolean };
+  assert.equal(caps.research.configuredRunFactory, true);
+  assert.equal(caps.account.compiled, false);
+  assert.equal(caps.account.registration, false);
+  assert.equal(caps.running, false);
+  await writeFile(join(root, 'build-result.json'), JSON.stringify(result), { flag: 'wx' });
+});
