@@ -96,12 +96,16 @@ test('science CI exercises original high-precision data and upstream strategies 
 
 test('main and dev releases do not require science but cancelled builds never proceed', () => {
   assert.doesNotMatch(workflow, /rust-regression|needs: regression|\n  regression:/);
+  assert.match(workflow, /needs: native-protocol/);
+  assert.match(workflow, /cargo clippy --locked --workspace --all-targets --all-features/);
+  assert.match(workflow, /--test build_identity --test account_observer/);
+  assert.doesNotMatch(workflow, /make check-native-full|make check-science|--test native_strategy/);
   assert.match(workflow, /Verify successful exact-push CI/);
   assert.match(workflow, /release\.py verify --version/);
   const evaluate = condition('build');
   for (const regression of results) for (const branch of ['main', 'dev']) for (const cancelled of [false, true]) {
-    assert.equal(evaluate({ regression: { result: regression } }, () => cancelled, { branch }),
-      !cancelled, `${branch}/${regression}/cancelled=${cancelled}`);
+    assert.equal(evaluate({ 'native-protocol': { result: regression } }, () => cancelled, { branch }),
+      !cancelled && (branch === 'dev' || regression === 'success'), `${branch}/${regression}/cancelled=${cancelled}`);
   }
 });
 
