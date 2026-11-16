@@ -6,6 +6,7 @@ import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { defineDocFamily, defineTask, type Harness, type ConversationId, type JsonObject, type TaskId, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { stripVTControlCharacters } from 'node:util';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { runNativeProcess, cancelNativeProcess, NativeProcessFailure, type NativeProcessFacts } from './native-process.ts';
@@ -283,7 +284,7 @@ export function withNativeExecutionHost<T>(harness: Harness, conversationId: Con
 }
 type RemoteTaskInput = { target: NativeExecutionTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
 
-/** Explicit source-reviewed closure of the known legacy empty-venue failure.
+/** Explicit source-reviewed closure of the known configured-run failures.
  * Exit status alone is never sufficient. The caller supplies the source review;
  * persisted original identity, diagnostics and process observations are checked here.
  * This is an adopted receipt, not a rewrite/retry of the terminal native Task. */
@@ -295,7 +296,7 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
     || !Number.isSafeInteger(review.nativeTaskId) || Number(review.nativeTaskId) < 1
     || !Number.isSafeInteger(review.ownerTaskId) || Number(review.ownerTaskId) < 1
     || typeof review.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(review.requestId)
-    || review.classification !== 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
+    || !['EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD', 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL'].includes(review.classification)
     || typeof review.sourceReview !== 'string' || !review.sourceReview.trim() || review.sourceReview.length > 8192
     || !Array.isArray(review.sources) || !review.sources.length || review.sources.length > 16
     || !review.sources.every(source => typeof source === 'string' && source.trim() && source.length <= 2048)) throw invalid();
@@ -329,7 +330,10 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
       || process.errorCategory !== 'native_process_failed' || process.exitObserved !== true || process.exitCode !== 1
       || process.signal !== null || process.terminationRequested !== false) throw conflict();
     const diagnostic = await tx.doc(NativeEvidencePart, conversationId, `${task.id}:private-native-stderr`, null);
-    if (diagnostic.data !== 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n') throw conflict();
+    const matchesDiagnostic = review.classification === 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
+      ? diagnostic.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
+      : /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(diagnostic.data));
+    if (!matchesDiagnostic) throw conflict();
     const evidence = {review:review as unknown as JsonObject, reviewedAt:new Date().toISOString(),
       previousStatus:reference.status, previousError:reference.error ?? null, process,
       diagnosticPart:`${task.id}:private-native-stderr`, scope:'SOURCE_REVIEWED_BACKTEST_FAILURE_NOT_GENERAL_SIDE_EFFECT_ROLLBACK'};
