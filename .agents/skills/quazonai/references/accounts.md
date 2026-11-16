@@ -36,38 +36,25 @@ quazonai account-strategy receipt "$observation_id" "$request_id"
 
 START 的 accountSourceId/strategyRevision 必须来自用户决定启动时已读到的 status。过期拒绝后先报告，不自动获取新修订替旧命令重新授权。STOP 不要求修订；仍须明确用户操作意图。当前账户仅已接入官方 EMA_CROSS；ORDER_BOOK_IMBALANCE、GRID_MARKET_MAKER、HURST_VPIN_DIRECTIONAL 目前只接研究回测，不支持账户运行。连接中的策略配置并非由历史回测自动部署；当前 CLI 不是策略代码上传器或连接配置器。
 
-默认启动宿主不等于启动交易。paper/live 使用独立连接；live START 可能实际下单，必须满足用户明确授权及适用确认要求，不能因回测评级良好自行启动。恢复会重新预热，不承诺无缝恢复策略内部指标状态。STOP 沿用上游配置语义，不保证不撤单或不清仓；观测停止也不是策略 STOP。
+默认启动宿主不等于启动交易。paper/live 使用独立连接；live START 可能实际下单，必须满足用户明确授权及适用确认要求，不能因回测评级良好自行启动。恢复会重新预热，不承诺无缝恢复策略内部指标状态。STOP 沿用上游配置语义，可能撤单或清仓，但 STOPPED 不证明仓位已平、资金可提或提现完成；观测停止也不是策略 STOP。
 
 命令回执分别报告 REJECTED、UNCERTAIN 与真实原生结果。persisted:false 表示回执未持久化，即使结果显示 STOPPED 也不能称已可靠记账或跨重启防重放。网络不确定时查询原 requestId，不自动重发，不用当前 STATUS 冒充旧命令已完成。取消保护、订单预览和仓位计算按实际能力报告，预览不是下单。
 
-## 资金退出：状态 → 预览 → 命令 → 对账
+## 资金退出：仅查询历史记录
 
-1. 运行 `capital status OBSERVATION_ID`。先检查 `capability`、`reason`、`controlRevision`、`exits` 与 `commands`。`UNSUPPORTED` / `BLOCKED` 时停止该操作并报告原因。
-2. 将用户指定金额和观测币种保存为预览请求，使用新的 requestId：
+当前版本已退役新资金退出规划与执行入口，不支持“指定金额 → 自动减仓 → 提现”的完整流程。不要执行旧版 `capital preview`、START、RESUME 或 RECONCILE_WITHDRAWAL 教程，也不要调用已删除的预览/启动 HTTP 路由。
 
-```json
-{"requestId":"REPLACE_PREVIEW_REQUEST_ID","amount":"1000","currency":"USD"}
+```sh
+quazonai capital status "$observation_id"
+quazonai capital get "$observation_id" "$exit_id"
 ```
 
-省略 policy 时服务使用 `CASH_ONLY`。不要为了完成提现擅自改成减仓策略。金额和币种是示例，替换成用户实际值；更复杂的 policy 必须来自已有合法请求或明确的下游合同。
+从 status 返回的历史记录取得真实 exitId。读取 `capability`、`reason`、历史退出与命令回执；保留原始金额、币种、预留、订单、requestId 和 UNKNOWN / UNCERTAIN，不把读取成功或历史金额当作当前可提现余额。不要删除历史记录、改写未知结果或重新提交原操作来消除阻塞。
 
-3. 执行 `capital preview OBSERVATION_ID --file preview-request.json`，读取 `id`、`capability`、`valid_until`、`plan_artifact_id`、预览资金、拟撤销项和减仓腿。预览不会自动成为退出命令。
-4. 在用户已授权执行的范围内，使用预览 ID 构造独立的 START 请求：
+`capital command` 只保留旧记录 PAUSE/CANCEL 请求形状，不代表当前下游能够执行。必须检查实际 capability/actions；当前原生账户适配返回 `capital_original_control_evidence_unavailable` 时明确报告不可用，不发送命令，不将“取消退出计划”等同于撤销交易所订单。其他资金动作被 `capital_exit_planning_retired` 拒绝，不以自写脚本或资金计算绕过。
 
-```json
-{"requestId":"REPLACE_COMMAND_REQUEST_ID","action":"START","previewId":"REPLACE_PREVIEW_ID"}
-```
+## 策略停止、退出与外部提现的边界
 
-5. 执行 `capital command OBSERVATION_ID --file capital-command.json`，再用 `capital status OBSERVATION_ID` 查询同一 requestId 的状态。`PENDING`、`UNCERTAIN`、`ACCEPTED`、`REJECTED` 分别保留原意；`ACCEPTED` 不是已提现。
+`account-strategy stop` 是独立的显式原生策略控制，不是资金退出或提现替代命令。是否撤单/平仓取决于已配置的上游策略和已接入能力；只据真实订单、持仓与原命令回执报告结果，不把 STOPPED 当作已清仓或已转账。
 
-预览过期或账户修订变化时，先读取状态，按新操作重新预览。未知结果的原命令仍保留原文件和 requestId，不把它改指向新预览。
-
-## 恢复与外部提款对账
-
-非 START 操作绑定实际 `exitId` 和从 `capital status` 返回的 `exit.revision`。这里的 `expectedRevision` 不来自 PM mandate，也不来自账户 controlRevision。
-
-- `RESUME`：提交 `{requestId,action:"RESUME",exitId,expectedRevision,previewId}`，使用有效的预览。
-- `RECONCILE_WITHDRAWAL`：仅在用户提供真实外部转账事实时提交 `{requestId,action:"RECONCILE_WITHDRAWAL",exitId,expectedRevision,amount,currency,externalTransferRef}`。金额是字符串，externalTransferRef 使用真实转账引用。
-- 其他下游动作仅按已确认的动作合同构造，不从名称猜出 `withdraw`、`sell` 或 `cancel` CLI 子命令。
-
-分别报告 requested、reserved、released cash、verified withdrawable 与 reconciled withdrawal；缺少可提现或已转账证据时，不能依据一个成功退出码宣称资金已到账。
+当前 CLI 不提供自动外部划转或提现。外部操作由用户在平台/钱包完成；当前版本也没有可执行的 RECONCILE_WITHDRAWAL 命令。历史外部引用仅是历史记录，不代表新转账发生。缺少平台流水或到账证据时，明确“未确认”，不宣称已提现；不从命令名、账户余额或成功退出码推断资金到账。
