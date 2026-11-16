@@ -35,7 +35,7 @@ def safe_name(name: str) -> bool:
     value = PurePosixPath(name)
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
-REMOTE_OWNER_MODULES = ('account-configurations.ts', 'account-runtime.ts', 'account-receipt-lock.ts',
+REMOTE_OWNER_MODULES = ('account-credentials.ts', 'account-configurations.ts', 'account-runtime.ts', 'account-receipt-lock.ts',
     'capital-account.ts', 'hyperliquid-account.ts', 'remote-account-supervisor.ts',
     'remote-account-client.ts', 'remote-account-ssh.ts')
 

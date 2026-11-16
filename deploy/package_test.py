@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,6 +22,29 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('SHA256SUMS', package.REQUIRED_ASSETS)
         self.assertNotIn('quazonai-image-runtime.tar.gz', package.REQUIRED_ASSETS)
         self.assertIn('quazonai-image-application.tar.gz', package.REQUIRED_ASSETS)
+
+    def test_explicit_account_sources_import_in_isolated_release_layouts(self):
+        # Stage exactly each release source list, not the checkout: imports must
+        # resolve without a sibling source file accidentally masking omissions.
+        docker = (package.ROOT / 'deploy/docker/Dockerfile').read_text()
+        docker_modules = re.findall(r'apps/nautilus/src/([a-z-]+\.ts)', '\n'.join(
+            line for line in docker.splitlines() if line.startswith('COPY ')))
+        self.assertTrue(docker_modules)
+        node = shutil.which('node')
+        self.assertIsNotNone(node)
+        for name, modules in (('cli', package.REMOTE_OWNER_MODULES), ('application', docker_modules)):
+            with self.subTest(distribution=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / 'package.json').write_text('{"type":"module"}')
+                shutil.copytree(package.ROOT / 'packages/contracts/src', root / 'packages/contracts/src')
+                owner = root / 'apps/nautilus/src'
+                owner.mkdir(parents=True)
+                for module in modules:
+                    shutil.copy2(package.ROOT / 'apps/nautilus/src' / module, owner / module)
+                code = '\n'.join('await import(' + json.dumps((owner / module).as_uri()) + ');' for module in modules)
+                result = subprocess.run([node, '--experimental-strip-types', '--input-type=module', '-e', code],
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_release_readme_documents_docker_and_preserves_cli_clients(self):
         text = package.readme({'version': 'v3.0.0-doc-test', 'revision': 'abc123'})
