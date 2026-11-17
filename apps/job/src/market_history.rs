@@ -3098,8 +3098,8 @@ mod tests {
                 .iter()
                 .find(|trade| trade.trade_id.to_string() == "T-2")
                 .unwrap();
-            assert_eq!(first.price.as_decimal().to_string(), "10.12");
-            assert_eq!(second.size.as_decimal().to_string(), "0.2");
+            assert_eq!(first.price.as_decimal().normalize().to_string(), "10.12");
+            assert_eq!(second.size.as_decimal().normalize().to_string(), "0.2");
         }
     }
 
