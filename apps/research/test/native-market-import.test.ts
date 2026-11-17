@@ -57,3 +57,26 @@ test('fill observation request preserves explicit provenance and timezone choice
   for(const extra of [{bar_seconds:1},{deduplicate:true},{instruments_path:'/source/current.json'},{assume_source_local_time_utc:'true'}])assert.throws(()=>prepareNativeFillObservationImport({...request,...extra}));
   const {source_revision,...missing}=request;assert.throws(()=>prepareNativeFillObservationImport(missing));
 });
+
+import {nativeRunnerMarketImportTool} from '../plugins/native-market-import.ts';
+test('preparation import reuses original child after target revision changes and never changes study binding',async()=>{
+  let resolutions=0,created=0;
+  const target={kind:'RUST_PROCESS',id:'prepared',binary:'/not-executed',capabilities:{preparation:{marketImport:true}}} as any;
+  const tool=nativeRunnerMarketImportTool(async(id,revision)=>{resolutions++;assert.equal(id,'built');assert.equal(revision,2);if(resolutions>1)throw new Error('revision_changed');return target;});
+  const request={schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog'};
+  const args={runnerBuildRequestId:'built',expectedRunnerRevision:2,request};
+  const child={taskId:null as number|null};const original={data:{catalog:'/old/catalog'},mode:undefined as string|undefined};
+  const api={taskId:5,conversationId:1,snapshot:async()=>({input:original}),commit:async(fn:any)=>fn({doc:async()=>child,createTask:async(def:any,input:any)=>{created++;assert.equal(def.definition.name,'qz.native-market-import');assert.deepEqual(input,{target,request,command:'native-market-import'});return 6;}}),waitForTask:async()=>({state:{outcome:{status:'failed',error:{message:'original_import_failure'}}}})};
+  await assert.rejects(tool.execute(args,api as any,context),/original_import_failure/);
+  await assert.rejects(tool.execute(args,api as any,context),/original_import_failure/);
+  assert.equal(resolutions,1);assert.equal(created,1);assert.deepEqual(original.data,{catalog:'/old/catalog'});
+  original.mode='LITERATURE_ONLY';await assert.rejects(tool.execute(args,api as any,context),/literature_only_native_execution_forbidden/);
+});
+test('preparation target rejection creates no import and keeps generated request validation',async()=>{
+  let created=0;
+  const tool=nativeRunnerMarketImportTool(async()=>{throw new Error('native_build_not_completed');});
+  const api={taskId:1,conversationId:1,snapshot:async()=>({input:{data:{}}}),commit:async(fn:any)=>fn({doc:async()=>({taskId:null}),createTask:async()=>{created++;}})};
+  const args={runnerBuildRequestId:'failed',expectedRunnerRevision:2,request:{schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog'}};
+  await assert.rejects(tool.execute(args,api as any,context),/native_build_not_completed/);assert.equal(created,0);
+  assert.throws(()=>tool.prepareArguments!({...args,request:{...args.request,received_time:true}}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
+});

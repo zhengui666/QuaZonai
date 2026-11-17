@@ -108,3 +108,5 @@ quazonai research implementation-sources "$research_id" --file source-material.j
 已经执行过的研究仍可通过同一研究终态后的 resume 指令请求“事后源码/逻辑审查”，注明已登记 sourceRequestId，并要求内部 Agent 使用明确的 POST_EXECUTION 审查时序。读取 research get 中独立审查记录及其原 evidence 链接；事后记录不能替代旧事前评级、不能补成事前协议，也不会重跑历史任务。源码复核子 Agent 不自动读取历史回测结果，需将源码结论与原执行证据区分。
 
 owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Build 不随保存配置改变。已有原生导入器要求 owner 显式 high-precision；构建保持同一官方依赖来源/版本/精度，不能通过伪改 capability 启用。让内部 Agent 按内部 skill 准备 owner feature/官方锁、新 Build，并用原 requestId 绑定新研究；不必切换全局 runner。随后使用已有 `native_market_import` 合同导入已授权训练文件，读取真实报告后再决定数据登记。
+
+无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。

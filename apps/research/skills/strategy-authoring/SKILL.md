@@ -113,4 +113,14 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 
 原生 owner 环境可显式设置 `marketImport:true`，下一次 `native_runner_build` 才会编译已有 `market-history` 导入入口；保存配置不编译，也不改变旧研究/旧 Build。该入口使用 high-precision：owner 的官方依赖图必须已显式选择相同精度，否则构建报 `rust_market_import_requires_high_precision_owner`，不静默改变策略精度。通过 owner 自有 Cargo feature 选择官方 high-precision、官方 Cargo 准备锁，再新建 Build 并读取真实 capabilities；不要改旧 capability 回执或切全局 runner来替代绑定。
 
-新研究用成功 Build 的原 requestId 显式绑定后，`native_market_import` 复用现有 `NativeMarketImportRequestV1` 导入明确授权的本地训练 manifest/原生定义到新目录。原请求/输出与失败记录保留；UNKNOWN不重发。晚到定义只能保留其真实 ts_init 并披露静态情景，不能回填历史定义。导入成功不等于数据准入、OOS有效或策略回测完成。
+已有登记 catalog 时，新研究绑定后可用 `native_market_import`。尚无 catalog 时不要冒用其他 dataset 或创建占位研究，按以下正式准备顺序：
+1. 在当前普通研究中调用 `native_runner_market_import {runnerBuildRequestId: "成功 Build 的原 requestId", expectedRunnerRevision: 当前实例配置 revision, request: 完整 NativeMarketImportRequestV1}`。request 至少为 `{schema_version:1, manifest_path:"明确授权的manifest绝对路径", instruments_path:"原生定义绝对路径", output_path:"新的输出目录"}`；可选 `start_seconds`/`end_seconds` 为字符串，`path_prefixes` 为字符串数组。若 `received_time:true`，必须显式传字符串 `maximum_receive_delay_ns`。原生合同不支持 bars/resume。此工具复用同一原生 import Task，仅用成功 Build 解析 target，不修改当前研究的旧执行绑定。
+2. 读取原 import 结果的 `catalog_path`、`report_path` 和完整所需报告。结果大时按返回提示用 `native_assessment_read_exposure` 分页，不以工具受理当导入成功。
+3. 用官方 write 在配置的研究源码工作区写 dataset descriptor JSON，顶层是一个对象或对象数组。现有合同如下，所有值须替换成实际证据，不照抄占位符：
+```json
+{"id":"新的数据集标识","name":"真实描述","assetClass":"CRYPTO","currency":"实际计价币种","source":"真实来源","start":null,"end":null,"ready":true,"nativeModality":"TRADE_TICK","data":{"catalog":"原import返回的catalog_path"},"policy":{},"preparation":{"archiveLoaded":true,"nativePrepared":true,"scientificQualification":"NOT_ASSESSED"}}
+```
+`id/name/assetClass/currency/source` 必须是非空字符串；`start/end` 为明确的日期时间字符串或 null，不猜测覆盖；`ready` 为布尔值，只有实际可用时才为 true；`data` 是对象，catalog相对路径按descriptor文件目录解析，优先用实际绝对路径。准备状态不是研究合格，报告中的冲突/缺失、晚到定义等限制写入研究说明，不能伪造收益或准入。不要在descriptor加入凭据或未授权数据。
+4. 调 `native_dataset_registration_status {}` 取得**数据源** revision（不同于实例配置 revision），再调 `native_dataset_register {requestId:"本次登记稳定标识", expectedRevision:数据源revision, path:"工作区内descriptor绝对路径"}`。复用既有append-only registry，校验真实工作区路径（含符号链接）；原request重放返回原回执，不覆盖旧dataset。
+5. 使用登记返回的真实 datasetId、成功 Build 原requestId、当前实例配置revision和真实model调用 `native_research_start_bound`。导入、登记、绑定是不同事实；不改全局runner、不重绑旧研究。
+原请求/输出与失败记录保留；UNKNOWN不重发。晚到定义只能保留其真实 ts_init 并披露静态情景，不能回填历史定义。导入成功不等于数据准入、OOS有效或策略回测完成。

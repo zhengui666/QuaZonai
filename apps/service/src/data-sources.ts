@@ -1,8 +1,8 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc, defineTask, defineExtension, type JsonObject as DurableJson, type TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { dirname, resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
@@ -282,7 +282,7 @@ export async function dataSources(config: ServiceConfig) {
   };
   // Register a new identity only. File contents are captured once on successful publication;
   // retrying the original request returns its receipt without reopening the source file.
-  async function registerDatasets(value: unknown) {
+  async function registerDatasets(value: unknown, descriptorWorkspace?: string) {
     const body = object(value, 'dataset_registration');
     if (Object.keys(body).some(key => !['requestId', 'expectedRevision', 'path'].includes(key))
       || typeof body.requestId !== 'string' || !body.requestId.trim()
@@ -300,8 +300,14 @@ export async function dataSources(config: ServiceConfig) {
     const initial = (await runtime.harness.snapshot(State, context))!.sources[registeredName] as unknown as SavedSource;
     const prior = replay(initial); if (prior) return prior;
     if (initial.revision !== input.expectedRevision) throw new Problem('data_source_revision_conflict', 409);
+    const descriptorPath=resolve(config.dataDir,input.path);
+    if(descriptorWorkspace!==undefined){
+      const root=await realpath(descriptorWorkspace), path=await realpath(descriptorPath);
+      const within=relative(root,path);
+      if(within==='..'||within.startsWith('../')||isAbsolute(within))throw new Problem('research_descriptor_outside_workspace',422);
+    }
     let loaded: DatasetConfig[];
-    try { loaded = await readDatasetConfig(resolve(config.dataDir, input.path)); }
+    try { loaded = await readDatasetConfig(descriptorPath); }
     catch { throw new Problem('dataset_registration_file_invalid', 422); }
     if (!loaded.length) throw new Problem('dataset_registration_empty', 422);
     const receipt = await runtime.harness.commit(async tx => {

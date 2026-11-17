@@ -58,6 +58,9 @@ export async function createService(options: ServiceOptions) {
     configuration: () => preparationOperations.configuration(),
     build: value => preparationOperations.build(value), read: id => preparationOperations.read(id), select: value => preparationOperations.select(value),
     startResearch: value => preparationOperations.startResearch(value),
+    importTarget:(id,revision)=>preparationOperations.importTarget!(id,revision),
+    registrationStatus:()=>preparationOperations.registrationStatus!(),
+    registerDatasets:value=>preparationOperations.registerDatasets!(value),
   });
   let accounts:Awaited<ReturnType<typeof processAccounts>>|undefined;
   let remote:Awaited<ReturnType<typeof remoteAccounts>>|undefined;
@@ -171,7 +174,11 @@ export async function createService(options: ServiceOptions) {
   }, context);
   const builds=nativeBuild.workbench(research,instances);
   const work = workbench(research, config, builds.researchTarget);
-  preparationOperations = { configuration: builds.configuration, build: builds.start, read: builds.read, select: builds.select, startResearch: work.startResearch };
+  preparationOperations = { configuration: builds.configuration, build: builds.start, read: builds.read, select: builds.select, startResearch: work.startResearch,
+    importTarget:builds.researchTarget,
+    registrationStatus:()=>{const source=sources.view().find(row=>row.name==='qz.data.registered')!;return {name:source.name,revision:source.revision};},
+    registerDatasets:value=>{if(!config.research.codingWorkspace)throw new Problem('research_coding_workspace_required',409);return sources.registerDatasets(value,config.research.codingWorkspace);},
+  };
   research.harness.resume();
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {

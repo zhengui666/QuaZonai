@@ -1,3 +1,5 @@
+import { nativeRunnerMarketImportTool } from '../../research/plugins/native-market-import.ts';
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 
@@ -9,10 +11,22 @@ export function nativePreparationTools(operations: {
   read(requestId: string): Promise<unknown>;
   select(value: unknown): Promise<unknown>;
   startResearch(value: unknown): Promise<unknown>;
+  importTarget?(requestId:string,revision:number):Promise<NativeTarget>;
+  registrationStatus?():unknown;
+  registerDatasets?(value:unknown):Promise<unknown>;
 }) {
   const output = (value: unknown) => ({ output: [{ type: 'text' as const, text: JSON.stringify(value) }] });
   const request = obj({ requestId: str(), expectedRevision: int() });
   return defineExtension({ name: 'qz.native-preparation', tools: [
+    ...(operations.importTarget?[nativeRunnerMarketImportTool(operations.importTarget)]:[]),
+    ...(operations.registrationStatus&&operations.registerDatasets?[
+      defineTool({name:'native_dataset_registration_status',parameters:obj({}),replay:'safe',executionMode:'sequential',
+        description:'Read registered dataset source revision for explicit registration. No market file reads or data acquisition.',
+        async execute(){return output(operations.registrationStatus!());}}),
+      defineTool({name:'native_dataset_register',parameters:obj({requestId:str(),expectedRevision:int(),path:str()}),replay:'safe',executionMode:'sequential',
+        description:'Register an explicitly prepared dataset descriptor through the existing registry. Write the descriptor in the configured coding workspace using actual catalog paths and native import evidence; never fabricate catalog or qualification. Uses original requestId and source revision CAS, preserves existing dataset identities and does not start research or trading.',
+        async execute(args){return output(await operations.registerDatasets!(args));}}),
+    ]:[]),
     defineTool({ name: 'native_runner_preparation_status', parameters: obj({}), replay: 'safe', executionMode: 'sequential',
       description: 'Read current configured Rust project identity, available factory modules, selected runner and settings revision. No inspection, compiler, code execution or account connection. Use this revision for an explicit build; missing environment cannot be invented.',
       async execute() { return output(operations.configuration()); } }),

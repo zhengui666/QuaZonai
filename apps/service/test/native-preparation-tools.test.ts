@@ -2,7 +2,7 @@ import {AssistantEntry, ToolTask, configure} from '@earendil-works/pi-durable';
 import {createService} from '../src/service.ts';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
@@ -113,4 +113,25 @@ test('Service initializes preparation callbacks before resuming a persisted tool
   const entry=await service.research.harness.commit(tx=>tx.entry(result.entryId),context);
   const wire=JSON.stringify(entry);assert.ok(wire.includes('revision'));assert.ok(wire.includes('selectedRunner'));assert.equal(wire.includes('TypeError'),false);assert.equal(wire.includes('\"isError\":true'),false);
  }finally{await service?.close();await seed.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('production preparation wiring registers an explicit descriptor and rejects unavailable build before import',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qz-pi-registration-'));
+ const config=configDefaults({dataDir:dir});config.research.codingWorkspace=dir;
+ const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
+ const service=await createService({config,models});
+ try{
+  const path=join(dir,'descriptor.json');await writeFile(path,JSON.stringify({id:'prepared',name:'Protocol metadata only',assetClass:'TEST',currency:'USD',source:'controlled',start:null,end:null,ready:false,data:{catalog:join(dir,'not-executed')},policy:{}}));
+  faux.setResponses([
+   fauxAssistantMessage(fauxToolCall('native_dataset_registration_status',{}),{stopReason:'toolUse'}),
+   fauxAssistantMessage(fauxToolCall('native_dataset_register',{requestId:'registered',expectedRevision:1,path}),{stopReason:'toolUse'}),
+   fauxAssistantMessage(fauxToolCall('native_runner_market_import',{runnerBuildRequestId:'missing',expectedRunnerRevision:0,request:{schema_version:1,manifest_path:'/not-read',instruments_path:'/not-read',output_path:'/not-written'}}),{stopReason:'toolUse'}),
+   fauxAssistantMessage('Descriptor registered; missing Build did not import market data.')]);
+  const result=await service.research.start('prepare-registration',{goal:'Explicit preparation protocol only',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:dir},policy:{}});
+  await (await service.research.harness.submission(result.submissionId,context))!.wait(context);
+  const entries=await service.research.harness.commit(tx=>tx.scanEntries({conversationId:result.conversationId},100),context);
+  const encoded=JSON.stringify(entries);assert.match(encoded,/native_build_request_not_found/);assert.match(encoded,/datasetIds/);assert.doesNotMatch(encoded,/tool_not_found|unknown tool|TypeError/i);
+  const tasks=await service.research.harness.commit(tx=>tx.scanTasks({conversationId:result.conversationId},100),context);
+  assert.equal(tasks.items.filter(t=>t.kind==='qz.native-market-import').length,0);
+ }finally{await service.close();await rm(dir,{recursive:true,force:true});}
 });

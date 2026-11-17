@@ -1,5 +1,5 @@
 import {defineDoc,defineExtension,defineTask,defineTool,type JsonObject,type TaskId} from '@earendil-works/pi-durable';
-import {compile,type Schema} from '@earendil-works/pi-schema';
+import {compile,int,obj,str,type Schema} from '@earendil-works/pi-schema';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {join,normalize} from 'node:path';
 import type {NativeTarget,NativeJson} from '../../../packages/contracts/src/nautilus.ts';
@@ -34,20 +34,38 @@ export function prepareNativeFillObservationImport(args:unknown):JsonObject {
 }
 type ImportCommand='native-market-import'|'native-fill-observation-import';
 const Child=defineDoc<{taskId:TaskId<JsonObject>|null}>({kind:'qz.native-market-import-child',version:1,scope:'task',initial:()=>({taskId:null}),checkpointWhen:(_v,_o,info)=>info.deltasSinceBase>=127});
-function importTool(name:string,parameters:Schema<JsonObject>,prepareArguments:(args:unknown)=>JsonObject,command:ImportCommand,capability:'marketImport'|'fillObservationImport',description:string){return defineTool({
+function importTool(name:string,parameters:Schema<JsonObject>,prepareArguments:(args:unknown)=>JsonObject,command:ImportCommand,capability:'marketImport'|'fillObservationImport',description:string,preparation?:{target(args:JsonObject):Promise<NativeTarget>;request(args:JsonObject):JsonObject}){return defineTool({
   name,outputLimits:nativeToolOutputLimits,parameters,replay:'safe',executionMode:'sequential',description,
   prepareArguments,
   async execute(args,api,context){
     const input=await studyInput(api,context);
     if(input.mode==='LITERATURE_ONLY')throw new Error('literature_only_native_execution_forbidden');
-    const target=nativeTargetForData(input.data);
-    if(typeof target==='string'||!('kind' in target)||target.kind!=='RUST_PROCESS'||target.capabilities.preparation?.[capability]!==true)throw new Error('native_market_import_not_available');
-    const id=await api.commit(async tx=>{const child=await tx.doc(Child,api.taskId);child.taskId??=await tx.createTask(NativeMarketImportTask,{target,request:args,command},{ownership:{kind:'task',taskId:api.taskId}});return child.taskId;},context);
+    let id=await api.commit(async tx=>(await tx.doc(Child,api.taskId)).taskId,context);
+    if(id===null){
+      const target=preparation?await preparation.target(args):nativeTargetForData(input.data);
+      if(typeof target==='string'||!('kind' in target)||target.kind!=='RUST_PROCESS'||target.capabilities.preparation?.[capability]!==true)throw new Error('native_market_import_not_available');
+      const request=preparation?preparation.request(args):args;
+      id=await api.commit(async tx=>{const child=await tx.doc(Child,api.taskId);child.taskId??=await tx.createTask(NativeMarketImportTask,{target,request,command},{ownership:{kind:'task',taskId:api.taskId}});return child.taskId;},context);
+    }
     const task=await api.waitForTask(id,context);
     if(task.state.outcome.status!=='completed')throw new Error(task.state.outcome.status==='failed'?task.state.outcome.error.message:'native_market_import_aborted');
     return {output:[{type:'text',text:nativeToolText(task.state.outcome.result,id)}]};
   },
 });}
+/** Preparation uses the same original import Task, before a catalog can be registered. */
+export function nativeRunnerMarketImportTool(target:(requestId:string,revision:number)=>Promise<NativeTarget>){
+  const parameters=obj({runnerBuildRequestId:str(),expectedRunnerRevision:int(),request:schema}) as Schema<JsonObject>;
+  const validate=compile(parameters);
+  return importTool('native_runner_market_import',parameters,args=>{
+    if(!validate.check(args))throw new Error('native_runner_market_import_invalid');
+    const value=args as JsonObject;
+    prepareNativeMarketImport(value.request);
+    return value;
+  },'native-market-import','marketImport','Import explicitly authorized existing local training files using a named successful original owner Build BEFORE dataset registration. Uses the unchanged native market import contract and original durable import Task; no placeholder dataset, global runner selection or research rebinding. Read the original report before separately registering its actual catalog. Preserve UNKNOWN and original output paths; do not reissue an uncertain import.',{
+    target:args=>target(String(args.runnerBuildRequestId),Number(args.expectedRunnerRevision)),
+    request:args=>args.request as JsonObject,
+  });
+}
 export const nativeMarketImportTool=importTool('native_market_import',schema,prepareNativeMarketImport,'native-market-import','marketImport','Import explicitly owner-specified existing local manifest and native instrument definitions into a NEW TradeTick catalog using the installed Nautilus native importer. No network acquisition, account-fill normalization, bars, trading, auto-registration or research qualification. Source-specific semantics and permission must already be declared in the manifest; raw account fills are not market trades. Use only authorized training paths/windows. Preserve incomplete outputs and original receipts; never retry an uncertain execution into another output directory to hide its state. Read the native report before separately registering any prepared dataset. A runner must explicitly declare preparation.marketImport.');
 export const nativeFillObservationImportTool=importTool('native_fill_observation_import',fillSchema,prepareNativeFillObservationImport,'native-fill-observation-import','fillObservationImport','Convert one explicitly owner-selected existing local Chainticks Parquet into official CustomData fill observations. Preserve original source row/envelope and event/source-node clocks; no TradeTick reconstruction, side aggregation, deduplication, download, bars, research qualification or registration. Maker/special/unknown rows remain observations. Timezone-free source local_time requires explicit UTC assumption. Select only authorized training input, inspect the report, and retain incomplete outputs and original execution identity; do not retry UNKNOWN into another path. Requires explicit preparation.fillObservationImport. Single-file memory materialization is not a large-archive streaming promise.');
 export const NativeMarketImportTask=defineTask<{target:NativeTarget;request:JsonObject;command?:ImportCommand},{phase:'compute'}|{phase:'reconcile';nativeTaskId:TaskId<NativeJson>},JsonObject>({
