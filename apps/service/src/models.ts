@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AuthPrompt, ModelThinkingLevel } from '@earendil-works/pi-ai';
-import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
+import type { AuthPrompt } from '@earendil-works/pi-ai';
 import type { FastifyInstance } from 'fastify';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -124,6 +123,13 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
   app.patch(`${API}/settings`, async request => {
     const patch = object(request.body);
     if (Object.keys(patch).some(key => !['defaultModel', 'thinkingLevel', 'serviceTier', 'tickBookCores'].includes(key))) throw new Problem('settings_field_not_mutable');
+    const before = await getSettings();
+    const candidate = { ...before, ...patch } as SettingsView;
+    const modelChanged = JSON.stringify([candidate.defaultModel, candidate.thinkingLevel, candidate.serviceTier]) !== JSON.stringify([before.defaultModel, before.thinkingLevel, before.serviceTier]);
+    // Provider I/O stays outside the Durable transaction. Recheck actual merged
+    // settings below; a concurrent model change cannot inherit stale capabilities.
+    const availableModels = modelChanged && candidate.defaultModel !== null
+      ? await host.availableModels(text(object(candidate.defaultModel, 'model').provider, 'provider')) : [];
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const current = settings(facts.settings);
       const next = { ...current, ...patch } as SettingsView;
@@ -140,10 +146,10 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
       if (modelSettingsChanged && next.defaultModel !== null) {
         const ref = object(next.defaultModel, 'model');
         if (Object.keys(ref).some(key => !['provider', 'modelId'].includes(key))) throw new Problem('model_invalid');
-        const model = host.models.getModel(text(ref.provider, 'provider'), text(ref.modelId, 'model_id'));
-        const available = model && (await host.availableModels(model.provider)).find(item => item.modelId === model.id);
+        const available = availableModels.find(item => item.provider === text(ref.provider, 'provider') && item.modelId === text(ref.modelId, 'model_id'));
+        const model = host.models.getModel(String(ref.provider), String(ref.modelId));
         if (!model || !available) throw new Problem('model_unavailable', 409);
-        if (next.thinkingLevel !== null && !getSupportedThinkingLevels(model).includes(next.thinkingLevel as ModelThinkingLevel)) throw new Problem('thinking_level_unsupported');
+        if (next.thinkingLevel !== null && !available.thinkingLevels.includes(next.thinkingLevel)) throw new Problem('thinking_level_unsupported');
         if (next.serviceTier !== null && !available.serviceTiers.includes(next.serviceTier)) throw new Problem('service_tier_unsupported');
       } else if (modelSettingsChanged && (next.thinkingLevel !== null || next.serviceTier !== null)) throw new Problem('model_required');
       facts.settings = { ...facts.settings, ...patch };

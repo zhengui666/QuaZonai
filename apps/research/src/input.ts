@@ -23,7 +23,7 @@ export function researchInput(value: unknown): ResearchInput {
   const model = record(input.model, 'model');
   if (typeof input.goal !== 'string' || !input.goal.trim()) throw new Error('research_goal_required');
   if (typeof model.provider !== 'string' || !model.provider || typeof model.modelId !== 'string' || !model.modelId) throw new Error('model_required');
-  if (input.thinkingLevel !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(String(input.thinkingLevel))) throw new Error('invalid_thinking_level');
+  if (input.thinkingLevel !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(String(input.thinkingLevel))) throw new Error('invalid_thinking_level');
   if (input.serviceTier !== undefined && input.serviceTier !== 'default' && input.serviceTier !== 'priority') throw new Error('invalid_service_tier');
   publicLiteratureQueries(input.publicLiteratureQueries);
   if (input.specification !== undefined) {

@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { ModelsStore, ModelsStoreEntry } from '@earendil-works/pi-ai';
 import type { AuthOperationOptions, Credential, CredentialStore } from '@earendil-works/pi-ai';
 
 /** App-owned private storage for the official provider's login/refresh protocol. */
@@ -15,7 +16,7 @@ export class ModelCredentials implements CredentialStore {
     const database = new DatabaseSync(path);
     try {
       await chmod(path, 0o600);
-      database.exec('CREATE TABLE IF NOT EXISTS credentials (provider TEXT PRIMARY KEY, value TEXT NOT NULL)');
+      database.exec('CREATE TABLE IF NOT EXISTS credentials (provider TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS model_catalog (provider TEXT PRIMARY KEY, value TEXT NOT NULL)');
       return new ModelCredentials(database);
     } catch (error) { database.close(); throw error; }
   }
@@ -50,5 +51,13 @@ export class ModelCredentials implements CredentialStore {
   delete(provider: string, options?: AuthOperationOptions) {
     return this.serial(() => { this.database.prepare('DELETE FROM credentials WHERE provider=?').run(provider); }, options);
   }
+  readonly modelsStore: ModelsStore = {
+    read: (provider, options) => this.serial(() => {
+      const row = this.database.prepare('SELECT value FROM model_catalog WHERE provider=?').get(provider);
+      return row ? JSON.parse(String(row.value)) as ModelsStoreEntry : undefined;
+    }, options),
+    write: (provider, entry, options) => this.serial(() => { this.database.prepare('INSERT INTO model_catalog(provider,value) VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET value=excluded.value').run(provider, JSON.stringify(entry)); }, options),
+    delete: (provider, options) => this.serial(() => { this.database.prepare('DELETE FROM model_catalog WHERE provider=?').run(provider); }, options),
+  };
   close() { return this.serial(() => { this.database.close(); }); }
 }

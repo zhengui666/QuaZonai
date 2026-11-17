@@ -24,9 +24,9 @@ export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.t
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
 export type ModelRef = import('@earendil-works/pi-durable').ModelRef;
-export type ThinkingLevel = import('@earendil-works/pi-ai').ModelThinkingLevel;
+export type ThinkingLevel = import('@earendil-works/pi-ai').ModelThinkingLevel | 'ultra';
 export type ServiceTier = 'default' | 'priority';
-export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
+export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; unavailableThinkingLevels?: { level: ThinkingLevel; reason: string }[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
 export type ModelAuthType = 'api_key' | 'oauth';
 export interface ProviderView { id: string; name: string; configured: boolean; authTypes: ModelAuthType[]; login: { id: string; type: ModelAuthType } | null; error: string | null }
 export interface ModelCatalog { providers: ProviderView[]; models: ModelView[] }

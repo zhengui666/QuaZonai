@@ -19,7 +19,7 @@ export async function startLegacyResearch(host: ResearchHost, requestId: string,
       return;
     }
     const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-    await configure(tx, conversation.id, { model: input.model, thinkingLevel: input.thinkingLevel ?? 'medium', instructions: researchInstructions(input) });
+    await configure(tx, conversation.id, { model: input.model, thinkingLevel: (input.thinkingLevel ?? 'medium') as import('@earendil-works/pi-ai').ModelThinkingLevel, instructions: researchInstructions(input) });
     (await tx.doc(Study, conversation.id)).input = structuredClone(input);
     requests.requests[key] = { input, conversationId: conversation.id };
   }, BACKGROUND_CONTEXT);

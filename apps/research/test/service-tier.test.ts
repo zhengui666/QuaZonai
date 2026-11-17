@@ -12,17 +12,19 @@ import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { openRetainedResearch as openResearch } from './frozen-input.ts';
 import research from '../plugins/research.ts';
+import { discoveredOpenAIProvider } from '../src/model-catalog.ts';
+import { ModelCredentials } from '../src/credentials.ts';
 
 const context = BACKGROUND_CONTEXT;
 const input = (goal: string) => ({ goal, model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'max' as const, data: {}, policy: { } });
 type RequestBody = { instructions: string; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
 
-function controlledProvider(provider: Provider = openaiCodexProvider()) {
+function controlledProvider(provider: Provider = openaiCodexProvider(), modelsStore?: import('@earendil-works/pi-ai').ModelsStore) {
   const requests: RequestBody[] = [];
   let fail = false;
   let summary = false;
   const token = `synthetic.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'synthetic-account' } })).toString('base64')}.synthetic`;
-  const models = createModels();
+  const models = createModels({ modelsStore });
   models.setProvider({ ...provider,
     auth: { apiKey: { name: 'Synthetic request auth', async resolve() { return { auth: { apiKey: token } }; } } },
     streamSimple(model, transcript, options) {
@@ -79,7 +81,7 @@ test('official Codex serializes max and per-study Fast choices without mixing co
     assert.equal(transformed, 1);
     assert.equal(controlled.requests.at(-1)!.composition_marker, 'preserved');
     assert.equal(controlled.requests.at(-1)!.service_tier, 'priority');
-    await assert.rejects(host.start('ultra', { ...input('ultra'), thinkingLevel: 'ultra' } as never), /invalid_thinking_level/);
+    await assert.rejects(host.start('ultra', { ...input('ultra'), thinkingLevel: 'ultra' } as never), /thinking_level_unsupported/);
     await assert.rejects(host.start('unsupported-max', { ...input('unsupported max'), model: { provider: other.provider.id, modelId: 'other' } }), /thinking_level_unsupported/);
     await assert.rejects(host.start('unsupported-fast', { ...input('unsupported Fast'), model: { provider: other.provider.id, modelId: 'other' }, thinkingLevel: 'off', serviceTier: 'priority' }), /service_tier_unsupported/);
     assert.equal(controlled.requests.length, choices.length + 1);
@@ -130,4 +132,38 @@ test('official OpenAI Responses requests Fast for subscription auth, including c
     assert.equal(controlled.requests.length, 2);
     assert.equal(controlled.requests[1]!.service_tier, 'priority');
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('new discovered model survives SQLite reopen and offline discovery without losing original reasoning or price uncertainty', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-dynamic-resume-'));
+  const database = join(directory, 'research.sqlite');
+  let credentials = await ModelCredentials.open(join(directory, 'auth'));
+  let offline = false;
+  const provider = () => discoveredOpenAIProvider(openaiProvider(), async () => {
+    if (offline) throw new Error('discovery offline');
+    return Response.json({ models: [{ slug: 'future-discovered', context_window: 200000, default_reasoning_level: 'max', supported_reasoning_levels: [{ effort: 'max' }, { effort: 'ultra' }] }] });
+  });
+  let controlled = controlledProvider(provider(), credentials.modelsStore);
+  let host = await openResearch({ database, models: controlled.models, extensions: [research] });
+  const original = { ...input('recover-discovered'), model: { provider: 'openai', modelId: 'future-discovered' } };
+  try {
+    controlled.fail(true);
+    const receipt = await host.start('recover-discovered', original);
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'unanswered');
+    assert.equal((await host.usage()).costAvailable, false);
+    await host.close(); await credentials.close();
+    credentials = await ModelCredentials.open(join(directory, 'auth'));
+    offline = true; controlled = controlledProvider(provider(), credentials.modelsStore);
+    assert.ok((await controlled.models.refresh({ allowNetwork: true })).errors.has('openai'));
+    host = await openResearch({ database, models: controlled.models, extensions: [research] });
+    assert.equal((await host.usage()).costAvailable, false);
+    await assert.rejects(host.availableModels('openai'), /provider_status_unavailable/);
+    assert.deepEqual(await host.start('recover-discovered', original), receipt);
+    const resumed = await host.resume(receipt.conversationId, receipt.submissionId);
+    assert.equal((await (await host.harness.submission(resumed.submissionId, context))!.wait(context)).status, 'done');
+    assert.equal(controlled.requests.length, 1);
+    assert.equal(controlled.requests[0]!.reasoning.effort, 'max');
+    assertFrozenInput((await host.view(receipt.conversationId)).research!.input, original);
+  } finally { await host.close(); await credentials.close(); await rm(directory, { recursive: true, force: true }); }
 });
