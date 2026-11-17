@@ -114,12 +114,13 @@ it('renders original assessment stars, missing grades, historical scope and real
   const html = renderToStaticMarkup(createElement(ResearchAssessments, { assessments: [
     { taskId: 41, mode: 'SYNTHESIS', status: 'completed', configuration: 'CURRENT', error: null,
       result: { judgment: { stars: null, rationale: '真实样本尚不足' }, dataJudgment: { stars: null }, ratingStatus: 'NOT_RATED_INSUFFICIENT_EVIDENCE', evidence: { logic: { result: { judgment: { stars: 0 } } }, ratingReadiness: { limitations: ['CPCV_NOT_RUN'] } } }, evidenceLinks: [{ taskId: 41, href: '/api/v3/research/7/evidence/41' }] },
+    { taskId: 32, mode: 'LOGIC', reviewTiming: 'POST_EXECUTION', status: 'completed', configuration: 'CURRENT', error: null, result: { judgment: { stars: null } }, evidenceLinks: [] },
     { taskId: 31, mode: 'LOGIC', status: 'completed', configuration: 'HISTORICAL', error: null, result: { judgment: { stars: 3, rationale: '原始逻辑结论' } }, evidenceLinks: [] },
   ] }));
   expect(visibleText(html)).toContain('未评级'); expect(visibleText(html)).toContain('0 / 5 星');
   expect(visibleText(html)).toContain('历史配置，不适用于当前输入'); expect(visibleText(html)).toContain('真实样本尚不足');
   expect(html).not.toContain('/api/v3/research/7/evidence/41'); expect(html).not.toContain('CPCV_NOT_RUN'); expect(html).not.toContain('ratingStatus'); expect(html).toContain('尚未完成组合净化交叉验证');
-  expect(visibleText(html)).toContain('证据不足，未评级');
+  expect(visibleText(html)).toContain('证据不足，未评级'); expect(visibleText(html)).toContain('事后逻辑审阅（不替代事前评估）'); expect(visibleText(html)).toContain('事前逻辑审阅');
 });
 
 it('keeps stopping available for live validation after a completed historical native result', async () => {

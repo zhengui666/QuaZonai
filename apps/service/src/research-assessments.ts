@@ -48,6 +48,7 @@ export async function readResearchAssessments(host: ResearchHost, id: number, in
         }
         rows.push({ taskId: task.id, mode: invocation.mode, status: outcome?.status ?? task.state.status,
           configuration: current ? 'CURRENT' : 'HISTORICAL', result,
+          ...(invocation.mode === 'LOGIC' ? { reviewTiming: evidence.reviewTiming === 'POST_EXECUTION' ? 'POST_EXECUTION' as const : 'PRE_EXECUTION' as const } : {}),
           error: outcome?.status === 'failed' ? 'research_assessment_failed' : null,
           evidenceLinks: [{ taskId: task.id, href: `/api/v3/research/${id}/evidence/${task.id}` }, ...links.filter(link => link.taskId !== task.id)] });
       }

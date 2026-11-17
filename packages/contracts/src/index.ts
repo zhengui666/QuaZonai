@@ -89,6 +89,7 @@ export interface ResearchMessage { entryId: number; text: string; role?: 'user' 
 export interface ResearchMessagePage { messages: ResearchMessage[]; nextCursor: string | null }
 export interface ResearchAssessmentView {
   taskId: number; mode: 'LOGIC' | 'SYNTHESIS'; status: string;
+  reviewTiming?: 'PRE_EXECUTION' | 'POST_EXECUTION';
   configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
   evidenceLinks: { taskId: number; href: string }[];
 }

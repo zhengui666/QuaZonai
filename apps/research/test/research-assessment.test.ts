@@ -122,6 +122,23 @@ test('a real native execution attempt cannot be relabelled as pre-execution logi
     const submission = await conversation!.submit({ type: 'input', content: 'Review now', requestId: 'after-review' }, context);
     await submission.wait(context);
     assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.assessment' }, 20), context)).items.length, 0);
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('native_strategy_logic_review', { hypothesis: 'Retrospective only.', reviewTiming: 'POST_EXECUTION' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(JSON.stringify(judgment(3))),
+      fauxAssistantMessage(fauxToolCall('native_strategy_assessment_report', {}), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(JSON.stringify({ ...judgment(4), evidenceSufficient: true, dataJudgment: judgment(4) })),
+      fauxAssistantMessage('Retrospective review does not supply a pre-execution method.'),
+    ]);
+    await (await conversation!.submit({ type: 'input', content: 'Review retrospectively', requestId: 'post-review' }, context)).wait(context);
+    const doc = await host.harness.snapshot(ResearchAssessment, receipt.conversationId, context);
+    assert.equal(doc!.logicTaskId, null); assert.equal(doc!.reportTaskIds.length, 1);
+    const report = await host.harness.getTask(doc!.reportTaskIds[0]!, context);
+    assert.equal(report!.state.outcome?.status, 'completed');
+    if (report!.state.outcome?.status !== 'completed') assert.fail('report failed');
+    const result = report!.state.outcome.result as any;
+    assert.equal(result.judgment.stars, null); assert.equal(result.dataJudgment.stars, null);
+    assert.ok(result.evidence.ratingReadiness.reasons.includes('PRE_EXECUTION_METHOD_MISSING'));
+
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); if (previousBinary === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previousBinary; }
 });
 
