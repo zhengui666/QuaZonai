@@ -104,3 +104,5 @@ quazonai research implementation-sources "$research_id" --file source-material.j
 新数据集通过 `datasets registry` 获取 `qz.data.registered` revision，使用 `datasets register --file` 追加服务端已准备的 DatasetConfig 文件。相同 ID 不可覆盖任何现有或保留数据集；保存原 requestId，未知结果只查询/重放原请求，不能另换 ID。登记不启动研究、不运行数据获取，也不改变旧数据源。
 
 验收完成后，新的 `research start --file` 可带 `runnerBuildRequestId` 和当前 `expectedRunnerRevision` 显式绑定该完成构建；无需选择全局默认。原环境变化或 revision 冲突必须先核对，不能自动刷新并重发。已有研究及同 requestId 重放保留原 executor。数据集和 runner 就绪不代表允许实盘。
+
+已经执行过的研究仍可通过同一研究终态后的 resume 指令请求“事后源码/逻辑审查”，注明已登记 sourceRequestId，并要求内部 Agent 使用明确的 POST_EXECUTION 审查时序。读取 research get 中独立审查记录及其原 evidence 链接；事后记录不能替代旧事前评级、不能补成事前协议，也不会重跑历史任务。源码复核子 Agent 不自动读取历史回测结果，需将源码结论与原执行证据区分。

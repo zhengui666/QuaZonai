@@ -153,7 +153,7 @@ export function ResearchAssessments({ assessments, researchId }: { assessments: 
       const result = row.result ?? {}; const judgment = record(result.judgment); const data = record(result.dataJudgment);
       const evidence = record(result.evidence); const logic = record(record(record(evidence.logic).result).judgment);
       return <article key={row.taskId} id={`assessment-${row.taskId}`}>
-        <h3>{row.mode === 'LOGIC' ? '事前逻辑审阅' : '综合研究报告'}</h3>
+        <h3>{row.mode === 'LOGIC' ? row.reviewTiming === 'POST_EXECUTION' ? '事后逻辑审阅（不替代事前评估）' : '事前逻辑审阅' : '综合研究报告'}</h3>
         <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'}</p><Status value={row.status} />
         <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', result.ratingStatus === 'RATED_CONDITIONAL_STATIC_SCENARIO' ? '条件性情景评价' : result.ratingStatus === 'NOT_RATED_INSUFFICIENT_EVIDENCE' ? '证据不足，未评级' : typeof judgment.stars === 'number' ? '已记录评价，需结合局限' : '未评级']]} />
         {record(result.instrumentDefinitionAssumption).mode === 'STATIC_SCENARIO' && <p role="note">条件性情景：历史规格未核实</p>}
