@@ -92,3 +92,12 @@ test('owner import evidence stays research-scoped and bounds large completed rep
  assert.ok(JSON.stringify(bounded).length<10000);
  task.kind='pi.tool';await assert.rejects(researchTaskEvidence(host,1,7),/research_evidence_not_found/);
 });
+
+test('small import tool results include original Task linkage without changing native evidence',async()=>{
+ const result={catalog_path:'/not-executed/catalog',report_path:'/not-executed/report.json'};
+ const original=structuredClone(result);
+ const tool=nativeRunnerMarketImportTool(async()=>{throw new Error('original child should not resolve again');});
+ const api={taskId:5,conversationId:1,snapshot:async()=>({input:{data:{}}}),commit:async(fn:any)=>fn({doc:async()=>({taskId:7})}),waitForTask:async()=>({state:{outcome:{status:'completed',result}}})};
+ const output=await tool.execute({runnerBuildRequestId:'original',expectedRunnerRevision:1,request:{schema_version:1,manifest_path:'/not-read',instruments_path:'/not-read',output_path:'/not-written'}},api as any,context);
+ assert.deepEqual(JSON.parse((output.output![0] as any).text),{...result,taskId:7});assert.deepEqual(result,original);
+});

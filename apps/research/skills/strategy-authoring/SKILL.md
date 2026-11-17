@@ -124,3 +124,9 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 4. 调 `native_dataset_registration_status {}` 取得**数据源** revision（不同于实例配置 revision），再调 `native_dataset_register {requestId:"本次登记稳定标识", expectedRevision:数据源revision, path:"工作区内descriptor绝对路径"}`。复用既有append-only registry，校验真实工作区路径（含符号链接）；原request重放返回原回执，不覆盖旧dataset。
 5. 使用登记返回的真实 datasetId、成功 Build 原requestId、当前实例配置revision和真实model调用 `native_research_start_bound`。导入、登记、绑定是不同事实；不改全局runner、不重绑旧研究。
 原请求/输出与失败记录保留；UNKNOWN不重发。晚到定义只能保留其真实 ts_init 并披露静态情景，不能回填历史定义。导入成功不等于数据准入、OOS有效或策略回测完成。
+
+### 目录查询与导入回执关联
+
+`native_strategy_catalog` 的 `data_types` 使用原生 NautilusDataType 名称，例如 `["TradeTick"]`，不是数据集 modality 的 `["TRADE_TICK"]`。可以省略此过滤条件先发现实际 selectors，再原样采用返回名称；按 next_cursor 分页。查询解析失败不代表缺少数据或执行过回放，不把错误改写为成功。
+
+导入工具返回原始 import `taskId` 供关联与分页读取，小结果和大结果提示均保留该关联；catalog_path/report_path与真实manifest/report仍是准备结果的直接证据。任务编号不是策略必填参数，不应给observer或全市场通用流程增加不必要的编号门槛。旧小结果未含编号时可通过外部正式research evidence读取原Task关联，无需重跑导入。
