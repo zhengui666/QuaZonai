@@ -3,7 +3,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/
 import type { Provider, RefreshModelsContext } from '@earendil-works/pi-ai/models';
 import type { ThinkingLevel, ServiceTier } from '../../../packages/contracts/src/index.ts';
 
-type Capabilities = { levels: ThinkingLevel[]; advertised: ThinkingLevel[]; defaultLevel: ThinkingLevel; tiers: ServiceTier[]; outputLimitKnown: boolean };
+type Capabilities = { levels: ThinkingLevel[]; advertised: ThinkingLevel[]; defaultLevel: ThinkingLevel; tiers: ServiceTier[]; outputLimitKnown: boolean; priceKnown: boolean };
 const capabilities = new WeakMap<object, Capabilities>();
 export function thinkingLevels(model: Model<Api>): ThinkingLevel[] { return capabilities.get(model)?.levels ?? [...getSupportedThinkingLevels(model)]; }
 export function defaultThinking(model: Model<Api>, requested: ThinkingLevel): ThinkingLevel {
@@ -12,9 +12,10 @@ export function defaultThinking(model: Model<Api>, requested: ThinkingLevel): Th
   if (current) return current.levels.includes(requested) ? requested : current.defaultLevel;
   return clampThinkingLevel(model, requested as ModelThinkingLevel);
 }
-export function unavailableThinkingLevels(model: Model<Api>) { const value = capabilities.get(model); return value?.advertised.filter(level => !value.levels.includes(level)).map(level => ({ level, reason: '提供方目录已列出，但当前 Pi / Responses 运行接口尚不支持该强度' })) ?? []; }
+export function unavailableThinkingLevels(model: Model<Api>) { const value = capabilities.get(model); return value?.advertised.filter(level => !value.levels.includes(level)).map(level => ({ level, reason: 'Ultra 是 Codex 多 Agent 推理模式；当前 Pi 运行链尚未实现其语义，不能仅发送 ultra 或改成 Max' })) ?? []; }
 export function modelServiceTiers(model: Model<Api>): ServiceTier[] | undefined { return capabilities.get(model)?.tiers; }
 export function unknownOutputLimit(model: Model<Api>) { return capabilities.get(model)?.outputLimitKnown === false; }
+export function unknownPrice(model: Model<Api>) { return capabilities.get(model)?.priceKnown === false; }
 const levels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 type RemoteModel = { slug: string; display_name?: string; visibility?: string; supported_in_api?: boolean; context_window?: number; max_output_tokens?: number; input_modalities?: string[]; default_reasoning_level?: string; supported_reasoning_levels?: { effort: string }[]; service_tiers?: { id: string }[] };
 
@@ -42,7 +43,7 @@ export function readCatalog(body: unknown, provider: Provider): Model<Api>[] {
     };
     const runtime: ThinkingLevel[] = supported.filter(value => value !== 'ultra');
     if (!runtime.length) throw new Error('model_catalog_runtime_unsupported');
-    capabilities.set(model, { levels: runtime, advertised: supported, defaultLevel: runtime.includes(item.default_reasoning_level as ThinkingLevel) ? item.default_reasoning_level as ThinkingLevel : runtime[0]!, tiers: ['default', ...(item.service_tiers?.some(value => value.id === 'priority') ? ['priority' as const] : [])], outputLimitKnown: item.max_output_tokens !== undefined || prior !== undefined });
+    capabilities.set(model, { levels: runtime, advertised: supported, defaultLevel: runtime.includes(item.default_reasoning_level as ThinkingLevel) ? item.default_reasoning_level as ThinkingLevel : runtime[0]!, tiers: ['default', ...(item.service_tiers?.some(value => value.id === 'priority') ? ['priority' as const] : [])], outputLimitKnown: item.max_output_tokens !== undefined || prior !== undefined, priceKnown: prior !== undefined });
     return model;
   });
 }
@@ -56,9 +57,17 @@ export function discoveredOpenAIProvider(provider: Provider, fetcher: typeof fet
   let lastToken: string | undefined;
   return { ...provider, getModels: () => current, getAllModels: () => current,
     async refreshModels(context: RefreshModelsContext) {
+      if (context.stored) {
+        const restored = context.stored.models.filter(model => model.provider === provider.id && (!model.type || model.type === 'chat')) as Model<Api>[];
+        for (const model of restored) {
+          const saved = (model as Model<Api> & { qzCatalog?: Capabilities }).qzCatalog;
+          if (saved) capabilities.set(model, saved);
+        }
+        if (!await context.publish({ update() { current = restored; } })) return;
+      }
       if (!context.allowNetwork) return;
       const credential = context.credential;
-      if (!credential) { await context.publish({ update() { current = []; checkedAt = 0; lastToken = undefined; } }); return; }
+      if (!credential) { await context.publish({ persist: null, update() { current = []; checkedAt = 0; lastToken = undefined; } }); return; }
       const token = credential.type === 'oauth' ? credential.access : credential.key;
       if (!token) throw new Error('model_catalog_auth_unavailable');
       if (!context.force && token === lastToken && Date.now() - checkedAt < 60_000) return;
@@ -69,7 +78,8 @@ export function discoveredOpenAIProvider(provider: Provider, fetcher: typeof fet
       const response = await fetcher(url, { headers, signal: AbortSignal.any([context.signal, AbortSignal.timeout(15000)]) });
       if (!response.ok) throw new Error(`model_catalog_http_${response.status}`);
       const next = readCatalog(await response.json(), provider);
-      await context.publish({ update() { current = next; checkedAt = Date.now(); lastToken = token; } });
+      const now = Date.now();
+      await context.publish({ persist: { models: next.map(model => ({ ...model, ...(capabilities.has(model) ? { qzCatalog: capabilities.get(model) } : {}) })), checkedAt: now }, update() { current = next; checkedAt = now; lastToken = token; } });
     },
   };
 }

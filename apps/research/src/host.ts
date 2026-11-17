@@ -23,7 +23,7 @@ import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import type { ResearchInput } from './documents.ts';
-import { configuredModels, subscriptionSpeed, supportsServiceTier, ModelTiers } from './models.ts';
+import { configuredModels, subscriptionSpeed, supportsServiceTier, ModelPricing, ModelTiers } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from './native-remote-receipts.ts';
@@ -70,8 +70,10 @@ export async function openResearch(options: {
     abort: (_task, runtime, taskContext) => runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), taskContext),
   });
   try {
-    models = options.models ?? await configuredModels(options.providerModules, credentials);
-    speed = subscriptionSpeed(models, async id => (await harness.snapshot(ModelTiers, context))?.tiers[id]);
+    models = options.models ?? await configuredModels(options.providerModules, credentials, credentials?.modelsStore);
+    speed = subscriptionSpeed(models, async id => (await harness.snapshot(ModelTiers, context))?.tiers[id], async () => {
+      if (!(await harness.snapshot(ModelPricing, context))?.unpriced) await harness.commit(async tx => { (await tx.doc(ModelPricing)).unpriced = true; }, context);
+    });
     models = speed.models;
     for (const extension of options.extensions ?? []) registry.install(extension);
     for (const path of options.modules ?? []) {
@@ -372,7 +374,7 @@ export async function openResearch(options: {
       return submission.status(context);
     },
     submissionFor,
-    async usage() { return harness.usage(context); },
+    async usage() { return { ...await harness.usage(context), costAvailable: !(await harness.snapshot(ModelPricing, context))?.unpriced }; },
     async availableModels(providerId?: string) {
       try { const refresh = await models.refresh({ allowNetwork: true, ...(providerId ? { providers: [providerId] } : {}) }); if (refresh.errors.size) throw new Error('provider_status_unavailable'); return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...thinkingLevels(model)], effectiveThinkingLevel: defaultThinking(model, requestedThinking), unavailableThinkingLevels: unavailableThinkingLevels(model), serviceTiers: modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default' as const, 'priority' as const] : []) })); }
       catch { throw new Error('provider_status_unavailable'); }

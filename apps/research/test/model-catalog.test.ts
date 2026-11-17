@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ModelCredentials } from '../src/credentials.ts';
 import { createModels } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { discoveredOpenAIProvider, readCatalog, thinkingLevels, defaultThinking, unavailableThinkingLevels } from '../src/model-catalog.ts';
@@ -27,20 +31,25 @@ test('official provider refresh replaces catalog and discovers new IDs and Ultra
 
 test('unimplemented Ultra is rejected without silently sending a lower effort', async () => {
   const original = openaiProvider();
-  const model = readCatalog({ models: [entry('gpt-6-astra')] }, original)[0]!;
+  const model = readCatalog({ models: [entry('new-unpriced-model')] }, original)[0]!;
   const payloads: Record<string, any>[] = [];
   const models = createModels();
-  models.setProvider({ ...original, getModels: () => [model], getAllModels: () => [model], auth: { apiKey: { name: 'Request serialization test', resolve: async () => ({ auth: { apiKey: 'test' } }) } }, streamSimple(model, transcript, options) {
+  models.setProvider({ ...original, getModels: () => [model], getAllModels: () => [model], auth: { apiKey: { name: 'Request serialization test', resolve: async () => ({ auth: { apiKey: 'sk-test' } }) } }, streamSimple(model, transcript, options) {
     return original.streamSimple(model as import('@earendil-works/pi-ai').Model<'openai-responses'>, transcript, { ...options, fetch: async (_url, init) => {
       payloads.push(JSON.parse(String(init?.body)));
       return new Response('data: {"type":"response.completed","response":{"id":"test","status":"completed","output":[]}}\n\n', { headers: { 'content-type': 'text/event-stream' } });
     } });
   } });
-  const wrapped = subscriptionSpeed(models).models;
+  let unpriced = 0;
+  const wrapped = subscriptionSpeed(models, undefined, async () => { unpriced++; }).models;
   assert.throws(() => wrapped.completeSimple(model, { messages: [] }, { reasoning: 'ultra' as any }), /thinking_level_unsupported/);
   await wrapped.completeSimple(model, { messages: [] }, { reasoning: 'low' });
   assert.equal(payloads.length, 1);
   assert.equal(payloads[0]!.reasoning.effort, 'low');
+  assert.equal(payloads[0]!.max_output_tokens, undefined);
+  await wrapped.completeSimple(model, { messages: [] }, { reasoning: 'low', maxTokens: 128 });
+  assert.equal(payloads[1]!.max_output_tokens, 128);
+  assert.equal(unpriced, 2);
 });
 
 test('model response prompts are ignored and hidden/unsupported models omitted', () => {
@@ -65,4 +74,30 @@ test('discovery rejects unusable contracts instead of inventing runtime reasonin
   assert.throws(() => readCatalog({ models: [{ ...entry('bad'), context_window: 0 }] }, provider), /model_catalog_invalid/);
   assert.throws(() => readCatalog({ models: [{ ...entry('ultra-only', ['ultra']), default_reasoning_level: 'ultra' }] }, provider), /model_catalog_runtime_unsupported/);
   assert.deepEqual(readCatalog({ data: [{ id: 'unknown-without-capabilities' }] }, provider), []);
+});
+
+
+test('official model store restores new IDs and capabilities after restart with discovery offline', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-model-store-'));
+  let credentials = await ModelCredentials.open(directory);
+  try {
+    await credentials.modify('openai', async () => ({ type: 'api_key', key: 'test' }));
+    let models = createModels({ credentials, modelsStore: credentials.modelsStore });
+    models.setProvider(discoveredOpenAIProvider(openaiProvider(), async () => Response.json({ models: [entry('future-model')] })));
+    assert.equal((await models.refresh({ allowNetwork: true })).errors.size, 0);
+    assert.equal(models.getModel('openai', 'future-model')?.id, 'future-model');
+    await credentials.close(); credentials = await ModelCredentials.open(directory);
+    models = createModels({ credentials, modelsStore: credentials.modelsStore });
+    models.setProvider(discoveredOpenAIProvider(openaiProvider(), async () => { throw new Error('offline'); }));
+    const result = await models.refresh({ allowNetwork: true });
+    assert.ok(result.errors.has('openai'));
+    const restored = models.getModel('openai', 'future-model')!;
+    assert.ok(restored);
+    assert.deepEqual(thinkingLevels(restored), ['low', 'max']);
+    assert.equal(unavailableThinkingLevels(restored)[0]!.level, 'ultra');
+    assert.equal(defaultThinking(restored, 'medium'), 'low');
+    const saved = await credentials.modelsStore.read('openai');
+    assert.equal(saved?.models.length, 1);
+    assert.equal(JSON.stringify(saved).includes('test'), false);
+  } finally { await credentials.close(); await rm(directory, { recursive: true, force: true }); }
 });
