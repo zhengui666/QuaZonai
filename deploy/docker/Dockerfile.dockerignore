@@ -67,3 +67,11 @@
 **/provider.env
 **/auth.json
 **/master.key
+
+!.agents/
+!.agents/skills/
+!.agents/skills/quazonai/
+!.agents/skills/quazonai/references/
+!.agents/skills/quazonai/references/strategy-authoring.md
+!.agents/skills/quazonai/assets/
+!.agents/skills/quazonai/assets/research.rs

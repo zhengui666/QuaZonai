@@ -21,8 +21,12 @@ test('official coding tools author and edit Rust in an explicit workspace, prese
   const options = { database: join(root, 'research.sqlite'), codingWorkspace: workspace, models };
   let host = await openResearch(options);
   try {
+    let authoringPrompt = "";
     faux.setResponses([
-      call('write', { path: 'src/lib.rs', content: 'pub const VALUE: u32 = 1;\n' }),
+      transcript => {
+        authoringPrompt = JSON.stringify(transcript);
+        return call('write', { path: 'src/lib.rs', content: 'pub const VALUE: u32 = 1;\n' });
+      },
       call('edit', { path: 'src/lib.rs', edits: [{ oldText: '= 1;', newText: '= 2;' }] }),
       call('read', { path: 'src/lib.rs' }),
       call('read', { path: '../sealed.txt' }),
@@ -34,6 +38,11 @@ test('official coding tools author and edit Rust in an explicit workspace, prese
     const receipt = await host.start('author', { goal: 'Author research source', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     assert.equal(await readFile(join(workspace, 'src/lib.rs'), 'utf8'), 'pub const VALUE: u32 = 2;\n');
+    assert.ok(authoringPrompt.includes('Rust 策略编写合同'));
+    assert.ok(authoringPrompt.includes('pub fn config(catalog: &Path'));
+    assert.ok(authoringPrompt.includes('nautilus_strategy!(CallbackCheck)'));
+    assert.ok(authoringPrompt.includes('native_configured_configure'));
+    assert.ok(authoringPrompt.includes('special_event_observation'));
     await assert.rejects(readFile(join(root, 'new.txt')), { code: 'ENOENT' });
     await assert.rejects(readFile(join(root, 'not-created.txt')), { code: 'ENOENT' });
     await assert.rejects(readFile(join(root, 'not-created-directory/new.rs')), { code: 'ENOENT' });
