@@ -35,16 +35,23 @@ export function requireOriginal(configPath) {
 // be interrupted just to discover it during the stopped inspection.
 export function requireExitedPreflight(selection, status, detail, owner) {
   const fail = () => { throw new Error('Enter maintenance and wait until only the selected exited native job remains; app was not stopped'); };
-  const ownerKind = owner?.kind;
+  const selectedOwner = detail?.tasks?.find(task => task.id === selection.ownerTaskId);
+  // Older releases cannot project import evidence. Only this exact HTTP absence
+  // may use the existing live task projection; stopped Storage checks stay mandatory.
+  const legacyImport = owner?.error === 'research_evidence_not_found' && owner.status === 404
+    && Object.keys(owner).sort().join(',') === 'error,status'
+    && selectedOwner?.name === 'qz.native-market-import' && selectedOwner.status === 'sleeping';
+  const ownerKind = legacyImport ? selectedOwner.name : owner?.kind;
   const supportedOwner = ['qz.native-strategy.backtest', 'qz.native-market-import'].includes(ownerKind);
   const live = detail?.tasks?.filter(task => task.status !== 'terminal');
   const expected = new Map((live ?? []).map(task => [task.id, task.name]));
   const native = detail?.tasks?.find(task => task.id === selection.nativeTaskId);
   if (status?.state !== 'DRAINING' || typeof status.epoch !== 'string' || !status.epoch
     || status.activeBusinessRequests !== 0 || status.blockingExternal?.length !== 0 || status.parkedTaskIds?.length !== 0
-    || owner?.taskId !== selection.ownerTaskId || !supportedOwner
-    || owner.state?.status !== 'sleeping' || owner.state.checkpoint?.phase !== 'reconcile'
-    || owner.state.checkpoint.nativeTaskId !== selection.nativeTaskId
+    || !supportedOwner
+    || (!legacyImport && (owner?.taskId !== selection.ownerTaskId
+      || owner.state?.status !== 'sleeping' || owner.state.checkpoint?.phase !== 'reconcile'
+      || owner.state.checkpoint.nativeTaskId !== selection.nativeTaskId))
     || detail?.id !== selection.conversationId || detail.submission?.id !== selection.submissionId
     || native?.name !== 'qz.native.execution' || native.status !== 'terminal' || native.error !== 'nautilus_execution_unknown'
     || live?.length !== 3 || expected.get(selection.ownerTaskId) !== ownerKind

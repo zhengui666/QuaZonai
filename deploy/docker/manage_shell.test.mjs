@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import { configure } from './configure.mjs';
-import { requireIdle, context } from './maintenance.mjs';
+import { requireIdle, requireExitedPreflight, context } from './maintenance.mjs';
 const require = createRequire(new URL('../../apps/service/package.json', import.meta.url));
 const { openNodeSqliteStorage } = await import(require.resolve('@earendil-works/pi-durable/storage/sqlite/node'));
 async function writeStorage(storage, writes, context) {
@@ -334,7 +334,7 @@ qz_lock "$ROOT"; qz_recover_failed_update "$ROOT"`,'retry-recovery-test',script,
  assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),previous);
 });
 
-for (const blocked of [false, true, 'live']) test(`exited-backtest update inspects stopped originals using candidate only (blocked=${blocked})`, async t => {
+for (const blocked of [false, true, 'live', 'legacy-import']) test(`exited-backtest update inspects stopped originals using candidate only (blocked=${blocked})`, async t => {
   const root = await directory(t);
   for (const name of ['data', 'bundle', 'work']) await mkdir(join(root, name));
   const old = {schema_version:5,version:'v0.0.0-ci.1',revision:'b'.repeat(40),root,uid:process.getuid(),gid:process.getgid(),project:'recovery-test',port:8081,image:`sha256:${'a'.repeat(64)}`,bundle:join(root,'bundle')};
@@ -347,21 +347,35 @@ ROOT=$2; QZ_WORK="$ROOT/work"; QZ_BUNDLE="$ROOT/bundle"; QZ_BACKUP_POLICY=skip; 
 qz_prepare() { QZ_PREPARED="$ROOT/candidate.json"; }
 qz_stop() { echo stop >> "$ROOT/calls"; }
 qz_idle() { echo old-idle >> "$ROOT/calls"; return 90; }
-quazonai() { echo '{}'; }
+quazonai() { ${blocked === 'legacy-import' ? `if [[ \"$*\" == *\"research evidence\"* ]]; then echo '{\"error\":\"research_evidence_not_found\",\"status\":404}' >&2; return 1; fi;` : ''} echo '{}'; }
 qz_compose() { [[ "$1" == "$ROOT/candidate.json" ]] || return 91; shift;
   if [[ "$*" == *exited-preflight* ]]; then echo preflight >> "$ROOT/calls"; ${blocked === 'live' ? 'return 26;' : `echo '{"nativeFailure":{"conversationId":9,"ownerTaskId":24,"nativeTaskId":27,"submissionId":17},"maintenanceEpoch":"original"}'; return;`} fi
-  printf '%s\\n' "$*" >> "$ROOT/calls"; ${blocked ? 'return 27;' : ':'}
+  printf '%s\\n' "$*" >> "$ROOT/calls"; ${blocked === true ? 'return 27;' : ':'}
 }
 qz_start() { echo start >> "$ROOT/calls"; }
 qz_apply_update "$ROOT"`,'exited-backtest-test',fileURLToPath(new URL('./manage.sh',import.meta.url)),root,selection],{encoding:'utf8',timeout:20000});
   const result=run('9:24:27:17');
-  assert.equal(result.status,blocked === 'live' ? 26 : blocked ? 27 : 0,result.stderr);
-  assert.equal(await readFile(join(root,'calls'),'utf8'),'preflight\n'+(blocked === 'live' ? '' : 'stop\nrun --rm --no-deps app maintenance exited-backtest {"nativeFailure":{"conversationId":9,"ownerTaskId":24,"nativeTaskId":27,"submissionId":17},"maintenanceEpoch":"original"}\n'+(blocked?'':'start\n')));
+  assert.equal(result.status,blocked === 'live' ? 26 : blocked === true ? 27 : 0,result.stderr);
+  assert.equal(await readFile(join(root,'calls'),'utf8'),'preflight\n'+(blocked === 'live' ? '' : 'stop\nrun --rm --no-deps app maintenance exited-backtest {"nativeFailure":{"conversationId":9,"ownerTaskId":24,"nativeTaskId":27,"submissionId":17},"maintenanceEpoch":"original"}\n'+(blocked === true?'':'start\n')));
   assert.equal(await readFile(join(root,'data/original'),'utf8'),'original durable records');
-  if (blocked) {
+  if (blocked === 'legacy-import') assert.deepEqual(JSON.parse(await readFile(join(root,'work/live-owner.json'),'utf8')),{error:'research_evidence_not_found',status:404});
+  if (blocked === true || blocked === 'live') {
     const pending=JSON.parse(await readFile(join(root,'pending.json'),'utf8'));
     assert.equal(pending.phase,'preparing');assert.equal(pending.exited_backtest,'9:24:27:17');
     const retry=run('9:24:28:17');assert.notEqual(retry.status,0);assert.match(retry.stderr,/original exited-backtest selection/);
     assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),old);
   } else assert.deepEqual(JSON.parse(await readFile(join(root,'installation.json'),'utf8')),candidate);
+});
+
+
+test('legacy import evidence fallback is exact and retains global preflight scope', () => {
+ const selection={conversationId:9,ownerTaskId:24,nativeTaskId:27,submissionId:17};
+ const tasks=[{id:20,name:'pi.generation',status:'waiting'},{id:22,name:'pi.tool',status:'waiting'},{id:24,name:'qz.native-market-import',status:'sleeping'},{id:27,name:'qz.native.execution',status:'terminal',error:'nautilus_execution_unknown'}];
+ const detail={id:9,submission:{id:17},tasks};
+ const status={state:'DRAINING',epoch:'original',activeBusinessRequests:0,blockingExternal:[],parkedTaskIds:[],blockingTasks:tasks.slice(0,3).map(t=>({taskId:t.id,kind:t.name})),blockingSubmissions:[{submissionId:17,status:'placed'}]};
+ const missing={error:'research_evidence_not_found',status:404};
+ assert.deepEqual(requireExitedPreflight(selection,status,detail,missing),{nativeFailure:selection,maintenanceEpoch:'original'});
+ for(const error of [{error:'unauthorized',status:401},{error:'network_error'},{error:'different',status:404},{...missing,extra:true},null]) assert.throws(()=>requireExitedPreflight(selection,status,detail,error),/app was not stopped/);
+ for(const change of [{name:'qz.native-strategy.backtest'},{status:'running'}]) assert.throws(()=>requireExitedPreflight(selection,status,{...detail,tasks:tasks.map(t=>t.id===24?{...t,...change}:t)},missing),/app was not stopped/);
+ for(const change of [{activeBusinessRequests:1},{blockingExternal:[{}]},{blockingTasks:status.blockingTasks.slice(0,2)},{blockingSubmissions:[]}]) assert.throws(()=>requireExitedPreflight(selection,{...status,...change},detail,missing),/app was not stopped/);
 });
