@@ -133,3 +133,5 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 导入工具返回原始 import `taskId` 供关联与分页读取，小结果和大结果提示均保留该关联；catalog_path/report_path与真实manifest/report仍是准备结果的直接证据。任务编号不是策略必填参数，不应给observer或全市场通用流程增加不必要的编号门槛。旧小结果未含编号时可通过外部正式research evidence读取原Task关联，无需重跑导入。
 
 永续/期货数据的原生模拟 venue 使用与 instrument 兼容的 `AccountType::Margin`，不能因为observer不下单就设为 Cash：固定上游在 `add_instrument` 会拒绝现金账户加载永续/期货。股票/现货仍按实际账户语义配置，不将此变成所有策略一律Margin的限制。仿真账户类型/余额/杠杆参数不表示实盘账户已连接或获交易许可。
+
+正式 `native_runner_build` 请求可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
