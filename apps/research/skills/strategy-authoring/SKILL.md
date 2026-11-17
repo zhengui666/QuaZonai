@@ -106,3 +106,5 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 此 factory 只建 BacktestRunConfig；paper/live 需要独立已编译 account registration、适配器、账户配置和显式启动，不能将历史 factory 自动用于 live，也不从回测成功推导实盘许可。不得在此接线例子里加钱包、账户连接或实盘订单。配置保存、构建与 capabilities 读取均不表示策略已启动。
 
 已有执行后的源码/逻辑复核，使用同一 `native_strategy_logic_review`，显式传 `reviewTiming:"POST_EXECUTION"` 和已授权的 `sourceRequestId`。这是新的独立审查 Task，不重发回测、不替换旧事前逻辑评级或报告，也不能补成事前验证协议。子 Agent 仍只读取指定源码材料，不自动获取历史回测或父对话；结合原结果评价时分别读取原审查及执行证据。省略 reviewTiming 仍是事前审查，已有执行时会拒绝。
+
+综合评估子 Agent 在配置了研究工作区时，可用 `native_assessment_read_report {taskId, offset, limit}` 分页读取该评估清单内原生 Task 的 `request.config.report`。这复用官方 Pi read 的行分页，不运行回测；报告是原 Task 声明路径上的当前文件，不自动等同不可变原生结果或生产者证明。逐页读所需范围、保留截断提示并披露未读内容；不将父 Agent 摘要冒充独立读取。
