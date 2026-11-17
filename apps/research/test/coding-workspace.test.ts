@@ -76,3 +76,40 @@ test('coding tools are absent by default and from literature-only conversations'
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('independent synthesis reads only Task-declared reports with official line pagination', async () => {
+  const { ResearchAssessmentTask } = await import('../plugins/research-assessment.ts');
+  const { NativeStrategyBacktestTask } = await import('../plugins/native-strategy-backtest.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-report-read-'));
+  const workspace = join(directory, 'workspace'); await mkdir(workspace);
+  const report = join(workspace, 'report.json'); await writeFile(report, 'FIRST_REPORT_LINE\nSECOND_REPORT_LINE\nLAST_REPORT_LINE\n');
+  await writeFile(join(directory, 'outside.json'), 'OUTSIDE_SENTINEL');
+  await symlink(join(directory, 'outside.json'), join(workspace, 'escape.json'));
+  const faux = fauxProvider({ tokensPerSecond: 100000 }); const models = createModels(); models.setProvider(faux.provider);
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), codingWorkspace: workspace, models });
+  try {
+    const root = await host.harness.root(context);
+    const native = async (path: string, conversation = root) => conversation.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: { name: 'test-actor', config: { report: path } }, catalog: directory, target: '/missing-report-reader-test-binary' }, { ownership: { kind: 'conversation' } }), context);
+    const nativeId = await native(report); await host.harness.waitForTask(nativeId, context);
+    const escapeId = await native(join(workspace, 'escape.json')); await host.harness.waitForTask(escapeId, context);
+    const unlistedId = await native(report); await host.harness.waitForTask(unlistedId, context);
+    const otherId = await root.commit(async tx => (await tx.createConversation({ ownership: { kind: 'ownerless' } })).id, context);
+    const other = (await host.harness.conversation(otherId, context))!;
+    const foreignId = await native(report, other); await host.harness.waitForTask(foreignId, context);
+    faux.setResponses([
+      call('native_assessment_read_report', { taskId: nativeId, offset: 1, limit: 1 }),
+      input => { const wire = JSON.stringify(input.messages); assert.ok(wire.includes('FIRST_REPORT_LINE')); assert.ok(!wire.includes('SECOND_REPORT_LINE')); return call('native_assessment_read_report', { taskId: nativeId, offset: 2, limit: 2 }); },
+      input => { assert.ok(JSON.stringify(input.messages).includes('LAST_REPORT_LINE')); return call('native_assessment_read_report', { taskId: escapeId }); },
+      call('native_assessment_read_report', { taskId: unlistedId }),
+      call('native_assessment_read_report', { taskId: foreignId }),
+      input => { const wire = JSON.stringify(input.messages); assert.ok(!wire.includes('OUTSIDE_SENTINEL')); assert.ok(wire.includes('research_source_outside_workspace')); assert.ok(wire.includes('assessment_report_not_in_manifest')); assert.ok(wire.includes('assessment_report_task_unavailable')); return fauxAssistantMessage(JSON.stringify({ stars: null, rationale: 'Read current actor file, not immutable execution proof.', risks: [], uncertainties: [] })); },
+    ]);
+    const id = await root.commit(tx => tx.createTask(ResearchAssessmentTask, { mode: 'SYNTHESIS', model: { provider: faux.provider.id, modelId: faux.getModel().id }, request: { name: 'test-actor', config: { report } }, configurationTaskId: null, evidence: { trialHistory: { runs: [{ taskId: nativeId }, { taskId: escapeId }, { taskId: foreignId }] } } }, { ownership: { kind: 'conversation' } }), context);
+    const task = await host.harness.waitForTask(id, context); assert.equal(task.state.outcome.status, 'completed');
+    if (task.state.outcome.status !== 'completed') assert.fail('review failed');
+    const childId = task.state.outcome.result.reviewConversationId as import('@earendil-works/pi-durable').ConversationId;
+    const agent = await (await host.harness.conversation(childId, context))!.agent(context);
+    assert.deepEqual(agent.tools.map(t => t.name).sort(), ['native_assessment_read_exposure', 'native_assessment_read_report']);
+    assert.equal(await readFile(report, 'utf8'), 'FIRST_REPORT_LINE\nSECOND_REPORT_LINE\nLAST_REPORT_LINE\n');
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});

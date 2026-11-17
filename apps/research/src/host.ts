@@ -61,7 +61,7 @@ export async function openResearch(options: {
   let storage!: Storage;
   const registry = createRegistry();
   const coding = options.codingWorkspace ? await codingWorkspace(options.codingWorkspace) : undefined;
-  if (coding) registry.install(coding.extension);
+  if (coding) { registry.install(coding.extension); registry.install(coding.reportExtension); }
   const OwnerStopTask = defineTask<{ conversationId: ConversationId }, { phase: 'stop' }, null>({
     name: 'qz.research.owner-stop', version: 1, initial: () => ({ phase: 'stop' }),
     phases: { async stop(task, runtime, taskContext) {
@@ -89,7 +89,7 @@ export async function openResearch(options: {
     registry.install(defineExtension({ name: 'qz.research-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, ReviewSourceValidationTask] }));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
-    harness = await Harness.open(storage, { models, registry, ...(coding ? { env: coding.env } : {}), settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => !['qz.review', 'qz.research-native', 'qz.ultra-delegation'].includes(extension.name)) } }, context);
+    harness = await Harness.open(storage, { models, registry, ...(coding ? { env: coding.env } : {}), settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => !['qz.review', 'qz.research-native', 'qz.ultra-delegation', 'qz.research-report-read'].includes(extension.name)) } }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
