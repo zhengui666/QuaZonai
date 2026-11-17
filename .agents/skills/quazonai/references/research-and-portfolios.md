@@ -111,6 +111,8 @@ owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Buil
 
 无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。
 
+让内部 Agent 使用正式 `native_runner_build` 请求，可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
+
 ### 多个已登记 catalog
 
 新研究的 start JSON 保留 `datasetId` 为主数据集，可添加 `additionalDatasetIds: ["另一已登记datasetId"]`。服务解析并保留各 dataset 原 catalog 与身份，不复制行情、不扩大父目录；同 requestId 重试仍使用原绑定。只用于内部配置式 Nautilus 工厂/配置式参数批次的多 catalog 输入，旧研究与普通单 catalog 调用不变。外部 Agent 提交真实登记 ID 和研究要求，由 QuaZonai 内部通过 brief、指定绑定 datasetId 的 catalog 检查及原生回测工具执行，不直接编写或执行研究策略。

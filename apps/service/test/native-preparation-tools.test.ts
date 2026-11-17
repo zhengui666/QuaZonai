@@ -20,7 +20,7 @@ import {Application} from '../src/facts.ts';
 test('Pi preparation preserves original build and explicitly admits a new bound study without rebinding old studies',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-pi-prepare-'));
  const config=configDefaults({dataDir:dir,datasets:[{id:'fixture',name:'Protocol only',assetClass:'TEST',currency:'USD',source:'controlled',start:null,end:null,ready:true,data:{catalog:dir},policy:{}}]});
- let count=0;const builder=nativeEnvironmentBuild(config,async()=>({executable:join(dir,`runner-${++count}`),manifestPath:join(dir,'Cargo.toml'),qualification:'COMPILED_NOT_CONNECTED',capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}}));
+ let count=0;const builder=nativeEnvironmentBuild(config,async options=>{assert.equal(options.optimizationLevel,2);return {executable:join(dir,`runner-${++count}`),manifestPath:join(dir,'Cargo.toml'),qualification:'COMPILED_NOT_CONNECTED',capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};});
  const models=createModels(),faux=fauxProvider({tokensPerSecond:100000});models.setProvider(faux.provider);
  let operations!:Parameters<typeof nativePreparationTools>[0];
  const preparation=nativePreparationTools({configuration:()=>operations.configuration(),build:v=>operations.build(v),read:v=>operations.read(v),select:v=>operations.select(v),startResearch:v=>operations.startResearch(v)});
@@ -32,7 +32,7 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
  try{
   await host.harness.commit(async tx=>{(await tx.doc(Application)).settings={defaultModel:null,thinkingLevel:null,serviceTier:null};},context);
   await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/controlled/cargo',manifestPath:join(dir,'Cargo.toml'),packageName:'owner',backtestFactory:'factory'}});
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_runner_preparation_status',{}),{stopReason:'toolUse'}),fauxAssistantMessage(fauxToolCall('native_runner_build',{requestId:'original-build',expectedRevision:1}),{stopReason:'toolUse'}),fauxAssistantMessage('Build task accepted, not yet claimed complete.')]);
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('native_runner_preparation_status',{}),{stopReason:'toolUse'}),fauxAssistantMessage(fauxToolCall('native_runner_build',{requestId:'original-build',expectedRevision:1,optimizationLevel:2}),{stopReason:'toolUse'}),fauxAssistantMessage('Build task accepted, not yet claimed complete.')]);
   const old=await host.start('preparation-parent',{goal:'Explicit preparation only',model,data:{catalog:dir},policy:{}});
   await (await host.harness.submission(old.submissionId,context))!.wait(context);
   const built=await builds.read('original-build');await host.harness.waitForTask(built.taskId,context);
@@ -52,7 +52,7 @@ test('Pi preparation preserves original build and explicitly admits a new bound 
   const conversation=await host.harness.conversation(old.conversationId,context);assert.ok(conversation);
   faux.setResponses([
    fauxAssistantMessage(fauxToolCall('native_runner_build_status',{requestId:'original-build'}),{stopReason:'toolUse'}),
-   fauxAssistantMessage(fauxToolCall('native_runner_build',{requestId:'original-build',expectedRevision:1}),{stopReason:'toolUse'}),
+   fauxAssistantMessage(fauxToolCall('native_runner_build',{requestId:'original-build',expectedRevision:1,optimizationLevel:2}),{stopReason:'toolUse'}),
    fauxAssistantMessage(fauxToolCall('native_runner_select',{requestId:'original-build',expectedRevision:1}),{stopReason:'toolUse'}),
    fauxAssistantMessage('Explicit runner selected.')]);
   await (await conversation.submit({type:'input',content:'Read original build, replay same request, then explicitly select it.',requestId:'select-original'},context)).wait(context);

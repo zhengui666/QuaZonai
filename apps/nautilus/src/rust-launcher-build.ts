@@ -84,7 +84,10 @@ export async function buildRustLauncher(options: {
   targetDirectory?: string;
   signal?: AbortSignal;
   prepareOwnerLockIn?: string;
+  /** Cargo dev-profile opt-level only; preserves other profile settings. */
+  optimizationLevel?: 0 | 1 | 2 | 3;
 }): Promise<{ executable: string; manifestPath: string; capabilities: unknown; qualification: 'COMPILED_NOT_CONNECTED' }> {
+  if (options.optimizationLevel !== undefined && ![0, 1, 2, 3].includes(options.optimizationLevel)) throw new Error('rust_build_optimization_level_invalid');
   const discovery = await preflight('manifest_discovery', () => discoverRustEnvironment(options.source));
   if (!discovery.libraryTarget) throw new Error('rust_environment_public_library_required');
   const binaryName = `qz-owner-launcher-${randomUUID()}`;
@@ -110,6 +113,7 @@ export async function buildRustLauncher(options: {
   const relativeTarget = relative(await realpath(discovery.workspaceRoot), targetDirectory);
   if (!relativeTarget || (!relativeTarget.startsWith(`..${sep}`) && relativeTarget !== '..' && !isAbsolute(relativeTarget))) throw new Error('rust_build_target_must_be_outside_user_workspace');
   const env = { ...process.env, CARGO_PROFILE_DEV_DEBUG: '0', CARGO_INCREMENTAL: '0', RUSTC: rustc, PATH: `${dirname(rustc)}${delimiter}${process.env.PATH ?? ''}`, CARGO_TARGET_DIR: targetDirectory, CARGO_NET_OFFLINE: 'true', QZ_NATIVE_BUILD_LOCK: join(directory, 'launcher/Cargo.lock') };
+  if (options.optimizationLevel !== undefined) Object.assign(env, { CARGO_PROFILE_DEV_OPT_LEVEL: String(options.optimizationLevel) });
   const compiler = await execute(rustc, ['-vV'], { env, signal: options.signal, maxBuffer: 64 * 1024 });
   const host = /^host: (\S+)$/m.exec(compiler.stdout)?.[1];
   if (!host) throw new Error('rust_build_compiler_host_missing');
