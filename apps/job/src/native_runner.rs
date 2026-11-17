@@ -15,7 +15,8 @@ pub fn capabilities(
         "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured},
         "preparation":{"marketImport":cfg!(feature="market-history"),"fillObservationImport":cfg!(feature="market-history")},
         "account":{"compiled":cfg!(feature="account-runtime"),"registration":account_registration,
-            "command":"account-runtime","requiresExplicitStart":true},
+            "command":"account-runtime","requiresExplicitStart":true,
+            "adapters":[{"id":"HYPERLIQUID","compiled":cfg!(feature="account-runtime"),"modes":["paper","live"],"accountTypes":["CASH","MARGIN"]}]},
         "running":false
     })
 }
@@ -146,6 +147,13 @@ mod tests {
         assert_eq!(value["research"]["configuredRunFactory"], true);
         assert_eq!(value["account"]["registration"], false);
         assert_eq!(value["account"]["requiresExplicitStart"], true);
+        assert_eq!(
+            value["account"]["adapters"],
+            serde_json::json!([{
+                "id":"HYPERLIQUID", "compiled":cfg!(feature="account-runtime"),
+                "modes":["paper","live"], "accountTypes":["CASH","MARGIN"]
+            }])
+        );
     }
 }
 
@@ -155,7 +163,7 @@ mod owner_thread_tests {
     fn fresh_owner_thread_does_not_inherit_callers_native_sender() {
         std::thread::spawn(|| {
             use nautilus_common::runner::{
-                SyncTradingCommandSender, set_exec_cmd_sender, try_get_trading_cmd_sender,
+                set_exec_cmd_sender, try_get_trading_cmd_sender, SyncTradingCommandSender,
             };
             set_exec_cmd_sender(std::sync::Arc::new(SyncTradingCommandSender));
             assert!(try_get_trading_cmd_sender().is_some());

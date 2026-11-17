@@ -1,5 +1,5 @@
 //! Operator-only, declaratively mapped history. Scientific jobs remain offline.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use nautilus_core::UnixNanos;
@@ -10,7 +10,7 @@ use nautilus_model::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, btree_map::Entry},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     fs,
     io::{BufRead, BufReader, Write},
     path::{Component, Path, PathBuf},
@@ -2032,23 +2032,7 @@ mod tests {
         assert!(Arguments::try_parse_from(["market-history", "compose-cohorts"]).is_err());
         for retired in ["--cohort-cache", "--cohort-flow-cache"] {
             assert!(retired_cohort_mode(std::ffi::OsStr::new(retired)));
-            assert!(
-                Arguments::try_parse_from([
-                    "market-history",
-                    "import",
-                    "--manifest",
-                    "source.json",
-                    "--instruments",
-                    "instruments.json",
-                    "--output",
-                    "out",
-                    retired
-                ])
-                .is_err()
-            );
-        }
-        assert!(
-            Arguments::try_parse_from([
+            assert!(Arguments::try_parse_from([
                 "market-history",
                 "import",
                 "--manifest",
@@ -2057,10 +2041,22 @@ mod tests {
                 "instruments.json",
                 "--output",
                 "out",
-                "--trade-ticks"
+                retired
             ])
-            .is_ok()
-        );
+            .is_err());
+        }
+        assert!(Arguments::try_parse_from([
+            "market-history",
+            "import",
+            "--manifest",
+            "source.json",
+            "--instruments",
+            "instruments.json",
+            "--output",
+            "out",
+            "--trade-ticks"
+        ])
+        .is_ok());
     }
 
     #[test]
@@ -2118,15 +2114,13 @@ mod tests {
         assert_eq!(fs::read_to_string(&raw).unwrap(), text);
         assert!(context::run(&manifest, &definitions, "", &temp.path().join("unbound")).is_err());
         fs::write(&raw, text.replace("1e-8", "-1e8")).unwrap();
-        assert!(
-            context::run(
-                &manifest,
-                &definitions,
-                "research",
-                &temp.path().join("invalid")
-            )
-            .is_err()
-        );
+        assert!(context::run(
+            &manifest,
+            &definitions,
+            "research",
+            &temp.path().join("invalid")
+        )
+        .is_err());
     }
 
     #[test]
@@ -2236,18 +2230,14 @@ mod tests {
             manifest["funding_settlement_mode"],
             "HISTORICAL_POST_HOC_EVENT_TIME"
         );
-        assert!(
-            !manifest["native_funding_fields"]
-                .as_str()
-                .unwrap()
-                .contains("Original official FundingRateUpdate")
-        );
-        assert!(
-            !manifest["source"]
-                .as_str()
-                .unwrap()
-                .contains("via official NautilusTrader adapter")
-        );
+        assert!(!manifest["native_funding_fields"]
+            .as_str()
+            .unwrap()
+            .contains("Original official FundingRateUpdate"));
+        assert!(!manifest["source"]
+            .as_str()
+            .unwrap()
+            .contains("via official NautilusTrader adapter"));
         assert!(!output.join(".funding-parts").exists());
         let request: contracts::native_strategy::NativeStrategyBacktestRequestV1 = serde_json::from_value(serde_json::json!({
             "schema_version":1,"instrument_id":id.to_string(),"selectors":[{"data_type":"OrderBookDelta","identifier":id.to_string()},{"data_type":"FundingRateUpdate","identifier":id.to_string()}],
@@ -2258,12 +2248,10 @@ mod tests {
         let replay = crate::native_strategy::run(&market, request).unwrap();
         assert_eq!(replay.data_rows_by_type["FundingRateUpdate"].get(), 1);
         assert_eq!(replay.data_rows_by_type["OrderBookDelta"].get(), 6);
-        assert!(
-            replay
-                .notes
-                .iter()
-                .any(|value| value.starts_with("HISTORICAL_POST_HOC_FUNDING:"))
-        );
+        assert!(replay
+            .notes
+            .iter()
+            .any(|value| value.starts_with("HISTORICAL_POST_HOC_FUNDING:")));
         let canonical = &replay.canonical_result;
         let adjustments = canonical["positions"][0]["adjustments"].as_array().unwrap();
         assert_eq!(adjustments.len(), 1);
@@ -2280,18 +2268,16 @@ mod tests {
         assert_eq!(settled["balances"][0]["total"], "99998.99500000 USDT");
         assert_eq!(canonical["fills"].as_array().unwrap().len(), 2);
         // Neither a raw append nor another source may erase the explicit scope.
-        assert!(
-            publish_native_funding(
-                root.path(),
-                Some(&market),
-                std::slice::from_ref(&instrument),
-                &BTreeMap::new(),
-                None
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("FUNDING_CATALOG_PROVENANCE_ALREADY_EXISTS")
-        );
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&market),
+            std::slice::from_ref(&instrument),
+            &BTreeMap::new(),
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("FUNDING_CATALOG_PROVENANCE_ALREADY_EXISTS"));
         assert_eq!(
             json::<serde_json::Value>(&market.join("funding-rates.manifest.json")).unwrap(),
             manifest
@@ -2314,18 +2300,16 @@ mod tests {
         other_catalog
             .write_to_parquet(&[other], None, None, None)
             .unwrap();
-        assert!(
-            publish_native_funding(
-                root.path(),
-                Some(&mixed),
-                std::slice::from_ref(&instrument),
-                &BTreeMap::new(),
-                Some(&manifest)
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING")
-        );
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&mixed),
+            std::slice::from_ref(&instrument),
+            &BTreeMap::new(),
+            Some(&manifest)
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"));
         assert!(!mixed.join("funding-rates.manifest.json").exists());
         // A rejected cross-instrument append leaves the original native row intact.
         let retained = other_catalog
@@ -2359,18 +2343,16 @@ mod tests {
         .unwrap()
         .path();
         fs::rename(&original, original.with_file_name("legacy.parquet")).unwrap();
-        assert!(
-            publish_native_funding(
-                root.path(),
-                Some(&mixed),
-                std::slice::from_ref(&instrument),
-                &BTreeMap::new(),
-                Some(&manifest),
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING")
-        );
+        assert!(publish_native_funding(
+            root.path(),
+            Some(&mixed),
+            std::slice::from_ref(&instrument),
+            &BTreeMap::new(),
+            Some(&manifest),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("SETTLED_HISTORY_REQUIRES_CATALOG_WITHOUT_FUNDING"));
         assert!(!mixed.join("funding-rates.manifest.json").exists());
         assert_eq!(
             serde_json::to_value(
@@ -2388,29 +2370,33 @@ mod tests {
             let invalid = root.path().join(format!("inexact-{index}.jsonl"));
             fs::write(&invalid, serde_json::json!({"instrument_id":id.to_string(), "event_ns":boundary.to_string(), "rate":rate}).to_string()).unwrap();
             let rejected = root.path().join(format!("inexact-output-{index}"));
-            assert!(
-                import_settled_history(&invalid, &definitions, 1, 7201, &rejected, "inexact", None)
-                    .is_err()
-            );
+            assert!(import_settled_history(
+                &invalid,
+                &definitions,
+                1,
+                7201,
+                &rejected,
+                "inexact",
+                None
+            )
+            .is_err());
             assert!(!rejected.exists());
         }
         let duplicate = root.path().join("duplicate.jsonl");
         fs::write(&duplicate, format!("{line}\n{line}\n")).unwrap();
         let rejected = root.path().join("duplicate-output");
-        assert!(
-            import_settled_history(
-                &duplicate,
-                &definitions,
-                1,
-                7201,
-                &rejected,
-                "duplicate",
-                None
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("FUNDING_NATIVE_DUPLICATE_EVENT")
-        );
+        assert!(import_settled_history(
+            &duplicate,
+            &definitions,
+            1,
+            7201,
+            &rejected,
+            "duplicate",
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("FUNDING_NATIVE_DUPLICATE_EVENT"));
         assert!(!rejected.exists());
     }
 
@@ -2422,11 +2408,9 @@ mod tests {
         let parts = funding_parts(&output, &request).unwrap();
         publish_funding_json(&parts.join("0.json"), &Vec::<FundingRateUpdate>::new()).unwrap();
         assert_eq!(funding_parts(&output, &request).unwrap(), parts);
-        assert!(
-            json::<Vec<FundingRateUpdate>>(&parts.join("0.json"))
-                .unwrap()
-                .is_empty()
-        );
+        assert!(json::<Vec<FundingRateUpdate>>(&parts.join("0.json"))
+            .unwrap()
+            .is_empty());
         assert!(
             funding_parts(&output, &serde_json::json!({"source_revision":"different"})).is_err()
         );
@@ -3135,12 +3119,10 @@ mod tests {
         let excluded = &report.source_age_excluded_files["perps/fills.csv"];
         assert_eq!((excluded.rows, excluded.selected_rows), (4, 4));
         assert_eq!(excluded.row_ranges_zero_based, [[0, 1], [2, 3], [4, 6]]);
-        assert!(
-            report
-                .source_age_population
-                .unwrap()
-                .contains("among eligible deliveries")
-        );
+        assert!(report
+            .source_age_population
+            .unwrap()
+            .contains("among eligible deliveries"));
         assert_eq!(report.source_event_start_ns, Some(1767225599998000000));
         assert_eq!(report.source_event_end_ns, Some(1767225601000000001));
         assert!(report.source_event_end_ns.unwrap() > report.event_end_ns);
@@ -3201,12 +3183,10 @@ mod tests {
             let output = temp.path().join("received");
             let report = import(&path, &instruments, &output, options).unwrap();
             assert_eq!(report.status, "INCOMPLETE");
-            assert!(
-                report
-                    .rejected_rows
-                    .keys()
-                    .any(|key| key.starts_with(reason))
-            );
+            assert!(report
+                .rejected_rows
+                .keys()
+                .any(|key| key.starts_with(reason)));
             assert_eq!(report.source_age_excluded_rows.is_some(), observed);
         }
     }
@@ -3340,15 +3320,13 @@ mod tests {
                 .replace("10.1234567890123456", "20.1234567890123456"),
         )
         .unwrap();
-        assert!(
-            import(
-                &manifest,
-                &instruments,
-                &output,
-                tick_options(&prefixes, true, 10, 10_000_000)
-            )
-            .is_err()
-        );
+        assert!(import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, true, 10, 10_000_000)
+        )
+        .is_err());
         fs::write(&csv, &original).unwrap();
         let native_file = report
             .native_files
@@ -3541,15 +3519,13 @@ mod tests {
         .unwrap();
         assert_eq!(report.status, "INCOMPLETE");
         assert_eq!(report.duplicate_trades, 1);
-        assert!(
-            import(
-                &manifest,
-                &instruments,
-                &output,
-                tick_options(&prefixes, true, 10, 10_000_000)
-            )
-            .is_err()
-        );
+        assert!(import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, true, 10, 10_000_000)
+        )
+        .is_err());
         for (name, max_rows, max_bytes) in [("row-limit", 1, 10_000_000), ("byte-limit", 10, 1)] {
             let output = temp.path().join(name);
             let report = import(

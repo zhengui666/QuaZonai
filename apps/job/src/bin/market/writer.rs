@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_model::{
     data::{
         Bar, Data, DataBatch, FundingRateUpdate, HasTsInit, IndexPriceUpdate, MarkPriceUpdate,
@@ -365,13 +365,11 @@ mod tests {
             1_u64.into(),
         )
         .unwrap();
-        assert!(
-            writer
-                .push(Data::Trade(overflow))
-                .unwrap_err()
-                .to_string()
-                .contains("COHORT_LIMIT")
-        );
+        assert!(writer
+            .push(Data::Trade(overflow))
+            .unwrap_err()
+            .to_string()
+            .contains("COHORT_LIMIT"));
         assert!(writer.counts.is_empty());
         assert!(!output.join("import-report.json").exists());
     }

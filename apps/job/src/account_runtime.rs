@@ -9,6 +9,7 @@
 //! position ID, with reduce-only orders. Only a unique long position is supported;
 //! ambiguous/short positions are rejected. Sandbox evidence is not a claim of live
 //! exchange execution validation, nor generic strategy recovery compatibility.
+pub use crate::account_adapter::AccountAdapter;
 use crate::{account_observer::project_snapshot, account_runtime_cache::AccountCacheFactory};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use contracts::{native_strategy::NativeCompiledStrategyV1, Id};
@@ -28,13 +29,9 @@ use nautilus_execution::models::{
     latency::{LatencyModelAny, StaticLatencyModel},
 };
 use nautilus_hyperliquid::{
-    common::{
-        consts::HYPERLIQUID_CLIENT_ID,
-        enums::{HyperliquidEnvironment, HyperliquidProductType},
-    },
+    common::enums::{HyperliquidEnvironment, HyperliquidProductType},
     http::client::HyperliquidHttpClient,
-    HyperliquidDataClientConfig, HyperliquidDataClientFactory, HyperliquidExecutionClientConfig,
-    HyperliquidExecutionClientFactory,
+    HyperliquidExecutionClientConfig,
 };
 use nautilus_live::{
     config::{LiveExecutionEngineConfig, LiveRiskEngineConfig},
@@ -76,6 +73,8 @@ use ustr::Ustr;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountRuntimeConfig {
+    #[serde(default)]
+    pub adapter: AccountAdapter,
     pub client_id: String,
     pub account_id: String,
     pub mode: String,
@@ -363,13 +362,13 @@ impl DataActor for AccountController {
             .borrow_mut()
             .set_trading_state(nautilus_model::enums::TradingState::Halted);
         let ids = self.ids.clone();
-        self.subscribe_quotes(ids.clone(), Some(*HYPERLIQUID_CLIENT_ID), None);
+        self.subscribe_quotes(ids.clone(), Some(self.config.adapter.client_id()), None);
         self.subscribe_book_at_interval(
             ids,
             BookType::L2_MBP,
             NonZeroUsize::new(20),
             NonZeroUsize::new(100).unwrap(),
-            Some(*HYPERLIQUID_CLIENT_ID),
+            Some(self.config.adapter.client_id()),
             None,
         );
         self.clock().set_timer_ns(
@@ -1689,7 +1688,7 @@ async fn run_config_owned(
     let client = if config.mode == "paper" {
         ClientId::from("QZ-PAPER")
     } else {
-        *HYPERLIQUID_CLIENT_ID
+        config.adapter.client_id()
     };
     let cache_factory = AccountCacheFactory::new(config.data_dir.clone());
     let cache_failed = cache_factory.failed.clone();
@@ -1727,15 +1726,10 @@ async fn run_config_owned(
         ..Default::default()
     })
     .with_delay_post_stop_secs(0)
-    .with_delay_shutdown_secs(0)
-    .add_data_client(
-        Some("HYPERLIQUID".into()),
-        Box::new(HyperliquidDataClientFactory::new()),
-        Box::new(HyperliquidDataClientConfig {
-            environment,
-            ..Default::default()
-        }),
-    )?;
+    .with_delay_shutdown_secs(0);
+    let (factory, native_config) = config.adapter.data_client(environment);
+    builder =
+        builder.add_data_client(Some(config.adapter.name().into()), factory, native_config)?;
     if config.mode == "paper" {
         let initial = Decimal::from_str(
             config
@@ -1781,19 +1775,14 @@ async fn run_config_owned(
             }),
         )?;
     } else {
-        builder = builder.add_exec_client(
-            Some("HYPERLIQUID".into()),
-            Box::new(HyperliquidExecutionClientFactory::new()),
-            Box::new(HyperliquidExecutionClientConfig {
-                product_types: execution_product_types,
-                account_id: account,
-                account_address: config.account_address.clone(),
-                environment,
-                normalize_prices: false,
-                include_builder_attribution: false,
-                ..Default::default()
-            }),
-        )?;
+        let (factory, native_config) = config.adapter.execution_client(
+            environment,
+            account,
+            config.account_address.clone(),
+            execution_product_types,
+        );
+        builder =
+            builder.add_exec_client(Some(config.adapter.name().into()), factory, native_config)?;
     }
     let mut node = builder.build()?;
     cache_factory
@@ -2628,6 +2617,7 @@ mod tests {
                 ..Default::default()
             }),
             config: AccountRuntimeConfig {
+                adapter: Default::default(),
                 client_id: "test".into(),
                 account_id: account.to_string(),
                 mode: if scoped { "live" } else { "paper" }.into(),
