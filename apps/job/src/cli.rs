@@ -5,7 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{io::Write, path::PathBuf};
 
 use crate as job;
-use crate::native_configured::ConfiguredRunFactory;
+use crate::native_configured::{ConfiguredFactory, ConfiguredRunFactory};
 use crate::native_stdout;
 use crate::native_strategy::registry::StrategyRegistration;
 
@@ -100,7 +100,7 @@ fn output<T: Serialize>(value: &T) -> Result<()> {
 fn run(
     operation: Operation,
     registration: Option<StrategyRegistration>,
-    factory: Option<ConfiguredRunFactory>,
+    factory: Option<ConfiguredFactory>,
 ) -> Result<()> {
     match operation {
         Operation::BuildIdentity => {
@@ -148,7 +148,7 @@ fn run(
             catalog,
             additional_catalogs,
         } => native_output(|| {
-            job::native_configured::run_with_catalogs(
+            job::native_configured::run_with_factory(
                 &catalog,
                 &additional_catalogs,
                 input()?,
@@ -194,6 +194,12 @@ pub fn main_with_registration(registration: Option<StrategyRegistration>) {
 pub fn main_with_native_hooks(
     registration: Option<StrategyRegistration>,
     factory: Option<ConfiguredRunFactory>,
+) {
+    main_with_configured_factory(registration, factory.map(ConfiguredFactory::Legacy));
+}
+pub(crate) fn main_with_configured_factory(
+    registration: Option<StrategyRegistration>,
+    factory: Option<ConfiguredFactory>,
 ) {
     let args = Arguments::parse();
     if let Err(error) = run(args.command, registration, factory) {
