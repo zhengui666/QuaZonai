@@ -95,3 +95,21 @@ test('source observations are explicit, registered before factory configuration,
   assert.doesNotMatch(renderRustLauncher({ backtestFactory: 'research', chainticksFillObservations: false }), /chainticks_fill/);
   assert.throws(() => renderRustLauncher({ accountFactory: 'account', chainticksFillObservations: true }), /observation_backtest_factory_required/);
 });
+
+
+test('successful completion is explicitly selected without changing legacy factory source',()=>{
+ const legacy=renderRustLauncher({backtestFactory:'observer'});
+ assert.equal(renderRustLauncher({backtestFactory:'observer',backtestCompletion:false}),legacy);
+ assert.doesNotMatch(legacy,/CompletedConfiguredNativeRun|with_completion|finalize_after_node_run/);
+ const selected=renderRustLauncher({backtestFactory:'observer',backtestCompletion:true});
+ assert.match(selected,/Result<job::native_configured::CompletedConfiguredNativeRun>/);
+ assert.match(selected,/let completion_name = name.clone\(\);/);
+ assert.match(selected,/let completion_config = config.clone\(\);/);
+ assert.match(selected,/with_completion\(move \|node, config_id, results\| owner_strategy::observer::finalize_after_node_run\(node, config_id, results, &completion_name, &completion_config\)\)/);
+ assert.match(selected,/main_with_completion_hooks\(None, Some\(configured\), None\)/);
+ const combined=renderRustLauncher({backtestFactory:'observer',backtestCompletion:true,accountFactory:'account',accountCompatibility:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'});
+ assert.match(combined,/main_with_completion_hooks_and_account_compatibility/);
+ assert.match(combined,/AccountCompatibility::TrustedStrategyOnlySingleNode/);
+ assert.throws(()=>renderRustLauncher({accountFactory:'account',backtestCompletion:true}),/completion_factory_required/);
+ assert.throws(()=>renderRustLauncher({backtestFactory:'observer',backtestCompletion:'true' as any}),/completion_factory_required/);
+});

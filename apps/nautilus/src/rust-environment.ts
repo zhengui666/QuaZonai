@@ -84,7 +84,7 @@ export async function materializeRustLauncher(discovery: RustEnvironmentDiscover
   return { manifestPath: join(destination, 'Cargo.toml'), qualification: 'SOURCE_ONLY_NOT_BUILT' };
 }
 
-export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'; chainticksFillObservations?: boolean; marketImport?: boolean };
+export type RustFactoryModules = { backtestFactory?: string; backtestCompletion?: boolean; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'; chainticksFillObservations?: boolean; marketImport?: boolean };
 /** Module paths name explicit public entry contracts, not arbitrary functions or dynamic plugins.
  * owner module backtest: config(Path,name,Value) and install(BacktestEngine,name,Value).
  * owner module account: strategy(name,Value,TraderId,AccountId,ClientId,InstrumentId,&[InstrumentId]) returning its concrete official Strategy type.
@@ -92,18 +92,19 @@ export type RustFactoryModules = { backtestFactory?: string; accountFactory?: st
 export function renderRustLauncher(factories: RustFactoryModules): string {
   if (!factories.backtestFactory && !factories.accountFactory) throw new Error('rust_environment_factory_required');
   if(factories.accountCompatibility!==undefined && (factories.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!factories.accountFactory))throw new Error('rust_account_compatibility_declaration_invalid');
+  if (factories.backtestCompletion !== undefined && (typeof factories.backtestCompletion !== 'boolean' || factories.backtestCompletion && !factories.backtestFactory)) throw new Error('rust_backtest_completion_factory_required');
   if (factories.marketImport !== undefined && typeof factories.marketImport !== 'boolean') throw new Error('rust_market_import_invalid');
   if (factories.chainticksFillObservations !== undefined && (typeof factories.chainticksFillObservations !== 'boolean' || factories.chainticksFillObservations && !factories.backtestFactory)) throw new Error('rust_observation_backtest_factory_required');
   const backtest = factories.backtestFactory ? publicRustPath(factories.backtestFactory) : null;
   const account = factories.accountFactory ? publicRustPath(factories.accountFactory) : null;
-  return `${backtest ? `fn configured(catalog: &std::path::Path, name: &str, config: &serde_json::Value) -> anyhow::Result<job::native_configured::ConfiguredNativeRun> {
+  return `${backtest ? `fn configured(catalog: &std::path::Path, name: &str, config: &serde_json::Value) -> anyhow::Result<job::native_configured::${factories.backtestCompletion ? 'CompletedConfiguredNativeRun' : 'ConfiguredNativeRun'}> {
     ${factories.chainticksFillObservations ? 'job::chainticks_fill::register_observation_type();\n    ' : ''}let native_config = owner_strategy::${backtest}::config(catalog, name, config)?;
     let name = name.to_owned();
     let config = config.clone();
-    Ok(job::native_configured::ConfiguredNativeRun {
+${factories.backtestCompletion ? '    let completion_name = name.clone();\n    let completion_config = config.clone();\n' : ''}    Ok(job::native_configured::ConfiguredNativeRun {
         config: native_config,
         install: Box::new(move |engine| owner_strategy::${backtest}::install(engine, &name, &config)),
-    })
+    }${factories.backtestCompletion ? `.with_completion(move |node, config_id, results| owner_strategy::${backtest}::finalize_after_node_run(node, config_id, results, &completion_name, &completion_config))` : ''})
 }
 ` : ''}${account ? `fn account(registrar: &mut job::account_runtime::AccountStrategyRegistrar, name: &str, config: &serde_json::Value) -> anyhow::Result<()> {
     let strategy = owner_strategy::${account}::strategy(
@@ -113,7 +114,7 @@ export function renderRustLauncher(factories: RustFactoryModules): string {
     registrar.add(strategy)
 }
 ` : ''}fn main() {
-    job::native_runner::${factories.accountCompatibility ? 'main_with_hooks_and_account_compatibility' : 'main_with_hooks'}(None, ${backtest ? 'Some(configured)' : 'None'}, ${account ? 'Some(account)' : 'None'}${factories.accountCompatibility ? ', job::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode' : ''});
+    job::native_runner::${factories.backtestCompletion ? (factories.accountCompatibility ? 'main_with_completion_hooks_and_account_compatibility' : 'main_with_completion_hooks') : (factories.accountCompatibility ? 'main_with_hooks_and_account_compatibility' : 'main_with_hooks')}(None, ${backtest ? 'Some(configured)' : 'None'}, ${account ? 'Some(account)' : 'None'}${factories.accountCompatibility ? ', job::native_runner::AccountCompatibility::TrustedStrategyOnlySingleNode' : ''});
 }
 `;
 }

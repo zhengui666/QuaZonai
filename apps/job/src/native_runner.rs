@@ -1,7 +1,9 @@
 //! One user-built process entry; inspection never invokes a user factory or node.
 #[cfg(feature = "account-runtime")]
 use crate::account_runtime::AccountStrategyRegistration;
-use crate::native_configured::ConfiguredRunFactory;
+use crate::native_configured::{
+    CompletedConfiguredRunFactory, ConfiguredFactory, ConfiguredRunFactory,
+};
 use crate::native_strategy::registry::StrategyRegistration;
 
 pub fn capabilities(
@@ -82,6 +84,48 @@ pub fn main_with_hooks_and_account_compatibility(
     account: Option<AccountStrategyRegistration>,
     compatibility: AccountCompatibility,
 ) {
+    main_with_factory(
+        registration,
+        configured.map(ConfiguredFactory::Legacy),
+        account,
+        compatibility,
+    )
+}
+
+#[cfg(feature = "account-runtime")]
+pub fn main_with_completion_hooks(
+    registration: Option<StrategyRegistration>,
+    configured: Option<CompletedConfiguredRunFactory>,
+    account: Option<AccountStrategyRegistration>,
+) {
+    main_with_completion_hooks_and_account_compatibility(
+        registration,
+        configured,
+        account,
+        AccountCompatibility::Unspecified,
+    )
+}
+#[cfg(feature = "account-runtime")]
+pub fn main_with_completion_hooks_and_account_compatibility(
+    registration: Option<StrategyRegistration>,
+    configured: Option<CompletedConfiguredRunFactory>,
+    account: Option<AccountStrategyRegistration>,
+    compatibility: AccountCompatibility,
+) {
+    main_with_factory(
+        registration,
+        configured.map(ConfiguredFactory::Completion),
+        account,
+        compatibility,
+    )
+}
+#[cfg(feature = "account-runtime")]
+fn main_with_factory(
+    registration: Option<StrategyRegistration>,
+    configured: Option<ConfiguredFactory>,
+    account: Option<AccountStrategyRegistration>,
+    compatibility: AccountCompatibility,
+) {
     match std::env::args().nth(1).as_deref() {
         Some("capabilities") => {
             let mut value = capabilities(
@@ -110,7 +154,7 @@ pub fn main_with_hooks_and_account_compatibility(
                 std::process::exit(1);
             }
         }
-        _ => crate::cli::main_with_native_hooks(registration, configured),
+        _ => crate::cli::main_with_configured_factory(registration, configured),
     }
 }
 
@@ -120,12 +164,27 @@ pub fn main_with_hooks(
     configured: Option<ConfiguredRunFactory>,
     _account: Option<std::convert::Infallible>,
 ) {
+    main_with_factory(registration, configured.map(ConfiguredFactory::Legacy))
+}
+#[cfg(not(feature = "account-runtime"))]
+pub fn main_with_completion_hooks(
+    registration: Option<StrategyRegistration>,
+    configured: Option<CompletedConfiguredRunFactory>,
+    _account: Option<std::convert::Infallible>,
+) {
+    main_with_factory(registration, configured.map(ConfiguredFactory::Completion))
+}
+#[cfg(not(feature = "account-runtime"))]
+fn main_with_factory(
+    registration: Option<StrategyRegistration>,
+    configured: Option<ConfiguredFactory>,
+) {
     match std::env::args().nth(1).as_deref() {
         Some("capabilities") => println!(
             "{}",
             capabilities(registration.is_some(), configured.is_some(), false)
         ),
-        _ => crate::cli::main_with_native_hooks(registration, configured),
+        _ => crate::cli::main_with_configured_factory(registration, configured),
     }
 }
 

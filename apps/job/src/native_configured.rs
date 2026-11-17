@@ -4,7 +4,9 @@ use contracts::{
     SchemaV1,
     native_strategy::{NativeConfiguredBacktestRequestV1, NativeConfiguredBacktestResultV1},
 };
-use nautilus_backtest::{config::BacktestRunConfig, engine::BacktestEngine, node::BacktestNode};
+use nautilus_backtest::{
+    config::BacktestRunConfig, engine::BacktestEngine, node::BacktestNode, result::BacktestResult,
+};
 use std::path::{Path, PathBuf};
 
 /// The user crate builds official multi-venue/data/engine configuration and installs its
@@ -16,6 +18,55 @@ pub struct ConfiguredNativeRun {
 
 pub type ConfiguredRunFactory =
     fn(catalog_root: &Path, name: &str, config: &serde_json::Value) -> Result<ConfiguredNativeRun>;
+
+/// Optional completion is outside the legacy struct so existing owner literals remain valid.
+pub struct CompletedConfiguredNativeRun {
+    pub run: ConfiguredNativeRun,
+    pub after_success:
+        Option<Box<dyn FnOnce(&mut BacktestNode, &str, &[BacktestResult]) -> Result<()>>>,
+}
+impl From<ConfiguredNativeRun> for CompletedConfiguredNativeRun {
+    fn from(run: ConfiguredNativeRun) -> Self {
+        Self {
+            run,
+            after_success: None,
+        }
+    }
+}
+impl ConfiguredNativeRun {
+    /// Invoked only after the matching native run succeeds, after native clear_data
+    /// but before QZ reads canonical output and disposes the still-present engine.
+    /// A returned result may be stopped: the owner checks native outcome for natural EOF.
+    pub fn with_completion(
+        self,
+        hook: impl FnOnce(&mut BacktestNode, &str, &[BacktestResult]) -> Result<()> + 'static,
+    ) -> CompletedConfiguredNativeRun {
+        CompletedConfiguredNativeRun {
+            run: self,
+            after_success: Some(Box::new(hook)),
+        }
+    }
+}
+pub type CompletedConfiguredRunFactory =
+    fn(&Path, &str, &serde_json::Value) -> Result<CompletedConfiguredNativeRun>;
+#[derive(Clone, Copy)]
+pub(crate) enum ConfiguredFactory {
+    Legacy(ConfiguredRunFactory),
+    Completion(CompletedConfiguredRunFactory),
+}
+impl ConfiguredFactory {
+    fn build(
+        self,
+        root: &Path,
+        name: &str,
+        config: &serde_json::Value,
+    ) -> Result<CompletedConfiguredNativeRun> {
+        match self {
+            Self::Legacy(factory) => factory(root, name, config).map(Into::into),
+            Self::Completion(factory) => factory(root, name, config),
+        }
+    }
+}
 
 fn checked_catalog_path(roots: &[PathBuf], protocol: &str, path: &Path) -> Result<()> {
     ensure!(
@@ -47,6 +98,34 @@ pub fn run_with_catalogs(
     request: NativeConfiguredBacktestRequestV1,
     factory: Option<ConfiguredRunFactory>,
 ) -> Result<NativeConfiguredBacktestResultV1> {
+    run_with_factory(
+        root,
+        additional_catalogs,
+        request,
+        factory.map(ConfiguredFactory::Legacy),
+    )
+}
+
+pub fn run_with_completion(
+    root: &Path,
+    additional_catalogs: &[PathBuf],
+    request: NativeConfiguredBacktestRequestV1,
+    factory: Option<CompletedConfiguredRunFactory>,
+) -> Result<NativeConfiguredBacktestResultV1> {
+    run_with_factory(
+        root,
+        additional_catalogs,
+        request,
+        factory.map(ConfiguredFactory::Completion),
+    )
+}
+
+pub(crate) fn run_with_factory(
+    root: &Path,
+    additional_catalogs: &[PathBuf],
+    request: NativeConfiguredBacktestRequestV1,
+    factory: Option<ConfiguredFactory>,
+) -> Result<NativeConfiguredBacktestResultV1> {
     let factory =
         factory.ok_or_else(|| anyhow::anyhow!("NATIVE_CONFIGURED_RUN_REQUIRES_USER_RUNNER"))?;
     let root = root.canonicalize()?;
@@ -57,7 +136,15 @@ pub fn run_with_catalogs(
             roots.push(canonical);
         }
     }
-    let ConfiguredNativeRun { config, install } = factory(&root, &request.name, &request.config)?;
+    let CompletedConfiguredNativeRun {
+        run: ConfiguredNativeRun { config, install },
+        after_success,
+    } = factory.build(&root, &request.name, &request.config)?;
+    let has_completion = after_success.is_some();
+    ensure!(
+        !has_completion || !config.dispose_on_completion(),
+        "NATIVE_CONFIGURED_COMPLETION_REQUIRES_RETAINED_ENGINE"
+    );
     // Validate the returned configuration's real local catalog paths, not just the path
     // supplied to the factory. This does not sandbox arbitrary trusted user Rust code.
     for data in config.data() {
@@ -70,7 +157,7 @@ pub fn run_with_catalogs(
     let id = config.id().to_string();
     let omit_canonical = config.dispose_on_completion();
     let mut node = BacktestNode::builder(vec![config]).build()?;
-    let result = (|| {
+    let execute = || {
         node.build()?;
         let engine = node
             .get_engine_mut(&id)
@@ -79,6 +166,18 @@ pub fn run_with_catalogs(
         // Official actors/controllers may register strategies during start, quote or timer
         // callbacks. Do not impose a pre-run strategy-count gate on a typed configuration.
         let results = node.run()?;
+        if let Some(complete) = after_success {
+            // raise_exception=false can swallow a run error and return Ok([]).
+            ensure!(
+                results.len() == 1 && results[0].run_config_id.as_deref() == Some(id.as_str()),
+                "NATIVE_CONFIGURED_COMPLETION_REQUIRES_SUCCESSFUL_RUN"
+            );
+            ensure!(
+                node.get_engine(&id).is_some(),
+                "NATIVE_CONFIGURED_ENGINE_UNAVAILABLE"
+            );
+            complete(&mut node, &id, &results)?;
+        }
         let canonical_result = if omit_canonical {
             None
         } else {
@@ -116,7 +215,8 @@ pub fn run_with_catalogs(
             canonical_unavailable_reason: omit_canonical
                 .then(|| "OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG".into()),
         })
-    })();
+    };
+    let result = execute();
     node.dispose();
     result
 }
@@ -285,6 +385,168 @@ mod tests {
                 .to_string(),
             "OWNER_RUN_UNKNOWN"
         );
+    }
+
+    #[test]
+    fn completion_uses_real_native_results_and_disposes_on_result_errors() {
+        use nautilus_backtest::config::BacktestVenueConfig;
+        use nautilus_common::{
+            actor::{DataActor, DataActorConfig, DataActorCore},
+            nautilus_actor,
+        };
+        use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+        use nautilus_model::{
+            data::{Data, QuoteTick},
+            enums::{AccountType, BookType, OmsType},
+            identifiers::{ActorId, InstrumentId},
+            types::{Price, Quantity},
+        };
+        use std::sync::Mutex;
+        static EVENTS: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+        #[derive(Debug)]
+        struct LifecycleActor {
+            core: DataActorCore,
+            stop: bool,
+        }
+        nautilus_actor!(LifecycleActor);
+        impl DataActor for LifecycleActor {
+            fn on_start(&mut self) -> Result<()> {
+                EVENTS.lock().unwrap().push("start");
+                if self.stop {
+                    self.shutdown_system(Some("synthetic stop".into()));
+                }
+                Ok(())
+            }
+            fn on_dispose(&mut self) -> Result<()> {
+                EVENTS.lock().unwrap().push("dispose");
+                Ok(())
+            }
+        }
+        fn factory(
+            _: &Path,
+            scenario: &str,
+            _: &serde_json::Value,
+        ) -> Result<CompletedConfiguredNativeRun> {
+            let scenario = scenario.to_string();
+            let venue = BacktestVenueConfig::builder()
+                .name("SIM")
+                .oms_type(OmsType::Netting)
+                .account_type(AccountType::Margin)
+                .book_type(BookType::L1_MBP)
+                .starting_balances(vec!["1000 USD".into()])
+                .fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()))
+                .build()?;
+            // Missing start is legal; the synthetic future tick makes the real engine reject
+            // start > end during run (not at builder/install time).
+            let config = BacktestRunConfig::builder()
+                .venues(vec![venue])
+                .data(Vec::new())
+                .end(1u64.into())
+                .raise_exception(scenario != "swallowed")
+                .dispose_on_completion(scenario == "early-dispose")
+                .build()?;
+            let install_scenario = scenario.clone();
+            let run = ConfiguredNativeRun {
+                config,
+                install: Box::new(move |engine| {
+                    EVENTS.lock().unwrap().push("install");
+                    engine.add_actor(LifecycleActor {
+                        core: DataActorCore::new(DataActorConfig {
+                            actor_id: Some(ActorId::from("COMPLETION-001")),
+                            ..Default::default()
+                        }),
+                        stop: install_scenario == "stopped",
+                    })?;
+                    if install_scenario == "install-error" {
+                        anyhow::bail!("SYNTHETIC_INSTALL_ERROR");
+                    }
+                    if matches!(install_scenario.as_str(), "run-error" | "swallowed") {
+                        engine.add_data(
+                            vec![Data::Quote(QuoteTick::new(
+                                InstrumentId::from("TEST.SIM"),
+                                Price::from("1"),
+                                Price::from("2"),
+                                Quantity::from("1"),
+                                Quantity::from("1"),
+                                2u64.into(),
+                                2u64.into(),
+                            ))],
+                            None,
+                            false,
+                            true,
+                        )?;
+                    }
+                    Ok(())
+                }),
+            };
+            Ok(run.with_completion(move |node, id, results| {
+                EVENTS.lock().unwrap().push("completion");
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].run_config_id.as_deref(), Some(id));
+                let engine = node.get_engine(id).unwrap();
+                let canonical = engine.get_canonical_result()?;
+                assert_eq!(
+                    canonical.as_value()["run"]["outcome"],
+                    if scenario == "stopped" {
+                        "stopped"
+                    } else {
+                        "completed"
+                    }
+                );
+                assert!(!EVENTS.lock().unwrap().contains(&"dispose"));
+                if scenario == "callback-error" {
+                    anyhow::bail!("SYNTHETIC_CALLBACK_ERROR");
+                }
+                if scenario == "stopped" {
+                    anyhow::bail!("OWNER_REQUIRES_NATURAL_COMPLETION");
+                }
+                Ok(())
+            }))
+        }
+        let root = tempfile::tempdir().unwrap();
+        for (scenario, expected) in [
+            ("success", None),
+            ("callback-error", Some("SYNTHETIC_CALLBACK_ERROR")),
+            ("install-error", Some("SYNTHETIC_INSTALL_ERROR")),
+            ("run-error", Some("start was > end")),
+            (
+                "swallowed",
+                Some("NATIVE_CONFIGURED_COMPLETION_REQUIRES_SUCCESSFUL_RUN"),
+            ),
+            (
+                "early-dispose",
+                Some("NATIVE_CONFIGURED_COMPLETION_REQUIRES_RETAINED_ENGINE"),
+            ),
+            ("stopped", Some("OWNER_REQUIRES_NATURAL_COMPLETION")),
+        ] {
+            EVENTS.lock().unwrap().clear();
+            let result = run_with_completion(
+                root.path(),
+                &[],
+                NativeConfiguredBacktestRequestV1 {
+                    schema_version: SchemaV1,
+                    name: scenario.into(),
+                    config: serde_json::Value::Null,
+                },
+                Some(factory),
+            );
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap_err().to_string(), expected, "{scenario}");
+            } else {
+                assert_eq!(result.unwrap().native_results.as_array().unwrap().len(), 1);
+            }
+            let events = EVENTS.lock().unwrap();
+            if scenario == "early-dispose" {
+                assert!(events.is_empty());
+            } else {
+                assert_eq!(events.last(), Some(&"dispose"), "{scenario}: {events:?}");
+                assert_eq!(
+                    events.iter().filter(|e| **e == "completion").count(),
+                    usize::from(matches!(scenario, "success" | "callback-error" | "stopped")),
+                    "{scenario}: {events:?}"
+                );
+            }
+        }
     }
 
     #[test]

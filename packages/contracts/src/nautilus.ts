@@ -102,6 +102,8 @@ export function nativeFixedRiskSizing(value: unknown): NativeFixedRiskSizingRequ
 export interface NativeRustEnvironment {
   kind: 'RUST_PROCESS'; id: string; cargoBinary: string; manifestPath: string; packageName: string;
   features?: string[]; backtestFactory?: string; accountFactory?: string;
+  /** Explicit owner module finalize_after_node_run(node,config_id,results,name,config), after verified successful native completion. */
+  backtestCompletion?: boolean;
   /** Compile/register the existing source observation type for an explicit backtest factory only. */
   chainticksFillObservations?: boolean;
   /** Compile the existing native market-history importer; owner must explicitly use high precision. */

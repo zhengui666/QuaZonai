@@ -71,7 +71,7 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
     if(!task.input.importSource&&!selected)throw new Error('rust_environment_not_configured');
     const targetDirectory=join(config.dataDir,'native-build-cache');
     if(!task.input.importSource)await mkdir(targetDirectory,{recursive:true});
-    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,accountFactory:selected!.accountFactory,accountCompatibility:selected!.accountCompatibility,chainticksFillObservations:selected!.chainticksFillObservations,marketImport:selected!.marketImport},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),targetDirectory,signal:runtime.signal,...(task.input.optimizationLevel!==undefined?{optimizationLevel:task.input.optimizationLevel}:{}),...(task.input.prepareOwnerLock?{prepareOwnerLockIn:config.research.codingWorkspace!}:{})});
+    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,backtestCompletion:selected!.backtestCompletion,accountFactory:selected!.accountFactory,accountCompatibility:selected!.accountCompatibility,chainticksFillObservations:selected!.chainticksFillObservations,marketImport:selected!.marketImport},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),targetDirectory,signal:runtime.signal,...(task.input.optimizationLevel!==undefined?{optimizationLevel:task.input.optimizationLevel}:{}),...(task.input.prepareOwnerLock?{prepareOwnerLockIn:config.research.codingWorkspace!}:{})});
     const target=validateNativeTarget({kind:'RUST_PROCESS',id:task.input.importSource?.environmentId??selected!.id,binary:result.executable,capabilities:result.capabilities}) as ProcessNativeTarget;
     await runtime.commit(()=>({status:'terminal',outcome:{status:'completed',result:json({qualification:result.qualification,target,...('manifestPath' in result?{manifestPath:result.manifestPath}:{}),connected:false,strategyStarted:false})}}),ctx);
    }catch(error){
@@ -139,7 +139,7 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
   }
   function configuration() {
    const current=settings.view();const environment=current.environment;
-   return {revision:current.revision,environment:environment?{id:environment.id,packageName:environment.packageName,backtestFactory:environment.backtestFactory??null}:null,
+   return {revision:current.revision,environment:environment?{id:environment.id,packageName:environment.packageName,backtestFactory:environment.backtestFactory??null,backtestCompletion:environment.backtestCompletion??false}:null,
     selectedRunner:current.runner?{id:current.runner.id,capabilities:current.runner.capabilities}:null,connected:false,strategyStarted:false};
   }
   return {configuration,start:(value:unknown)=>start(value),startImport:(value:unknown)=>start(value,true),read,select,researchTarget};

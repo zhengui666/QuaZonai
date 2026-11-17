@@ -145,3 +145,22 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 同一 instrument/type 在多个 catalog 中的重叠记录不会由 QZ 自动去重或择优；按原 Nautilus 多流行为处理，明确实际选择、时间重叠与同时间戳顺序，不能把绑定的总行数当实际消费记录数。
 
 多 root 执行要求新 runner 的真实 capabilities.research.multiCatalogBindings=true；旧 build 缺省不支持，须按当前正式 glue 重新构建并新建研究绑定，不修改旧 capability 或旧研究。单 root 不要求新增 capability。
+
+
+### 显式原生运行完成检查
+
+需要在原生 `node.run()` 返回后检查并写出最终材料时，在 owner 环境显式保存 `backtestCompletion:true`，同 `backtestFactory` 模块提供：
+
+```rust
+pub fn finalize_after_node_run(
+    node: &mut nautilus_backtest::node::BacktestNode,
+    config_id: &str,
+    results: &[nautilus_backtest::result::BacktestResult],
+    name: &str,
+    config: &serde_json::Value,
+) -> anyhow::Result<()>;
+```
+
+使用原 `config` / `install` 工厂；新构建生成器保存参数并注册可选回调。省略/false保持旧接口，不要求旧模块新增函数。回调要求配置 `dispose_on_completion=false`，且只有原 `node.run()` 返回成功并产生匹配 configuration 的原生结果才进入。此时上游可能已经 `clear_data`，但原 node/engine/actor 仍可检查；不能声称处于 clear_data 之前。
+
+原生成功结果本身不证明自然 EOF。owner 必须核对原 canonical outcome 与自身处理状态，区分正常完成、提前停止及缺失材料；不能把 `on_stop` 或仅 `Ok` 当自然 EOF。回调返回错误时保留失败并执行清理，不宣称成功。保存开关不修改旧 Build/已有研究，需正式重新构建再新建绑定。此接口不新增订单、行情读取旁路或评分逻辑。

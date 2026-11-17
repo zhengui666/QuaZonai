@@ -111,6 +111,7 @@ test('actual binary identity must match resolved source/version/precision', () =
 test('actual generated observation launcher compiles without an account hook', async t => {
   const cargo = process.env.QZ_TEST_CARGO;
   const root = process.env.QZ_TEST_OBSERVATION_BUILD;
+  const completion = process.env.QZ_TEST_BACKTEST_COMPLETION === '1';
   if (!cargo || !root) { t.skip('requires explicit actual Cargo and an isolated retained build directory'); return; }
   const { mkdir, readFile, writeFile } = await import('node:fs/promises');
   const { join, resolve } = await import('node:path');
@@ -158,6 +159,17 @@ pub mod observer {
             .start(time(value,"start_ns")?).end(time(value,"end_ns")?)
             .raise_exception(true).dispose_on_completion(false).build()?)
     }
+    ${completion ? `// Compile-only callback contract: this fixture is not proof of natural EOF.
+    pub fn finalize_after_node_run(
+        node: &mut nautilus_backtest::node::BacktestNode,
+        config_id: &str,
+        results: &[nautilus_backtest::result::BacktestResult],
+        name: &str,
+        config: &Value,
+    ) -> Result<()> {
+        let _ = (node, config_id, results, name, config);
+        Ok(())
+    }` : ''}
     pub fn install(engine: &mut BacktestEngine, _: &str, value: &Value) -> Result<()> {
         let mut catalog = ParquetDataCatalog::new(Path::new(value["catalog"].as_str().context("catalog required")?), None, None, None, None);
         // Registration belongs to the generated launcher. This owner does not redeclare
@@ -201,10 +213,13 @@ impl DataActor for Observer {
   await execute(cargo, ['generate-lockfile', '--offline', '--manifest-path', join(owner, 'Cargo.toml')], { cwd: owner, maxBuffer: 8 * 1024 * 1024 });
   const result = await buildRustLauncher({
     source: { cargoBinary: cargo, manifestPath: join(owner, 'Cargo.toml'), packageName: 'source-observation-owner' },
-    factories: { backtestFactory: 'observer', chainticksFillObservations: true },
+    factories: { backtestFactory: 'observer', chainticksFillObservations: true, ...(completion ? {backtestCompletion:true} : {}) },
     glueSourceRoot: glue, directory: join(root, 'build'),
     ...(process.env.QZ_TEST_NATIVE_TARGET ? { targetDirectory: process.env.QZ_TEST_NATIVE_TARGET } : {}),
   });
+  const generated = await readFile(join(root, 'build/launcher/src/main.rs'), 'utf8');
+  if (completion) assert.match(generated, /with_completion\(move \|node, config_id, results\|/);
+  else assert.doesNotMatch(generated, /with_completion|finalize_after_node_run/);
   const caps = result.capabilities as { research: { configuredRunFactory: boolean }; account: { compiled: boolean; registration: boolean }; running: boolean };
   assert.equal(caps.research.configuredRunFactory, true);
   assert.equal(caps.account.compiled, false);
