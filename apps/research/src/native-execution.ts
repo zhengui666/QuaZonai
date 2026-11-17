@@ -284,7 +284,7 @@ export function withNativeExecutionHost<T>(harness: Harness, conversationId: Con
 }
 type RemoteTaskInput = { target: NativeExecutionTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
 
-/** Explicit source-reviewed closure of the known configured-run failures.
+/** Explicit source-reviewed closure of the known native configuration failures.
  * Exit status alone is never sufficient. The caller supplies the source review;
  * persisted original identity, diagnostics and process observations are checked here.
  * This is an adopted receipt, not a rewrite/retry of the terminal native Task. */

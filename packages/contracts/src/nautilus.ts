@@ -127,7 +127,7 @@ export interface NativeConfiguredFailureReview {
   ownerTaskId: number;
   requestId: string;
   classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD' | 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL' | 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT';
-  /** Human/source review of the original owner factory and the classified rejection boundary. */
+  /** Human/source review of the original native entry point and the classified rejection boundary. */
   sourceReview: string;
   sources: string[];
 }
