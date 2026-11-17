@@ -15,7 +15,7 @@ import type {instanceSettings} from './instance-settings.ts';
 
 const BuildRequests=defineDoc<{requests:Record<string,{taskId:number,input:JsonObject}>}>({kind:'qz.native-environment-builds',version:1,scope:'session',initial:()=>({requests:{}}),checkpointWhen:()=>true});
 type ImportSource={environmentId:string;sourceExecutable:string;expectedIdentity?:ImportedLauncherIdentity};
-type Input={requestId:string;revision:number;environment:NativeRustEnvironment|null;prepareOwnerLock?:boolean;importSource?:ImportSource};
+type Input={requestId:string;revision:number;environment:NativeRustEnvironment|null;prepareOwnerLock?:boolean;optimizationLevel?:0|1|2|3;importSource?:ImportSource};
 /** Public categories only: never forward compiler output, file paths or arbitrary errors. */
 export function nativePreparationFailure(error:unknown):string {
  if(error instanceof RustPreparationError)return error.message;
@@ -71,7 +71,7 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
     if(!task.input.importSource&&!selected)throw new Error('rust_environment_not_configured');
     const targetDirectory=join(config.dataDir,'native-build-cache');
     if(!task.input.importSource)await mkdir(targetDirectory,{recursive:true});
-    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,accountFactory:selected!.accountFactory,accountCompatibility:selected!.accountCompatibility,chainticksFillObservations:selected!.chainticksFillObservations,marketImport:selected!.marketImport},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),targetDirectory,signal:runtime.signal,...(task.input.prepareOwnerLock?{prepareOwnerLockIn:config.research.codingWorkspace!}:{})});
+    const result=task.input.importSource?await importRunner({sourceExecutable:task.input.importSource.sourceExecutable,expectedIdentity:task.input.importSource.expectedIdentity,directory:join(root,String(task.id)),signal:runtime.signal}):await build({source:selected!,factories:{backtestFactory:selected!.backtestFactory,accountFactory:selected!.accountFactory,accountCompatibility:selected!.accountCompatibility,chainticksFillObservations:selected!.chainticksFillObservations,marketImport:selected!.marketImport},glueSourceRoot:process.env.QZ_NATIVE_GLUE_SOURCE??'/opt/quazonai/native-glue',directory:join(root,String(task.id)),targetDirectory,signal:runtime.signal,...(task.input.optimizationLevel!==undefined?{optimizationLevel:task.input.optimizationLevel}:{}),...(task.input.prepareOwnerLock?{prepareOwnerLockIn:config.research.codingWorkspace!}:{})});
     const target=validateNativeTarget({kind:'RUST_PROCESS',id:task.input.importSource?.environmentId??selected!.id,binary:result.executable,capabilities:result.capabilities}) as ProcessNativeTarget;
     await runtime.commit(()=>({status:'terminal',outcome:{status:'completed',result:json({qualification:result.qualification,target,...('manifestPath' in result?{manifestPath:result.manifestPath}:{}),connected:false,strategyStarted:false})}}),ctx);
    }catch(error){
@@ -96,7 +96,8 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
    return {requestId,taskId:task.id,input:original.input,state:task.state,diagnostics:await readPreparationDiagnostics(join(config.dataDir,'native-builds',String(task.id))),connected:false,strategyStarted:false};
   }
   async function start(value:unknown,importing=false){
-   const body=object(value);if(Object.keys(body).some(k=>!(importing?['requestId','expectedRevision','environmentId','sourceExecutable','expectedIdentity']:['requestId','expectedRevision','prepareOwnerLock']).includes(k))||typeof body.requestId!=='string'||!body.requestId.trim()||!Number.isSafeInteger(body.expectedRevision))throw new Problem('native_build_request_invalid',422);
+   const body=object(value);if(Object.keys(body).some(k=>!(importing?['requestId','expectedRevision','environmentId','sourceExecutable','expectedIdentity']:['requestId','expectedRevision','prepareOwnerLock','optimizationLevel']).includes(k))||typeof body.requestId!=='string'||!body.requestId.trim()||!Number.isSafeInteger(body.expectedRevision))throw new Problem('native_build_request_invalid',422);
+   if(body.optimizationLevel!==undefined&&(!Number.isInteger(body.optimizationLevel)||![0,1,2,3].includes(body.optimizationLevel as number)))throw new Problem('native_build_request_invalid',422);
    if(body.prepareOwnerLock!==undefined&&typeof body.prepareOwnerLock!=='boolean')throw new Problem('native_build_request_invalid',422);
    if(body.prepareOwnerLock&&!config.research.codingWorkspace)throw new Problem('research_coding_workspace_required',409);
    let importSource:ImportSource|undefined;
@@ -107,11 +108,11 @@ export function nativeEnvironmentBuild(config:ServiceConfig,build=buildRustLaunc
     importSource={environmentId:body.environmentId,sourceExecutable:body.sourceExecutable,...(expectedIdentity?{expectedIdentity}: {})};
    }
    const current=settings.view();const saved=(await host.harness.snapshot(BuildRequests,context))?.requests[body.requestId];
-   if(saved){if(Boolean(saved.input.prepareOwnerLock)!==Boolean(body.prepareOwnerLock)||saved.input.revision!==body.expectedRevision||canonical(saved.input.importSource??null)!==canonical(json(importSource??null)))throw new Problem('request_id_conflict',409);return read(body.requestId);}
+   if(saved){if(saved.input.optimizationLevel!==body.optimizationLevel||Boolean(saved.input.prepareOwnerLock)!==Boolean(body.prepareOwnerLock)||saved.input.revision!==body.expectedRevision||canonical(saved.input.importSource??null)!==canonical(json(importSource??null)))throw new Problem('request_id_conflict',409);return read(body.requestId);}
    if(current.revision!==body.expectedRevision)throw new Problem('instance_settings_revision_conflict',409);
    if(!current.environment&&!importing)throw new Problem('rust_environment_not_configured',409);
    if(importSource&&current.environment&&current.environment.id!==importSource.environmentId)throw new Problem('native_import_environment_mismatch',409);
-   const input:Input={requestId:body.requestId,revision:current.revision,environment:current.environment??null,...(body.prepareOwnerLock?{prepareOwnerLock:true}:{}),...(importSource?{importSource}:{})};
+   const input:Input={requestId:body.requestId,revision:current.revision,environment:current.environment??null,...(body.prepareOwnerLock?{prepareOwnerLock:true}:{}),...(body.optimizationLevel!==undefined?{optimizationLevel:body.optimizationLevel as 0|1|2|3}:{}),...(importSource?{importSource}:{})};
    const root=await host.harness.root(context);
    await root.commit(async tx=>{const requests=await tx.doc(BuildRequests);const prior=requests.requests[input.requestId];if(prior){if(canonical(prior.input)!==canonical(json(input)))throw new Problem('request_id_conflict',409);return;}
     const taskId=await tx.createTask(Build,input,{ownership:{kind:'conversation'},background:true});requests.requests[input.requestId]={taskId,input:json(input)};

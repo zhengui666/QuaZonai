@@ -14,7 +14,7 @@ import {nativeEnvironmentBuild,readPreparationDiagnostics} from '../src/native-e
 test('explicit build reuses original Pi ID; reads/save never build, artifact selection is separate and revision-fenced',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-build-task-'));const config=configDefaults({dataDir:dir});await mkdir(dir,{recursive:true});
  let builds=0;const caps={schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'test-protocol',nautilusSource:'test-only',precision:'high'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false};
- const builder=nativeEnvironmentBuild(config,async options=>{builds++;assert.equal(options.source.packageName,'owner');assert.equal(options.targetDirectory,join(dir,'native-build-cache'));assert.equal(options.factories.chainticksFillObservations,true);assert.equal(options.factories.marketImport,true);assert.equal(options.factories.accountFactory,undefined);return {executable:join(dir,'fixed-test-artifact'),manifestPath:join(dir,'generated/Cargo.toml'),capabilities:caps,qualification:'COMPILED_NOT_CONNECTED'};});
+ const builder=nativeEnvironmentBuild(config,async options=>{builds++;assert.equal(options.optimizationLevel,undefined);assert.equal(options.source.packageName,'owner');assert.equal(options.targetDirectory,join(dir,'native-build-cache'));assert.equal(options.factories.chainticksFillObservations,true);assert.equal(options.factories.marketImport,true);assert.equal(options.factories.accountFactory,undefined);return {executable:join(dir,'fixed-test-artifact'),manifestPath:join(dir,'generated/Cargo.toml'),capabilities:caps,qualification:'COMPILED_NOT_CONNECTED'};});
  const models=createModels();models.setProvider(fauxProvider().provider);const opts={database:join(dir,'research.sqlite'),models,extensions:[builder.extension]};
  let host=await openResearch(opts),settings=await instanceSettings(config);let work=builder.workbench(host,settings);
  try{
@@ -24,6 +24,7 @@ test('explicit build reuses original Pi ID; reads/save never build, artifact sel
   const body={requestId:'build-original',expectedRevision:1};const first=await work.start(body);await host.harness.waitForTask(first.taskId,context);
   assert.equal(builds,1);assert.equal(config.nativeProcess,undefined,'Compilation never connects or selects an artifact.');
   assert.equal((await work.start(body)).taskId,first.taskId);assert.equal((await work.read(body.requestId)).taskId,first.taskId);assert.equal(builds,1);
+  await assert.rejects(work.start({...body,optimizationLevel:0}),/request_id_conflict/);
   await work.select(body);assert.equal(settings.view().revision,2);await work.select(body);assert.equal(settings.view().revision,2);assert.equal(config.nativeProcess!.capabilities.account.compiled,false);assert.equal(config.nativeProcess!.binary,join(dir,'fixed-test-artifact'));
   await settings.close();await host.close();settings=await instanceSettings(config);host=await openResearch(opts);work=builder.workbench(host,settings);
   assert.equal((await work.start(body)).taskId,first.taskId);assert.equal(builds,1,'Restart/read never reruns the old construction.');
@@ -167,5 +168,26 @@ test('owner resolution rejection retains its exact cause in original build-statu
   assert.equal(result.diagnostics.files.find(file=>file.name==='build.log')!.status,'missing');
   assert.equal((await work.start(request)).taskId,original.taskId);assert.equal(calls,1);
   assert.equal(config.nativeProcess,undefined);
+ }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('explicit optimization is original build input, passed unchanged and cannot change on replay or runner import',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'qz-build-optimization-'));const config=configDefaults({dataDir:dir});const seen:(number|undefined)[]=[];
+ const builder=nativeEnvironmentBuild(config,async options=>{seen.push(options.optimizationLevel);throw new Error('controlled_builder_stop');});
+ const models=createModels();models.setProvider(fauxProvider().provider);const host=await openResearch({database:join(dir,'research.sqlite'),models,extensions:[builder.extension]});const settings=await instanceSettings(config);
+ try{
+  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner'}});
+  const work=builder.workbench(host,settings);
+  for(const optimizationLevel of [0,1,2,3]){
+   const body={requestId:`optimization-${optimizationLevel}`,expectedRevision:1,optimizationLevel};const original=await work.start(body);await host.harness.waitForTask(original.taskId,context);
+   assert.equal((await work.read(body.requestId)).input.optimizationLevel,optimizationLevel);
+   assert.equal((await work.start(body)).taskId,original.taskId);
+   await assert.rejects(work.start({...body,optimizationLevel:(optimizationLevel+1)%4}),/request_id_conflict/);
+   const {optimizationLevel:unused,...omitted}=body;await assert.rejects(work.start(omitted),/request_id_conflict/);
+  }
+  assert.deepEqual(seen,[0,1,2,3]);
+  for(const optimizationLevel of [-1,4,1.5,'2',null,true])await assert.rejects(work.start({requestId:'invalid',expectedRevision:1,optimizationLevel}),/native_build_request_invalid/);
+  await assert.rejects(work.startImport({requestId:'import',expectedRevision:1,environmentId:'owner',sourceExecutable:'/original/runner',optimizationLevel:2}),/native_build_request_invalid/);
+  assert.deepEqual(seen,[0,1,2,3]);assert.equal(settings.view().revision,1);assert.equal(config.nativeProcess,undefined);
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
 });

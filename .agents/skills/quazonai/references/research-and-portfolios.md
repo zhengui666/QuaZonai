@@ -110,3 +110,5 @@ quazonai research implementation-sources "$research_id" --file source-material.j
 owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Build 不随保存配置改变。已有原生导入器要求 owner 显式 high-precision；构建保持同一官方依赖来源/版本/精度，不能通过伪改 capability 启用。让内部 Agent 按内部 skill 准备 owner feature/官方锁、新 Build，并用原 requestId 绑定新研究；不必切换全局 runner。随后由内部 Agent 使用已有 `native_market_import` 合同导入已授权训练文件，读取真实报告后再决定数据登记。请求 `modality` 省略默认 `TRADE_TICK`；`BOOK_SNAPSHOT` 表示全量盘口快照，以原生 Clear + 全档位 Add 的 `OrderBookDelta` 保存，不是源增量。价格和数量不截档，源 `order_count` 不在 delta 字段中；按真实 manifest 映射读取 `parquet-zstd` 文件，事件/接收时钟选择必须明确，接收时钟模式须显式最大延迟。外部 Agent 负责操作 QuaZonai、读取报告和确认登记结果，不直接运行原生导入器。
 
 无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。
+
+让内部 Agent 使用正式 `native_runner_build` 请求，可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
