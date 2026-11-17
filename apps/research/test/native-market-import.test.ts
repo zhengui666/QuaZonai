@@ -88,7 +88,7 @@ test('owner import evidence stays research-scoped and bounds large completed rep
  assert.deepEqual((await researchTaskEvidence(host,1,7)).state,task.state);
  await assert.rejects(researchTaskEvidence(host,2,7),/research_evidence_not_found/);
  task.state={status:'terminal',outcome:{status:'completed',result:{report:{native_files:Array.from({length:1000},()=>({path:'p'.repeat(100)}))}}}};
- const bounded=await researchTaskEvidence(host,1,7);assert.equal(bounded.state.outcome.result.reader,'native_assessment_read_exposure');
+ const bounded=await researchTaskEvidence(host,1,7);if(bounded.state.status!=='terminal'||bounded.state.outcome.status!=='completed')assert.fail('completed import expected');assert.equal(bounded.state.outcome.result.reader,'native_assessment_read_exposure');
  assert.ok(JSON.stringify(bounded).length<10000);
  task.kind='pi.tool';await assert.rejects(researchTaskEvidence(host,1,7),/research_evidence_not_found/);
 });
