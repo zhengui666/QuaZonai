@@ -151,3 +151,21 @@ test('explicit offline owner preparation is scope-gated, original-ID idempotent 
   await assert.rejects(work.start({...request,prepareOwnerLock:false}),/request_id_conflict/);
  }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('owner resolution rejection retains its exact cause in original build-status diagnostics',async()=>{
+ const {RustPreparationError}=await import('../../nautilus/src/rust-launcher-build.ts');
+ const dir=await mkdtemp(join(tmpdir(),'qz-resolution-diagnostic-'));const config=configDefaults({dataDir:dir});let calls=0;
+ const builder=nativeEnvironmentBuild(config,async()=>{calls++;throw new RustPreparationError('owner_native_resolution',new Error('rust_build_owner_dependency_changed:nautilus-data'));});
+ const models=createModels();models.setProvider(fauxProvider().provider);const host=await openResearch({database:join(dir,'research.sqlite'),models,extensions:[builder.extension]});const settings=await instanceSettings(config);
+ try{
+  await settings.saveEnvironment({expectedRevision:0,environment:{kind:'RUST_PROCESS',id:'owner',cargoBinary:'/owner/cargo',manifestPath:'/owner/Cargo.toml',packageName:'owner'}});
+  const work=builder.workbench(host,settings),request={requestId:'resolution-failed',expectedRevision:1};const original=await work.start(request);await host.harness.waitForTask(original.taskId,context);
+  const result=await work.read(request.requestId);assert.equal(result.state.status,'terminal');
+  if(result.state.status==='terminal'&&result.state.outcome.status==='failed')assert.equal(result.state.outcome.error.message,'rust_preflight_failed:owner_native_resolution');else assert.fail('Expected resolution failure');
+  assert.match(result.diagnostics.files.find(file=>file.name==='preflight.log')!.text!,/rust_build_owner_dependency_changed:nautilus-data/);
+  assert.equal(result.diagnostics.files.find(file=>file.name==='build.log')!.status,'missing');
+  assert.equal((await work.start(request)).taskId,original.taskId);assert.equal(calls,1);
+  assert.equal(config.nativeProcess,undefined);
+ }finally{await settings.close();await host.close();await rm(dir,{recursive:true,force:true});}
+});
