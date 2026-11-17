@@ -957,8 +957,11 @@ fn file_symbol(path: &Path) -> Result<String> {
 impl Manifest {
     fn cryptohftdata(&self) -> bool {
         self.repository == "CryptoHFTData"
-            && self.source_reference.as_deref()
-                == Some("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data")
+            && matches!(
+                self.source_reference.as_deref(),
+                Some("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data")
+                    | Some("https://www.cryptohftdata.com/docs/wire-format-hyperliquid-futures")
+            )
     }
 
     fn trade_revision(&self) -> bool {
@@ -3005,6 +3008,99 @@ mod tests {
         metadata["files"][0]["size"] = serde_json::json!(fs::metadata(&csv).unwrap().len());
         fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
         (path, instruments)
+    }
+
+    #[test]
+    fn hyperliquid_wire_reference_preserves_trade_identity_and_replay_semantics() {
+        for conflict in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut rows = concat!(
+                "BTCUSDT,1767225600001,10.12,0.1,T-1,B,1767225600003000000\n",
+                "BTCUSDT,1767225600001,10.13,0.2,T-2,S,1767225600002000000\n",
+                "BTCUSDT,1767225600001,10.12,0.1,T-1,B,1767225600002000000\n"
+            )
+            .to_owned();
+            if conflict {
+                rows.push_str("BTCUSDT,1767225600001,99.12,0.1,T-1,B,1767225600004000000\n");
+            }
+            let (path, instruments) = received_source(temp.path(), &rows, true);
+            let mut metadata: serde_json::Value = json(&path).unwrap();
+            metadata["source_reference"] = serde_json::json!(
+                "https://www.cryptohftdata.com/docs/wire-format-hyperliquid-futures"
+            );
+            let manifest: Manifest = serde_json::from_value(metadata.clone()).unwrap();
+            assert!(manifest.cryptohftdata());
+            for reference in [
+                "https://www.cryptohftdata.com/docs/rest-trades",
+                "https://www.cryptohftdata.com/docs/wire-format-binance-futures",
+                "https://example.com/docs/wire-format-hyperliquid-futures",
+            ] {
+                metadata["source_reference"] = serde_json::json!(reference);
+                assert!(
+                    !serde_json::from_value::<Manifest>(metadata.clone())
+                        .unwrap()
+                        .cryptohftdata()
+                );
+            }
+            metadata["source_reference"] = serde_json::json!(manifest.source_reference);
+            metadata["repository"] = serde_json::json!("DifferentPublisher");
+            assert!(
+                !serde_json::from_value::<Manifest>(metadata.clone())
+                    .unwrap()
+                    .cryptohftdata()
+            );
+            metadata["repository"] = serde_json::json!("CryptoHFTData");
+            fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let prefixes = ["perps/".into()];
+            let mut options = tick_options(&prefixes, false, 10, 10_000_000);
+            options.received_time = true;
+            options.maximum_receive_delay_ns = Some(4_000_000);
+            let output = temp.path().join("received");
+            let report = import(&path, &instruments, &output, options).unwrap();
+            assert_eq!(
+                report.status,
+                if conflict { "INCOMPLETE" } else { "IMPORTED" }
+            );
+            assert_eq!(report.duplicate_trades, 1);
+            assert_eq!(report.readback_records, 2);
+            assert_eq!(
+                report.rejected_rows.values().sum::<u64>(),
+                u64::from(conflict)
+            );
+            assert_eq!(
+                report.deduplication_policy.as_deref(),
+                Some("EARLIEST_RECEIPT_IDENTICAL_TRADE")
+            );
+            let mut catalog =
+                nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                    output.join("catalog").to_str().unwrap(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            let trades = catalog
+                .query::<TradeTick>(None, None, None, None, None, false)
+                .unwrap();
+            assert_eq!(trades.len(), 2);
+            assert!(
+                trades
+                    .iter()
+                    .all(|trade| trade.ts_event.as_u64() == 1767225600001000000
+                        && trade.ts_init.as_u64() == 1767225600002000000)
+            );
+            let first = trades
+                .iter()
+                .find(|trade| trade.trade_id.to_string() == "T-1")
+                .unwrap();
+            let second = trades
+                .iter()
+                .find(|trade| trade.trade_id.to_string() == "T-2")
+                .unwrap();
+            assert_eq!(first.price.as_decimal().normalize().to_string(), "10.12");
+            assert_eq!(second.size.as_decimal().normalize().to_string(), "0.2");
+        }
     }
 
     #[test]
