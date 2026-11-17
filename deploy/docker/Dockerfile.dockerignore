@@ -60,6 +60,13 @@
 !deploy/docker/maintenance.mjs
 !deploy/docker/operator/
 !deploy/docker/operator/**
+!.agents/
+!.agents/skills/
+!.agents/skills/quazonai/
+!.agents/skills/quazonai/references/
+!.agents/skills/quazonai/references/strategy-authoring.md
+!.agents/skills/quazonai/assets/
+!.agents/skills/quazonai/assets/research.rs
 **/node_modules
 **/dist
 **/test-results

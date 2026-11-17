@@ -34,6 +34,10 @@ test('Docker context admits native glue COPY inputs and keeps private data exclu
   const copies = docker.split('\n').filter(line => line.startsWith('COPY ') && line.includes('/opt/quazonai/native-glue/'));
   const sources = copies.flatMap(line => line.split(/\s+/).slice(2, -1));
   sources.push('apps/nautilus/package.json', 'apps/nautilus/src');
+  for (const source of ['.agents/skills/quazonai/references/strategy-authoring.md', '.agents/skills/quazonai/assets/research.rs']) {
+    assert.ok(docker.includes(`COPY --chmod=644 ${source} /opt/quazonai/${source}`));
+    sources.push(source);
+  }
   for (const source of sources) {
     const directory = lstatSync(resolve(root, source)).isDirectory();
     assert.ok(rules.includes(`!${source}${directory ? '/' : ''}`), source);

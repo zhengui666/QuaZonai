@@ -1,4 +1,4 @@
-import { lstat, realpath, stat } from 'node:fs/promises';
+import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { defineExtension, hook, section, ToolTask } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
@@ -10,6 +10,8 @@ export async function codingWorkspace(directory: string) {
   if (!isAbsolute(directory)) throw new Error('research_coding_workspace_must_be_absolute');
   const root = await realpath(directory);
   if (!(await stat(root)).isDirectory()) throw new Error('research_coding_workspace_not_directory');
+  const authoring = await readFile(new URL('../../../.agents/skills/quazonai/references/strategy-authoring.md', import.meta.url), 'utf8');
+  const example = await readFile(new URL('../../../.agents/skills/quazonai/assets/research.rs', import.meta.url), 'utf8');
   const tools = CodingTools.tools!.filter(tool => ['read', 'write', 'edit'].includes(tool.name));
   async function sourcePath(path: string, writing: boolean): Promise<string> {
     // Keep paths literal, avoiding the upstream convenience aliases/normalizations.
@@ -36,7 +38,7 @@ export async function codingWorkspace(directory: string) {
   return {
     env: () => new NodeExecutionEnv({ cwd: root }),
     extension: defineExtension({ name: 'qz.research-coding', tools,
-      sections: [section('research-source', () => `You may create and edit Rust source only in the explicitly configured research source workspace ${root}, using official read/write/edit. No shell is exposed. Do not put credentials, market data or sealed/OOS data here. Use native_runner_preparation_status and the existing native_runner_build/build_status tools for the configured owner factory; writing source is not a build. After changing Cargo.toml dependencies, explicitly use prepareOwnerLock=true on native_runner_build to let official Cargo resolve Cargo.lock offline, and inspect preflight.log for changes. Never hand-edit Cargo.lock. Do not prepare the lock while another study edits or builds the same owner. Unknown build outcomes must not be automatically retried. Use native_research_start_bound after a verified build, without selecting a global runner or changing accounts. This workspace is shared by research conversations; preserve other research source and coordinate file changes. A configured compiler and owner project must actually be reachable from the service.`)],
+      sections: [section('research-source', () => `You may create and edit Rust source only in the explicitly configured research source workspace ${root}, using official read/write/edit. No shell is exposed. Do not put credentials, market data or sealed/OOS data here. Use native_runner_preparation_status and the existing native_runner_build/build_status tools for the configured owner factory; writing source is not a build. After changing Cargo.toml dependencies, explicitly use prepareOwnerLock=true on native_runner_build to let official Cargo resolve Cargo.lock offline, and inspect preflight.log for changes. Never hand-edit Cargo.lock. Do not prepare the lock while another study edits or builds the same owner. Unknown build outcomes must not be automatically retried. Use native_research_start_bound after a verified build, without selecting a global runner or changing accounts. This workspace is shared by research conversations; preserve other research source and coordinate file changes. A configured compiler and owner project must actually be reachable from the service.\n\n${authoring}\n\nComplete owner module (assets/research.rs):\n\`\`\`rust\n${example}\n\`\`\``)],
       hooks: [hook(ToolTask, { async beforeTool(call) {
         if (!['read', 'write', 'edit'].includes(call.name)) return;
         if (typeof call.arguments.path !== 'string') return;
