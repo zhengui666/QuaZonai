@@ -240,7 +240,7 @@ test('retired configuration metadata cannot supply an absent official execution 
     ]);
     await (await (await host.harness.conversation(receipt.conversationId, context))!.submit({ type: 'input', content: 'Review', requestId: 'review-unbound' }, context)).wait(context);
     assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.assessment' }, 20), context)).items.length, 0);
-
+    assert.equal(faux.state.callCount, 4, 'only ordinary model turns run, no invented reviewer input');
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
