@@ -67,18 +67,18 @@ for (const failSecond of [false, true]) test(`explicit batch retains independent
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-parameter-test-'));
   const binary = join(directory, 'protocol.mjs'), calls = join(directory, 'calls.jsonl');
   await writeFile(binary, `#!${process.execPath}\nimport{appendFileSync}from'node:fs';let body='';for await(const c of process.stdin)body+=c;const request=JSON.parse(body);appendFileSync(${JSON.stringify(calls)},JSON.stringify({request,command:process.argv[2],args:process.argv.slice(3)})+'\\n');const echoed=${failSecond}&&request.config.period===3?{...request,name:'wrong::Factory'}:request;process.stdout.write(JSON.stringify({schema_version:1,request:echoed,native_version:'0.69.0',native_results:[{run_id:String(request.config.period)}],canonical_result:null,canonical_unavailable_reason:'PROTOCOL_TEST_ONLY'}));`, { mode: 0o755 });
-  const target: ProcessNativeTarget = { kind: 'RUST_PROCESS', id: 'batch-protocol', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol-only', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } };
+  const target: ProcessNativeTarget = { kind: 'RUST_PROCESS', id: 'batch-protocol', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol-only', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true, multiCatalogBindings: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } };
   const models = createModels(), faux = fauxProvider(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_parameter_grid', grid), { stopReason: 'toolUse' }), fauxAssistantMessage(fauxToolCall('native_parameter_batch', { configured: true, requests: nativeParameterGridPage(grid).requests }), { stopReason: 'toolUse' }), fauxAssistantMessage('Explicit batch finished; no automatic ranking or OOS claim.')]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
-  const input = { goal: 'Run the explicit installed Rust factory candidates, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target }, policy: {} };
+  const input = { goal: 'Run the explicit installed Rust factory candidates, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, catalogBindings:[{datasetId:"primary",catalog:directory},{datasetId:"book",catalog:directory+"-book"}], nautilusTarget: target }, policy: {} };
   try {
     const admission = await host.start('explicit-batch', input);
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
     const launches = (await readFile(calls, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.deepEqual(launches.map(row => row.request), requests.slice(0, failSecond ? 2 : 3));
-    for (const launch of launches) { assert.equal(launch.command, 'native-configured-backtest'); assert.deepEqual(launch.args, ['--catalog', directory]); }
+    for (const launch of launches) { assert.equal(launch.command, 'native-configured-backtest'); assert.deepEqual(launch.args, ['--catalog', directory, '--additional-catalog', directory+'-book']); }
     const tasks = (await host.harness.commit(tx => tx.scanTasks({ conversationId: admission.conversationId, kind: 'qz.native-strategy.backtest' }, 20), context)).items;
     assert.equal(tasks.length, launches.length);
     for (const task of tasks) {
@@ -104,7 +104,7 @@ test('an uncertain process result retains its original child and never starts th
   const directory = await mkdtemp(join(tmpdir(), 'qz-native-parameter-unknown-'));
   const binary = join(directory, 'uncertain.mjs'), calls = join(directory, 'calls.jsonl');
   await writeFile(binary, `#!${process.execPath}\nimport{appendFileSync}from'node:fs';let body='';for await(const c of process.stdin)body+=c;appendFileSync(${JSON.stringify(calls)},body+'\\n');process.exit(1);`, { mode: 0o755 });
-  const target: ProcessNativeTarget = { kind: 'RUST_PROCESS', id: 'uncertain-protocol', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol-only', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } };
+  const target: ProcessNativeTarget = { kind: 'RUST_PROCESS', id: 'uncertain-protocol', binary, capabilities: { schemaVersion: 1, protocol: 'quazonai-native-process-v1', identity: { nautilusVersion: 'protocol-only', precision: 'high' }, research: { singleStrategyRegistration: true, configuredRunFactory: true, multiCatalogBindings: true }, account: { compiled: false, registration: false, command: 'account-runtime', requiresExplicitStart: true }, running: false } };
   const models = createModels(), faux = fauxProvider(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_parameter_batch', { configured: true, requests }), { stopReason: 'toolUse' })]);
   const options = { database: join(directory, 'research.sqlite'), models };

@@ -18,7 +18,7 @@ function executionSource(data: JsonObject): JsonObject {
   let target: JsonValue = null;
   try { target = nativeTargetForData(data) as JsonValue; }
   catch (error) { if (!(error instanceof Error) || error.message !== 'nautilus_backtest_not_configured') throw error; }
-  return { catalog: typeof data.catalog === 'string' ? data.catalog : null, target };
+  return { catalog: typeof data.catalog === 'string' ? data.catalog : null, target, ...(data.catalogBindings ? {catalogBindings:data.catalogBindings} : {}) };
 }
 function sameRequest(a: JsonValue | undefined, b: JsonObject): boolean {
   if (a && typeof a === 'object' && !Array.isArray(a) && typeof a.name === 'string' && Object.hasOwn(a, 'config')) {
@@ -33,7 +33,7 @@ function sameRequest(a: JsonValue | undefined, b: JsonObject): boolean {
   return canonical(left) === canonical(right);
 }
 function sameSource(invocation: JsonObject, source: JsonObject): boolean {
-  return canonical({ catalog: invocation.catalog ?? null, target: invocation.target ?? null }) === canonical(source);
+  return canonical({ catalog: invocation.catalog ?? null, target: invocation.target ?? null, ...(invocation.catalogBindings ? {catalogBindings:invocation.catalogBindings} : {}) }) === canonical(source);
 }
 async function upstreamExecution(tx: Tx, conversationId: ConversationId, request: JsonObject, source: JsonObject, includeValidation = false) {
   let cursor; let found: TaskRecord<JsonValue, JsonValue, JsonValue> | undefined;

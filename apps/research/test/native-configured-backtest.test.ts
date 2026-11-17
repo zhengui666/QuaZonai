@@ -12,22 +12,23 @@ import { nativeCommands } from '../src/native-execution.ts';
 import { isTickNativeCommand, type ProcessNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { isNativeTable, readNativeTable } from '../src/native-table.ts';
 import { NativeEvidencePart } from '../plugins/native-evidence.ts';
+import {registeredCatalogBindings, nativeStrategyCatalogTool, assertConfiguredCatalogCapability} from '../plugins/native-strategy-backtest.ts';
 import { nativeResultView } from '../src/native-result-view.ts';
 
 // Official Pi + real process protocol, not evidence that a custom Rust strategy was compiled or profitable.
-for (const retainCanonical of [false, true]) test(`typed Rust factory tool retains original results and reopens without rerunning (canonical=${retainCanonical})`, async () => {
+for (const multi of [false, true]) for (const retainCanonical of [false, true]) test(`typed Rust factory tool retains original results and reopens without rerunning (canonical=${retainCanonical},multi=${multi})`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-configured-'));
   const request = { schema_version: 1, name: 'owner::MultiInstrument', config: { instruments: ['BTC.SIM', 'ETH.SIM'], exact: '0.000000000000000019', nested: [null, true] } };
   const report = { schema: 'nautilus-backtest-result/v1', orders: retainCanonical ? Array.from({ length: 1200 }, (_, i) => ({ index: i, quantity: '0.000000000000000019', detail: 'original'.repeat(32) })) : [], fills: [], positions: [], accounts: [], portfolio_snapshots: [], position_snapshots: [], statistics: {} };
   const result = { schema_version: 1, request, native_version: '0.69.0', native_results: [{ run_id: 'official-run', total_orders: 0 }], canonical_result: retainCanonical ? report : null, canonical_unavailable_reason: retainCanonical ? null : 'OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG' };
   const binary=join(directory,'controlled-native.mjs'),marker=join(directory,'calls.jsonl');
   await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';let text='';for await(const part of process.stdin)text+=part;const input=JSON.parse(text);appendFileSync(${JSON.stringify(marker)},JSON.stringify({command:process.argv[2],args:process.argv.slice(3),input})+'\\n');process.stdout.write(${JSON.stringify(JSON.stringify(result))});`,{mode:0o755});
-  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled-process',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
+  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled-process',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},research:{singleStrategyRegistration:true,configuredRunFactory:true,...(multi?{multiCatalogBindings:true}:{})},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false}};
   const models = createModels(), faux = fauxProvider(); models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_configured_backtest', { request, finishResearch: true }), { stopReason: 'toolUse' })]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
-  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, nautilusTarget: target }, policy: {} };
+  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, ...(multi ? {catalogBindings:[{datasetId:"primary",catalog:directory},{datasetId:"book",catalog:directory+"-book"}]} : {}), nautilusTarget: target }, policy: {} };
   try {
     const admission = await host.start('factory-protocol', input);
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
@@ -44,7 +45,7 @@ for (const retainCanonical of [false, true]) test(`typed Rust factory tool retai
       assert.deepEqual(stored, { ...result, canonical_result: { ...report, orders: table } });
     } else assert.deepEqual(stored, result);
     const posts=(await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
-    assert.equal(posts.length, 1); assert.equal(posts[0].command, 'native-configured-backtest'); assert.deepEqual(posts[0].input, request); assert.deepEqual(posts[0].args, ['--catalog', directory]);
+    assert.equal(posts.length, 1); assert.equal(posts[0].command, 'native-configured-backtest'); assert.deepEqual(posts[0].input, request); assert.deepEqual(posts[0].args, ['--catalog', directory, ...(multi ? ['--additional-catalog', directory+'-book'] : [])]);
     assert.equal(isTickNativeCommand(posts[0].command), true); assert.equal(nativeCommands.has('native-walk-forward'), false);
     const executions = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.native.execution' }, 10), context);
     assert.equal(executions.items.length, 1);
@@ -57,4 +58,17 @@ for (const retainCanonical of [false, true]) test(`typed Rust factory tool retai
     assert.deepEqual((await host.harness.snapshot(Study, admission.conversationId, context))!.final?.result, stored);
     assert.deepEqual((await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line)),posts,'reopen never launches replacement process');
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('catalog binding validation and inspection never accept unbound dataset selection',async()=>{
+ const data={catalog:'/primary',catalogBindings:[{datasetId:'primary',catalog:'/primary'},{datasetId:'book',catalog:'/book'}]};
+ assert.equal(registeredCatalogBindings(data).length,2);
+ const old={kind:'RUST_PROCESS',capabilities:{research:{configuredRunFactory:true}}} as any;
+ assert.throws(()=>assertConfiguredCatalogCapability(data,old),/rebuild_runner/);
+ assert.doesNotThrow(()=>assertConfiguredCatalogCapability({catalog:'/legacy'},old));
+ assert.doesNotThrow(()=>assertConfiguredCatalogCapability(data,{...old,capabilities:{research:{configuredRunFactory:true,multiCatalogBindings:true}}}));
+ assert.deepEqual(registeredCatalogBindings({catalog:'/legacy'}),[]);
+ for(const catalogBindings of [[],[{datasetId:'x',catalog:'/other'}],[...data.catalogBindings,data.catalogBindings[1]],['bad']]) assert.throws(()=>registeredCatalogBindings({...data,catalogBindings}),/binding/);
+ await assert.rejects(()=>nativeStrategyCatalogTool.execute({datasetId:'unbound'}, {snapshot:async()=>({input:{data}})} as any,context),/research_catalog_dataset_unbound/);
 });

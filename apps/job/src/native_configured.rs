@@ -1,11 +1,11 @@
 //! Execute a user crate's official typed backtest configuration without reimplementing it.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use contracts::{
-    native_strategy::{NativeConfiguredBacktestRequestV1, NativeConfiguredBacktestResultV1},
     SchemaV1,
+    native_strategy::{NativeConfiguredBacktestRequestV1, NativeConfiguredBacktestResultV1},
 };
 use nautilus_backtest::{config::BacktestRunConfig, engine::BacktestEngine, node::BacktestNode};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The user crate builds official multi-venue/data/engine configuration and installs its
 /// official Strategy instances. The closure can retain its typed parameters without a registry.
@@ -17,14 +17,14 @@ pub struct ConfiguredNativeRun {
 pub type ConfiguredRunFactory =
     fn(catalog_root: &Path, name: &str, config: &serde_json::Value) -> Result<ConfiguredNativeRun>;
 
-fn checked_catalog_path(root: &Path, protocol: &str, path: &Path) -> Result<()> {
+fn checked_catalog_path(roots: &[PathBuf], protocol: &str, path: &Path) -> Result<()> {
     ensure!(
         protocol == "file",
         "NATIVE_CONFIGURED_CATALOG_PROTOCOL_UNSUPPORTED"
     );
     let selected = path.canonicalize()?;
     ensure!(
-        selected.starts_with(root),
+        roots.iter().any(|root| selected.starts_with(root)),
         "NATIVE_CONFIGURED_CATALOG_OUTSIDE_BOUND_ROOT"
     );
     Ok(())
@@ -35,15 +35,34 @@ pub fn run(
     request: NativeConfiguredBacktestRequestV1,
     factory: Option<ConfiguredRunFactory>,
 ) -> Result<NativeConfiguredBacktestResultV1> {
+    run_with_catalogs(root, &[], request, factory)
+}
+
+/// Executes on the original root plus explicitly admitted additional catalog roots.
+/// The factory still receives the primary root; returned data configs are checked
+/// against every canonical admitted root without broadening to a common parent.
+pub fn run_with_catalogs(
+    root: &Path,
+    additional_catalogs: &[PathBuf],
+    request: NativeConfiguredBacktestRequestV1,
+    factory: Option<ConfiguredRunFactory>,
+) -> Result<NativeConfiguredBacktestResultV1> {
     let factory =
         factory.ok_or_else(|| anyhow::anyhow!("NATIVE_CONFIGURED_RUN_REQUIRES_USER_RUNNER"))?;
     let root = root.canonicalize()?;
+    let mut roots = vec![root.clone()];
+    for catalog in additional_catalogs {
+        let canonical = catalog.canonicalize()?;
+        if !roots.contains(&canonical) {
+            roots.push(canonical);
+        }
+    }
     let ConfiguredNativeRun { config, install } = factory(&root, &request.name, &request.config)?;
     // Validate the returned configuration's real local catalog paths, not just the path
     // supplied to the factory. This does not sandbox arbitrary trusted user Rust code.
     for data in config.data() {
         checked_catalog_path(
-            &root,
+            &roots,
             data.catalog().fs_protocol(),
             Path::new(data.catalog().path()),
         )?;
@@ -110,7 +129,7 @@ mod tests {
     fn typed_factory_checks_actual_catalog_path_and_protocol() {
         let root = tempfile::tempdir().unwrap();
         let other = tempfile::tempdir().unwrap();
-        let bound = root.path().canonicalize().unwrap();
+        let bound = vec![root.path().canonicalize().unwrap()];
         checked_catalog_path(&bound, "file", root.path()).unwrap();
         assert!(checked_catalog_path(&bound, "file", other.path()).is_err());
         assert!(checked_catalog_path(&bound, "s3", root.path()).is_err());
@@ -119,6 +138,33 @@ mod tests {
             let link = root.path().join("outside");
             std::os::unix::fs::symlink(other.path(), &link).unwrap();
             assert!(checked_catalog_path(&bound, "file", &link).is_err());
+        }
+    }
+
+    #[test]
+    fn multiple_bound_roots_do_not_admit_siblings_or_symlink_escapes() {
+        let temp = tempfile::tempdir().unwrap();
+        let primary = temp.path().join("trades");
+        let secondary = temp.path().join("books");
+        let unbound = temp.path().join("unbound");
+        for path in [&primary, &secondary, &unbound] {
+            std::fs::create_dir(path).unwrap();
+        }
+        let roots = vec![
+            primary.canonicalize().unwrap(),
+            secondary.canonicalize().unwrap(),
+        ];
+        checked_catalog_path(&roots, "file", &primary).unwrap();
+        checked_catalog_path(&roots, "file", &secondary).unwrap();
+        assert!(checked_catalog_path(&roots[..1], "file", &secondary).is_err());
+        assert!(checked_catalog_path(&roots, "file", &unbound).is_err());
+        assert!(checked_catalog_path(&roots, "file", temp.path()).is_err());
+        assert!(checked_catalog_path(&roots, "s3", &secondary).is_err());
+        #[cfg(unix)]
+        {
+            let link = secondary.join("outside");
+            std::os::unix::fs::symlink(&unbound, &link).unwrap();
+            assert!(checked_catalog_path(&roots, "file", &link).is_err());
         }
     }
 

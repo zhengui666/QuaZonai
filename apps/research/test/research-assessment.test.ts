@@ -50,6 +50,7 @@ for (const thinkingLevel of ['off', 'high', 'max'] as const) test(`official chil
       const wire = JSON.stringify(input);
       assert.ok(!wire.includes('PRIVATE_CONVERSATION_SENTINEL'));
       assert.ok(wire.includes('NO_TRANSCRIPT_OR_NATIVE_RESULTS'));
+      if (thinkingLevel === 'max') assert.ok(wire.includes('ADDITIONAL_BOOK_SOURCE'));
       assert.ok(wire.includes('max_trade_size caps a single trade'));
       assert.ok(wire.includes('instrument.margin_init'));
       assert.ok(wire.includes('1790000000000000001')); assert.ok(wire.includes('0.500000000000000001'));
@@ -69,7 +70,7 @@ for (const thinkingLevel of ['off', 'high', 'max'] as const) test(`official chil
   const options = { database: join(directory, 'research.sqlite'), models, thinkingLevel };
   let host = await openResearch(options);
   try {
-    const receipt = await host.start('assessment', { goal: 'PRIVATE_CONVERSATION_SENTINEL', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, native_strategy_backtest_request: request }, policy: {} });
+    const receipt = await host.start('assessment', { goal: 'PRIVATE_CONVERSATION_SENTINEL', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, ...(thinkingLevel === 'max' ? {catalogBindings:[{datasetId:'primary',catalog:directory},{datasetId:'book',catalog:directory+'-book',dataset:{source:'ADDITIONAL_BOOK_SOURCE'}}]} : {}), native_strategy_backtest_request: request }, policy: {} });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const doc = await host.harness.snapshot(ResearchAssessment, receipt.conversationId, context);
     assert.ok(doc?.logicTaskId); assert.equal(doc.reportTaskIds.length, 1);
