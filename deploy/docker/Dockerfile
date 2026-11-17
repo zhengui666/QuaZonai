@@ -110,7 +110,7 @@ COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 COPY --from=application-source / /
 COPY --from=web /build/apps/web/dist/ ./web/
 # COPY file modes also affect newly created destination directories.
-RUN find native-glue apps/nautilus apps/research/skills -type d -exec chmod 755 {} + \
+RUN find native-glue apps/nautilus apps/research -type d -exec chmod 755 {} + \
  && find native-glue apps/nautilus apps/research/skills -type f -exec chmod 644 {} +
 ARG VERSION=development
 ARG REVISION=unknown

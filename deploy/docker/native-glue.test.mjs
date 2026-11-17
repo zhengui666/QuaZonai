@@ -55,7 +55,7 @@ test('Docker context admits native glue COPY inputs and keeps private data exclu
 test('application normalizes source glue directories and files before the non-root user', () => {
   const docker = readFileSync(resolve(root, 'deploy/docker/Dockerfile'), 'utf8');
   const application = docker.split('FROM execution-base AS application\n')[1];
-  assert.ok(application.includes('find native-glue apps/nautilus apps/research/skills -type d -exec chmod 755 {} +'));
+  assert.ok(application.includes('find native-glue apps/nautilus apps/research -type d -exec chmod 755 {} +'));
   assert.ok(application.includes('find native-glue apps/nautilus apps/research/skills -type f -exec chmod 644 {} +'));
   assert.ok(application.indexOf('RUN find') < application.indexOf('USER node'));
 });
