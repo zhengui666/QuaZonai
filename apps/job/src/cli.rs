@@ -69,6 +69,9 @@ enum Operation {
     NativeConfiguredBacktest {
         #[arg(long)]
         catalog: PathBuf,
+        /// Additional explicitly registered catalog roots; never a shared parent directory.
+        #[arg(long = "additional-catalog")]
+        additional_catalogs: Vec<PathBuf>,
     },
     /// Run a compiled upstream strategy on original native market events.
     NativeStrategyBacktest {
@@ -141,9 +144,17 @@ fn run(
         Operation::NativeFillObservationImport => {
             native_output(|| job::chainticks_import::native_fill_observation_import(input()?))
         }
-        Operation::NativeConfiguredBacktest { catalog } => {
-            native_output(|| job::native_configured::run(&catalog, input()?, factory))
-        }
+        Operation::NativeConfiguredBacktest {
+            catalog,
+            additional_catalogs,
+        } => native_output(|| {
+            job::native_configured::run_with_catalogs(
+                &catalog,
+                &additional_catalogs,
+                input()?,
+                factory,
+            )
+        }),
         Operation::NativeStrategyBacktest { catalog } => native_output(|| {
             job::native_strategy::run_with_registration(&catalog, input()?, registration)
         }),
@@ -195,8 +206,62 @@ pub fn main_with_native_hooks(
 
 #[cfg(test)]
 mod tests {
-    use super::{Arguments, public_error_code, public_failure};
+    use super::{Arguments, Operation, public_error_code, public_failure};
     use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn configured_backtest_accepts_only_explicit_repeatable_additional_catalogs() {
+        let args = Arguments::try_parse_from([
+            "job",
+            "native-configured-backtest",
+            "--catalog",
+            "/trades",
+            "--additional-catalog",
+            "/books",
+            "--additional-catalog",
+            "/other",
+        ])
+        .unwrap();
+        let Operation::NativeConfiguredBacktest {
+            catalog,
+            additional_catalogs,
+        } = args.command
+        else {
+            panic!("wrong command")
+        };
+        assert_eq!(catalog, PathBuf::from("/trades"));
+        assert_eq!(
+            additional_catalogs,
+            vec![PathBuf::from("/books"), PathBuf::from("/other")]
+        );
+        let args = Arguments::try_parse_from([
+            "job",
+            "native-configured-backtest",
+            "--catalog",
+            "/trades",
+        ])
+        .unwrap();
+        let Operation::NativeConfiguredBacktest {
+            additional_catalogs,
+            ..
+        } = args.command
+        else {
+            panic!("wrong command")
+        };
+        assert!(additional_catalogs.is_empty());
+        assert!(
+            Arguments::try_parse_from([
+                "job",
+                "native-strategy-backtest",
+                "--catalog",
+                "/trades",
+                "--additional-catalog",
+                "/books"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn local_trade_import_is_only_available_when_compiled() {
