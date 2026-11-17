@@ -38,6 +38,9 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
     mode=LITERATURE_ONLY with datasetId admits only descriptive metadata and approved public literature; no native execution or sealed data.
   research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
+  research messages ID [--cursor CURSOR]
+  research native-runs ID --result-task-id TASK_ID [--offset OFFSET]
+  research implementation-sources ID --file REQUEST.json [--request-id ORIGINAL_ID]
   research native-backtests ID [--cursor CURSOR] | research evidence ID TASK_ID
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]
   parameter-scan list [--file QUERY.json] | get ID | stop ID
@@ -75,6 +78,7 @@ const options = {
   model: { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
+  'result-task-id': { type: 'string' as const }, offset: { type: 'string' as const },
   instruction: { type: 'string' as const },
   'account-source-id': { type: 'string' as const }, 'expected-revision': { type: 'string' as const },
   'tick-book-cores': { type: 'string' as const },
@@ -207,7 +211,17 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       method = 'POST'; path = `/strategies/${resourceId(id)}/${action}`; body = file.bytes;
     } else throw new CliError('unknown_strategy_command');
   } else if (group === 'research') {
-    if (action === 'native-backtests') path = `/research/${researchId(id)}/native-backtests${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
+    if (action === 'messages') path = `/research/${researchId(id)}/messages${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
+    else if (action === 'native-runs') {
+      const resultTaskId = researchId(values['result-task-id']);
+      const offset = values.offset ?? '0';
+      if (!/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset))) throw new CliError('native_result_page_invalid');
+      path = `/research/${researchId(id)}/native-runs?resultTaskId=${resultTaskId}&offset=${Number(offset)}`;
+    } else if (action === 'implementation-sources') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      if (file.body.shareWithResearchModel !== true) throw new CliError('implementation_source_explicit_sharing_required');
+      method = 'POST'; path = `/research/${researchId(id)}/implementation-sources`; body = file.bytes;
+    } else if (action === 'native-backtests') path = `/research/${researchId(id)}/native-backtests${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
     else if (action === 'evidence') path = `/research/${researchId(id)}/evidence/${researchId(exitId)}`;
     else if (action === 'models') path = '/research/models';
     else if (action === 'list') {

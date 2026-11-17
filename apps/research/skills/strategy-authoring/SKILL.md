@@ -9,6 +9,12 @@ description: 内部 Pi Durable 研究 Agent 编写、构建和运行兼容 Nauti
 
 本参考适用于**已显式配置的可信 owner Rust crate**，不是动态 Python、任意目录编译或改写 QuaZonai/Nautilus。先读 `native_runner_preparation_status` 和 owner 的 Cargo.toml、src/lib.rs、现有 factory。这里的实际 Rust API 对应 Nautilus `634e09456c949f488b2bfcf6b6897b33cbf218d7`；若环境版本不同，先核对该版本签名，不照搬 develop 文档。所有 Nautilus crate 采用同一官方 rev/兼容 features，避免两份不相容类型。不得改上游或另写撮合/指标/收益引擎。
 
+## 与外部操作 Agent 的协作
+
+外部 Agent 通过 QuaZonai CLI 提交目标、续接指令、读取研究对话和结果；本内部 skill 负责把已受理目标落实为策略源码、构建、运行和评价。使用当前研究绑定的 workspace 与原生任务工具，保留构建、执行、报告的原任务 ID；把结论、实际验证范围和下一步写入研究回复，便于外部通过同一研究读取与继续。
+
+内部逻辑评估使用已登记的 implementation source 材料与 `native_assessment_read_source`；数据综合评估使用原任务 evidence manifest 与 `native_assessment_read_exposure` 分页读取。按实际读取范围形成判断，而不是把主研究摘要当独立验证。材料登记与原生结果读取不改变策略种类或交易逻辑。
+
 ## 1. owner 与 launcher 各写什么
 
 owner 是 library crate，factory module 名称可配置；例如选 `research` 时，`src/lib.rs` 导出 `pub mod research;`。实际配置的 module 必须提供这两个准确签名：

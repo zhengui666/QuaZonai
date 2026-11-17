@@ -21,6 +21,19 @@ Hurst/VPIN 的 INTERNAL BAR 由官方 DataEngine 根据原 TradeTick 聚合；EX
 
 先看真实数据类型及覆盖。数据准备不等于策略获利；缺失或未预热统计保留为空，官方统计名、币种和单位保留原意。回测不启动账户，也不把历史目标点当实时策略。
 
+## 读取过程与原生结果
+
+`research get` 读取当前摘要、任务身份和评价；用 `research messages` 获取用户目标、续接指令及 Agent 回复，按 `nextCursor` 原样读取更早的页面。每页消息按发生顺序排列，分页从最新一页向前；页面可能没有消息但仍有 nextCursor，要继续读取。不要把摘要当作全部研究过程。
+
+```sh
+quazonai research messages "$research_id"
+quazonai research messages "$research_id" --cursor "$next_cursor"
+quazonai research native-runs "$research_id" --result-task-id "$result_task_id"
+quazonai research native-runs "$research_id" --result-task-id "$result_task_id" --offset "$next_offset"
+```
+
+`result_task_id` 从当前研究详情的 `final.nativeStrategyResult.resultTaskId` 取得；原样保留它直到读完该结果的 `nextOffset`。native-runs 读取原生运行元数据，不把大行情/订单表全部载入。逐组请求与结果使用下面的 native-backtests/evidence。结果更新时重新读详情，不把两次结果拼成同一轮；历史任务仍按其原 taskId 读取。
+
 ## 同一研究继续和恢复
 
 保存 conversationId 与 submissionId。`watch`/`wait` 超时只退出客户端，不停止远端任务。需要停止时使用 `research stop ID` 并读回。通过 `diagnostics` 确认终止 submission 后：
@@ -68,13 +81,19 @@ quazonai research evidence "$research_id" "$task_id"
 
 ## 显式授权的实现源码评审
 
-源码评审不自动扫描本机、下载 URL 或读取凭据。所有者可经已认证的 `POST /api/v3/research/{conversationId}/implementation-sources` 提供准备好的源码文本：
+源码评审不自动扫描本机、下载 URL 或读取凭据。外部 Agent 使用 CLI 向同一研究登记所有者授权给指定模型的源码文本：
+
+```sh
+quazonai research implementation-sources "$research_id" --file source-material.json
+```
+
+`source-material.json` 内容：
 
 ```json
 {"requestId":"source-material-1","shareWithResearchModel":true,"model":{"provider":"实际提供方","modelId":"当前研究模型"},"files":[{"id":"strategy","name":"strategy.rs","revision":"所有者声明的版本","content":"经过确认可以交给该模型的源码文本"}]}
 ```
 
-这明确授权把这些文本交给此研究的指定模型；不要包含密码、密钥、私有账户资料或未授权文件。回复只返回清单，不启动评审/编译/回测/交易。相同 requestId 的原材料不能被替换；材料绑定当时的原生研究请求和模型，修改配置需要重新登记相应材料。没有独立 CLI 上传命令，不要编造命令。
+这明确授权把这些文本交给此研究的指定模型；不要包含密码、密钥、私有账户资料或未授权文件。回复只返回清单，不启动评审/编译/回测/交易。相同 requestId 的原材料不能被替换；材料绑定当时的原生研究请求和模型，修改配置需要重新登记相应材料。这是材料登记，不代替内部研究 Agent 的源码实现或评估。
 
 随后让原研究通过 `native_strategy_logic_review` 的 `sourceRequestId` 选择这份材料。Pi 子会话按 `native_assessment_read_source` 分页读取，报告实际读取的文件及 UTF-16 字元范围。未提供的依赖、未读区间、源码与构建产物的对应关系均保持未知；用户给出的版本标签不是构建证明。`SCOPED_SOURCE_LOGIC_REVIEW` 仅表示读过授权片段，不代表全部实现已审查。缺少材料仍是配置逻辑评价。旧 Task、报告和原始请求保留，不重新计算或授权交易。
 

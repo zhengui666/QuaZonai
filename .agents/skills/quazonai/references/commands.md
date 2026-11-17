@@ -25,6 +25,10 @@
 | --- | --- |
 | `research list [--cursor JSON]` | 从返回的 `cursor` 对象继续分页 |
 | `research get ID` / `research diagnostics ID` | 详情、原 submission 与运行诊断 |
+| `research messages ID [--cursor CURSOR]` | 同一研究的用户目标、续接指令与 Agent 回复；原样使用 nextCursor |
+| `research native-runs ID --result-task-id TASK_ID [--offset OFFSET]` | 当前结果的原生运行元数据分页；使用结果返回的 taskId 和 nextOffset |
+| `research native-backtests ID [--cursor CURSOR]` / `research evidence ID TASK_ID` | 原生子任务列表与指定任务的原请求、状态和证据 |
+| `research implementation-sources ID --file REQUEST.json [--request-id ORIGINAL_ID]` | 登记明确授权给当前研究模型的源码文本，供内部独立逻辑评估 |
 | `research start --file REQUEST.json [--request-id ORIGINAL_ID]` | `ResearchStart` |
 | `research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID` | 简单研究；不能同时加 `--file` |
 | `research watch ID [--timeout SECONDS]` / `research wait ID [--timeout SECONDS]` | 状态流或等待结束；ID 为 conversationId |
