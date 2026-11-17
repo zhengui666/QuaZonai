@@ -84,7 +84,7 @@ export async function materializeRustLauncher(discovery: RustEnvironmentDiscover
   return { manifestPath: join(destination, 'Cargo.toml'), qualification: 'SOURCE_ONLY_NOT_BUILT' };
 }
 
-export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'; chainticksFillObservations?: boolean };
+export type RustFactoryModules = { backtestFactory?: string; accountFactory?: string; accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'; chainticksFillObservations?: boolean; marketImport?: boolean };
 /** Module paths name explicit public entry contracts, not arbitrary functions or dynamic plugins.
  * owner module backtest: config(Path,name,Value) and install(BacktestEngine,name,Value).
  * owner module account: strategy(name,Value,TraderId,AccountId,ClientId,InstrumentId,&[InstrumentId]) returning its concrete official Strategy type.
@@ -92,6 +92,7 @@ export type RustFactoryModules = { backtestFactory?: string; accountFactory?: st
 export function renderRustLauncher(factories: RustFactoryModules): string {
   if (!factories.backtestFactory && !factories.accountFactory) throw new Error('rust_environment_factory_required');
   if(factories.accountCompatibility!==undefined && (factories.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!factories.accountFactory))throw new Error('rust_account_compatibility_declaration_invalid');
+  if (factories.marketImport !== undefined && typeof factories.marketImport !== 'boolean') throw new Error('rust_market_import_invalid');
   if (factories.chainticksFillObservations !== undefined && (typeof factories.chainticksFillObservations !== 'boolean' || factories.chainticksFillObservations && !factories.backtestFactory)) throw new Error('rust_observation_backtest_factory_required');
   const backtest = factories.backtestFactory ? publicRustPath(factories.backtestFactory) : null;
   const account = factories.accountFactory ? publicRustPath(factories.accountFactory) : null;

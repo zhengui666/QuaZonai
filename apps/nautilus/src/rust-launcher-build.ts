@@ -131,9 +131,7 @@ export async function buildRustLauncher(options: {
   if (!ownerPackage) throw new Error('rust_build_owner_package_missing');
   const owner = selectedCargoGraph(ownerMetadata, ownerPackage.id);
   const copiedManifest = join(glue, 'apps/job/Cargo.toml');
-  const features = options.factories.accountFactory ? ['account-runtime'] : [];
-  if (options.factories.chainticksFillObservations) features.push('chainticks-observations');
-  if (nativeResolution(owner).find(p => p.name === 'nautilus-model')?.precision.includes('high-precision')) features.push('high-precision');
+  const features = launcherFeatures(owner, options.factories);
   await writeFile(copiedManifest, alignCopiedNativeManifest(activeCopiedNativeManifest(await readFile(copiedManifest, 'utf8'), features), owner));
   const dependencies = `job = { path = ${JSON.stringify(join(glue, 'apps/job'))}, default-features = false, features = ${JSON.stringify(features)} }\nanyhow = "1"\nserde_json = "1"`;
   const materialized = await materializeRustLauncher(discovery, join(directory, 'launcher'), main, dependencies, binaryName);
@@ -177,6 +175,7 @@ export async function buildRustLauncher(options: {
     || capabilities.research?.configuredRunFactory !== Boolean(options.factories.backtestFactory)
     || capabilities.account?.registration !== Boolean(options.factories.accountFactory)) throw new Error('rust_build_capabilities_mismatch');
   if((capabilities.account?.compatibilityDeclaration??null)!==(options.factories.accountCompatibility??null))throw new Error('rust_build_compatibility_declaration_mismatch');
+  if (options.factories.marketImport && capabilities.preparation?.marketImport !== true) throw new Error('rust_build_market_import_capability_missing');
   verifyLauncherIdentity(generated, capabilities.identity);
   return { executable, manifestPath: materialized.manifestPath, capabilities, qualification: 'COMPILED_NOT_CONNECTED' };
 }
@@ -185,4 +184,13 @@ export function verifyLauncherIdentity(metadata: ResolvedMetadata, identity: { n
   const model = nativeResolution(metadata).filter(p => p.name === 'nautilus-model');
   if (model.length !== 1 || !identity || identity.nautilusSource !== model[0]!.source || identity.nautilusVersion !== model[0]!.version
     || identity.precision !== (model[0]!.precision.includes('high-precision') ? 'high' : 'standard')) throw new Error('rust_build_binary_identity_mismatch');
+}
+
+/** Keep the owner-selected precision; never silently upgrade existing strategies for preparation. */
+export function launcherFeatures(owner: ResolvedMetadata, factories: RustFactoryModules): string[] {
+  const highPrecision = nativeResolution(owner).find(p => p.name === 'nautilus-model')?.precision.includes('high-precision');
+  if (factories.marketImport && !highPrecision) throw new Error('rust_market_import_requires_high_precision_owner');
+  return [...(factories.accountFactory ? ['account-runtime'] : []),
+    ...(factories.chainticksFillObservations ? ['chainticks-observations'] : []),
+    ...(factories.marketImport ? ['market-history'] : []), ...(highPrecision ? ['high-precision'] : [])];
 }

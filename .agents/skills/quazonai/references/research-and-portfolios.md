@@ -106,3 +106,5 @@ quazonai research implementation-sources "$research_id" --file source-material.j
 验收完成后，新的 `research start --file` 可带 `runnerBuildRequestId` 和当前 `expectedRunnerRevision` 显式绑定该完成构建；无需选择全局默认。原环境变化或 revision 冲突必须先核对，不能自动刷新并重发。已有研究及同 requestId 重放保留原 executor。数据集和 runner 就绪不代表允许实盘。
 
 已经执行过的研究仍可通过同一研究终态后的 resume 指令请求“事后源码/逻辑审查”，注明已登记 sourceRequestId，并要求内部 Agent 使用明确的 POST_EXECUTION 审查时序。读取 research get 中独立审查记录及其原 evidence 链接；事后记录不能替代旧事前评级、不能补成事前协议，也不会重跑历史任务。源码复核子 Agent 不自动读取历史回测结果，需将源码结论与原执行证据区分。
+
+owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Build 不随保存配置改变。已有原生导入器要求 owner 显式 high-precision；构建保持同一官方依赖来源/版本/精度，不能通过伪改 capability 启用。让内部 Agent 按内部 skill 准备 owner feature/官方锁、新 Build，并用原 requestId 绑定新研究；不必切换全局 runner。随后使用已有 `native_market_import` 合同导入已授权训练文件，读取真实报告后再决定数据登记。

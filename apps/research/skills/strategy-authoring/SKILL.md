@@ -108,3 +108,9 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 已有执行后的源码/逻辑复核，使用同一 `native_strategy_logic_review`，显式传 `reviewTiming:"POST_EXECUTION"` 和已授权的 `sourceRequestId`。这是新的独立审查 Task，不重发回测、不替换旧事前逻辑评级或报告，也不能补成事前验证协议。子 Agent 仍只读取指定源码材料，不自动获取历史回测或父对话；结合原结果评价时分别读取原审查及执行证据。省略 reviewTiming 仍是事前审查，已有执行时会拒绝。
 
 综合评估子 Agent 在配置了研究工作区时，可用 `native_assessment_read_report {taskId, offset, limit}` 分页读取该评估清单内原生 Task 的 `request.config.report`。这复用官方 Pi read 的行分页，不运行回测；报告是原 Task 声明路径上的当前文件，不自动等同不可变原生结果或生产者证明。逐页读所需范围、保留截断提示并披露未读内容；不将父 Agent 摘要冒充独立读取。
+
+### 已有行情的正式导入能力
+
+原生 owner 环境可显式设置 `marketImport:true`，下一次 `native_runner_build` 才会编译已有 `market-history` 导入入口；保存配置不编译，也不改变旧研究/旧 Build。该入口使用 high-precision：owner 的官方依赖图必须已显式选择相同精度，否则构建报 `rust_market_import_requires_high_precision_owner`，不静默改变策略精度。通过 owner 自有 Cargo feature 选择官方 high-precision、官方 Cargo 准备锁，再新建 Build 并读取真实 capabilities；不要改旧 capability 回执或切全局 runner来替代绑定。
+
+新研究用成功 Build 的原 requestId 显式绑定后，`native_market_import` 复用现有 `NativeMarketImportRequestV1` 导入明确授权的本地训练 manifest/原生定义到新目录。原请求/输出与失败记录保留；UNKNOWN不重发。晚到定义只能保留其真实 ts_init 并披露静态情景，不能回填历史定义。导入成功不等于数据准入、OOS有效或策略回测完成。

@@ -104,6 +104,8 @@ export interface NativeRustEnvironment {
   features?: string[]; backtestFactory?: string; accountFactory?: string;
   /** Compile/register the existing source observation type for an explicit backtest factory only. */
   chainticksFillObservations?: boolean;
+  /** Compile the existing native market-history importer; owner must explicitly use high precision. */
+  marketImport?: boolean;
   /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
   accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { verifyLauncherIdentity, verifyOwnerNativeResolution } from '../src/rust-launcher-build.ts';
+import { verifyLauncherIdentity, verifyOwnerNativeResolution, launcherFeatures } from '../src/rust-launcher-build.ts';
 const resolved = (source = 'git+https://github.com/nautechsystems/nautilus_trader.git?rev=abc#abc', precision: string[] = []) => ({
   packages: [{ id: 'model', name: 'nautilus-model', version: '0.69.0', source }],
   resolve: { nodes: [{ id: 'model', features: precision }] },
@@ -237,4 +237,12 @@ test('official Cargo offline resolver repairs stale owner lock without running b
       assert.match(String(error),/owner_lock_preparation/);assert.match(String((error as Error).cause),/offline|no matching package/);return true;
     });
   } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test('market preparation is opt-in and preserves explicit owner precision', () => {
+  assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research' }), []);
+  assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research', marketImport: false }), []);
+  assert.deepEqual(launcherFeatures(resolved(undefined, ['high-precision']), { backtestFactory: 'research' }), ['high-precision']);
+  assert.throws(() => launcherFeatures(resolved(), { marketImport: true }), /requires_high_precision_owner/);
+  assert.deepEqual(launcherFeatures(resolved(undefined, ['high-precision']), { backtestFactory: 'research', marketImport: true }), ['market-history', 'high-precision']);
 });
