@@ -13,7 +13,9 @@ quazonai research wait "$research_id" --timeout 60
 
 `research_id` 为受理回执的 conversationId。复杂请求使用 `--file`，不与简单参数混用。模型的推理等级和服务档位取自实际列表。公开文献查询仅使用用户授权外发的内容。
 
-研究 Agent 可在显式配置的 Rust owner workspace/factory 中编写任何兼容当前 Nautilus 原生能力的策略；不限定策略种类、逻辑、参数、标的数量或频率。预注册策略只是便捷入口，不是策略白名单。当前这些单标的便捷接线为 EMA_CROSS、GRID_MARKET_MAKER（QuoteTick），ORDER_BOOK_IMBALANCE（L2 订单簿）及 HURST_VPIN_DIRECTIONAL（官方 BAR/QuoteTick/TradeTick 订阅）；参数及可选 base 配置按实际原生 schema 原样传递。这是预注册策略路径，不是任意 Python Strategy 或所有交易所的通用入口。已显式配置 Rust owner 源码 workspace/factory 时，研究 Agent 可通过官方 read/write/edit 编写原生策略、构建并绑定新 runner；写代码前必须读 [准确策略代码合同与完整示例](strategy-authoring.md)，不猜接口。不要用已退役的因子、IC、WASM 拟合或组合评分工具替代。
+自定义策略通过 `research start` 或终态后的 `research resume` 提交，向 QuaZonai 说明研究目标、策略逻辑、参数与数据范围。策略种类不受内置名称清单限制。内部 Pi Durable 研究 Agent 负责按其内部 skill 编写、构建、绑定及运行 Nautilus 策略；外部 Agent 不按本操作 skill 直接编辑策略源码或调用内部工具。需要源码工作区时，先确认产品已配置可用环境；未配置应报告阻碍，不冒充已经运行。
+
+EMA_CROSS、GRID_MARKET_MAKER、ORDER_BOOK_IMBALANCE、HURST_VPIN_DIRECTIONAL 等预注册入口只是便捷选项，不是可研究策略白名单。外部操作只提交目标与准确参数、跟踪回执和读取证据。
 
 Hurst/VPIN 的 INTERNAL BAR 由官方 DataEngine 根据原 TradeTick 聚合；EXTERNAL BAR 必须使用原完整 BarType。外部非时间 BAR 若只供策略读取，应明确配置原生 venue.bar_execution=false，并提供用于撮合的原 Quote/Trade 数据；省略保持官方默认 true，不由胶水静默关闭。研究与账户的工厂注册及 capabilities 独立，研究配置不扩大账户执行能力。
 

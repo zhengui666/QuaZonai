@@ -1,3 +1,8 @@
+---
+name: strategy-authoring
+description: 内部 Pi Durable 研究 Agent 编写、构建和运行兼容 Nautilus 的 Rust 策略；规定接口，不限定策略类型。
+---
+
 # Rust 策略编写合同
 
 **本合同只明确接口与执行方式，不限定可编写的策略。** 任何兼容当前 Nautilus 原生能力的策略均可实现；策略种类、交易逻辑、参数、标的数量与频率由研究目标决定，不设预注册名称白名单。下文数据、订单与完整代码都只是接口示例，不是唯一模板；可按需组合原生 Strategy、Actor、Controller 及其公开能力，实际可执行范围取决于已配置的数据、适配器与版本。
@@ -68,7 +73,7 @@ self.submit_order(order, None, None, None)?;
 
 ## 4. 可编译、无订单的完整 owner 例子
 
-同发行包的 [assets/research.rs](../assets/research.rs) 是完整 module，不是伪代码；内部研究 Agent 同时收到原文。它用原生 Strategy 消费已登记 CustomData，并验证 loaded/received 数量，不下单、不生成假收益。只用于验证生命周期和正确接线，不规定真实策略必须使用 CustomData、此数据源、无订单逻辑或示例名称/参数。可以完全替换示例实现，编写符合研究目标的任何原生兼容策略。
+同发行包的 [assets/research.rs](assets/research.rs) 是完整 module，不是伪代码；内部研究 Agent 同时收到原文。它用原生 Strategy 消费已登记 CustomData，并验证 loaded/received 数量，不下单、不生成假收益。只用于验证生命周期和正确接线，不规定真实策略必须使用 CustomData、此数据源、无订单逻辑或示例名称/参数。可以完全替换示例实现，编写符合研究目标的任何原生兼容策略。
 
 owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backtest（streaming）、nautilus-common、nautilus-core、nautilus-execution、nautilus-model、nautilus-persistence、nautilus-trading。沿用当前环境 features/锁定依赖，不抄另一版锁文件。示例配置为：
 

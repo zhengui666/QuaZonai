@@ -34,7 +34,7 @@ test('Docker context admits native glue COPY inputs and keeps private data exclu
   const copies = docker.split('\n').filter(line => line.startsWith('COPY ') && line.includes('/opt/quazonai/native-glue/'));
   const sources = copies.flatMap(line => line.split(/\s+/).slice(2, -1));
   sources.push('apps/nautilus/package.json', 'apps/nautilus/src');
-  for (const source of ['.agents/skills/quazonai/references/strategy-authoring.md', '.agents/skills/quazonai/assets/research.rs']) {
+  for (const source of ['apps/research/skills/strategy-authoring/SKILL.md', 'apps/research/skills/strategy-authoring/assets/research.rs']) {
     assert.ok(docker.includes(`COPY --chmod=644 ${source} /opt/quazonai/${source}`));
     sources.push(source);
   }
@@ -55,8 +55,8 @@ test('Docker context admits native glue COPY inputs and keeps private data exclu
 test('application normalizes source glue directories and files before the non-root user', () => {
   const docker = readFileSync(resolve(root, 'deploy/docker/Dockerfile'), 'utf8');
   const application = docker.split('FROM execution-base AS application\n')[1];
-  assert.ok(application.includes('find native-glue apps/nautilus .agents -type d -exec chmod 755 {} +'));
-  assert.ok(application.includes('find native-glue apps/nautilus .agents -type f -exec chmod 644 {} +'));
+  assert.ok(application.includes('find native-glue apps/nautilus apps/research/skills -type d -exec chmod 755 {} +'));
+  assert.ok(application.includes('find native-glue apps/nautilus apps/research/skills -type f -exec chmod 644 {} +'));
   assert.ok(application.indexOf('RUN find') < application.indexOf('USER node'));
 });
 
