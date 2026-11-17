@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -87,4 +87,19 @@ test('registration HTTP route validates input and exposes the current CAS revisi
     const empty = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { ...payload, requestId: 'empty', expectedRevision: 2 } });
     assert.equal(empty.statusCode, 422);
   } finally { await state.cleanup(); }
+});
+
+test('research descriptor registration respects real workspace and replays original receipt without file reread',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'qz-registration-scope-'));const state=await open(directory);
+ try{
+  const workspace=join(directory,'source');await mkdir(workspace);
+  const outside=join(directory,'outside.json');await writeFile(outside,JSON.stringify(dataset('outside')));
+  await symlink(outside,join(workspace,'escape.json'));
+  for(const path of [outside,join(workspace,'../outside.json'),join(workspace,'escape.json')])await assert.rejects(state.sources.registerDatasets({requestId:'outside',expectedRevision:1,path},workspace),/research_descriptor_outside_workspace/);
+  const path=join(workspace,'prepared.json');await writeFile(path,JSON.stringify(dataset('prepared')));
+  const request={requestId:'prepared',expectedRevision:1,path};const receipt=await state.sources.registerDatasets(request,workspace);
+  await rm(path);assert.deepEqual(await state.sources.registerDatasets(request,workspace),receipt);
+  await assert.rejects(state.sources.registerDatasets({requestId:'stale',expectedRevision:1,path},workspace),/data_source_revision_conflict/);
+  assert.deepEqual(receipt.datasetIds,['prepared']);
+ }finally{await state.close();await rm(directory,{recursive:true,force:true});}
 });
