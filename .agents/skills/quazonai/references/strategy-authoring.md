@@ -80,7 +80,7 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 2. 修改 owner 源码。改 Cargo.toml 依赖后调用 `native_runner_build {requestId, expectedRevision, prepareOwnerLock:true}` 让官方 Cargo 离线准备锁；未改依赖通常省略该标志。绝不手改 Cargo.lock，也不与另一研究同时改/编译同一 owner。
 3. `native_runner_build_status {requestId}` 读原构建状态和 preflight/build 诊断，直到真实成功。running/checkpoint unknown 不代表终态；终态 UNKNOWN 不改 ID 重发。修正编译错误是新构建，保留旧失败。
 4. 用完成 build 的 requestId、当前配置 revision、实际 dataset/model 调 `native_research_start_bound`；它创建**显式绑定新二进制的新研究**，不更新旧研究 executor，也不需要 native_runner_select 全局切换。
-5. 由该研究读取 brief/实际 request，以 `native_configured_configure {request: 完整原生请求}` 设置 factory/name/config，再通过 `native_configured_backtest` 执行准确配置。先声明窗口/参数/假设，不把 build 成功当回放成功。检查原任务状态、stderr、回调、原生结果、订单/成交及费用证据；无订单例子的成功仅是接线成功。
+5. 由该研究读取 brief/实际 request，先以 `native_strategy_logic_review` 记录全部计划运行的完整请求、窗口和假设，再以 `native_configured_configure {request: 完整原生请求}` 设置 factory/name/config，再通过 `native_configured_backtest` 执行准确配置。先声明窗口/参数/假设，不把 build 成功当回放成功。检查原任务状态、stderr、回调、原生结果、订单/成交及费用证据；无订单例子的成功仅是接线成功。
 
 这些是内部 Agent tools，不是同名 CLI 子命令。外部调用仍用 research start/resume 交给研究 Agent；终止的 submission 才正常 resume。可用 tools 和绑定 capabilities 为准，不编造缺失能力或自动重发原 UNKNOWN。
 
