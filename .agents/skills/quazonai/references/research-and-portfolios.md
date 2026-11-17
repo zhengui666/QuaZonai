@@ -111,4 +111,4 @@ owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Buil
 
 无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。
 
-正式 `native_runner_build` 请求可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
+让内部 Agent 使用正式 `native_runner_build` 请求，可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。

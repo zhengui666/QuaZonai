@@ -84,7 +84,7 @@ export async function buildRustLauncher(options: {
   targetDirectory?: string;
   signal?: AbortSignal;
   prepareOwnerLockIn?: string;
-  /** Cargo dev-profile opt-level only; keeps debug assertions and overflow checks. */
+  /** Cargo dev-profile opt-level only; preserves other profile settings. */
   optimizationLevel?: 0 | 1 | 2 | 3;
 }): Promise<{ executable: string; manifestPath: string; capabilities: unknown; qualification: 'COMPILED_NOT_CONNECTED' }> {
   if (options.optimizationLevel !== undefined && ![0, 1, 2, 3].includes(options.optimizationLevel)) throw new Error('rust_build_optimization_level_invalid');
