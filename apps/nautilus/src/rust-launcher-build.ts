@@ -139,7 +139,7 @@ export async function buildRustLauncher(options: {
   const launcher = generatedMetadata.packages.find(p => p.manifest_path === materialized.manifestPath);
   if (!launcher) throw new Error('rust_build_launcher_package_missing');
   const generated = selectedCargoGraph(generatedMetadata, launcher.id);
-  verifyOwnerNativeResolution(owner, generated);
+  await preflight('owner_native_resolution', async () => verifyOwnerNativeResolution(owner, generated));
   const metadataPath = join(directory, 'resolved-cargo-metadata.json');
   await writeFile(metadataPath, JSON.stringify(generatedMetadata), { flag: 'wx' });
   Object.assign(env, { QZ_NATIVE_BUILD_METADATA: metadataPath });

@@ -43,7 +43,7 @@ test('explicit build command pipeline is offline, keeps original lock and inspec
     await writeFile(cargo, `#!/usr/bin/env node
 const fs=require('node:fs'),p=require('node:path');
 const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(root, 'calls'))},JSON.stringify(args)+'\\n');
-if(args[0]==='metadata') { const m=args[args.indexOf('--manifest-path')+1]; const full=${JSON.stringify(resolved())}; full.packages.push({id:'root',name:'root',version:'0',source:null,manifest_path:m});full.resolve.nodes[0].deps=[];full.resolve.nodes.push({id:'root',features:[],deps:[{pkg:'model',dep_kinds:[{kind:null}]}]}); console.log(JSON.stringify(args.includes('--no-deps')?${JSON.stringify(discovery)}:full)); }
+if(args[0]==='metadata') { const m=args[args.indexOf('--manifest-path')+1]; const full=${JSON.stringify(resolved())}; if(m.includes('mismatched-resolution/launcher'))full.resolve.nodes[0].features=['high-precision']; full.packages.push({id:'root',name:'root',version:'0',source:null,manifest_path:m});full.resolve.nodes[0].deps=[];full.resolve.nodes.push({id:'root',features:[],deps:[{pkg:'model',dep_kinds:[{kind:null}]}]}); console.log(JSON.stringify(args.includes('--no-deps')?${JSON.stringify(discovery)}:full)); }
 else if(args[0]==='build' && process.env.CARGO_TARGET_DIR.includes('interrupt-build')) { console.error('build-in-progress');setInterval(()=>{},1000); }
 else if(args[0]==='build') { const dest=p.join(process.env.CARGO_TARGET_DIR,args[args.indexOf('--target')+1],'debug');fs.mkdirSync(dest,{recursive:true});const cap={...${JSON.stringify(caps)},compiledFrom:process.cwd()}; const text='#!/usr/bin/env node\\nif(process.argv[2]!=="capabilities")process.exit(22);console.log('+JSON.stringify(JSON.stringify(cap))+');'; fs.writeFileSync(p.join(dest,args[args.indexOf('--bin')+1]),text,{mode:0o755}); }
 else process.exit(23);
@@ -61,6 +61,15 @@ else process.exit(23);
     assert.ok(calls[3]!.includes('--frozen'));
     assert.equal(calls[3]![calls[3]!.indexOf('--target') + 1], 'x86_64-unknown-linux-gnu');
     assert.ok(!calls.flat().includes('run'));
+    const beforeMismatch = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').length;
+    await assert.rejects(buildRustLauncher({ source: { cargoBinary: cargo, manifestPath, packageName: 'owner' }, factories: { backtestFactory: 'factory' }, glueSourceRoot: glue, directory: join(root, 'mismatched-resolution') }), error => {
+      assert.equal((error as Error).message, 'rust_preflight_failed:owner_native_resolution');
+      assert.equal(((error as Error).cause as Error).message, 'rust_build_owner_dependency_changed:nautilus-model');
+      return true;
+    });
+    const mismatchCalls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').slice(beforeMismatch).map(line => JSON.parse(line) as string[]);
+    assert.ok(mismatchCalls.every(args => args[0] === 'metadata'), 'Resolution rejection never compiles or executes a runner.');
+    assert.equal(await readFile(join(owner, 'Cargo.lock'), 'utf8'), 'original lock');
     const controller = new AbortController();
     const interruptedDir = join(root, 'interrupt-build');
     const promise = buildRustLauncher({ source: { cargoBinary: cargo, manifestPath, packageName: 'owner' }, factories: { backtestFactory: 'factory' }, glueSourceRoot: glue, directory: interruptedDir, signal: controller.signal });
