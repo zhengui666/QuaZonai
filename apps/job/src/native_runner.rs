@@ -12,7 +12,7 @@ pub fn capabilities(
     serde_json::json!({
         "schemaVersion":1,"identity":crate::build_identity(),
         "protocol":"quazonai-native-process-v1",
-        "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured},
+        "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured,"multiCatalogBindings":configured},
         "preparation":{"marketImport":cfg!(feature="market-history"),"fillObservationImport":cfg!(feature="market-history")},
         "account":{"compiled":cfg!(feature="account-runtime"),"registration":account_registration,
             "command":"account-runtime","requiresExplicitStart":true},
@@ -144,6 +144,11 @@ mod tests {
             cfg!(feature = "market-history")
         );
         assert_eq!(value["research"]["configuredRunFactory"], true);
+        assert_eq!(value["research"]["multiCatalogBindings"], true);
+        assert_eq!(
+            super::capabilities(true, false, false)["research"]["multiCatalogBindings"],
+            false
+        );
         assert_eq!(value["account"]["registration"], false);
         assert_eq!(value["account"]["requiresExplicitStart"], true);
     }
