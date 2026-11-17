@@ -1,14 +1,12 @@
 use anyhow::{Context, Result, ensure};
 use nautilus_model::{
-    data::{
-        Bar, Data, DataBatch, FundingRateUpdate, HasTsInit, IndexPriceUpdate, MarkPriceUpdate,
-        NautilusDataType, OrderBookDelta, QuoteTick, TradeTick,
-    },
+    data::{Data, DataBatch, HasTsInit, NautilusDataType},
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::{
     backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
 };
+use nautilus_serialization::arrow::EncodeToRecordBatch;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -48,24 +46,16 @@ fn identity(data: &Data) -> Result<(String, String)> {
 }
 
 fn metadata(data: &Data) -> HashMap<String, String> {
+    // Use the same native Arrow metadata as ParquetDataCatalog. The source
+    // adapter only keeps contiguous encoding versions in separate publications.
     match data {
-        Data::Trade(d) => {
-            TradeTick::get_metadata(&d.instrument_id, d.price.precision, d.size.precision)
-        }
-        Data::Bar(d) => Bar::get_metadata(&d.bar_type, d.open.precision, d.volume.precision),
-        Data::BookDelta(d) => OrderBookDelta::get_metadata(
-            &d.instrument_id,
-            d.order.price.precision,
-            d.order.size.precision,
-        ),
-        Data::Quote(d) => QuoteTick::get_metadata(
-            &d.instrument_id,
-            d.bid_price.precision,
-            d.bid_size.precision,
-        ),
-        Data::FundingRate(d) => FundingRateUpdate::get_metadata(&d.instrument_id),
-        Data::MarkPrice(d) => MarkPriceUpdate::get_metadata(&d.instrument_id, d.value.precision),
-        Data::IndexPrice(d) => IndexPriceUpdate::get_metadata(&d.instrument_id, d.value.precision),
+        Data::Trade(d) => d.metadata(),
+        Data::Bar(d) => d.metadata(),
+        Data::BookDelta(d) => d.metadata(),
+        Data::Quote(d) => d.metadata(),
+        Data::FundingRate(d) => d.metadata(),
+        Data::MarkPrice(d) => d.metadata(),
+        Data::IndexPrice(d) => d.metadata(),
         _ => unreachable!("identity rejects unsupported records"),
     }
 }
@@ -267,6 +257,7 @@ fn directory_bytes(path: &Path) -> Result<u64> {
 mod tests {
     use super::*;
     use nautilus_model::{
+        data::{Bar, TradeTick},
         enums::AggressorSide,
         identifiers::{InstrumentId, TradeId},
         types::{Price, Quantity},

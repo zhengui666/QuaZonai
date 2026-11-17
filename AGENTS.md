@@ -102,6 +102,12 @@ TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同�
 
 该目录用于 `native-strategy-backtest` 时须显式选择 `FundingRateUpdate`，不能只导入不回放；正式结果保留事后结算限制 notes。真实接收/发布时间未知，不能称严格 PIT 或无前视认证；策略若将这些费率用于信号仍有前视风险。导入不提供历史结算价格，官方引擎采用已有 mark 或盘口中点，不等于 Hyperliquid 真实支付；读取行数不证明全部结算，须核对官方持仓资金调整与账户事件。L2 OBI 加资金费仍保持原生 book-to-quote 管道；加入 MarkPrice 等其他选择器的组合不在本次接线范围。
 
+## 市场数据职责边界
+
+原生行情以 Nautilus `ParquetDataCatalog` 为权威。QuaZonai 保存来源适配、任务回执及 DatasetConfig 引用，不另外定义行情格式或因登记而复制 catalog。CHD 等外部格式仍须转换为原生记录；其来源接收时钟与重连重复语义不能用通用时间戳去重替代。
+
+流式适配器只保留有界缓冲、同一 `ts_init` 记录不跨文件及连续精度版本分段；编码 metadata 由上游 `EncodeToRecordBatch` 提供，读写使用官方 catalog API。固定上游会拒绝混合精度与重叠文件区间，因此不能把这些来源分段误删为重复存储引擎。
+
 ## 账户资金退出运行配置
 
 既有远程 Nautilus 入口通过 `QZ_NAUTILUS_ACCOUNTS` 显式配置账户数组；每项包含 `id`、`clientId`、`accountId`、`mode` 和原生现货 `instruments`。Paper 另外要求 `startingBalance` 与显式 `paperFeeRate`；LIVE 使用 `accountAddress` 指定 master 地址，`network` 选择 mainnet/testnet。签名密钥通过账户宿主读取的 `HYPERLIQUID_PK` / `HYPERLIQUID_TESTNET_PK` 注入，不写入源码或业务请求。
