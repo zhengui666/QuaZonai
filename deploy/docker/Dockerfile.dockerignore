@@ -60,14 +60,6 @@
 !deploy/docker/maintenance.mjs
 !deploy/docker/operator/
 !deploy/docker/operator/**
-**/node_modules
-**/dist
-**/test-results
-**/.env*
-**/provider.env
-**/auth.json
-**/master.key
-
 !.agents/
 !.agents/skills/
 !.agents/skills/quazonai/
@@ -75,3 +67,10 @@
 !.agents/skills/quazonai/references/strategy-authoring.md
 !.agents/skills/quazonai/assets/
 !.agents/skills/quazonai/assets/research.rs
+**/node_modules
+**/dist
+**/test-results
+**/.env*
+**/provider.env
+**/auth.json
+**/master.key
