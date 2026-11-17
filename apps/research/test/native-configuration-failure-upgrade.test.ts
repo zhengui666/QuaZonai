@@ -20,12 +20,13 @@ import {configure} from '../../../deploy/docker/configure.mjs';
 // @ts-ignore JavaScript deployment module.
 import {requireIdle,requireExitedPreflight} from '../../../deploy/docker/maintenance.mjs';
 
-for(const variant of ['market-import','market-import-wrong-diagnostic','backtest-import-diagnostic','original','missing-fee-model','fee-wrong-terminal-error','different-error','different-exit','queued-submission','unrelated-task']) test(`stopped original native upgrade: ${variant}`, {timeout:30000}, async()=>{
+for(const variant of ['cash-perpetual','cash-wrong-suffix','market-import-cash-diagnostic','market-import','market-import-wrong-diagnostic','backtest-import-diagnostic','original','missing-fee-model','fee-wrong-terminal-error','different-error','different-exit','queued-submission','unrelated-task']) test(`stopped original native upgrade: ${variant}`, {timeout:30000}, async()=>{
  const dir=await mkdtemp(join(tmpdir(),'qz-failure-upgrade-')),binary=join(dir,'runner.mjs'),marker=join(dir,'launches');
  const marketImport=variant.startsWith('market-import');
  const importDiagnostic='QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n';
  const feeDiagnostic="\u001b[1m2026-11-16T21:53:05Z\u001b[0m \u001b[1;31m[ERROR] TRADER-001.nautilus_backtest::node: Error building backtest 'run-id': BacktestVenueConfig for 'IDEAS_SIM' requires an explicit fee_model, including an explicit zero-fee model\u001b[0m\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n";
- const diagnostic=variant==='market-import'||variant==='backtest-import-diagnostic'?importDiagnostic:variant==='missing-fee-model'?feeDiagnostic:variant==='fee-wrong-terminal-error'?feeDiagnostic.replace('NATIVE_CONFIGURED_ENGINE_UNAVAILABLE','another error'):variant==='different-error'?'QZ_NATIVE_JOB_FAILED\nother failure\n':'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n';
+ const cashDiagnostic='[INFO] TRADER-001.BacktestEngine: Building configured engine\nQZ_NATIVE_JOB_FAILED\nCash account cannot trade futures or perpetuals\n';
+ const diagnostic=variant==='cash-perpetual'||variant==='market-import-cash-diagnostic'?cashDiagnostic:variant==='cash-wrong-suffix'?cashDiagnostic+'another error\n':variant==='market-import'||variant==='backtest-import-diagnostic'?importDiagnostic:variant==='missing-fee-model'?feeDiagnostic:variant==='fee-wrong-terminal-error'?feeDiagnostic.replace('NATIVE_CONFIGURED_ENGINE_UNAVAILABLE','another error'):variant==='different-error'?'QZ_NATIVE_JOB_FAILED\nother failure\n':'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n';
  await writeFile(binary,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(marker)},'start\\n');for await(const c of process.stdin){};process.stderr.write(${JSON.stringify(diagnostic)});process.exit(${variant==='different-exit'?2:1});`,{mode:0o755});
  const target:ProcessNativeTarget={kind:'RUST_PROCESS',id:'controlled',binary,capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'controlled',precision:'standard'},research:{singleStrategyRegistration:false,configuredRunFactory:true},account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false,preparation:{marketImport:true,fillObservationImport:false}}};
  const configPath=configure(dir,'http://localhost:8081');
@@ -76,7 +77,7 @@ for(const variant of ['market-import','market-import-wrong-diagnostic','backtest
   for(const field of ['conversationId','ownerTaskId','nativeTaskId','submissionId'] as const){
    await assert.rejects(requireIdle(configPath,{maintenanceEpoch:epoch,nativeFailure:{...scope.nativeFailure,[field]:999999}}),/evidence conflict/);
   }
-  if(!['original','missing-fee-model','market-import'].includes(variant)){
+  if(!['original','missing-fee-model','market-import','cash-perpetual'].includes(variant)){
    await assert.rejects(requireIdle(configPath,scope),/evidence conflict|Unresolved durable task|Unresolved research submission/);
    assert.equal((await readFile(marker,'utf8')).trim(),'start');
    return;
@@ -93,7 +94,7 @@ for(const variant of ['market-import','market-import-wrong-diagnostic','backtest
   assert.equal((await createMaintenance(host).status()).state,'DRAINING');
   await createMaintenance(host).resume({requestId:'upgrade-resume-original',epoch});
   assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty,receipt.conversationId,String(owner.id),context),beforeFacts);
-  const review={nativeTaskId:native.id,ownerTaskId:owner.id,requestId:native.input.requestId,classification:marketImport?'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT':variant==='missing-fee-model'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:'Controlled child source only writes its invocation marker, consumes stdin, emits the exact configuration rejection, and exits 1. The controlled source does not start a replay or install callback.',sources:['controlled runner source']};
+  const review={nativeTaskId:native.id,ownerTaskId:owner.id,requestId:native.input.requestId,classification:variant==='cash-perpetual'?'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL':marketImport?'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT':variant==='missing-fee-model'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:'Controlled child source only writes its invocation marker, consumes stdin, emits the exact configuration rejection, and exits 1. The controlled source does not start a replay or install callback.',sources:['controlled runner source']};
   assert.equal((await reconcileConfiguredFailure(host.harness,receipt.conversationId,review,context)).status,'FAILED');
   const settled=await host.harness.waitForTask(owner.id,context);
   assert.equal(settled.state.outcome.status,'failed');
