@@ -79,7 +79,7 @@ test('official Codex serializes max and per-study Fast choices without mixing co
     assert.equal(transformed, 1);
     assert.equal(controlled.requests.at(-1)!.composition_marker, 'preserved');
     assert.equal(controlled.requests.at(-1)!.service_tier, 'priority');
-    await assert.rejects(host.start('ultra', { ...input('ultra'), thinkingLevel: 'ultra' } as never), /invalid_thinking_level/);
+    await assert.rejects(host.start('ultra', { ...input('ultra'), thinkingLevel: 'ultra' } as never), /thinking_level_unsupported/);
     await assert.rejects(host.start('unsupported-max', { ...input('unsupported max'), model: { provider: other.provider.id, modelId: 'other' } }), /thinking_level_unsupported/);
     await assert.rejects(host.start('unsupported-fast', { ...input('unsupported Fast'), model: { provider: other.provider.id, modelId: 'other' }, thinkingLevel: 'off', serviceTier: 'priority' }), /service_tier_unsupported/);
     assert.equal(controlled.requests.length, choices.length + 1);

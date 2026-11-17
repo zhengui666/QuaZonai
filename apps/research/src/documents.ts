@@ -9,7 +9,7 @@ export type ResearchInput = JsonObject & {
   publicLiteratureQueries?: string[];
   campaign?: import('./pm-campaign.ts').ResearchCampaignBinding;
   model: { provider: string; modelId: string };
-  thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
+  thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel;
   serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier;
   data: JsonObject;
   policy: JsonObject;

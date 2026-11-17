@@ -5,9 +5,8 @@ import nativeMarketImport from '../plugins/native-market-import.ts';
 import { assertResearchRunSettled } from './research-configuration.ts';
 import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
+import { thinkingLevels, defaultThinking, modelServiceTiers, unavailableThinkingLevels } from './model-catalog.ts';
 import type { Models } from '@earendil-works/pi-ai/models';
-import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { configure, createRegistry, defineTask, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId, Tx } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
@@ -46,14 +45,14 @@ export async function openResearch(options: {
   models?: Models;
   storage?: Storage;
   settings?: HarnessOptions['settings'];
-  thinkingLevel?: ModelThinkingLevel;
+  thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel;
   /** Service-owned parent admission, applied to original native recovery too. */
   authorizeResume?: (tx: Tx, id: ConversationId) => Promise<void>;
   authorizeAdmission?: (tx: Tx, input: ResearchInput, metadata?: import('@earendil-works/pi-durable').JsonObject) => Promise<void>;
 }) {
   const settings = researchSettings(typeof options.settings === 'function' ? options.settings() : options.settings);
   const requestedThinking = options.thinkingLevel ?? 'medium';
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
+  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
   const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
   let models: Models;
   let speed!: ReturnType<typeof subscriptionSpeed>;
@@ -116,6 +115,13 @@ export async function openResearch(options: {
     const input = structuredClone(researchInput(value));
     if (input.mode === 'LITERATURE_ONLY' && sourceEvidence) throw new Error('literature_only_source_evidence_unsupported');
     const inputDigest = canonicalJsonDigest(input);
+    // Do not hold a Durable transaction across provider network I/O. Existing
+    // request retries retain their original receipt even during catalog outages.
+    const retained = await harness.snapshot(Requests, context);
+    if (!retained?.requests[`request:${requestId}`]) {
+      const refresh = await models.refresh({ providers: [input.model.provider], allowNetwork: true });
+      if (refresh.errors.has(input.model.provider)) throw new Error('provider_status_unavailable');
+    }
     const taskId = await controller.commit(async tx => {
       const requests = await tx.doc(Requests); const key = `request:${requestId}`;
       const existing = requests.requests[key];
@@ -129,11 +135,11 @@ export async function openResearch(options: {
       await options.authorizeAdmission?.(tx, input, metadata);
       if (input.campaign) throw Object.assign(new Error('custom_research_campaign_retired'), { statusCode: 410 });
       if (['reviewPolicy', 'reviewPolicies', 'reviewedFactorSources'].some(key => input.policy[key] !== undefined)) throw Object.assign(new Error('legacy_research_scoring_retired'), { statusCode: 410 });
-    const model = models.getModel(input.model.provider, input.model.modelId);
-    if (!model) throw new Error('model_unavailable');
-    if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
-    if (input.serviceTier !== undefined && !supportsServiceTier(model)) throw new Error('service_tier_unsupported');
-    const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
+      const model = models.getModel(input.model.provider, input.model.modelId);
+      if (!model) throw new Error('model_unavailable');
+      if (input.thinkingLevel !== undefined && !thinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
+      if (input.serviceTier !== undefined && !(modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default', 'priority'] : [])).includes(input.serviceTier)) throw new Error('service_tier_unsupported');
+      const thinkingLevel = input.thinkingLevel ?? defaultThinking(model, requestedThinking);
       const source = sourceEvidence ? JSON.parse(JSON.stringify(sourceEvidence)) : undefined;
       const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, toolPolicy: 'NAUTILUS_ONLY', ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
       requests.requests[key] = { input, inputDigest, conversationId: null, submissionId: null, taskId, ...(source ? { sourceEvidence: source } : {}), ...(metadata ? { metadata } : {}) };
@@ -368,7 +374,7 @@ export async function openResearch(options: {
     submissionFor,
     async usage() { return harness.usage(context); },
     async availableModels(providerId?: string) {
-      try { return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], effectiveThinkingLevel: clampThinkingLevel(model, requestedThinking), serviceTiers: supportsServiceTier(model) ? ['default' as const, 'priority' as const] : [] })); }
+      try { const refresh = await models.refresh({ allowNetwork: true, ...(providerId ? { providers: [providerId] } : {}) }); if (refresh.errors.size) throw new Error('provider_status_unavailable'); return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...thinkingLevels(model)], effectiveThinkingLevel: defaultThinking(model, requestedThinking), unavailableThinkingLevels: unavailableThinkingLevels(model), serviceTiers: modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default' as const, 'priority' as const] : []) })); }
       catch { throw new Error('provider_status_unavailable'); }
     },
     close() {
