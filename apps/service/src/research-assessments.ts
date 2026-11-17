@@ -1,3 +1,4 @@
+import { nativeToolText } from '../../research/src/native-result-view.ts';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -9,7 +10,7 @@ import { nativeTargetForData } from '../../research/src/native-execution.ts';
 import type { Json, JsonObject, ResearchAssessmentView } from '../../../packages/contracts/src/index.ts';
 import { object, Problem } from './facts.ts';
 
-const evidenceKinds = new Set(['qz.research.assessment', 'qz.native-strategy.backtest']);
+const evidenceKinds = new Set(['qz.research.assessment', 'qz.native-strategy.backtest', 'qz.native-market-import']);
 function references(value: unknown, found = new Set<number>()): Set<number> {
   if (!value || typeof value !== 'object') return found;
   for (const [key, child] of Object.entries(value)) {
@@ -65,7 +66,10 @@ export async function researchTaskEvidence(host: ResearchHost, id: number, taskI
     if (!task || task.conversationId !== id || !evidenceKinds.has(task.kind)) throw new Problem('research_evidence_not_found', 404);
     const study = await tx.doc(Study, id as ConversationId);
     if (!study.input || study.deletedAt) throw new Problem('research_evidence_not_found', 404);
-    return { taskId, kind: task.kind, input: task.input, state: task.state };
+    const state=task.kind==='qz.native-market-import'&&task.state.status==='terminal'&&task.state.outcome.status==='completed'
+      ? {...task.state,outcome:{...task.state.outcome,result:JSON.parse(nativeToolText(object(task.state.outcome.result,'native_market_import_result'),task.id))}}
+      : task.state;
+    return { taskId, kind: task.kind, input: task.input, state };
   }, context);
 }
 

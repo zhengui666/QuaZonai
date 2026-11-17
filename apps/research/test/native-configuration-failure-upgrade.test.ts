@@ -57,7 +57,7 @@ for(const variant of ['market-import','market-import-wrong-diagnostic','backtest
   const epoch=maintenance.receipt.epoch;
   const selection={conversationId:receipt.conversationId,ownerTaskId:owner.id,nativeTaskId:native.id,submissionId:receipt.submissionId};
   const detail=await researchDetail(host,receipt.conversationId,researchTaskViews(host));
-  const ownerEvidence=marketImport?{taskId:owner.id,kind:owner.kind,state:owner.state}:await researchTaskEvidence(host,receipt.conversationId,owner.id);
+  const ownerEvidence=await researchTaskEvidence(host,receipt.conversationId,owner.id);
   if(['queued-submission','unrelated-task'].includes(variant)){
    assert.throws(()=>requireExitedPreflight(selection,maintenance.status,detail,ownerEvidence),/app was not stopped/);
   }else{
@@ -93,17 +93,11 @@ for(const variant of ['market-import','market-import-wrong-diagnostic','backtest
   assert.equal((await createMaintenance(host).status()).state,'DRAINING');
   await createMaintenance(host).resume({requestId:'upgrade-resume-original',epoch});
   assert.deepEqual(await host.harness.snapshot(NativeRemoteUncertainty,receipt.conversationId,String(owner.id),context),beforeFacts);
-  if(marketImport){
-   assert.deepEqual(await host.harness.getTask(native.id,context),originalNative);
-   assert.equal((await host.harness.commit(tx=>tx.scanTasks({kind:'qz.native.execution'},100),context)).items.length,1);
-   assert.equal((await readFile(marker,'utf8')).trim(),'start');
-   return; // Upgrade only: source-reviewed reconciliation remains a separate explicit operation.
-  }
-  const review={nativeTaskId:native.id,ownerTaskId:owner.id,requestId:native.input.requestId,classification:variant==='missing-fee-model'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:'Controlled child source only writes its invocation marker, consumes stdin, emits the exact configuration rejection, and exits 1. The controlled source does not start a replay or install callback.',sources:['controlled runner source']};
+  const review={nativeTaskId:native.id,ownerTaskId:owner.id,requestId:native.input.requestId,classification:marketImport?'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT':variant==='missing-fee-model'?'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL':'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD',sourceReview:'Controlled child source only writes its invocation marker, consumes stdin, emits the exact configuration rejection, and exits 1. The controlled source does not start a replay or install callback.',sources:['controlled runner source']};
   assert.equal((await reconcileConfiguredFailure(host.harness,receipt.conversationId,review,context)).status,'FAILED');
   const settled=await host.harness.waitForTask(owner.id,context);
   assert.equal(settled.state.outcome.status,'failed');
-  assert.match(JSON.stringify(settled.state.outcome),/native_configured_configuration_rejected/);
+  assert.match(JSON.stringify(settled.state.outcome),marketImport?/native_market_import_configuration_rejected/:/native_configured_configuration_rejected/);
   assert.equal((await (await host.harness.submission(receipt.submissionId,context))!.wait(context)).status,'done');
   assert.deepEqual(await host.harness.getTask(native.id,context),originalNative);
   assert.equal((await host.harness.snapshot(NativeEvidencePart,receipt.conversationId,`${native.id}:private-native-stderr`,context))!.data,diagnostic);

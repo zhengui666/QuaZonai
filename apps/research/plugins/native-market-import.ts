@@ -22,6 +22,8 @@ export function prepareNativeMarketImport(args:unknown):JsonObject {
   validateNumbers(args);
   if(!validate.check(args))throw new Error('native_market_import_request_schema_invalid');
   const request=args as JsonObject;
+  // Existing native selection uses directory prefixes, never individual filenames.
+  if(Array.isArray(request.path_prefixes)&&request.path_prefixes.some(prefix=>typeof prefix!=='string'||!prefix.endsWith('/')||prefix.startsWith('/')||prefix.includes('\\')||prefix.split('/').filter(Boolean).some(part=>part==='.'||part==='..')))throw new Error('SOURCE_PATH_PREFIX_INVALID');
   if((request.received_time===true)!=(request.maximum_receive_delay_ns!==undefined&&request.maximum_receive_delay_ns!==null))throw new Error('RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY');
   return request;
 }
