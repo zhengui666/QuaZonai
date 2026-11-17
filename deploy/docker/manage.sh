@@ -314,7 +314,7 @@ qz_unpack() {
 qz_help() {
     printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH|recover-failed-update [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
-      '--resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION requires existing maintenance enter and matching authenticated CLI; permits only the original exited empty-venue/missing-fee-model backtest or invalid-source-prefix market-import wait chain during update; it does not reconcile or retry it.' \
+      '--resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION requires existing maintenance enter and matching authenticated CLI; permits only the original exited empty-venue/missing-fee-model/cash-derivative backtest or invalid-source-prefix market-import wait chain during update; it does not reconcile or retry it.' \
       '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
       'Native environments are owner-managed; deployment only starts/updates app and preserves external services and data.' \
       'Only schema-5 installations are supported; prior formats are not migrated.'

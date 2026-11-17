@@ -130,3 +130,5 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 `native_strategy_catalog` 的 `data_types` 使用原生 NautilusDataType 名称，例如 `["TradeTick"]`，不是数据集 modality 的 `["TRADE_TICK"]`。可以省略此过滤条件先发现实际 selectors，再原样采用返回名称；按 next_cursor 分页。查询解析失败不代表缺少数据或执行过回放，不把错误改写为成功。
 
 导入工具返回原始 import `taskId` 供关联与分页读取，小结果和大结果提示均保留该关联；catalog_path/report_path与真实manifest/report仍是准备结果的直接证据。任务编号不是策略必填参数，不应给observer或全市场通用流程增加不必要的编号门槛。旧小结果未含编号时可通过外部正式research evidence读取原Task关联，无需重跑导入。
+
+永续/期货数据的原生模拟 venue 使用与 instrument 兼容的 `AccountType::Margin`，不能因为observer不下单就设为 Cash：固定上游在 `add_instrument` 会拒绝现金账户加载永续/期货。股票/现货仍按实际账户语义配置，不将此变成所有策略一律Margin的限制。仿真账户类型/余额/杠杆参数不表示实盘账户已连接或获交易许可。
