@@ -12,6 +12,19 @@ test('import tool consumes generated original contract without coercing timestam
   }
 });
 
+test('market import preserves explicit book modality and clock choices through the generated contract',()=>{
+  const request={schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/books',start_seconds:'1776124800',end_seconds:'1776128400'};
+  assert.deepEqual(prepareNativeMarketImport(request),request, 'omitted modality remains omitted for the native TRADE_TICK default');
+  for(const modality of ['TRADE_TICK','BOOK_SNAPSHOT']) {
+    assert.deepEqual(prepareNativeMarketImport({...request,modality}),{...request,modality});
+    const received={...request,modality,received_time:true,maximum_receive_delay_ns:'3600000000000'};
+    assert.deepEqual(prepareNativeMarketImport(received),received);
+    assert.throws(()=>prepareNativeMarketImport({...received,maximum_receive_delay_ns:null}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
+    assert.throws(()=>prepareNativeMarketImport({...received,received_time:false}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
+  }
+  for(const modality of ['BOOK_DELTA','OrderBookDelta','BAR']) assert.throws(()=>prepareNativeMarketImport({...request,modality}),/native_market_import_request_schema_invalid/);
+});
+
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {exposureReadTool} from '../plugins/research-assessment.ts';
 import {nativeToolText} from '../src/native-result-view.ts';

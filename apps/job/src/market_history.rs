@@ -272,6 +272,8 @@ struct Report {
     definitions_observed_after_event_rows: u64,
     empty_books: u64,
     one_sided_books: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    book_snapshot_groups: Option<u64>,
     native_records: BTreeMap<String, BTreeMap<String, u64>>,
     readback_records: u64,
     missing_partitions: Vec<serde_json::Value>,
@@ -1214,10 +1216,6 @@ fn import(
         "SOURCE_REVISION_REQUIRED"
     );
     ensure!(
-        !options.received_time || (options.trade_ticks),
-        "RECEIVED_TIME_REQUIRES_TRADE_INPUT"
-    );
-    ensure!(
         options.received_time == options.maximum_receive_delay_ns.is_some(),
         "RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY"
     );
@@ -1235,6 +1233,16 @@ fn import(
         .filter(|f| f.stream.is_some() && selected_path(&f.path, &prefixes))
         .collect::<Vec<_>>();
     ensure!(!selected_files.is_empty(), "SOURCE_SELECTION_EMPTY");
+    let book_snapshots = !options.trade_ticks && selected_files.iter().all(|file| {
+        manifest.stream(file.stream.as_deref().unwrap()).is_ok_and(|stream| stream.kind == "book_snapshots")
+    });
+    ensure!(!options.received_time || options.trade_ticks || book_snapshots,
+        "RECEIVED_TIME_REQUIRES_TRADE_OR_BOOK_INPUT");
+    if book_snapshots && options.received_time {
+        ensure!(selected_files.iter().all(|file| manifest.stream(file.stream.as_deref().unwrap())
+            .is_ok_and(|stream| stream.columns.contains_key("available_at"))), "RECEIVED_TIME_REQUIRES_SOURCE_AVAILABILITY");
+    }
+
     if published_source {
         selected_files.sort_by(|a, b| a.path.cmp(&b.path));
     }
@@ -1360,7 +1368,8 @@ fn import(
         revision: manifest.revision.clone(), source_revision: manifest.revision.clone(),
         selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
         selected_path_prefixes: prefixes.clone(),
-        modality: if options.trade_ticks { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
+        modality: if options.trade_ticks { "TRADE_TICK" } else if book_snapshots { "BOOK_SNAPSHOT" } else { "NATIVE_SOURCE" }.into(),
+        book_snapshot_groups: book_snapshots.then_some(0),
         generated_bar_semantics: (bar_seconds.is_some() || bar_milliseconds.is_some())
             .then(|| crate::catalog::aggregation::CONVENTION.into()),
         representation: None,
@@ -1372,8 +1381,8 @@ fn import(
         event_start_ns: start,
         event_end_ns: end,
         maximum_receive_delay_ns: options.maximum_receive_delay_ns,
-        source_age_population: freshness_source.then(|| "Original collector-receipt window with positive receiver-minus-venue source age at most maximum_receive_delay_ns; venue-ahead clock skew is retained. EARLIEST_RECEIPT_IDENTICAL_TRADE applies among eligible deliveries. Every processed payload is validated before selection; identity conflicts are checked within each file and the retained eligible ID window, not across all historical excluded deliveries. Excluded original rows and files remain unchanged; this is a freshness selection, not complete exchange history or synchronized latency evidence.".into()),
-        source_age_excluded_rows: freshness_source.then_some(0),
+        source_age_population: if book_snapshots && options.received_time { Some("Complete snapshot groups selected on original received time; groups with receiver-before-event clocks or receive delay above maximum_receive_delay_ns are excluded. No trade identity deduplication, synthesized incremental updates, order-count preservation or sampling-frequency guarantee.".into()) } else { freshness_source.then(|| "Original collector-receipt window with positive receiver-minus-venue source age at most maximum_receive_delay_ns; venue-ahead clock skew is retained. EARLIEST_RECEIPT_IDENTICAL_TRADE applies among eligible deliveries. Every processed payload is validated before selection; identity conflicts are checked within each file and the retained eligible ID window, not across all historical excluded deliveries. Excluded original rows and files remain unchanged; this is a freshness selection, not complete exchange history or synchronized latency evidence.".into()) },
+        source_age_excluded_rows: (freshness_source || book_snapshots && options.received_time).then_some(0),
         record_precision: if options.native_precision {
             format!("NATIVE_ENCODING_{}; not a historical contract tick/lot claim", nautilus_model::types::fixed::FIXED_PRECISION)
         } else {
@@ -1382,7 +1391,7 @@ fn import(
         missing_partitions: selected_missing(&manifest, &prefixes),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
         coverage: observed_source.then(|| "OBSERVED_PUBLISHED_FILES".into()),
-        deduplication_policy: published_source.then(|| "EARLIEST_RECEIPT_IDENTICAL_TRADE".into()),
+        deduplication_policy: (published_source && !book_snapshots).then(|| "EARLIEST_RECEIPT_IDENTICAL_TRADE".into()),
         ..Report::default()
     };
     // shortcut: deduplication retains IDs for this import; split long histories into dated catalogs when ID memory grows.
@@ -1441,7 +1450,7 @@ fn import(
                 report.selected_rows += 1;
                 coverage.selected_rows += 1;
             }
-            if options.received_time && selected && !published_source {
+            if options.received_time && selected && !published_source && !book_snapshots {
                 report.source_event_start_ns = Some(
                     report
                         .source_event_start_ns
@@ -1498,6 +1507,17 @@ fn import(
                 }
             } else if selected {
                 *report.missing_definitions.entry(symbol).or_default() += 1;
+            }
+            if book_snapshots && options.received_time {
+                // Every level in a snapshot shares these clocks: exclude the complete group,
+                // never individual prices or sizes. Venue-ahead clocks are not backdated.
+                if available < event || available - event > options.maximum_receive_delay_ns.unwrap() {
+                    report.exclude_source_age(&file.path, name, ordinal, selected);
+                    return Ok(());
+                }
+                report.source_event_start_ns = Some(report.source_event_start_ns.map_or(event, |first| first.min(event)));
+                let event_end = event.checked_add(1).context("TIMESTAMP_RANGE")?;
+                report.source_event_end_ns = Some(report.source_event_end_ns.map_or(event_end, |last| last.max(event_end)));
             }
             let converted = records::Encoding::new(id, instrument, options.native_precision)
                 .and_then(|encoding| {
@@ -1694,7 +1714,7 @@ fn import(
         .values()
         .flat_map(|v| v.values())
         .sum();
-    report.deduplicated_trades = published_source.then_some(report.duplicate_trades);
+    report.deduplicated_trades = (published_source && !book_snapshots).then_some(report.duplicate_trades);
     report.status = if report.missing_symbols.is_empty()
         && report.rejected_rows.is_empty()
         && (observed_source || report.missing_partitions.is_empty())
@@ -1738,7 +1758,7 @@ fn native_import_counter(value: Option<&str>) -> Result<Option<u64>> {
         .transpose()
 }
 
-/// Product entry for already present, explicitly mapped original trades.
+/// Product entry for already present, explicitly mapped trades or full book snapshots.
 /// No acquisition, bar construction, strategy execution, resume, or replacement.
 pub fn native_market_import(
     request: contracts::market_import::NativeMarketImportRequestV1,
@@ -1763,6 +1783,20 @@ pub fn native_market_import(
     let end = native_import_counter(request.end_seconds.as_deref())?;
     let maximum_receive_delay_ns =
         native_import_counter(request.maximum_receive_delay_ns.as_deref())?;
+    let book_snapshots = request.modality == contracts::market_import::NativeMarketImportModality::BookSnapshot;
+    if book_snapshots {
+        let source: Manifest = json(manifest)?;
+        let prefixes = selection_prefixes(&source, &request.path_prefixes)?;
+        for file in source.files.iter().filter(|file| file.stream.is_some() && selected_path(&file.path, &prefixes)) {
+            let stream = source.stream(file.stream.as_deref().unwrap())?;
+            ensure!(stream.kind == "book_snapshots", "BOOK_SNAPSHOT_REQUIRES_SNAPSHOT_ONLY_SELECTION");
+            // Source filters must select whole groups, never individual sides/levels.
+            let group_columns = ["symbol", "time", "available_at"].iter()
+                .filter_map(|key| stream.columns.get(*key)).collect::<BTreeSet<_>>();
+            ensure!(stream.equals.keys().chain(stream.not_equals.keys()).chain(stream.not_in.keys())
+                .all(|key| group_columns.contains(key)), "BOOK_SNAPSHOT_FILTER_MUST_SELECT_WHOLE_GROUP");
+        }
+    }
     let report = import(
         manifest,
         instruments,
@@ -1772,7 +1806,7 @@ pub fn native_market_import(
             end,
             bar_interval: (None, None),
             native_precision: true,
-            trade_ticks: true,
+            trade_ticks: !book_snapshots,
             received_time: request.received_time,
             maximum_receive_delay_ns,
             path_prefixes: &request.path_prefixes,
@@ -3294,6 +3328,66 @@ mod tests {
             4
         );
         assert!(!report.native_records.contains_key("quotes"));
+
+        // The formal product path preserves a full 20x2 snapshot whose venue
+        // timestamp precedes the requested receipt window, without depth truncation.
+        let start = 1_767_225_600_u64;
+        let at = start * 1_000_000_000;
+        let mut rows = String::from("symbol,time,received,event_type,side,price,quantity\n");
+        for level in (0..20).rev() {
+            rows.push_str(&format!("ALIAS,{},{},snapshot,bid,{},2\n", start * 1000 - 1, at + 123, 100 - level));
+            rows.push_str(&format!("ALIAS,{},{},snapshot,ask,{},3\n", start * 1000 - 1, at + 123, 101 + level));
+        }
+        // Same receipt time must not erase a distinct complete snapshot either.
+        rows.push_str(&format!("ALIAS,{},{},snapshot,noop,0,0\n", start * 1000 - 2, at + 123));
+        // Same event time is not a snapshot identity: preserve a second receipt.
+        rows.push_str(&format!("ALIAS,{},{},snapshot,noop,0,0\n", start * 1000 - 1, at + 456));
+        // Whole expired/venue-ahead groups are excluded; the end is exclusive.
+        rows.push_str(&format!("ALIAS,{},{},snapshot,bid,99,2\nALIAS,{},{},snapshot,ask,101,3\n", start * 1000 - 3000, at + 999, start * 1000 - 3000, at + 999));
+        rows.push_str(&format!("ALIAS,{},{},snapshot,noop,0,0\n", start * 1000 + 2000, at + 1000));
+        rows.push_str(&format!("ALIAS,{},{},snapshot,noop,0,0\n", start * 1000 + 1000, at + 1_000_000_000));
+        fs::write(&csv, rows).unwrap();
+        let mut source: serde_json::Value = json(&manifest).unwrap();
+        source["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        let output = temp.path().join("formal-book");
+        let request = serde_json::json!({"schema_version":1,"modality":"BOOK_SNAPSHOT",
+            "manifest_path":manifest,"instruments_path":instruments,"output_path":output,
+            "start_seconds":start.to_string(),"end_seconds":(start+1).to_string(),
+            "received_time":true,"maximum_receive_delay_ns":"2000000000"});
+        let result = native_market_import(serde_json::from_value(request.clone()).unwrap()).unwrap();
+        assert_eq!(result.report["modality"], "BOOK_SNAPSHOT");
+        assert_eq!(result.report["book_snapshot_groups"], 3);
+        assert_eq!(result.report["source_age_excluded_rows"], 3);
+        assert_eq!(result.report["outside_window_rows"], 1);
+        assert!(result.report.get("deduplication_policy").is_none());
+        let mut catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
+        let deltas = catalog.order_book_deltas(None, None, None).unwrap();
+        assert_eq!(deltas.len(), 43);
+        use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
+        assert_eq!(deltas[0].action, BookAction::Clear);
+        assert_eq!(deltas[1].order.side, Some(OrderSide::Buy));
+        assert_eq!(deltas[1].order.price.as_decimal(), rust_decimal::Decimal::from(100));
+        assert_eq!(deltas[20].order.price.as_decimal(), rust_decimal::Decimal::from(81));
+        assert_eq!(deltas[21].order.side, Some(OrderSide::Sell));
+        assert_eq!(deltas[40].order.price.as_decimal(), rust_decimal::Decimal::from(120));
+        assert_eq!(deltas.iter().filter(|delta| delta.flags & RecordFlag::F_LAST as u8 != 0).count(), 3);
+        assert!(deltas[..41].iter().all(|delta| delta.ts_init.as_u64() == at + 123 && delta.ts_event.as_u64() == at - 1_000_000));
+        // A level filter cannot silently turn a full snapshot into a partial book.
+        source["profile"]["streams"][0]["equals"] = serde_json::json!({"side":"bid"});
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        let mut filtered = request.clone(); filtered["output_path"] = temp.path().join("partial-book").to_string_lossy().as_ref().into();
+        assert!(native_market_import(serde_json::from_value(filtered).unwrap()).unwrap_err().to_string().contains("BOOK_SNAPSHOT_FILTER_MUST_SELECT_WHOLE_GROUP"));
+        source["profile"]["streams"][0].as_object_mut().unwrap().remove("equals");
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        // Default trades cannot silently accept books, and books cannot accept a trade stream.
+        let mut wrong = request.clone(); wrong.as_object_mut().unwrap().remove("modality");
+        wrong["output_path"] = temp.path().join("wrong-trades").to_string_lossy().as_ref().into();
+        assert!(native_market_import(serde_json::from_value(wrong).unwrap()).unwrap_err().to_string().contains("TRADE_TICKS_REQUIRE_TRADE_ONLY_SELECTION"));
+        source["profile"]["streams"][0]["kind"] = "trades".into();
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        let mut wrong = request; wrong["output_path"] = temp.path().join("wrong-books").to_string_lossy().as_ref().into();
+        assert!(native_market_import(serde_json::from_value(wrong).unwrap()).unwrap_err().to_string().contains("BOOK_SNAPSHOT_REQUIRES_SNAPSHOT_ONLY_SELECTION"));
     }
 
     #[test]

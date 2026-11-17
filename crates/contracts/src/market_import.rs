@@ -3,10 +3,21 @@ use crate::SchemaV1;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeMarketImportModality {
+    #[default]
+    TradeTick,
+    BookSnapshot,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeMarketImportRequestV1 {
     pub schema_version: SchemaV1,
+    /// Defaults to original trade import. Book snapshots retain all price/size levels as native CLEAR/ADD batches.
+    #[serde(default)]
+    pub modality: NativeMarketImportModality,
     pub manifest_path: String,
     pub instruments_path: String,
     /// A new directory under an existing local parent. Existing outputs are never replaced.
@@ -68,6 +79,7 @@ mod tests {
         let decoded: NativeMarketImportRequestV1 = serde_json::from_value(request.clone()).unwrap();
         assert_eq!(decoded.start_seconds.as_deref(), Some("1778284800"));
         assert!(!decoded.received_time);
+        assert_eq!(decoded.modality, NativeMarketImportModality::TradeTick);
         request["bar_seconds"] = serde_json::json!(1);
         assert!(serde_json::from_value::<NativeMarketImportRequestV1>(request.clone()).is_err());
         request.as_object_mut().unwrap().remove("bar_seconds");
