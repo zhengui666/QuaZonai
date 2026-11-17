@@ -284,7 +284,7 @@ export function withNativeExecutionHost<T>(harness: Harness, conversationId: Con
 }
 type RemoteTaskInput = { target: NativeExecutionTarget; requestId: string; basis: string; command: string; request: JsonObject; ownerTaskId?: number; receiptRequired?: true };
 
-/** Explicit source-reviewed closure of the known configured-run failures.
+/** Explicit source-reviewed closure of the known native configuration failures.
  * Exit status alone is never sufficient. The caller supplies the source review;
  * persisted original identity, diagnostics and process observations are checked here.
  * This is an adopted receipt, not a rewrite/retry of the terminal native Task. */
@@ -296,17 +296,18 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
     || !Number.isSafeInteger(review.nativeTaskId) || Number(review.nativeTaskId) < 1
     || !Number.isSafeInteger(review.ownerTaskId) || Number(review.ownerTaskId) < 1
     || typeof review.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(review.requestId)
-    || !['EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD', 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL'].includes(review.classification)
+    || !['EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD', 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL', 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT'].includes(review.classification)
     || typeof review.sourceReview !== 'string' || !review.sourceReview.trim() || review.sourceReview.length > 8192
     || !Array.isArray(review.sources) || !review.sources.length || review.sources.length > 16
     || !review.sources.every(source => typeof source === 'string' && source.trim() && source.length <= 2048)) throw invalid();
+  const importing=review.classification==='SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT';
   return harness.commit(async tx => {
     const conflict = () => Object.assign(new Error('native_configuration_failure_evidence_conflict'), {statusCode:409});
     const task = await tx.task(review.nativeTaskId as TaskId);
     const input = task?.input as unknown as RemoteTaskInput | undefined;
     if (!task || task.kind !== NativeExecutionTask.definition.name || task.conversationId !== conversationId
       || !input || input.ownerTaskId !== review.ownerTaskId || input.requestId !== review.requestId
-      || input.command !== 'native-configured-backtest' || !isProcessNativeTarget(input.target)
+      || input.command !== (importing?'native-market-import':'native-configured-backtest') || !isProcessNativeTarget(input.target)
       || task.state.status !== 'terminal' || task.state.outcome.status !== 'failed'
       || task.state.outcome.error.message !== 'nautilus_execution_unknown') throw conflict();
     const facts = await tx.doc(NativeRemoteUncertainty, conversationId, String(input.ownerTaskId), null);
@@ -319,7 +320,7 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
       return JSON.parse(JSON.stringify({nativeTaskId:task.id, ownerTaskId:input.ownerTaskId, requestId:input.requestId, status:'FAILED', review:reference.configurationFailureReview}));
     }
     const owner = await tx.task(input.ownerTaskId as TaskId);
-    if (!owner || owner.conversationId !== conversationId || owner.kind !== 'qz.native-strategy.backtest' || owner.state.status === 'terminal') throw conflict();
+    if (!owner || owner.conversationId !== conversationId || owner.kind !== (importing?'qz.native-market-import':'qz.native-strategy.backtest') || owner.state.status === 'terminal') throw conflict();
     const checkpoint = owner.state.checkpoint as JsonObject;
     if (checkpoint.phase !== 'reconcile' || checkpoint.nativeTaskId !== task.id) throw conflict();
     const call = await tx.doc(NativeCalls, input.ownerTaskId as TaskId, input.basis, null);
@@ -330,14 +331,14 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
       || process.errorCategory !== 'native_process_failed' || process.exitObserved !== true || process.exitCode !== 1
       || process.signal !== null || process.terminationRequested !== false) throw conflict();
     const diagnostic = await tx.doc(NativeEvidencePart, conversationId, `${task.id}:private-native-stderr`, null);
-    const matchesDiagnostic = review.classification === 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
+    const matchesDiagnostic = importing ? diagnostic.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : review.classification === 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
       ? diagnostic.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
       : /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(diagnostic.data));
     if (!matchesDiagnostic) throw conflict();
     const evidence = {review:review as unknown as JsonObject, reviewedAt:new Date().toISOString(),
       previousStatus:reference.status, previousError:reference.error ?? null, process,
-      diagnosticPart:`${task.id}:private-native-stderr`, scope:'SOURCE_REVIEWED_BACKTEST_FAILURE_NOT_GENERAL_SIDE_EFFECT_ROLLBACK'};
-    const error = 'native_configured_configuration_rejected';
+      diagnosticPart:`${task.id}:private-native-stderr`, scope:importing?'SOURCE_REVIEWED_IMPORT_INITIALIZATION_FAILURE_NOT_GENERAL_SIDE_EFFECT_ROLLBACK':'SOURCE_REVIEWED_BACKTEST_FAILURE_NOT_GENERAL_SIDE_EFFECT_ROLLBACK'};
+    const error = importing?'native_market_import_configuration_rejected':'native_configured_configuration_rejected';
     call.adoptedReceipt = {requestId:input.requestId,status:'FAILED',error};
     reference.configurationFailureReview = evidence;
     reference.status = 'FAILED'; reference.error = error;

@@ -7,7 +7,7 @@ test('import tool consumes generated original contract without coercing timestam
   assert.deepEqual(prepareNativeMarketImport(request),request);
   assert.throws(()=>prepareNativeMarketImport({...request,maximum_receive_delay_ns:null}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
   assert.throws(()=>prepareNativeMarketImport({...request,received_time:false}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
-  for(const extra of [{bar_seconds:1},{resume:true},{start_seconds:1778284800},{maximum_receive_delay_ns:18446744073709551615},{schema_version:2}]) {
+  for(const extra of [{path_prefixes:['BTC_trades.parquet']},{path_prefixes:['../outside/']},{path_prefixes:['/absolute/']},{bar_seconds:1},{resume:true},{start_seconds:1778284800},{maximum_receive_delay_ns:18446744073709551615},{schema_version:2}]) {
     assert.throws(()=>prepareNativeMarketImport({...request,...extra}));
   }
 });
@@ -79,4 +79,16 @@ test('preparation target rejection creates no import and keeps generated request
   const args={runnerBuildRequestId:'failed',expectedRunnerRevision:2,request:{schema_version:1,manifest_path:'/source/manifest.json',instruments_path:'/source/instruments.json',output_path:'/new/catalog'}};
   await assert.rejects(tool.execute(args,api as any,context),/native_build_not_completed/);assert.equal(created,0);
   assert.throws(()=>tool.prepareArguments!({...args,request:{...args.request,received_time:true}}),/RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY/);
+});
+
+import {researchTaskEvidence} from '../../service/src/research-assessments.ts';
+test('owner import evidence stays research-scoped and bounds large completed reports',async()=>{
+ const task={kind:'qz.native-market-import',conversationId:1,id:7,input:{request:{schema_version:1}},state:{status:'sleeping',checkpoint:{phase:'reconcile',nativeTaskId:8}}} as any;
+ const host={harness:{commit:async(fn:any)=>fn({task:async()=>task,doc:async()=>({input:{},deletedAt:null})})}} as any;
+ assert.deepEqual((await researchTaskEvidence(host,1,7)).state,task.state);
+ await assert.rejects(researchTaskEvidence(host,2,7),/research_evidence_not_found/);
+ task.state={status:'terminal',outcome:{status:'completed',result:{report:{native_files:Array.from({length:1000},()=>({path:'p'.repeat(100)}))}}}};
+ const bounded=await researchTaskEvidence(host,1,7);if(bounded.state.status!=='terminal'||bounded.state.outcome.status!=='completed')assert.fail('completed import expected');assert.equal(bounded.state.outcome.result.reader,'native_assessment_read_exposure');
+ assert.ok(JSON.stringify(bounded).length<10000);
+ task.kind='pi.tool';await assert.rejects(researchTaskEvidence(host,1,7),/research_evidence_not_found/);
 });

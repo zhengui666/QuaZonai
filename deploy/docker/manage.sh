@@ -195,7 +195,11 @@ qz_apply_update() {
             # maintenance to close admission; never stop first to find activity.
             quazonai maintenance status --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-maintenance.json"
             quazonai research get "$conversation" --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-research.json"
-            quazonai research evidence "$conversation" "$owner" --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-owner.json"
+            if ! quazonai research evidence "$conversation" "$owner" --origin "http://localhost:$(qz_get "$old" port)" > "$QZ_WORK/live-owner.json" 2> "$QZ_WORK/live-owner-error.json"; then
+                # Candidate preflight accepts only the exact old import-evidence 404.
+                # Authentication, network and other errors still refuse before stop.
+                cat "$QZ_WORK/live-owner-error.json" > "$QZ_WORK/live-owner.json"
+            fi
             printf '{"selection":%s,"status":%s,"detail":%s,"owner":%s}\n' "$selection" "$(cat "$QZ_WORK/live-maintenance.json")" "$(cat "$QZ_WORK/live-research.json")" "$(cat "$QZ_WORK/live-owner.json")" > "$QZ_WORK/live-upgrade.json"
             checked=$(qz_compose "$candidate" run --rm --no-deps -T app maintenance exited-preflight < "$QZ_WORK/live-upgrade.json")
         fi
@@ -310,7 +314,7 @@ qz_unpack() {
 qz_help() {
     printf '%s\n' 'Usage: bash manage.sh deploy|apply-update|update TAG|start|stop|restart|status|backup|restore PATH|recover-failed-update [--directory PATH] [--port PORT] [--no-backup]' \
       'Prebuilt Node/Docker deployment. Existing root, ports, config, credentials and original SQLite are retained.' \
-      '--resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION requires existing maintenance enter and matching authenticated CLI; permits only the original exited empty-venue or missing-fee-model backtest wait chain during update; it does not reconcile or retry it.' \
+      '--resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION requires existing maintenance enter and matching authenticated CLI; permits only the original exited empty-venue/missing-fee-model backtest or invalid-source-prefix market-import wait chain during update; it does not reconcile or retry it.' \
       '--no-backup is valid only for update/apply-update; it never bypasses graceful stop or unresolved-task checks.' \
       'Native environments are owner-managed; deployment only starts/updates app and preserves external services and data.' \
       'Only schema-5 installations are supported; prior formats are not migrated.'

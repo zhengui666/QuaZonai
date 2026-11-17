@@ -34,42 +34,53 @@ export function requireOriginal(configPath) {
 // maintenance. Admission is closed; no unrelated task or external activity may
 // be interrupted just to discover it during the stopped inspection.
 export function requireExitedPreflight(selection, status, detail, owner) {
-  const fail = () => { throw new Error('Enter maintenance and wait until only the selected exited backtest remains; app was not stopped'); };
+  const fail = () => { throw new Error('Enter maintenance and wait until only the selected exited native job remains; app was not stopped'); };
+  const selectedOwner = detail?.tasks?.find(task => task.id === selection.ownerTaskId);
+  // Older releases cannot project import evidence. Only this exact HTTP absence
+  // may use the existing live task projection; stopped Storage checks stay mandatory.
+  const legacyImport = owner?.error === 'research_evidence_not_found' && owner.status === 404
+    && Object.keys(owner).sort().join(',') === 'error,status'
+    && selectedOwner?.name === 'qz.native-market-import' && selectedOwner.status === 'sleeping';
+  const ownerKind = legacyImport ? selectedOwner.name : owner?.kind;
+  const supportedOwner = ['qz.native-strategy.backtest', 'qz.native-market-import'].includes(ownerKind);
   const live = detail?.tasks?.filter(task => task.status !== 'terminal');
   const expected = new Map((live ?? []).map(task => [task.id, task.name]));
   const native = detail?.tasks?.find(task => task.id === selection.nativeTaskId);
   if (status?.state !== 'DRAINING' || typeof status.epoch !== 'string' || !status.epoch
     || status.activeBusinessRequests !== 0 || status.blockingExternal?.length !== 0 || status.parkedTaskIds?.length !== 0
-    || owner?.taskId !== selection.ownerTaskId || owner.kind !== 'qz.native-strategy.backtest'
-    || owner.state?.status !== 'sleeping' || owner.state.checkpoint?.phase !== 'reconcile'
-    || owner.state.checkpoint.nativeTaskId !== selection.nativeTaskId
+    || !supportedOwner
+    || (!legacyImport && (owner?.taskId !== selection.ownerTaskId
+      || owner.state?.status !== 'sleeping' || owner.state.checkpoint?.phase !== 'reconcile'
+      || owner.state.checkpoint.nativeTaskId !== selection.nativeTaskId))
     || detail?.id !== selection.conversationId || detail.submission?.id !== selection.submissionId
     || native?.name !== 'qz.native.execution' || native.status !== 'terminal' || native.error !== 'nautilus_execution_unknown'
-    || live?.length !== 3 || expected.get(selection.ownerTaskId) !== 'qz.native-strategy.backtest'
+    || live?.length !== 3 || expected.get(selection.ownerTaskId) !== ownerKind
     || live.find(task => task.id === selection.ownerTaskId)?.status !== 'sleeping'
-    || [...expected.values()].sort().join(',') !== 'pi.generation,pi.tool,qz.native-strategy.backtest'
+    || [...expected.values()].sort().join(',') !== ['pi.generation', 'pi.tool', ownerKind].sort().join(',')
     || status.blockingTasks?.length !== 3 || status.blockingTasks.some(task => expected.get(task.taskId) !== task.kind)
     || status.blockingSubmissions?.length !== 1 || status.blockingSubmissions[0].submissionId !== selection.submissionId
     || status.blockingSubmissions[0].status !== 'placed') fail();
   return {nativeFailure:selection, maintenanceEpoch:status.epoch};
 }
-// Explicit upgrade of one already-exited configured backtest. This only reads
+// Explicit upgrade of one already-exited configured backtest or market import. This only reads
 // original Durable records; normal startup resumes them and the API reviews the
 // failure afterwards. No task, receipt, submission or diagnostic is rewritten.
 async function exitedBacktest(storage, selection) {
-  const fail = () => { throw new Error('Original exited backtest upgrade evidence conflict'); };
+  const fail = () => { throw new Error('Original exited native job upgrade evidence conflict'); };
   if (!selection || Object.keys(selection).sort().join(',') !== 'conversationId,nativeTaskId,ownerTaskId,submissionId'
     || Object.values(selection).some(id => !Number.isSafeInteger(id) || id <= 0)) fail();
   const {conversationId, nativeTaskId, ownerTaskId, submissionId} = selection;
   const native = await storage.task(nativeTaskId, context), owner = await storage.task(ownerTaskId, context);
   const input = native?.input;
+  const marketImport = owner?.kind === 'qz.native-market-import' && input?.command === 'native-market-import';
+  const backtest = owner?.kind === 'qz.native-strategy.backtest' && input?.command === 'native-configured-backtest';
   if (!native || native.kind !== 'qz.native.execution' || native.conversationId !== conversationId
     || native.owner !== ownerTaskId || native.abortRequested || input?.ownerTaskId !== ownerTaskId
-    || input.command !== 'native-configured-backtest' || input.target?.kind !== 'RUST_PROCESS'
+    || (!marketImport && !backtest) || input.target?.kind !== 'RUST_PROCESS'
     || typeof input.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(input.requestId)
     || typeof input.basis !== 'string' || native.state.status !== 'terminal'
     || native.state.outcome.status !== 'failed' || native.state.outcome.error.message !== 'nautilus_execution_unknown') fail();
-  if (!owner || owner.kind !== 'qz.native-strategy.backtest' || owner.conversationId !== conversationId
+  if (!owner || (!marketImport && !backtest) || owner.conversationId !== conversationId
     || owner.abortRequested || !['running', 'sleeping'].includes(owner.state.status)
     || owner.state.checkpoint?.phase !== 'reconcile' || owner.state.checkpoint.nativeTaskId !== nativeTaskId) fail();
   const tool = await storage.task(owner.owner, context), generation = tool && await storage.task(tool.owner, context);
@@ -97,8 +108,8 @@ async function exitedBacktest(storage, selection) {
     || process.signal !== null || process.terminationRequested !== false) fail();
   const call = await doc('qz.native-call', {kind:'task',taskId:ownerTaskId}, input.basis);
   const stderr = await doc('qz.native-evidence-part', scope, `${nativeTaskId}:private-native-stderr`);
-  const knownRejection = typeof stderr?.data === 'string' && (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
-    || /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(stderr.data)));
+  const knownRejection = typeof stderr?.data === 'string' && (marketImport ? stderr.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
+    || /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(stderr.data))));
   if (call?.taskId !== nativeTaskId || call.adoptedReceipt || !knownRejection) fail();
   return {tasks:new Set([ownerTaskId, tool.id, generation.id]), submissionId};
 }
@@ -215,6 +226,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else {
     const options = process.argv[2] === 'exited-backtest' ? JSON.parse(process.argv[3]) : {};
     await requireIdle(configPath, options);
-    console.log(options.nativeFailure ? 'Original exited backtest wait chain retained for upgrade; no reconciliation, cancellation or retry performed.' : 'Original durable database is idle; no cancellation was inferred.');
+    console.log(options.nativeFailure ? 'Original exited native job wait chain retained for upgrade; no reconciliation, cancellation or retry performed.' : 'Original durable database is idle; no cancellation was inferred.');
   }
 }
