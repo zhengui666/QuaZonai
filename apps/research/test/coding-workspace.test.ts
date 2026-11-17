@@ -39,6 +39,8 @@ test('official coding tools author and edit Rust in an explicit workspace, prese
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     assert.equal(await readFile(join(workspace, 'src/lib.rs'), 'utf8'), 'pub const VALUE: u32 = 2;\n');
     assert.ok(authoringPrompt.includes('Rust 策略编写合同'));
+    assert.ok(authoringPrompt.includes('任何兼容当前 Nautilus 原生能力的策略均可实现'));
+    assert.ok(authoringPrompt.includes('不是唯一模板'));
     assert.ok(authoringPrompt.includes('pub fn config(catalog: &Path'));
     assert.ok(authoringPrompt.includes('nautilus_strategy!(CallbackCheck)'));
     assert.ok(authoringPrompt.includes('native_configured_configure'));

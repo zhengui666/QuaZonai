@@ -10,8 +10,8 @@ export async function codingWorkspace(directory: string) {
   if (!isAbsolute(directory)) throw new Error('research_coding_workspace_must_be_absolute');
   const root = await realpath(directory);
   if (!(await stat(root)).isDirectory()) throw new Error('research_coding_workspace_not_directory');
-  const authoring = await readFile(new URL('../../../.agents/skills/quazonai/references/strategy-authoring.md', import.meta.url), 'utf8');
-  const example = await readFile(new URL('../../../.agents/skills/quazonai/assets/research.rs', import.meta.url), 'utf8');
+  const authoring = await readFile(new URL('../skills/strategy-authoring/SKILL.md', import.meta.url), 'utf8');
+  const example = await readFile(new URL('../skills/strategy-authoring/assets/research.rs', import.meta.url), 'utf8');
   const tools = CodingTools.tools!.filter(tool => ['read', 'write', 'edit'].includes(tool.name));
   async function sourcePath(path: string, writing: boolean): Promise<string> {
     // Keep paths literal, avoiding the upstream convenience aliases/normalizations.

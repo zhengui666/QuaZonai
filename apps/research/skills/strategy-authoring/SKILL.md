@@ -1,10 +1,17 @@
+---
+name: strategy-authoring
+description: 内部 Pi Durable 研究 Agent 编写、构建和运行兼容 Nautilus 的 Rust 策略；规定接口，不限定策略类型。
+---
+
 # Rust 策略编写合同
+
+**本合同只明确接口与执行方式，不限定可编写的策略。** 任何兼容当前 Nautilus 原生能力的策略均可实现；策略种类、交易逻辑、参数、标的数量与频率由研究目标决定，不设预注册名称白名单。下文数据、订单与完整代码都只是接口示例，不是唯一模板；可按需组合原生 Strategy、Actor、Controller 及其公开能力，实际可执行范围取决于已配置的数据、适配器与版本。
 
 本参考适用于**已显式配置的可信 owner Rust crate**，不是动态 Python、任意目录编译或改写 QuaZonai/Nautilus。先读 `native_runner_preparation_status` 和 owner 的 Cargo.toml、src/lib.rs、现有 factory。这里的实际 Rust API 对应 Nautilus `634e09456c949f488b2bfcf6b6897b33cbf218d7`；若环境版本不同，先核对该版本签名，不照搬 develop 文档。所有 Nautilus crate 采用同一官方 rev/兼容 features，避免两份不相容类型。不得改上游或另写撮合/指标/收益引擎。
 
 ## 1. owner 与 launcher 各写什么
 
-owner 是 library crate，`src/lib.rs` 导出 `pub mod research;`。配置的 factory module（此例 `research`）必须提供这两个准确签名：
+owner 是 library crate，factory module 名称可配置；例如选 `research` 时，`src/lib.rs` 导出 `pub mod research;`。实际配置的 module 必须提供这两个准确签名：
 
 ```rust
 pub fn config(catalog: &std::path::Path, name: &str, config: &serde_json::Value)
@@ -21,13 +28,15 @@ pub fn install(engine: &mut nautilus_backtest::engine::BacktestEngine,
 
 策略结构包含 `core: StrategyCore`；构造 `StrategyCore::new(StrategyConfig { strategy_id: Some(...), order_id_tag: Some(...), ..Default::default() })`。使用 `nautilus_trading::nautilus_strategy!(Type)`，然后 `impl nautilus_common::actor::DataActor for Type` 实现生命周期/数据回调。每个实例使用唯一 strategy ID/order ID tag。
 
+以下仅列常见回调，非可用数据类型清单；Bar、订单簿、定时器等同样可使用该版本原生 API。
+
 | 数据 | on_start 订阅 | 回调签名（返回 anyhow::Result<()>） |
 | --- | --- | --- |
 | TradeTick | `self.subscribe_trades(instrument_id, None, None)` | `fn on_trade(&mut self, tick: &TradeTick)` |
 | QuoteTick | `self.subscribe_quotes(instrument_id, None, None)` | `fn on_quote(&mut self, tick: &QuoteTick)` |
 | CustomData | `self.subscribe_data(data_type.clone(), None, None)` | `fn on_data(&mut self, data: &CustomData)` |
 
-不是 Python 的 `on_trade_tick` / `subscribe_trade_ticks`。指标直接使用该版官方 indicators 和其更新方法，先核签名。普通策略下单需 `use nautilus_trading::strategy::Strategy;`：
+不是 Python 的 `on_trade_tick` / `subscribe_trade_ticks`。指标直接使用该版官方 indicators 和其更新方法，先核签名。以下 market 单仅演示调用签名，不限定订单类型；limit、stop、撤改单等按原生 API 使用。此例下单需 `use nautilus_trading::strategy::Strategy;`：
 
 ```rust
 let order = self.order().market(
@@ -56,13 +65,15 @@ self.submit_order(order, None, None, None)?;
 
 ### Chainticks 账户 fill 特别约定
 
+本节仅适用于选用此来源的研究，不要求其他策略使用 Chainticks 或只做主动成交分析。
+
 配置的 launcher 必须启用相应 source import 并在 factory 前调用 `job::chainticks_fill::register_observation_type()`。使用已登记 `ChainticksFillObservation`，不要复制一个同名但不同 Rust 类型。动态读取使用 `data.data.to_json()?`，实际字段有 `source_row_zero_based`、`raw_envelope`（event 与 block），不是猜测的 row/index/fill 字段。
 
-账户 fill **不等于完整公共市场逐笔**。普通主动 fill 筛选必须消费既有 `classification == "taker_fill_observation"`，而不能只看 crossed=true；`maker_fill_observation`、`special_event_observation`、`unknown_fill_observation`、`unsupported_fill_observation` 保留各自含义，不能当普通成交。tid=0 不是独立删除规则；来源行身份、重放、账户双方记录和交易身份必须区分，保留原行。Spot Dust Conversion 等特殊事件可 crossed=true。账户 fill 不能据此声称盘口/滑点/可执行收益。
+账户 fill **不等于完整公共市场逐笔**。普通主动 fill 筛选必须消费既有 `classification == "taker_fill_observation"`，而不能只看 crossed=true；`maker_fill_observation`、`special_event_observation`、`unknown_fill_observation`、`unsupported_fill_observation` 保留各自含义：maker 是被动成交，可用于相应研究；特殊、未知及不支持事件不能混作普通主动成交。tid=0 不是独立删除规则；来源行身份、重放、账户双方记录和交易身份必须区分，保留原行。Spot Dust Conversion 等特殊事件可 crossed=true。账户 fill 不能据此声称盘口/滑点/可执行收益。
 
 ## 4. 可编译、无订单的完整 owner 例子
 
-同发行包的 [assets/research.rs](../assets/research.rs) 是完整 module，不是伪代码；内部研究 Agent 同时收到原文。它用原生 Strategy 消费已登记 CustomData，并验证 loaded/received 数量，不下单、不生成假收益。只用于验证生命周期和正确接线，之后替换为有明确假设的真实策略。
+同发行包的 [assets/research.rs](assets/research.rs) 是完整 module，不是伪代码；内部研究 Agent 同时收到原文。它用原生 Strategy 消费已登记 CustomData，并验证 loaded/received 数量，不下单、不生成假收益。只用于验证生命周期和正确接线，不规定真实策略必须使用 CustomData、此数据源、无订单逻辑或示例名称/参数。可以完全替换示例实现，编写符合研究目标的任何原生兼容策略。
 
 owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backtest（streaming）、nautilus-common、nautilus-core、nautilus-execution、nautilus-model、nautilus-persistence、nautilus-trading。沿用当前环境 features/锁定依赖，不抄另一版锁文件。示例配置为：
 
