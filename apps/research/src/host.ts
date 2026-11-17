@@ -1,3 +1,4 @@
+import ultraDelegation from '../plugins/ultra-delegation.ts';
 import { codingWorkspace } from './coding-workspace.ts';
 import researchAssessment from '../plugins/research-assessment.ts';
 import nativeStrategyBacktest from '../plugins/native-strategy-backtest.ts';
@@ -5,7 +6,7 @@ import nativeMarketImport from '../plugins/native-market-import.ts';
 import { assertResearchRunSettled } from './research-configuration.ts';
 import researchTools, { nativeResearchExtension } from '../plugins/research.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { thinkingLevels, defaultThinking, modelServiceTiers, unavailableThinkingLevels } from './model-catalog.ts';
+import { thinkingLevels, reasoningModes, resolveReasoning, defaultThinking, modelServiceTiers, unavailableThinkingLevels } from './model-catalog.ts';
 import type { Models } from '@earendil-works/pi-ai/models';
 import { configure, createRegistry, defineTask, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId, Tx } from '@earendil-works/pi-durable';
@@ -81,13 +82,14 @@ export async function openResearch(options: {
       registry.install(module.default as Extension);
     }
     registry.install(researchAssessment);
+    registry.install(ultraDelegation);
     registry.install(nativeStrategyBacktest);
     registry.install(nativeMarketImport);
     registry.install(nativeResearchExtension(registry.snapshot().installed().find(extension => extension.name === 'qz.research') ?? researchTools));
     registry.install(defineExtension({ name: 'qz.research-runtime', tasks: [OwnerStopTask, NativeExecutionTask, ResearchIntakeTask, ReviewSourceValidationTask] }));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
-    harness = await Harness.open(storage, { models, registry, ...(coding ? { env: coding.env } : {}), settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => !['qz.review', 'qz.research-native'].includes(extension.name)) } }, context);
+    harness = await Harness.open(storage, { models, registry, ...(coding ? { env: coding.env } : {}), settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => !['qz.review', 'qz.research-native', 'qz.ultra-delegation'].includes(extension.name)) } }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
@@ -139,11 +141,12 @@ export async function openResearch(options: {
       if (['reviewPolicy', 'reviewPolicies', 'reviewedFactorSources'].some(key => input.policy[key] !== undefined)) throw Object.assign(new Error('legacy_research_scoring_retired'), { statusCode: 410 });
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
-      if (input.thinkingLevel !== undefined && !thinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
+      if (input.thinkingLevel !== undefined) resolveReasoning(model, input.thinkingLevel);
       if (input.serviceTier !== undefined && !(modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default', 'priority'] : [])).includes(input.serviceTier)) throw new Error('service_tier_unsupported');
-      const thinkingLevel = input.thinkingLevel ?? defaultThinking(model, requestedThinking);
+      const selected = input.thinkingLevel ?? defaultThinking(model, requestedThinking);
+      const thinkingLevel = resolveReasoning(model, selected).effectiveLevel;
       const source = sourceEvidence ? JSON.parse(JSON.stringify(sourceEvidence)) : undefined;
-      const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, toolPolicy: 'NAUTILUS_ONLY', ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
+      const taskId = await tx.createTask(ResearchIntakeTask, { requestId, input, thinkingLevel, requestedThinkingLevel: selected, toolPolicy: 'NAUTILUS_ONLY', ...(source ? { sourceEvidence: source } : {}) }, { ownership: { kind: 'conversation' } });
       requests.requests[key] = { input, inputDigest, conversationId: null, submissionId: null, taskId, ...(source ? { sourceEvidence: source } : {}), ...(metadata ? { metadata } : {}) };
       return taskId;
     }, context);
@@ -376,7 +379,7 @@ export async function openResearch(options: {
     submissionFor,
     async usage() { return { ...await harness.usage(context), costAvailable: !(await harness.snapshot(ModelPricing, context))?.unpriced }; },
     async availableModels(providerId?: string) {
-      try { const refresh = await models.refresh({ allowNetwork: true, ...(providerId ? { providers: [providerId] } : {}) }); if (refresh.errors.size) throw new Error('provider_status_unavailable'); return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...thinkingLevels(model)], effectiveThinkingLevel: defaultThinking(model, requestedThinking), unavailableThinkingLevels: unavailableThinkingLevels(model), serviceTiers: modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default' as const, 'priority' as const] : []) })); }
+      try { const refresh = await models.refresh({ allowNetwork: true, ...(providerId ? { providers: [providerId] } : {}) }); if (refresh.errors.size) throw new Error('provider_status_unavailable'); return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...thinkingLevels(model)], reasoningModes: reasoningModes(model), effectiveThinkingLevel: defaultThinking(model, requestedThinking), unavailableThinkingLevels: unavailableThinkingLevels(model), serviceTiers: modelServiceTiers(model) ?? (supportsServiceTier(model) ? ['default' as const, 'priority' as const] : []) })); }
       catch { throw new Error('provider_status_unavailable'); }
     },
     close() {

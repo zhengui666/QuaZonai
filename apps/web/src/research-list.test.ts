@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { ListPage, ResearchListItem } from '../../../packages/contracts/src/lists.ts';
-import Research, { NativeResearchContinuation, nativeResearchInput, ResearchConversation, canContinueResearch, NativeStrategyResultView, ResearchMarkdown, safeMarkdownComponents, mergeResearchMessages, readableResearchText, ResearchRating, ResearchUncertainty, syncResearchWindow, acceptResearchHistoryPage } from './research';
+import Research, { ResearchDelegations, NativeResearchContinuation, nativeResearchInput, ResearchConversation, canContinueResearch, NativeStrategyResultView, ResearchMarkdown, safeMarkdownComponents, mergeResearchMessages, readableResearchText, ResearchRating, ResearchUncertainty, syncResearchWindow, acceptResearchHistoryPage } from './research';
 import type { ResearchDetail } from '../../../packages/contracts/src/index.ts';
 import { listQuery } from './list-values';
 
@@ -310,4 +310,23 @@ it('research list shows unresolved execution rather than an earlier computed res
  const text=visibleText(renderList([{...study,status:'UNKNOWN'}]));
  expect(text).toContain('执行结果未确认');
  expect(text).not.toContain('已计算');
+});
+
+describe('native Pi delegation presentation', () => {
+  it('hides an absent delegation list without inventing activity', () => {
+    expect(renderToStaticMarkup(createElement(ResearchDelegations, { delegations: [] }))).toBe('');
+  });
+  it('shows original identities, actual effort and escaped plain-text answers', () => {
+    const html = renderToStaticMarkup(createElement(ResearchDelegations, { delegations: [{ taskId: 17, conversationId: 23, submissionId: 41, status: 'failed', model: { provider: 'p', modelId: 'm' }, effectiveLevel: 'max', error: '原始错误', answer: '<script>alert(1)</script> **plain**' }] }));
+    expect(visibleText(html)).toContain('Max');
+    expect(visibleText(html)).toContain('#17');
+    expect(visibleText(html)).toContain('23');
+    expect(visibleText(html)).toContain('41');
+    expect(visibleText(html)).toContain('原始错误');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('**plain**');
+    expect(visibleText(html)).not.toContain('Ultra');
+    expect(visibleText(html)).not.toContain('重启');
+  });
 });

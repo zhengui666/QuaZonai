@@ -1,3 +1,4 @@
+import { modelSupportsThinking } from '../../../packages/contracts/src/index.ts';
 import { randomUUID } from 'node:crypto';
 import type { AuthPrompt } from '@earendil-works/pi-ai';
 import type { FastifyInstance } from 'fastify';
@@ -149,7 +150,7 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
         const available = availableModels.find(item => item.provider === text(ref.provider, 'provider') && item.modelId === text(ref.modelId, 'model_id'));
         const model = host.models.getModel(String(ref.provider), String(ref.modelId));
         if (!model || !available) throw new Problem('model_unavailable', 409);
-        if (next.thinkingLevel !== null && !available.thinkingLevels.includes(next.thinkingLevel)) throw new Problem('thinking_level_unsupported');
+        if (next.thinkingLevel !== null && !modelSupportsThinking(available, next.thinkingLevel)) throw new Problem('thinking_level_unsupported');
         if (next.serviceTier !== null && !available.serviceTiers.includes(next.serviceTier)) throw new Problem('service_tier_unsupported');
       } else if (modelSettingsChanged && (next.thinkingLevel !== null || next.serviceTier !== null)) throw new Problem('model_required');
       facts.settings = { ...facts.settings, ...patch };

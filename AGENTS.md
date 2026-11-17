@@ -406,3 +406,28 @@ cache and output sizes; it does not run market-data research or publish/deploy.
 `POST /api/v3/research/:id/native-failure-review` 仅对旧 `native-configured-backtest` 的原始空 venues 配置拒绝提供明确核对接缝。请求必须给出原 `nativeTaskId`、`ownerTaskId`、`requestId`，分类 `EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD`，以及对原 owner 工厂与拒绝调用链的 `sourceReview` 和 `sources`。它不是自动日志分类器，不能仅凭退出码推断任意用户 Rust 代码没有副作用；调用方须先核查原源码和执行证据，不能重跑请求进行“核实”。
 
 服务在同一官方 Pi transaction 核对原任务、绑定、已保存退出事实和精确原 stderr，然后采用现有 `NativeCalls.adoptedReceipt` 的 FAILED 结果。原 native Task 的 UNKNOWN 终态、请求、stderr 和进程事实不改写，原未知状态与核对来源继续保留；原回测 Task 沿已有 reconcile 失败路径终结。没有回测结果、自动重发、自动新建研究或交易权限。不同退出/终止/诊断、其他命令或身份不符保持 UNKNOWN；本接口不关闭账户或数据导入的未决执行。
+
+### Model discovery and Ultra collaboration
+
+Authenticated OpenAI/ChatGPT catalogs refresh through official Pi provider hooks;
+the latest successful capability contract is retained through `ModelsStore` for
+original-task recovery. A discovery failure is not a current availability claim.
+An identity-only API-key catalog does not invent capabilities for unknown IDs.
+
+`Ultra` is a requested collaboration mode, not a literal provider effort. The
+research intake retains the original request, configures the catalog's supported
+`multi_agent_reasoning_effort` (otherwise Max, otherwise the last supported
+non-Ultra level), and explicitly enables `qz.ultra-delegation`. Ordinary research
+does not receive this extension. The UI distinguishes the requested mode from the
+retained official `pi.agent` configuration; neither proves a request succeeded.
+
+`ultra_delegate` uses official foreground task-owned conversations and replay-safe
+submission IDs. Independent calls can run in parallel, and parent cancellation
+reaches the children. Children receive only the explicit assignment/material,
+the same model/actual effort and service tier. They perform analysis, review, and
+synthesis without research, source-file, market, or trading tools and without
+recursive delegation. The parent owns source retrieval, scientific execution,
+file changes, result integration, and final delivery. This is a bounded Pi-native
+collaboration mode, not the full Codex agent environment. Child answers are not
+new empirical evidence. UI results are projections of original Pi identities,
+submissions and ordinary final text, never a second result ledger.

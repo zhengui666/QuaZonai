@@ -26,9 +26,11 @@ export type JsonObject = { [key: string]: Json };
 export type ModelRef = import('@earendil-works/pi-durable').ModelRef;
 export type ThinkingLevel = import('@earendil-works/pi-ai').ModelThinkingLevel | 'ultra';
 export type ServiceTier = 'default' | 'priority';
-export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; unavailableThinkingLevels?: { level: ThinkingLevel; reason: string }[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
+export interface ReasoningConfiguration { requestedLevel: ThinkingLevel; effectiveLevel: Exclude<ThinkingLevel, 'ultra'>; mode: 'NATIVE' | 'PI_MULTI_AGENT' }
+export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; reasoningModes?: { level: 'ultra'; effectiveLevel: Exclude<ThinkingLevel, 'ultra'>; mode: 'PI_MULTI_AGENT' }[]; unavailableThinkingLevels?: { level: ThinkingLevel; reason: string }[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
 export type ModelAuthType = 'api_key' | 'oauth';
 export interface ProviderView { id: string; name: string; configured: boolean; authTypes: ModelAuthType[]; login: { id: string; type: ModelAuthType } | null; error: string | null }
+export function modelSupportsThinking(model: ModelView, level: ThinkingLevel): boolean { return model.thinkingLevels.includes(level) || !!model.reasoningModes?.some(item => item.level === level); }
 export interface ModelCatalog { providers: ProviderView[]; models: ModelView[] }
 export type ModelAuthPrompt = { id: number; message: string } & (
   { type: 'text' | 'secret' | 'manual_code'; placeholder?: string } |
@@ -90,7 +92,11 @@ export interface ResearchAssessmentView {
   configuration: 'CURRENT' | 'HISTORICAL'; result: JsonObject | null; error: string | null;
   evidenceLinks: { taskId: number; href: string }[];
 }
+export interface ResearchDelegationView { taskId: number; conversationId: number | null; submissionId: number | null; status: string; error: string | null; model: ModelRef | null; effectiveLevel: Exclude<ThinkingLevel, 'ultra'> | null; answer: string | null }
 export interface ResearchDetail extends ResearchSummary {
+  delegations?: ResearchDelegationView[];
+  /** Retained official Agent configuration, not a claim that a provider request completed. */
+  reasoningConfiguration?: ReasoningConfiguration;
   /** Explicit unresolved original current evaluation receipts, not inferred from task activity. */
   executionUncertain?: boolean;
   executionUncertainty?: { taskId: number; reason: 'nautilus_execution_unknown' | 'nautilus_cancellation_unknown' } | null;

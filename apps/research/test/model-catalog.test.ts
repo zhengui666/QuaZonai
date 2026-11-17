@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ModelCredentials } from '../src/credentials.ts';
 import { createModels } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
-import { discoveredOpenAIProvider, readCatalog, thinkingLevels, defaultThinking, unavailableThinkingLevels } from '../src/model-catalog.ts';
+import { discoveredOpenAIProvider, readCatalog, thinkingLevels, defaultThinking, unavailableThinkingLevels, reasoningModes, resolveReasoning } from '../src/model-catalog.ts';
 import { subscriptionSpeed } from '../src/models.ts';
 const entry = (slug: string, levels = ['low', 'max', 'ultra']) => ({ slug, display_name: slug, supported_reasoning_levels: levels.map(effort => ({ effort })), default_reasoning_level: 'low', context_window: 272000, service_tiers: [{ id: 'priority' }] });
 
@@ -19,7 +19,8 @@ test('official provider refresh replaces catalog and discovers new IDs and Ultra
   await refresh();
   assert.deepEqual(provider.getModels().map(model => model.id), ['new-model']);
   assert.deepEqual(thinkingLevels(provider.getModels()[0]!), ['low', 'max']);
-  assert.equal(unavailableThinkingLevels(provider.getModels()[0]!)[0]!.level, 'ultra');
+  assert.deepEqual(reasoningModes(provider.getModels()[0]!), [{ level: 'ultra', effectiveLevel: 'max', mode: 'PI_MULTI_AGENT' }]);
+  assert.deepEqual(unavailableThinkingLevels(provider.getModels()[0]!), []);
   assert.equal(defaultThinking(provider.getModels()[0]!, 'medium'), 'low');
   body = { models: [entry('replacement', ['low', 'max'])] }; await refresh();
   assert.deepEqual(provider.getModels().map(model => model.id), ['replacement']);
@@ -29,7 +30,7 @@ test('official provider refresh replaces catalog and discovers new IDs and Ultra
   assert.equal(calls, 3);
 });
 
-test('unimplemented Ultra is rejected without silently sending a lower effort', async () => {
+test('literal provider Ultra is rejected; the collaboration mode must resolve before streaming', async () => {
   const original = openaiProvider();
   const model = readCatalog({ models: [entry('new-unpriced-model')] }, original)[0]!;
   const payloads: Record<string, any>[] = [];
@@ -94,10 +95,21 @@ test('official model store restores new IDs and capabilities after restart with 
     const restored = models.getModel('openai', 'future-model')!;
     assert.ok(restored);
     assert.deepEqual(thinkingLevels(restored), ['low', 'max']);
-    assert.equal(unavailableThinkingLevels(restored)[0]!.level, 'ultra');
+    assert.equal(reasoningModes(restored)[0]!.level, 'ultra');
     assert.equal(defaultThinking(restored, 'medium'), 'low');
     const saved = await credentials.modelsStore.read('openai');
     assert.equal(saved?.models.length, 1);
     assert.equal(JSON.stringify(saved).includes('test'), false);
   } finally { await credentials.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('Ultra resolves the catalog collaboration effort separately from the user selection', () => {
+  const provider = openaiProvider();
+  const model = (levels: string[], preferred?: string) => readCatalog({ models: [{ ...entry('future', levels), multi_agent_reasoning_effort: preferred }] }, provider)[0]!;
+  assert.deepEqual(resolveReasoning(model(['low', 'xhigh', 'max', 'ultra'], 'xhigh'), 'ultra'), { requestedLevel: 'ultra', effectiveLevel: 'xhigh', mode: 'PI_MULTI_AGENT' });
+  assert.equal(resolveReasoning(model(['low', 'max', 'ultra'], 'high'), 'ultra').effectiveLevel, 'max');
+  assert.equal(resolveReasoning(model(['low', 'high', 'ultra'], 'ultra'), 'ultra').effectiveLevel, 'high');
+  assert.throws(() => resolveReasoning(model(['low', 'max']), 'ultra'), /thinking_level_unsupported/);
+  assert.equal(defaultThinking(model(['low', 'max', 'ultra']), 'ultra'), 'ultra');
 });

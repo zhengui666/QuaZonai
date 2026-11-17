@@ -1,9 +1,10 @@
+import { readUltraDelegations } from '../../research/src/ultra-delegation-view.ts';
 import { isNativeTable } from '../../research/src/native-table.ts';
 import { readResearchAssessments } from './research-assessments.ts';
 import { ResearchConfiguration } from '../../research/src/research-configuration.ts';
 import { NativeRemoteUncertainty } from '../../research/src/native-execution.ts';
 import { Requests } from '../../research/src/documents.ts';
-import { AssistantEntry, UserEntry } from '@earendil-works/pi-durable';
+import { AgentDoc, AssistantEntry, UserEntry } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, EntryRecord, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -242,7 +243,16 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
   const assessments = await readResearchAssessments(host, id, study.input);
   const messagePage = await researchMessagePage(host, id);
   const admissions = await readResearchAdmissions(host);
+  const agent = await host.harness.snapshot(AgentDoc, id as ConversationId, BACKGROUND_CONTEXT);
+  const ultra = Array.isArray(agent?.extensions) && agent.extensions.includes('qz.ultra-delegation');
+  const delegations = ultra || study.input.thinkingLevel === 'ultra' ? await readUltraDelegations(host.harness, id as ConversationId, BACKGROUND_CONTEXT) : [];
+  const reasoningConfiguration: ResearchDetail['reasoningConfiguration'] = agent?.thinkingLevel ? {
+    requestedLevel: study.input.thinkingLevel ?? (ultra ? 'ultra' : agent.thinkingLevel),
+    effectiveLevel: agent.thinkingLevel, mode: ultra ? 'PI_MULTI_AGENT' : 'NATIVE',
+  } : undefined;
   return {
+    ...(reasoningConfiguration ? { reasoningConfiguration } : {}),
+    ...(delegations.length ? { delegations } : {}),
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     executionUncertain: executionUncertainty !== null, executionUncertainty,
     reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)

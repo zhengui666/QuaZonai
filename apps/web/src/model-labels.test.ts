@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { thinkingLabel, thinkingOptions, thinkingUnavailableReason } from './model-labels';
+import { thinkingLabel, thinkingOptions, thinkingUnavailableReason, reasoningModeDescription } from './model-labels';
 const reads = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 vi.mock('@tanstack/react-query', async importOriginal => ({ ...await importOriginal<typeof import('@tanstack/react-query')>(), useQuery: (options: Record<string, unknown>) => { reads.push(options); return {}; } }));
 import { useModelCatalog } from './data-hooks';
@@ -19,6 +19,15 @@ describe('provider reasoning presentation', () => {
     expect(thinkingUnavailableReason()).toBeUndefined();
     expect(thinkingOptions({ ...model, thinkingLevels: ['max', 'ultra'] }).filter(option => option.value === 'ultra')).toEqual([{ value: 'ultra', label: 'Ultra', disabled: true, title: '服务暂不接受 Ultra' }]);
     expect(thinkingOptions()).toEqual([]);
+  });
+  it('keeps Ultra separate from the configured model effort and enables only declared orchestration', () => {
+    const model = { thinkingLevels: ['max'], reasoningModes: [{ level: 'ultra', effectiveLevel: 'max', mode: 'PI_MULTI_AGENT' as const }], unavailableThinkingLevels: [{ level: 'ultra', reason: '原生不支持' }] };
+    expect(thinkingOptions(model)).toEqual([{ value: 'max', label: 'Max' }, { value: 'ultra', label: 'Ultra' }]);
+    expect(thinkingUnavailableReason(model)).toBeUndefined();
+    expect(reasoningModeDescription(model, 'ultra')).toContain('底层模型配置 Max');
+    expect(reasoningModeDescription(model, 'ultra')).toContain('仅分析、审查和综合');
+    expect(reasoningModeDescription(model, 'max')).toBeUndefined();
+    expect(model.thinkingLevels).toEqual(['max']);
   });
   it('automatically reads the same model endpoint once per minute while visible', () => {
     reads.length = 0; renderToStaticMarkup(createElement(Catalog));
