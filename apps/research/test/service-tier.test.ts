@@ -18,7 +18,7 @@ import { ModelCredentials } from '../src/credentials.ts';
 
 const context = BACKGROUND_CONTEXT;
 const input = (goal: string) => ({ goal, model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'max' as const, data: {}, policy: { } });
-type RequestBody = { instructions: string; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
+type RequestBody = { tools?: { name?: string }[]; instructions: string; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
 
 function controlledProvider(provider: Provider = openaiCodexProvider(), modelsStore?: import('@earendil-works/pi-ai').ModelsStore) {
   const requests: RequestBody[] = [];
@@ -182,7 +182,8 @@ test('new Ultra research persists its requested mode while Pi sends the catalog 
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     assert.equal(controlled.requests[0]!.reasoning.effort, 'xhigh');
     assert.match(JSON.stringify(controlled.requests[0]), /proactively delegate/);
-    assert.ok(JSON.stringify(controlled.requests[0]).includes('ultra_delegate'));
+    assert.ok(controlled.requests[0]!.tools?.some(tool => tool.name === 'ultra_delegate'));
+    assert.ok(controlled.requests[0]!.tools?.some(tool => tool.name === 'research_finish'));
     const { AgentDoc } = await import('@earendil-works/pi-durable');
     assert.equal((await host.harness.snapshot(AgentDoc, receipt.conversationId, context))!.thinkingLevel, 'xhigh');
     assert.equal((await host.view(receipt.conversationId)).research!.input!.thinkingLevel, 'ultra');
@@ -193,7 +194,7 @@ test('new Ultra research persists its requested mode while Pi sends the catalog 
     const normal = await host.start('normal-after-ultra', { ...original, goal: 'Ordinary research', thinkingLevel: 'low' });
     assert.equal((await (await host.harness.submission(normal.submissionId, context))!.wait(context)).status, 'done');
     assert.equal(controlled.requests[1]!.reasoning.effort, 'low');
-    assert.ok(!JSON.stringify(controlled.requests[1]).includes('ultra_delegate'));
+    assert.ok(!controlled.requests[1]!.tools?.some(tool => tool.name === 'ultra_delegate'));
     assert.ok(!JSON.stringify(controlled.requests[1]).includes('proactively delegate'));
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
