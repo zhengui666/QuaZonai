@@ -1,3 +1,4 @@
+import { modelSupportsThinking } from '../../../packages/contracts/src/index.ts';
 import { ensureCapitalWatch } from './capital-watch.ts';
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { ProcessNativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -124,7 +125,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
     const available = await host.availableModels(String(model.provider));
     const selectedModel = available.find(item => item.modelId === model.modelId);
     if (!selectedModel) throw new Problem('model_unavailable', 409);
-    if (input.thinkingLevel !== undefined && !selectedModel.thinkingLevels.includes(input.thinkingLevel)) throw new Problem('thinking_level_unsupported');
+    if (input.thinkingLevel !== undefined && !modelSupportsThinking(selectedModel, input.thinkingLevel)) throw new Problem('thinking_level_unsupported');
     if (input.serviceTier !== undefined && !['default', 'priority'].includes(input.serviceTier)) throw new Problem('invalid_service_tier');
     if (input.serviceTier !== undefined && !selectedModel.serviceTiers.includes(input.serviceTier)) throw new Problem('service_tier_unsupported');
     const policy = object(input.policy, 'policy');

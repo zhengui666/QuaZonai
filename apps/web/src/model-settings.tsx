@@ -2,12 +2,13 @@ import { Button, Form, Input, InputNumber, Segmented, Select } from 'antd';
 import { ArrowClockwiseIcon, CaretDownIcon, CircleHalfIcon, MagnifyingGlassIcon, MoonIcon, PlugsIcon, SunIcon } from '@phosphor-icons/react';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
+import { modelSupportsThinking } from '../../../packages/contracts/src/index.ts';
 import type { ModelRef, ProviderView, ServiceTier, SettingsView, ThinkingLevel, UsageView } from '../../../packages/contracts/src/index.ts';
 import { ApiError, api } from './api';
 import { useAppearance } from './App';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft } from './commands';
 import { useModelCatalog, useResource } from './data-hooks';
-import { thinkingLabel, thinkingOptions, thinkingUnavailableReason } from './model-labels';
+import { thinkingLabel, thinkingOptions, thinkingUnavailableReason, reasoningModeDescription } from './model-labels';
 import type { ModelLoginRequest } from './model-login';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, Status, useConfirm } from './ui';
 type Fields = { model?: string; thinking: ThinkingLevel | 'default'; serviceTier?: ServiceTier; tickBookCores: number };
@@ -49,7 +50,7 @@ export default function ModelSettings({ connect }: { connect: (value: ModelLogin
     </div></section>
     <section className="settings-group"><header><h2>研究默认值</h2></header><div className="settings-group-body"><ErrorNotice error={preferences.error} retry={() => { void preferences.refetch(); }} />{preferences.isPending ? <Loading /> : <Form form={form} layout="vertical" onValuesChange={(_changed, values) => { setNotice(''); setError(undefined); setPendingSave(undefined); setDraftSaved(saveDraft('settings', values)); }} onFinish={() => { void save(); }} disabled={saving || !!pendingSave}>
       <Form.Item label="默认模型" name="model"><Select showSearch allowClear optionFilterProp="label" options={options} suffixIcon={<CaretDownIcon size={14} />} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); form.setFieldValue('thinking', 'default'); if (!current?.serviceTier || !model?.serviceTiers.includes(current.serviceTier)) form.setFieldValue('serviceTier', undefined); setDraftSaved(saveDraft('settings', form.getFieldsValue())); }} /></Form.Item>
-      <Form.Item label="推理强度" name="thinking" extra={thinkingUnavailableReason(selected)} rules={[{ validator: (_rule, value?: string) => !value || value === 'default' || !current?.model || !selected || selected.thinkingLevels.some(level => level === value) ? Promise.resolve() : Promise.reject(new Error('原推理强度不可用，请重新选择')) }]}><Select disabled={!current?.model || saving || !!pendingSave} suffixIcon={<CaretDownIcon size={14} />} options={[{ value: 'default', label: thinkingLabel('default') }, ...thinkingOptions(selected)]} /></Form.Item>
+      <Form.Item label="推理强度" name="thinking" extra={[reasoningModeDescription(selected, current?.thinking), thinkingUnavailableReason(selected)].filter(Boolean).join("；") || undefined} rules={[{ validator: (_rule, value?: string) => !value || value === 'default' || !current?.model || !selected || modelSupportsThinking(selected, value as ThinkingLevel) ? Promise.resolve() : Promise.reject(new Error('原推理强度不可用，请重新选择')) }]}><Select disabled={!current?.model || saving || !!pendingSave} suffixIcon={<CaretDownIcon size={14} />} options={[{ value: 'default', label: thinkingLabel('default') }, ...thinkingOptions(selected)]} /></Form.Item>
       <Form.Item label="推理速度" name="serviceTier" extra={selected && !selected.serviceTiers.length ? '当前模型服务不支持速度配置' : undefined}><Select allowClear disabled={!selected?.serviceTiers.length || saving || !!pendingSave} placeholder={!selected ? '先选择模型' : selected.serviceTiers.length ? '使用默认速度' : '由模型服务决定'} suffixIcon={<CaretDownIcon size={14} />} options={selected?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : '标准' }))} /></Form.Item>
       <Form.Item label="Tick 回放 CPU 核数" name="tickBookCores" rules={[{ required: true, type: 'integer', min: 1 }]}><InputNumber min={1} precision={0} /></Form.Item>
       <ErrorNotice error={error} /><DraftNotice saved={draftSaved} /><div className="settings-save"><Button type="primary" loading={saving} disabled={!dirty && !pendingSave} onClick={() => { void save(); }}>{saving ? '保存中' : pendingSave ? '重试保存' : '保存设置'}</Button><span role="status" className="quiet">{notice || (pendingSave && !saving ? '保存结果待核对' : dirty ? '未保存' : '')}</span></div>

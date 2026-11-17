@@ -3,21 +3,38 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/
 import type { Provider, RefreshModelsContext } from '@earendil-works/pi-ai/models';
 import type { ThinkingLevel, ServiceTier } from '../../../packages/contracts/src/index.ts';
 
-type Capabilities = { levels: ThinkingLevel[]; advertised: ThinkingLevel[]; defaultLevel: ThinkingLevel; tiers: ServiceTier[]; outputLimitKnown: boolean; priceKnown: boolean };
+type NativeThinkingLevel = Exclude<ThinkingLevel, 'ultra'>;
+type Capabilities = { levels: ThinkingLevel[]; advertised: ThinkingLevel[]; defaultLevel: ThinkingLevel; tiers: ServiceTier[]; outputLimitKnown: boolean; priceKnown: boolean; multiAgentEffort?: NativeThinkingLevel };
 const capabilities = new WeakMap<object, Capabilities>();
 export function thinkingLevels(model: Model<Api>): ThinkingLevel[] { return capabilities.get(model)?.levels ?? [...getSupportedThinkingLevels(model)]; }
 export function defaultThinking(model: Model<Api>, requested: ThinkingLevel): ThinkingLevel {
-  if (requested === 'ultra' && !thinkingLevels(model).includes(requested)) throw new Error('thinking_level_unsupported');
+  if (requested === 'ultra') return 'ultra';
   const current = capabilities.get(model);
   if (current) return current.levels.includes(requested) ? requested : current.defaultLevel;
   return clampThinkingLevel(model, requested as ModelThinkingLevel);
 }
-export function unavailableThinkingLevels(model: Model<Api>) { const value = capabilities.get(model); return value?.advertised.filter(level => !value.levels.includes(level)).map(level => ({ level, reason: 'Ultra 是 Codex 多 Agent 推理模式；当前 Pi 运行链尚未实现其语义，不能仅发送 ultra 或改成 Max' })) ?? []; }
+export function reasoningModes(model: Model<Api>): { level: 'ultra'; effectiveLevel: NativeThinkingLevel; mode: 'PI_MULTI_AGENT' }[] {
+  const value = capabilities.get(model);
+  if (!value?.advertised.includes('ultra')) return [];
+  const supported = value.levels.filter((level): level is NativeThinkingLevel => level !== 'ultra');
+  const effectiveLevel = value.multiAgentEffort && supported.includes(value.multiAgentEffort) ? value.multiAgentEffort : supported.includes('max') ? 'max' : supported.at(-1);
+  return effectiveLevel ? [{ level: 'ultra', effectiveLevel, mode: 'PI_MULTI_AGENT' }] : [];
+}
+export function resolveReasoning(model: Model<Api>, selected: ThinkingLevel): import('../../../packages/contracts/src/index.ts').ReasoningConfiguration {
+  if (selected === 'ultra') {
+    const mode = reasoningModes(model)[0];
+    if (!mode) throw new Error('thinking_level_unsupported');
+    return { requestedLevel: selected, effectiveLevel: mode.effectiveLevel, mode: mode.mode };
+  }
+  if (!thinkingLevels(model).includes(selected)) throw new Error('thinking_level_unsupported');
+  return { requestedLevel: selected, effectiveLevel: selected, mode: 'NATIVE' };
+}
+export function unavailableThinkingLevels(model: Model<Api>) { return capabilities.get(model)?.advertised.includes('ultra') && !reasoningModes(model).length ? [{ level: 'ultra' as const, reason: 'Ultra 没有可执行的底层模型推理强度' }] : []; }
 export function modelServiceTiers(model: Model<Api>): ServiceTier[] | undefined { return capabilities.get(model)?.tiers; }
 export function unknownOutputLimit(model: Model<Api>) { return capabilities.get(model)?.outputLimitKnown === false; }
 export function unknownPrice(model: Model<Api>) { return capabilities.get(model)?.priceKnown === false; }
 const levels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
-type RemoteModel = { slug: string; display_name?: string; visibility?: string; supported_in_api?: boolean; context_window?: number; max_output_tokens?: number; input_modalities?: string[]; default_reasoning_level?: string; supported_reasoning_levels?: { effort: string }[]; service_tiers?: { id: string }[] };
+type RemoteModel = { slug: string; display_name?: string; visibility?: string; supported_in_api?: boolean; context_window?: number; max_output_tokens?: number; input_modalities?: string[]; default_reasoning_level?: string; multi_agent_reasoning_effort?: string; supported_reasoning_levels?: { effort: string }[]; service_tiers?: { id: string }[] };
 
 /** Only capability fields are consumed; remote model prompts are never instructions. */
 export function readCatalog(body: unknown, provider: Provider): Model<Api>[] {
@@ -43,7 +60,7 @@ export function readCatalog(body: unknown, provider: Provider): Model<Api>[] {
     };
     const runtime: ThinkingLevel[] = supported.filter(value => value !== 'ultra');
     if (!runtime.length) throw new Error('model_catalog_runtime_unsupported');
-    capabilities.set(model, { levels: runtime, advertised: supported, defaultLevel: runtime.includes(item.default_reasoning_level as ThinkingLevel) ? item.default_reasoning_level as ThinkingLevel : runtime[0]!, tiers: ['default', ...(item.service_tiers?.some(value => value.id === 'priority') ? ['priority' as const] : [])], outputLimitKnown: item.max_output_tokens !== undefined || prior !== undefined, priceKnown: prior !== undefined });
+    capabilities.set(model, { levels: runtime, advertised: supported, defaultLevel: item.default_reasoning_level as ThinkingLevel, tiers: ['default', ...(item.service_tiers?.some(value => value.id === 'priority') ? ['priority' as const] : [])], outputLimitKnown: item.max_output_tokens !== undefined || prior !== undefined, priceKnown: prior !== undefined, ...(item.multi_agent_reasoning_effort && runtime.includes(item.multi_agent_reasoning_effort as ThinkingLevel) && item.multi_agent_reasoning_effort !== 'ultra' ? { multiAgentEffort: item.multi_agent_reasoning_effort as NativeThinkingLevel } : {}) });
     return model;
   });
 }

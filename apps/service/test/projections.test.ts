@@ -45,7 +45,7 @@ test('list and usage do not load historical task results; list retains its exist
     const { receipt } = await studied(state);
     const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
     const detail = (await get(`research/${receipt.conversationId}`)).json();
-    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, messagesNextCursor: _messagesNextCursor, executionUncertain: _uncertain, executionUncertainty: _uncertainty, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
+    const { reasoningConfiguration: _reasoning, delegations: _delegations, input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, messages: _messages, messagesNextCursor: _messagesNextCursor, executionUncertain: _uncertain, executionUncertainty: _uncertainty, toolPolicy: _toolPolicy, assessments: _assessments, ...expected } = detail;
     const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
     const list = await get('research'); const usage = await get('usage');
