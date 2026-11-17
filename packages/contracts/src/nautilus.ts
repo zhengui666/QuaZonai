@@ -7,7 +7,7 @@ export type ProcessNativeTarget = {
   kind: 'RUST_PROCESS'; id: string; binary: string;
   /** Exact result of the explicitly inspected user-built runner, not a claimed live state. */
   capabilities: { schemaVersion: 1; protocol: 'quazonai-native-process-v1'; identity: NativeJson;
-    research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
+    research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean; multiCatalogBindings?: boolean };
     /** Absent on older runners: never infer data preparation from research support. */
     preparation?: { marketImport: boolean; fillObservationImport?: boolean };
     account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };

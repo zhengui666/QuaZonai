@@ -37,7 +37,7 @@ export async function readResearchAssessments(host: ResearchHost, id: number, in
         let current = false;
         try {
           current = request !== null && canonical(normalizedNativeStrategyRequest(object(invocation.request, 'assessment_request'))) === canonical(request)
-            && canonical(evidence.executionSource ?? null) === canonical({ catalog: input.data.catalog ?? null, target })
+            && canonical(evidence.executionSource ?? null) === canonical({ catalog: input.data.catalog ?? null, target, ...(input.data.catalogBindings ? {catalogBindings:input.data.catalogBindings} : {}) })
             && (invocation.configurationTaskId ?? null) === (configuration.configuredByTaskId ?? null);
         } catch { /* Malformed historical bindings cannot be labelled current. */ }
         const outcome = task.state.status === 'terminal' ? task.state.outcome : null;

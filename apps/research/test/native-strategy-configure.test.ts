@@ -57,11 +57,11 @@ process.stdout.write(JSON.stringify(result));`,{mode:0o755});
   const calls=async()=> (await readFile(marker,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
   const models = createModels(); const faux = fauxProvider(); models.setProvider(faux.provider);
   const call = (name: string, args = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
-  faux.setResponses([call('native_strategy_brief'), transcript => { const message = transcript.messages.find(m => m.role === 'toolResult' && m.toolName === 'native_strategy_brief'); assert.ok(message?.role === 'toolResult'); const brief = JSON.parse(message.content.filter(p => p.type === 'text').map(p => p.text).join('')); assert.equal(brief.datasetId, null, 'No registered admission identity must not be guessed from a catalog path.'); return call('native_strategy_catalog', { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 }); }, call('native_strategy_catalog', { cursor }), call('native_strategy_configure', { request }),
+  faux.setResponses([call('native_strategy_brief'), transcript => { const message = transcript.messages.find(m => m.role === 'toolResult' && m.toolName === 'native_strategy_brief'); assert.ok(message?.role === 'toolResult'); const brief = JSON.parse(message.content.filter(p => p.type === 'text').map(p => p.text).join('')); assert.equal(brief.datasetId, null, 'No registered admission identity must not be guessed from a catalog path.'); return call('native_strategy_catalog', { ...(scenario ? {datasetId:'book'} : {}), instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 }); }, call('native_strategy_catalog', { ...(scenario ? {datasetId:'book'} : {}), cursor }), call('native_strategy_configure', { request }),
     call('native_strategy_backtest'), fauxAssistantMessage('Historical computation only; no independent qualification or live order.')]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
-  const data = { catalog: directory, nautilusTarget: target };
+  const data = { catalog: directory, ...(scenario ? {catalogBindings:[{datasetId:"primary",catalog:directory},{datasetId:"book",catalog:directory+"-book"}]} : {}), nautilusTarget: target };
   const input = { goal: `Research BTC on this catalog using 5000 USDC, 1x leverage, maker .00015 taker .00045. No live trading. ${scenario ? 'Explicitly assume the selected later catalog definition as a static scenario, without claiming historically verified rules.' : ''}`, model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: {} };
   try {
     const admission = await host.start('catalog-natural', input);
@@ -77,7 +77,7 @@ process.stdout.write(JSON.stringify(result));`,{mode:0o755});
     assert.equal(posts[0]!.command, 'catalog-inspect'); assert.deepEqual(posts[0]!.input, { instrument_ids: [request.instrument_id], data_types: ['OrderBookDelta'], page_size: 2 });
     assert.equal(posts[1]!.command, 'catalog-inspect'); assert.deepEqual(posts[1]!.input, { cursor });
     assert.equal(posts[2]!.command, 'native-strategy-backtest'); assert.deepEqual(posts[2]!.input, request);
-    assert.ok(posts.every(post => JSON.stringify(post.args) === JSON.stringify(['--catalog', directory])));
+    assert.deepEqual(posts.map(post=>post.args), [['--catalog',scenario?directory+'-book':directory],['--catalog',scenario?directory+'-book':directory],['--catalog',directory]]);
     assert.equal(faux.state.callCount, 6);
     await host.close(); host = await openResearch(options);
     assert.deepEqual(await host.start('catalog-natural', input), admission, 'original admission identity remains replayable after configuration');

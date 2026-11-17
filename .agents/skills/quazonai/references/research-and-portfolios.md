@@ -110,3 +110,7 @@ quazonai research implementation-sources "$research_id" --file source-material.j
 owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Build 不随保存配置改变。已有原生导入器要求 owner 显式 high-precision；构建保持同一官方依赖来源/版本/精度，不能通过伪改 capability 启用。让内部 Agent 按内部 skill 准备 owner feature/官方锁、新 Build，并用原 requestId 绑定新研究；不必切换全局 runner。随后由内部 Agent 使用已有 `native_market_import` 合同导入已授权训练文件，读取真实报告后再决定数据登记。请求 `modality` 省略默认 `TRADE_TICK`；`BOOK_SNAPSHOT` 表示全量盘口快照，以原生 Clear + 全档位 Add 的 `OrderBookDelta` 保存，不是源增量。价格和数量不截档，源 `order_count` 不在 delta 字段中；按真实 manifest 映射读取 `parquet-zstd` 文件，事件/接收时钟选择必须明确，接收时钟模式须显式最大延迟。外部 Agent 负责操作 QuaZonai、读取报告和确认登记结果，不直接运行原生导入器。
 
 无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。
+
+### 多个已登记 catalog
+
+新研究的 start JSON 保留 `datasetId` 为主数据集，可添加 `additionalDatasetIds: ["另一已登记datasetId"]`。服务解析并保留各 dataset 原 catalog 与身份，不复制行情、不扩大父目录；同 requestId 重试仍使用原绑定。只用于内部配置式 Nautilus 工厂/配置式参数批次的多 catalog 输入，旧研究与普通单 catalog 调用不变。外部 Agent 提交真实登记 ID 和研究要求，由 QuaZonai 内部通过 brief、指定绑定 datasetId 的 catalog 检查及原生回测工具执行，不直接编写或执行研究策略。

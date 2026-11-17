@@ -126,6 +126,7 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
   const item = value as ProcessNativeTarget;
   if (typeof item.id !== 'string' || !item.id.trim() || typeof item.binary !== 'string' || !isAbsolute(item.binary) || item.capabilities?.schemaVersion !== 1 || item.capabilities.protocol !== 'quazonai-native-process-v1' || item.capabilities.running !== false
     || (item.capabilities.preparation !== undefined && (typeof item.capabilities.preparation?.marketImport !== 'boolean' || (item.capabilities.preparation.fillObservationImport !== undefined && typeof item.capabilities.preparation.fillObservationImport !== 'boolean')))
+    || (item.capabilities.research?.multiCatalogBindings !== undefined && typeof item.capabilities.research.multiCatalogBindings !== 'boolean')
     || !item.capabilities.identity || typeof item.capabilities.research?.configuredRunFactory !== 'boolean' || typeof item.capabilities.research?.singleStrategyRegistration !== 'boolean'
     || typeof item.capabilities.account?.compiled !== 'boolean' || typeof item.capabilities.account?.registration !== 'boolean' || item.capabilities.account.command !== 'account-runtime' || item.capabilities.account.requiresExplicitStart !== true) throw new Error('native_process_target_invalid');
   const account=item.capabilities.account;
@@ -136,7 +137,7 @@ export function validateNativeTarget(value: unknown): NativeExecutionTarget {
   return {kind:'RUST_PROCESS',id:item.id,binary:item.binary,capabilities:{
     schemaVersion:1,protocol:'quazonai-native-process-v1',running:false,
     identity:JSON.parse(canonical(item.capabilities.identity as never)),
-    research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration},
+    research:{configuredRunFactory:item.capabilities.research.configuredRunFactory,singleStrategyRegistration:item.capabilities.research.singleStrategyRegistration,...(item.capabilities.research.multiCatalogBindings !== undefined ? {multiCatalogBindings:item.capabilities.research.multiCatalogBindings} : {})},
     ...(item.capabilities.preparation === undefined ? {} : {preparation:{marketImport:item.capabilities.preparation.marketImport,...(item.capabilities.preparation.fillObservationImport===undefined?{}:{fillObservationImport:item.capabilities.preparation.fillObservationImport})}}),
     account:{compiled:item.capabilities.account.compiled,registration:item.capabilities.account.registration,command:'account-runtime',requiresExplicitStart:true,...(account.compatibilityDeclaration!==undefined?{compatibilityDeclaration:account.compatibilityDeclaration,compatibilityVerified:false as const}:{})},
   }};

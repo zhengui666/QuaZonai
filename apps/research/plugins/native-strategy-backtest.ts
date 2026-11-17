@@ -37,24 +37,50 @@ export function nativeConfiguredResult(value: Parameters<typeof object>[0], requ
 
 const nativeCatalogInspectSchema = resolveSchema(schemas.NativeCatalogInspectRequestV1) as Schema<JsonObject>;
 const validateCatalogQuery = compile(nativeCatalogInspectSchema);
+const catalogToolSchema = { ...nativeCatalogInspectSchema, properties: { ...(nativeCatalogInspectSchema as { properties: Record<string, unknown> }).properties, datasetId: { type: 'string' } } } as Schema<JsonObject>;
+const validateCatalogToolQuery = compile(catalogToolSchema);
+
+export function registeredCatalogBindings(data: JsonObject): { datasetId: string; catalog: string }[] {
+  if (data.catalogBindings === undefined) return [];
+  if (!Array.isArray(data.catalogBindings) || !data.catalogBindings.length) throw new Error('research_catalog_bindings_invalid');
+  const bindings = data.catalogBindings.map(item => {
+    const row = object(item, 'research_catalog_binding');
+    if (typeof row.datasetId !== 'string' || !row.datasetId || typeof row.catalog !== 'string' || !row.catalog) throw new Error('research_catalog_bindings_invalid');
+    return { datasetId: row.datasetId, catalog: row.catalog };
+  });
+  if (bindings[0]!.catalog !== data.catalog || new Set(bindings.map(item => item.datasetId)).size !== bindings.length || new Set(bindings.map(item => item.catalog)).size !== bindings.length) throw new Error('research_catalog_bindings_invalid');
+  return bindings;
+}
+export function assertConfiguredCatalogCapability(data: JsonObject, target: NativeTarget): void {
+  if (registeredCatalogBindings(data).length > 1 && (typeof target === 'string' || !('kind' in target) || target.kind !== 'RUST_PROCESS' || target.capabilities.research.multiCatalogBindings !== true)) throw new Error('native_multi_catalog_binding_not_available_rebuild_runner');
+}
+function catalogBindingInput(data: JsonObject): { catalogBindings?: JsonObject[] } {
+  registeredCatalogBindings(data);
+  return data.catalogBindings === undefined ? {} : { catalogBindings: structuredClone(data.catalogBindings) as JsonObject[] };
+}
+
 export const nativeStrategyCatalogTool = defineTool({
   name: 'native_strategy_catalog',
-  description: 'Inspect only the current registered Nautilus catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. data_types uses exact official NautilusDataType names, for example TradeTick, QuoteTick, Bar or OrderBookDelta; TradeTick also accepts trades/trade/trade_tick. TRADE_TICK is QZ modality metadata, not a valid native selector name. Omit data_types to discover the available selectors rather than guessing; use returned selector names for subsequent queries. next_cursor non-null means INCOMPLETE: pass cursor unchanged to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
-  parameters: nativeCatalogInspectSchema,
+  description: 'Inspect only a registered Nautilus catalog bound to this research; omit datasetId for the primary catalog, or use an exact datasetId from native_strategy_brief catalogBindings for an additional catalog. Inspect the catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. data_types uses exact official NautilusDataType names, for example TradeTick, QuoteTick, Bar or OrderBookDelta; TradeTick also accepts trades/trade/trade_tick. TRADE_TICK is QZ modality metadata, not a valid native selector name. Omit data_types to discover the available selectors rather than guessing; use returned selector names for subsequent queries. next_cursor non-null means INCOMPLETE: pass cursor unchanged and repeat the same datasetId (when selected) to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
+  parameters: catalogToolSchema,
   prepareArguments(args) {
     validateNumbers(args);
-    if (!validateCatalogQuery.check(args)) throw new Error('native_catalog_query_schema_invalid');
+    if (!validateCatalogToolQuery.check(args)) throw new Error('native_catalog_query_schema_invalid');
     return args as JsonObject;
   }, replay: 'safe',
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
+    const { datasetId, ...query } = args;
+    const catalog = datasetId === undefined ? input.data.catalog : registeredCatalogBindings(input.data).find(item => item.datasetId === datasetId)?.catalog;
+    if (typeof catalog !== 'string') throw new Error('research_catalog_dataset_unbound');
+    if (!validateCatalogQuery.check(query)) throw new Error('native_catalog_query_schema_invalid');
     const binding = structuredClone(input);
     binding.data.native_strategy_backtest_request = {};
     registeredNativeStrategyRequest(binding);
     const id = await api.commit(async tx => {
       const child = await tx.doc(NativeStrategyChild, api.taskId);
-      child.taskId ??= await tx.createTask(NativeStrategyCatalogTask, { catalog: input.data.catalog as string, target: nativeTargetForData(input.data), query: args }, { ownership: { kind: 'task', taskId: api.taskId } });
+      child.taskId ??= await tx.createTask(NativeStrategyCatalogTask, { catalog, target: nativeTargetForData(input.data), query }, { ownership: { kind: 'task', taskId: api.taskId } });
       return child.taskId;
     }, context);
     const task = await api.waitForTask(id, context);
@@ -291,7 +317,7 @@ export const nativeStrategyBacktestTool = defineTool({
       const binding = await tx.doc(NativeStrategyChild, api.taskId);
       if (!binding.taskId) await assertResearchRunSettled(tx, api.conversationId);
       if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
-        request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
+        request, catalog: input.data.catalog as string, ...catalogBindingInput(input.data), target: nativeTargetForData(input.data),
       }, { ownership: { kind: 'task', taskId: api.taskId } });
       const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
       if (configuration.evaluationTaskId !== binding.taskId) {
@@ -326,6 +352,7 @@ export const nativeConfiguredBacktestTool = defineTool({
     if (input.data.native_configured_backtest_request !== undefined && canonical(request) !== canonical(input.data.native_configured_backtest_request)) throw new Error('native_configured_request_requires_configuration');
     validateNumbers(request);
     if (!validateConfiguredRequest.check(request)) throw new Error('native_configured_request_schema_invalid');
+    assertConfiguredCatalogCapability(input.data, nativeTargetForData(input.data));
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
     const id = await api.commit(async tx => {
       const study = await tx.doc(Study, api.conversationId);
@@ -333,7 +360,7 @@ export const nativeConfiguredBacktestTool = defineTool({
       const binding = await tx.doc(NativeStrategyChild, api.taskId);
       if (!binding.taskId) await assertResearchRunSettled(tx, api.conversationId);
       if (!binding.taskId) binding.taskId = await tx.createTask(NativeStrategyBacktestTask, {
-        configured: true, request, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
+        configured: true, request, catalog: input.data.catalog as string, ...catalogBindingInput(input.data), target: nativeTargetForData(input.data),
       }, { ownership: { kind: 'task', taskId: api.taskId } });
       const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
       if (configuration.evaluationTaskId !== binding.taskId) {
@@ -443,6 +470,7 @@ export const nativeParameterBatchTool = defineTool({
   async execute(args, api, context) {
     const { configured, requests } = prepareNativeParameterBatch(args);
     const input = await studyInput(api, context);
+    if (configured) assertConfiguredCatalogCapability(input.data, nativeTargetForData(input.data));
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
     // Validate every case before the first execution, preserving the admitted data binding.
     for (const request of requests) {
@@ -462,7 +490,7 @@ export const nativeParameterBatchTool = defineTool({
         const study = await tx.doc(Study, api.conversationId);
         if (study.trials.length) throw new Error('research_already_final');
         const id = await tx.createTask(NativeStrategyBacktestTask, {
-          request, configured, catalog: input.data.catalog as string, target: nativeTargetForData(input.data),
+          request, configured, catalog: input.data.catalog as string, ...catalogBindingInput(input.data), target: nativeTargetForData(input.data),
         }, { ownership: { kind: 'task', taskId: api.taskId } });
         children.taskIds.push(id);
         const configuration = await tx.doc(ResearchConfiguration, api.conversationId);
@@ -528,7 +556,7 @@ export const nativeParameterBatchReadTool = defineTool({
   },
 });
 
-export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; target: NativeTarget; configured?: boolean; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
+export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; catalog: string; catalogBindings?: JsonObject[]; target: NativeTarget; configured?: boolean; walkForward?: boolean; sourceRequest?: JsonObject; scanContext?: NativeScanContext }, NativeScanCheckpoint, JsonObject>({
   name: 'qz.native-strategy.backtest', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     if (task.input.walkForward) {
@@ -538,9 +566,10 @@ export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; cata
     }
     const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-native-strategy-'));
     try {
+      if (task.input.configured) assertConfiguredCatalogCapability({catalog:task.input.catalog,...(task.input.catalogBindings ? {catalogBindings:task.input.catalogBindings} : {})},task.input.target);
       const raw = await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(
         task.input.target, task.input.configured ? 'native-configured-backtest' : 'native-strategy-backtest', task.input.request,
-        ['--catalog', task.input.catalog], directory, context), task.input.scanContext);
+        ['--catalog', task.input.catalog, ...(task.input.configured ? registeredCatalogBindings({catalog: task.input.catalog, ...(task.input.catalogBindings ? {catalogBindings: task.input.catalogBindings} : {})}).slice(1).flatMap(({catalog: root}) => ['--additional-catalog', root]) : [])], directory, context), task.input.scanContext);
       const result = task.input.configured ? nativeConfiguredResult(raw, task.input.request) : nativeStrategyResult(raw, task.input.request);
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
     } catch (error) {
@@ -574,7 +603,7 @@ export const nativeStrategyBriefTool = defineTool({
     const input = await studyInput(api, context);
     const request = input.data.native_strategy_backtest_request === undefined ? null : registeredNativeStrategyRequest(input);
     return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, datasetId: await studyDatasetId(api, context), specification: input.specification ?? null,
-      request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema, catalog: input.data.catalog ?? null, target: nativeTargetForData(input.data),
+      request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema, catalog: input.data.catalog ?? null, ...(input.data.catalogBindings ? {catalogBindings:input.data.catalogBindings} : {}), target: nativeTargetForData(input.data),
       scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
   },

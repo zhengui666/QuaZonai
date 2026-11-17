@@ -59,7 +59,7 @@ export interface ResearchInput { mode?: 'LITERATURE_ONLY'; goal: string; specifi
 /** Explicit completed-build binding applies only to this new research, never global selection. */
 export type ResearchRunnerBinding = { runnerBuildRequestId?: string; expectedRunnerRevision?: number };
 export type ResearchStart = ResearchRunnerBinding & ({ requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
-  requestId: string; mode?: 'LITERATURE_ONLY'; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string;
+  requestId: string; mode?: 'LITERATURE_ONLY'; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; additionalDatasetIds?: string[];
 });
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }

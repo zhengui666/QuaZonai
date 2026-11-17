@@ -133,3 +133,13 @@ owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backte
 导入工具返回原始 import `taskId` 供关联与分页读取，小结果和大结果提示均保留该关联；catalog_path/report_path与真实manifest/report仍是准备结果的直接证据。任务编号不是策略必填参数，不应给observer或全市场通用流程增加不必要的编号门槛。旧小结果未含编号时可通过外部正式research evidence读取原Task关联，无需重跑导入。
 
 永续/期货数据的原生模拟 venue 使用与 instrument 兼容的 `AccountType::Margin`，不能因为observer不下单就设为 Cash：固定上游在 `add_instrument` 会拒绝现金账户加载永续/期货。股票/现货仍按实际账户语义配置，不将此变成所有策略一律Margin的限制。仿真账户类型/余额/杠杆参数不表示实盘账户已连接或获交易许可。
+
+### 已登记多 catalog 的正式绑定
+
+当一个配置式原生回测需要不同已登记 dataset 的 catalog（例如独立盘口和逐笔成交）时，新研究以 `datasetId` 指定主数据集，以可选 `additionalDatasetIds` 列出其他已登记数据集。`native_research_start_bound` 保留各原始 root 和登记身份；不扩大为父目录、不复制数据、不通过 install 回调旁路读行情。旧研究绑定不会因此改变。
+
+先读 `native_strategy_brief.catalogBindings` 的主/附加 dataset 身份与 catalog；`native_strategy_catalog` 默认检查主 catalog，传精确 `datasetId` 可检查该研究已绑定的其他 catalog，并逐页读所需证据。配置式工厂仍收到原主 root，可在显式 config 中用已绑定附加路径构造多个官方 `BacktestDataConfig`；只有 `native_configured_backtest` 和 configured 参数批次使用附加 root。单策略适配器仍用主 catalog。绑定不是数据齐全、历史规则、独立 OOS 或科学合格证明；评估材料必须说明每个数据源实际用途及局限。
+
+同一 instrument/type 在多个 catalog 中的重叠记录不会由 QZ 自动去重或择优；按原 Nautilus 多流行为处理，明确实际选择、时间重叠与同时间戳顺序，不能把绑定的总行数当实际消费记录数。
+
+多 root 执行要求新 runner 的真实 capabilities.research.multiCatalogBindings=true；旧 build 缺省不支持，须按当前正式 glue 重新构建并新建研究绑定，不修改旧 capability 或旧研究。单 root 不要求新增 capability。
