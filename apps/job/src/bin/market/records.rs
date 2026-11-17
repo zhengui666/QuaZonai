@@ -156,6 +156,7 @@ fn recorded_snapshot(
     snapshot: crate::source_market::BookSnapshot,
     report: &mut Report,
 ) -> Vec<Data> {
+    if let Some(groups) = &mut report.book_snapshot_groups { *groups += 1; }
     report.empty_books += u64::from(snapshot.empty);
     report.one_sided_books += u64::from(snapshot.one_sided);
     snapshot.into_data()
