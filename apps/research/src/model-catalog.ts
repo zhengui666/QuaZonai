@@ -8,7 +8,6 @@ type Capabilities = { levels: ThinkingLevel[]; advertised: ThinkingLevel[]; defa
 const capabilities = new WeakMap<object, Capabilities>();
 export function thinkingLevels(model: Model<Api>): ThinkingLevel[] { return capabilities.get(model)?.levels ?? [...getSupportedThinkingLevels(model)]; }
 export function defaultThinking(model: Model<Api>, requested: ThinkingLevel): ThinkingLevel {
-  if (requested === 'ultra' && !reasoningModes(model).length) throw new Error('thinking_level_unsupported');
   if (requested === 'ultra') return 'ultra';
   const current = capabilities.get(model);
   if (current) return current.levels.includes(requested) ? requested : current.defaultLevel;

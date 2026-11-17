@@ -110,6 +110,7 @@ test('Ultra resolves the catalog collaboration effort separately from the user s
   assert.deepEqual(resolveReasoning(model(['low', 'xhigh', 'max', 'ultra'], 'xhigh'), 'ultra'), { requestedLevel: 'ultra', effectiveLevel: 'xhigh', mode: 'PI_MULTI_AGENT' });
   assert.equal(resolveReasoning(model(['low', 'max', 'ultra'], 'high'), 'ultra').effectiveLevel, 'max');
   assert.equal(resolveReasoning(model(['low', 'high', 'ultra'], 'ultra'), 'ultra').effectiveLevel, 'high');
-  assert.throws(() => resolveReasoning(model(['low', 'max']), 'ultra'), /thinking_level_unsupported/);
+  assert.equal(defaultThinking(model(['low', 'max']), 'ultra'), 'ultra');
+  assert.throws(() => resolveReasoning(model(['low', 'max']), defaultThinking(model(['low', 'max']), 'ultra')), /thinking_level_unsupported/);
   assert.equal(defaultThinking(model(['low', 'max', 'ultra']), 'ultra'), 'ultra');
 });
