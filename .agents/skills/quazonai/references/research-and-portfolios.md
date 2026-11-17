@@ -116,3 +116,6 @@ owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Buil
 ### 多个已登记 catalog
 
 新研究的 start JSON 保留 `datasetId` 为主数据集，可添加 `additionalDatasetIds: ["另一已登记datasetId"]`。服务解析并保留各 dataset 原 catalog 与身份，不复制行情、不扩大父目录；同 requestId 重试仍使用原绑定。只用于内部配置式 Nautilus 工厂/配置式参数批次的多 catalog 输入，旧研究与普通单 catalog 调用不变。外部 Agent 提交真实登记 ID 和研究要求，由 QuaZonai 内部通过 brief、指定绑定 datasetId 的 catalog 检查及原生回测工具执行，不直接编写或执行研究策略。
+
+
+原生 owner 环境可显式设置 `backtestCompletion:true`，由内部策略模块提供 `finalize_after_node_run` 完成检查函数，再用原构建与新研究绑定流程启用。缺省/false保持旧工厂。此设置不是旧 Build 已支持的证明，也不是提前停止或自然 EOF 的判定；仅在原生运行返回成功且有匹配结果时执行注册回调，内部还须核对原始完成状态。不要让外部 Agent 用 on_stop 或补写文件伪装最终研究材料。

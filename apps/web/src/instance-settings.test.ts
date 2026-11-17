@@ -33,3 +33,12 @@ describe('explicit trusted account compatibility form',()=>{
 
  });
 });
+
+
+it('completion opt-in survives environment edits and requires a backtest module',()=>{
+ const fields={id:'owner',cargoBinary:'/cargo',manifestPath:'/Cargo.toml',packageName:'owner',backtestFactory:'observer'};
+ expect(environmentFromFields(fields)).not.toHaveProperty('backtestCompletion');
+ for(const enabled of [true,false])expect(environmentFromFields({...fields,backtestCompletion:enabled}).backtestCompletion).toBe(enabled);
+ expect(()=>environmentFromFields({...fields,backtestFactory:' ',backtestCompletion:true})).toThrow();
+ expect(()=>environmentFromFields({...fields,backtestCompletion:'true' as never})).toThrow();
+});

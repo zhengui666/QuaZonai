@@ -1,6 +1,6 @@
 import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
 import { href } from './router';
-import { Button, Form, Input, Select } from 'antd';
+import { Button, Checkbox, Form, Input, Select } from 'antd';
 import { useEffect, useState } from 'react';
 import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
 import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
@@ -12,9 +12,11 @@ type Fields = Omit<NativeRustEnvironment, 'kind' | 'features'> & { featureNames?
 export function environmentFromFields(values: Fields): NativeRustEnvironment {
   const accountFactory=values.accountFactory?.trim();
   if(values.accountCompatibility!==undefined && (values.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!accountFactory))throw new Error('兼容声明需要账户策略工厂；不声明时请清除此选项。');
+  if(values.backtestCompletion!==undefined && (typeof values.backtestCompletion!=='boolean'||values.backtestCompletion&&!values.backtestFactory?.trim()))throw new Error('完成回调需要回测工厂和明确布尔值。');
   return {kind:'RUST_PROCESS',id:values.id.trim(),cargoBinary:values.cargoBinary.trim(),manifestPath:values.manifestPath.trim(),packageName:values.packageName.trim(),
     features:(values.featureNames??'').split(',').map(v=>v.trim()).filter(Boolean),
     ...(values.backtestFactory?.trim()?{backtestFactory:values.backtestFactory.trim()}:{}),...(accountFactory?{accountFactory}:{}),
+    ...(values.backtestCompletion!==undefined?{backtestCompletion:values.backtestCompletion}:{}),
     ...(values.accountCompatibility?{accountCompatibility:values.accountCompatibility}:{}),
   };
 }
@@ -94,6 +96,7 @@ export default function InstanceSettings() {
       <Form.Item name="packageName" label="策略库 package 名称" rules={required}><Input /></Form.Item>
       <Form.Item name="featureNames" label="显式 features（逗号分隔）"><Input /></Form.Item>
       <Form.Item name="backtestFactory" label="回测工厂公开模块（config / install）"><Input /></Form.Item>
+      <Form.Item name="backtestCompletion" valuePropName="checked" label="原生运行返回后的完成检查回调" extra="显式启用同模块 finalize_after_node_run；需重新构建，不把停止当自然 EOF。"><Checkbox>启用</Checkbox></Form.Item>
       <Form.Item name="accountFactory" label="账户策略工厂公开模块（strategy）"><Input /></Form.Item>
       <Form.Item name="accountCompatibility" label="可选：账户工厂兼容声明（不是认证）" dependencies={['accountFactory']} rules={[({getFieldValue})=>({validator:async(_,value)=>{if(value && !getFieldValue('accountFactory')?.trim())throw new Error('请先填写账户策略工厂，或清除声明。');}})]}>
         <Select allowClear placeholder="未声明" options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:'我明确声明：可信策略，整个生命周期只使用此单节点'}]}/>
