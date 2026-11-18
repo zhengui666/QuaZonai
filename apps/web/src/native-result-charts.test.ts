@@ -22,6 +22,7 @@ afterEach(async()=>{if(view)await act(async()=>view!.unmount());view=undefined;s
 it('distinguishes an absent original field from explicit null',async()=>{
  await i18n.changeLanguage('en');
  expect(renderToStaticMarkup(createElement(NativeEvidenceCell,{value:null}))).toContain('null');
+ expect(renderToStaticMarkup(createElement(NativeEvidenceCell,{value:0}))).toContain('>0</code>');
  expect(renderToStaticMarkup(createElement(NativeEvidenceCell,{value:undefined,present:false}))).toContain('Field absent');
 });
 it('uses explicit native child identities, actual nextOffset, and resets pages on task switch',async()=>{

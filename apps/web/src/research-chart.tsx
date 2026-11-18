@@ -13,7 +13,7 @@ export default function ResearchChart({data}:{data:NativeChartData}){
  const units=[...new Set(data.series.map(s=>s.unit))];const [selectedUnit,setUnit]=useState('');const unit=units.includes(selectedUnit)?selectedUnit:units[0];
  const visible=useMemo(()=>data.series.filter(s=>s.unit===unit).map(s=>({...s,points:data.xKind==='time'?[...s.points].sort((a,b)=>{const x=BigInt(a.time),y=BigInt(b.time);return x<y?-1:x>y?1:0;}):s.points})),[data,unit]);
  const title=t(data.title);const description=t('Chart of the loaded evidence page. Exact values are available in the table.');
- useEffect(()=>{if(!element.current)return;const instance=echarts.init(element.current,undefined,{renderer:'svg'});chart.current=instance;const observer=new ResizeObserver(()=>instance.resize());observer.observe(element.current);return()=>{observer.disconnect();instance.dispose();chart.current=undefined;};},[]);
+ useEffect(()=>{if(!element.current)return;const instance=echarts.init(element.current,undefined,{renderer:'svg',locale:i18n.language.startsWith('zh')?'ZH':'EN'});chart.current=instance;const observer=new ResizeObserver(()=>instance.resize());observer.observe(element.current);return()=>{observer.disconnect();instance.dispose();chart.current=undefined;};},[i18n.language]);
  useEffect(()=>{
   chart.current?.setOption({animation:false,useUTC:true,aria:{enabled:true,label:{description}},textStyle:{color:token.colorText},
    legend:{type:'scroll',top:0,textStyle:{color:token.colorText}},grid:{left:70,right:24,top:55,bottom:70},
