@@ -22,6 +22,6 @@ test('explicit preparation CLI preserves original bodies without global selectio
     assert.equal(calls[5]!.body,'{"datasetIds":["unified"]}');
     assert.equal(calls[3].body,body);assert.equal(calls[4].body,body);
     await assert.rejects(run(['native-runner','select'],()=>{}),/unknown_native_runner_command/);
-    await assert.rejects(run(['datasets','register','--file',file,'--request-id','other'],()=>{}),/request_id_conflict/);assert.equal(calls.length,5);
+    await assert.rejects(run(['datasets','register','--file',file,'--request-id','other'],()=>{}),/request_id_conflict/);assert.equal(calls.length,6);
   } finally {if(previous===undefined)delete process.env.XDG_CONFIG_HOME;else process.env.XDG_CONFIG_HOME=previous;server.close();await rm(directory,{recursive:true,force:true});}
 });
