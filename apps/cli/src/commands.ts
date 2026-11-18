@@ -302,11 +302,11 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 0) throw new CliError('expected_revision_required');
       path = '/settings/instances/import'; method = 'POST'; body = file.bytes;
     } else throw new CliError('unknown_native_runner_command');
-  } else if (group === 'datasets' && action === 'registry') path = '/data-sources';
+  } else if (group === 'datasets' && action === 'registry') path = '/datasets/registry';
   else if (group === 'datasets' && action === 'register') {
     const file = await fileBody(values.file); requestId(file.body, values['request-id']);
     if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 1) throw new CliError('expected_revision_required');
-    path = '/data-sources/qz.data.registered/datasets'; method = 'POST'; body = file.bytes;
+    path = '/datasets/register'; method = 'POST'; body = file.bytes;
   }
   else if (group === 'datasets' && action === 'coverage') {
     path = `/datasets/${resourceId(id)}/coverage`; method = 'POST'; body = (await fileBody(values.file)).bytes;

@@ -1,3 +1,4 @@
+import { DataSourceState } from '../src/data-sources.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
@@ -64,9 +65,11 @@ test('portfolio watches stream the original public view and committed presentati
   } finally { await state.cleanup(); }
 });
 
-test('data source watches stream committed configuration through the public task-status envelope', { timeout: 15_000 }, async () => {
+test('historical source watches remain read-only and stream retained document facts', { timeout: 15_000 }, async () => {
   const state = await setup();
   try {
+    await state.service.research.harness.commit(async tx => { (await tx.doc(DataSourceState)).sources['qz.data.local-config'] = { enabled: false, config: { path: 'original.json' }, datasets: [], retainedDatasets: [], lastLoadedAt: null, error: null, revision: 2 }; }, context);
+    await state.restart();
     const base = await state.service.app.listen({ host: '127.0.0.1', port: 0 });
     const response = await fetch(`${base}/api/v3/data-sources/qz.data.local-config/events`, { headers: state.headers, signal: AbortSignal.timeout(10_000) });
     const stream = events(response);
@@ -74,8 +77,9 @@ test('data source watches stream committed configuration through the public task
     assert.equal(initial.status, 'idle'); assert.equal(initial.taskId, null);
     const saved = await state.service.app.inject({ method: 'PUT', url: '/api/v3/data-sources/qz.data.local-config', headers: state.headers,
       payload: { enabled: false, config: { path: 'next-owner-source.json' } } });
-    assert.equal(saved.statusCode, 200, saved.body);
-    const changed = await stream.until(value => value.source?.config.path === 'next-owner-source.json');
+    assert.equal(saved.statusCode, 410, saved.body);
+    await state.service.research.harness.commit(async tx => { const source = (await tx.doc(DataSourceState)).sources['qz.data.local-config'] as Record<string, any>; source.lastLoadedAt = '2026-02-01T00:00:00.000Z'; }, context);
+    const changed = await stream.until(value => value.source?.lastLoadedAt === '2026-02-01T00:00:00.000Z');
     assert.equal(changed.source.enabled, false); assert.equal(changed.status, 'idle');
     await stream.close();
   } finally { await state.cleanup(); }

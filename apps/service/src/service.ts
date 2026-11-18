@@ -78,7 +78,7 @@ export async function createService(options: ServiceOptions) {
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
-    if (extensions.has(extension.name) || sources.has(extension.name)) throw new Problem('extension_name_conflict');
+    if (extensions.has(extension.name)) throw new Problem('extension_name_conflict');
     definitions.set(extension.name, extension); defaults.set(extension.name, enabled); installed.push(extension);
     extensions.set(extension.name, { name: extension.name, version, enabled, kind, state: 'loaded', error: null });
   }
@@ -180,7 +180,6 @@ export async function createService(options: ServiceOptions) {
     registerDatasets:value=>{if(!config.research.codingWorkspace)throw new Problem('research_coding_workspace_required',409);return sources.registerDatasets(value,config.research.codingWorkspace);},
   };
   research.harness.resume();
-  for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
     const status = error instanceof Problem ? error.statusCode : /conflict|already|trial_budget_exhausted/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable|unsupported|mismatch/.test(message) ? 400 : 500);
@@ -365,12 +364,8 @@ export async function createService(options: ServiceOptions) {
         && fact.connection.tokenEnv === connection.tokenEnv && fact.connection.credentialRef === connection.credentialRef
         && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
   });
-  app.get(`${API}/extensions`, async (): Promise<ExtensionView[]> => [...await extensionViews(), ...sources.extensions()]);
+  app.get(`${API}/extensions`, async (): Promise<ExtensionView[]> => await extensionViews());
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {
-    if (sources.has(request.params.name)) {
-      await sources.toggle(request.params.name, object(request.body).enabled as boolean);
-      return sources.extensions().find(item => item.name === request.params.name);
-    }
     const found = extensions.get(request.params.name); if (!found) throw new Problem('extension_not_found', 404);
     const enabled = object(request.body).enabled; if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
     if (!enabled && requiredExtensions.has(found.name)) throw new Problem('service_extension_required', 409);
