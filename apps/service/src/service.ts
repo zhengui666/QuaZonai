@@ -216,7 +216,7 @@ export async function createService(options: ServiceOptions) {
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
   const datasetView = ({ data, policy: _policy, strategy, ...view }: (typeof config.datasets)[number], summary = false) => {
-    const hasResearchSettings = data.nativeInput !== undefined || data.request !== undefined || view.nativeModality === 'BAR';
+    const hasResearchSettings = data.nativeInput !== undefined || data.request !== undefined || data.catalog_scan_request !== undefined || view.nativeModality === 'BAR';
     const researchSettings = !hasResearchSettings || view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
     const nativeDataTypes = Array.isArray(view.inputCoverage?.native_data_types) ? view.inputCoverage.native_data_types.filter(value => typeof value === 'string') : undefined;
     const { inputCoverage: _coverage, ...metadata } = view;

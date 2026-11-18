@@ -71,7 +71,8 @@ test('original refresh identities recover without running a retired loader; publ
       extensions: [defineExtension({ name: 'qz.data-source-runtime', tasks: [Original] })] });
     let next: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      const id = await prior.harness.commit(async tx => {
+      const owner = await prior.harness.root(context);
+      const id = await owner.commit(async tx => {
         (await tx.doc(DataSourceState)).sources['old.source'] = { enabled: true, config: {}, datasets: [], retainedDatasets: [], revision: 3, lastLoadedAt: null, error: null };
         return tx.createTask(Original, { name: 'old.source', revision: 3, pluginVersion: '1' }, { ownership: { kind: 'conversation' } });
       }, context);
