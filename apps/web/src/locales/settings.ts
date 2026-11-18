@@ -1,5 +1,8 @@
 // Product interface text. Technical IDs and native results remain unchanged.
 export const en: Record<string, string> = {
+  "Dataset configuration file": "Dataset configuration file",
+  "CryptoHFTData archive directory": "CryptoHFTData archive directory",
+  "Prepared dataset configuration": "Prepared dataset configuration",
   "Account configuration must be a JSON object": "Account configuration must be a JSON object",
   "Unknown account field": "Unknown account field",
   "Subscribed instruments": "Subscribed instruments",
@@ -435,6 +438,9 @@ export const en: Record<string, string> = {
   "The account or session changed; current balance is unknown.": "The account or session changed; current balance is unknown."
 };
 export const zhCN: Record<string, string> = {
+  "Dataset configuration file": "数据集配置文件",
+  "CryptoHFTData archive directory": "CryptoHFTData 历史档案目录",
+  "Prepared dataset configuration": "已准备研究数据集配置",
   "Account configuration must be a JSON object": "账户配置必须是 JSON 对象",
   "Unknown account field": "未知账户字段",
   "Subscribed instruments": "订阅标的",

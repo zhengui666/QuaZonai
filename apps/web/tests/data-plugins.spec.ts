@@ -110,3 +110,23 @@ test('saving cleared optional number and password fields keeps them empty', asyn
   await expect(plugin.getByRole('button', { name: '保存配置', exact: true })).toBeDisabled();
   await expect(plugin.getByRole('button', { name: '加载数据', exact: true })).toBeEnabled();
 });
+
+test('English built-in data fields are localized while third-party labels remain unchanged at 390px', async ({ page }) => {
+  const state = await plugins(page);
+  await page.route('**/api/v3/settings', route => route.fulfill({ json: { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null } }));
+  const source = (name: string, fields: DataSourceView['fields']): DataSourceView => ({ name, version: '1.0', enabled: false, state: 'disabled', fields, config: {}, datasetIds: [], lastLoadedAt: null, error: null });
+  await page.route('**/api/v3/data-sources', route => route.fulfill({ json: [
+    source('qz.data.local-config', [{ key: 'path', label: '配置路径', type: 'text' }]),
+    source('qz.data.cryptohftdata', [{ key: 'archiveDirectory', label: '归档目录', type: 'text' }, { key: 'preparedConfig', label: '准备配置', type: 'text' }]),
+    source('third-party.source', [{ key: 'path', label: 'Custom source path · 原样', type: 'text' }]),
+  ] }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#/settings?section=data-plugins');
+  await expect(page.getByRole('heading', { name: 'Data plugins', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Dataset configuration file', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('CryptoHFTData archive directory', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Prepared dataset configuration', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Custom source path · 原样', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(state.writes).toEqual([]);
+});

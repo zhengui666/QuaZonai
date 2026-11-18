@@ -17,6 +17,13 @@ function DataPlugin({ source }: { source: DataSourceView }) {
   const values = Form.useWatch([], form) as DataSourceUpdate | undefined;
   const [busy, setBusy] = useState<'save' | 'refresh'>(); const [error, setError] = useState<unknown>(); const [notice, setNotice] = useState('');
   const saved = formValues(source);
+  // Built-in field labels are interface text; third-party plugin labels are left intact.
+  const builtInLabels: Record<string, Record<string, string>> = {
+    'qz.data.local-config': { path: 'Dataset configuration file' },
+    'qz.data.cryptohftdata': { archiveDirectory: 'CryptoHFTData archive directory', preparedConfig: 'Prepared dataset configuration' },
+  };
+  const knownLabels = Object.hasOwn(builtInLabels, source.name) ? builtInLabels[source.name] : undefined;
+  const fields = source.fields.map(field => ({ ...field, label: knownLabels && Object.hasOwn(knownLabels, field.key) ? t(knownLabels[field.key]!) : field.label }));
   const dirty = !!values && JSON.stringify(values) !== JSON.stringify(saved);
   const previous = useRef(saved);
   const observer = useRef<EventSource | null>(null);
@@ -70,7 +77,7 @@ function DataPlugin({ source }: { source: DataSourceView }) {
     <header><h2>{source.name}</h2><code>{source.version ?? t("No version provided")}</code><Status plain value={source.state} /></header>
     <div className="settings-group-body"><Form form={form} layout="vertical" initialValues={saved} disabled={!!busy} onValuesChange={() => { setNotice(''); setError(undefined); }} onFinish={() => { void update('save'); }}>
       <Form.Item label={t("Enable plugin")} name="enabled" valuePropName="checked"><Switch aria-label={t("Enable {{v0}}", { v0: source.name })} /></Form.Item>
-      {source.fields.map(field => <Form.Item key={field.key} label={field.label} name={['config', field.key]} valuePropName={field.type === 'boolean' ? 'checked' : 'value'} rules={field.required && values?.enabled ? [{ required: true, message: t("Enter {{v0}}", { v0: field.label }) }] : undefined}>
+      {fields.map(field => <Form.Item key={field.key} label={field.label} name={['config', field.key]} valuePropName={field.type === 'boolean' ? 'checked' : 'value'} rules={field.required && values?.enabled ? [{ required: true, message: t("Enter {{v0}}", { v0: field.label }) }] : undefined}>
         {field.choices ? <Select allowClear options={field.choices} placeholder={t("Choose input type")} /> : field.type === 'password' ? <Input.Password autoComplete="new-password" /> : field.type === 'number' ? <InputNumber style={{ width: '100%' }} /> : field.type === 'boolean' ? <Switch aria-label={field.label} /> : <Input autoComplete="off" />}
       </Form.Item>)}
       <p className="quiet">{t("Datasets: {{countText}} · Last loaded", { countText: new Intl.NumberFormat(i18n.language).format(source.datasetIds.length) })}<Timestamp value={source.lastLoadedAt} /></p>
