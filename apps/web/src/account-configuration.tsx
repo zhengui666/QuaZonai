@@ -105,7 +105,6 @@ function PaperParameters({text,onChange,disabled,onError}:{text:string;onChange:
  if(value!==undefined&&(!value||typeof value!=='object'||Array.isArray(value)))return <p>{t("Fix the paperExecution object in the JSON first.")}</p>;
  const scenario=(value??{}) as Record<string,unknown>;
  const edit=(key:string,value:string|boolean)=>{try{onChange(paperConfigurationField(text,key,value));onError(undefined);return true;}catch(error){onError(new Error(t("{{v0}}. Configuration was not changed; the input was restored to its original JSON value.", { v0: error instanceof Error?error.message:t("Invalid simulation parameters") })));return false;}};
- const adapter=accountAdapter(config as {adapter?:string});
  return <fieldset disabled={disabled}><legend>{t("Official Sandbox simulation parameters (optional)")}</legend>
 
  {paperFields.map(([key,label])=><label key={key} style={{display:'block'}}>{t(label)}{key==='prob_fill_on_limit'||key==='prob_slippage'?<PaperProbabilityInput label={t(label)} value={scenario[key]} disabled={disabled} onCommit={value=>edit(key,value)}/>:<Input aria-label={t(label)} value={String(scenario[key]??'')} disabled={disabled} onChange={event=>edit(key,event.target.value)}/>}</label>)}
