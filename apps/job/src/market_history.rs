@@ -3285,7 +3285,7 @@ mod tests {
         let output = temp.path().join("formal-trades");
         let request = serde_json::json!({"schema_version":1,
             "manifest_path":manifest,"instruments_path":instruments,"output_path":output,
-            "start_seconds":"1767225600","end_seconds":"1767225601",
+            "path_prefixes":["perps/"],"start_seconds":"1767225600","end_seconds":"1767225601",
             "received_time":true,"maximum_receive_delay_ns":"2000000000"});
         let result = native_market_import(serde_json::from_value(request).unwrap()).unwrap();
         assert!(result.report["record_precision"].as_str().unwrap().starts_with("NATIVE_ENCODING_16"));
