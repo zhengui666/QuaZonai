@@ -3432,7 +3432,9 @@ mod tests {
         manifest["missing"] = serde_json::json!([]);
         manifest["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
         fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        for repetition in 0..3 {
+        for repetition in 0..6 {
+            let legacy = repetition % 2 == 0;
+            crate::catalog::publish::profile::set_legacy(legacy);
             crate::catalog::publish::profile::take();
             let output = temp.path().join(format!("profile-{repetition}"));
             let request = serde_json::json!({"schema_version":1,"modality":"BOOK_SNAPSHOT",
@@ -3448,9 +3450,10 @@ mod tests {
             eprintln!("IMPORT_PROFILE {}", serde_json::json!({"repetition":repetition,
                 "source_rows":groups*40,"native_records":groups*41,"whole_ns":whole_ns,
                 "publish_ns":publish_ns,"write_ns":write_ns,"read_next_batch_ns":read_ns,
-                "json_compare_loop_ns":compare_ns,"outside_publish_ns":whole_ns.saturating_sub(publish_ns),
+                "compare_loop_ns":compare_ns,"comparison":if legacy { "original_json" } else { "exact_book_fields" },"outside_publish_ns":whole_ns.saturating_sub(publish_ns),
                 "scope":"synthetic CSV, one instrument, 20x2 levels; not private compressed Parquet throughput"}));
         }
+        crate::catalog::publish::profile::set_legacy(false);
     }
 
     #[test]
