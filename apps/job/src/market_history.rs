@@ -1805,7 +1805,10 @@ pub fn native_market_import(
             start,
             end,
             bar_interval: (None, None),
-            native_precision: true,
+            // MatchingEngine checks book Price/Quantity precision against the supplied
+            // instrument. Reuse the exact conversion path: it rejects any value loss.
+            // Trades retain their existing archive/native precision representation.
+            native_precision: !book_snapshots,
             trade_ticks: !book_snapshots,
             received_time: request.received_time,
             maximum_receive_delay_ns,
@@ -3275,6 +3278,27 @@ mod tests {
     }
 
     #[test]
+    fn formal_trade_import_keeps_native_precision_beyond_instrument_definition() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, instruments) = received_source(temp.path(),
+            "BTCUSDT,1767225600001,10.1234567890123456,0.1234567890,T-1,B,1767225600002000000\n", true);
+        let output = temp.path().join("formal-trades");
+        let request = serde_json::json!({"schema_version":1,
+            "manifest_path":manifest,"instruments_path":instruments,"output_path":output,
+            "start_seconds":"1767225600","end_seconds":"1767225601",
+            "received_time":true,"maximum_receive_delay_ns":"2000000000"});
+        let result = native_market_import(serde_json::from_value(request).unwrap()).unwrap();
+        assert!(result.report["record_precision"].as_str().unwrap().starts_with("NATIVE_ENCODING_16"));
+        let mut catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
+        let ticks = catalog.query::<TradeTick>(None, None, None, None, None, false).unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].price.precision, 16);
+        assert_eq!(ticks[0].size.precision, 16);
+        assert_eq!(ticks[0].price.as_decimal().to_string(), "10.1234567890123456");
+        assert_eq!(ticks[0].size.as_decimal(), "0.1234567890".parse::<rust_decimal::Decimal>().unwrap());
+    }
+
+    #[test]
     fn flat_book_import_uses_source_root_alias_definitions_and_original_receipt_units() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("archive");
@@ -3293,9 +3317,12 @@ mod tests {
                 "columns":{"symbol":"symbol","time":"time","available_at":"received","event_type":"event_type","side":"side","price":"price","size":"quantity"}}]},
             "files":[{"path":"book.csv","size":fs::metadata(&csv).unwrap().len(),"stream":"books"}],"missing":[]
         })).unwrap()).unwrap();
-        let instrument = InstrumentAny::CurrencyPair(
-            nautilus_model::instruments::stubs::currency_pair_btcusdt(),
-        );
+        let mut definition = nautilus_model::instruments::stubs::currency_pair_btcusdt();
+        definition.price_precision = 6;
+        definition.size_precision = 0;
+        definition.price_increment = "0.000001".parse().unwrap();
+        definition.size_increment = "1".parse().unwrap();
+        let instrument = InstrumentAny::CurrencyPair(definition);
         let instruments = temp.path().join("instruments.json");
         fs::write(&instruments, serde_json::to_vec(&serde_json::json!({
             "currencies":crate::catalog::currencies::definitions(std::slice::from_ref(&instrument)),
@@ -3364,6 +3391,9 @@ mod tests {
         let mut catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
         let deltas = catalog.order_book_deltas(None, None, None).unwrap();
         assert_eq!(deltas.len(), 43);
+        assert!(result.report["record_precision"].as_str().unwrap().starts_with("INSTRUMENT_DEFINITION"));
+        assert!(deltas.iter().filter(|delta| delta.action == nautilus_model::enums::BookAction::Add)
+            .all(|delta| delta.order.price.precision == 6 && delta.order.size.precision == 0));
         use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
         assert_eq!(deltas[0].action, BookAction::Clear);
         assert_eq!(deltas[1].order.side, Some(OrderSide::Buy));
@@ -3380,6 +3410,28 @@ mod tests {
         assert!(native_market_import(serde_json::from_value(filtered).unwrap()).unwrap_err().to_string().contains("BOOK_SNAPSHOT_FILTER_MUST_SELECT_WHOLE_GROUP"));
         source["profile"]["streams"][0].as_object_mut().unwrap().remove("equals");
         fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        // Extra nonzero digits must reject the whole import, never round or silently
+        // admit the remaining levels. Original sources and definitions remain unchanged.
+        for (name, price, size, reason) in [
+            ("price-loss", "10.1234567", "2", "PRICE_PRECISION_LOSS"),
+            ("size-loss", "10.123456", "2.1", "SIZE_PRECISION_LOSS"),
+        ] {
+            let rows = format!("symbol,time,received,event_type,side,price,quantity\nALIAS,{},{},snapshot,bid,{price},{size}\nALIAS,{},{},snapshot,ask,11,3\n", start * 1000, at + 123, start * 1000, at + 123);
+            fs::write(&csv, &rows).unwrap();
+            source["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
+            fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+            let failed_output = temp.path().join(name);
+            let mut lossy = request.clone();
+            lossy["output_path"] = failed_output.to_string_lossy().as_ref().into();
+            let original_definitions = fs::read(&instruments).unwrap();
+            let error = native_market_import(serde_json::from_value(lossy).unwrap()).unwrap_err();
+            assert!(error.to_string().contains("INCOMPLETE_IMPORT"));
+            let report: serde_json::Value = json(&failed_output.join("import-report.json")).unwrap();
+            assert_eq!(report["status"], "INCOMPLETE");
+            assert!(report["rejected_rows"].as_object().unwrap().keys().any(|key| key.contains(reason)));
+            assert_eq!(fs::read_to_string(&csv).unwrap(), rows);
+            assert_eq!(fs::read(&instruments).unwrap(), original_definitions);
+        }
         // Default trades cannot silently accept books, and books cannot accept a trade stream.
         let mut wrong = request.clone(); wrong.as_object_mut().unwrap().remove("modality");
         wrong["output_path"] = temp.path().join("wrong-trades").to_string_lossy().as_ref().into();
