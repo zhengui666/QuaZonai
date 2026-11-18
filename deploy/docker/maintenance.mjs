@@ -113,6 +113,8 @@ async function exitedBacktest(storage, selection) {
   const deltaPrecisionRejected = !!deltaPrecision && Number(deltaPrecision[1]) <= 255 && Number(deltaPrecision[2]) <= 255 && deltaPrecision[1] !== deltaPrecision[2];
   const knownRejection = typeof stderr?.data === 'string' && (marketImport ? stderr.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
     || deltaPrecisionRejected
+    // Completion rejected shutdown as EOF; partial replay and its unknown cause remain.
+    || /(?:^|\n)QZ_NATIVE_JOB_FAILED\nnative shutdown is not exhaustion\n(?![\s\S])/.test(stripVTControlCharacters(stderr.data))
     || /(?:^|\n)QZ_NATIVE_JOB_FAILED\nCash account cannot trade futures or perpetuals\n$/.test(stderr.data)
     // Query planning may fail after owner install: settling the exited chain is not rollback.
     || (`\n${stripVTControlCharacters(stderr.data)}`).endsWith('\nQZ_NATIVE_JOB_FAILED\ntype_coercion\ncaused by\nError during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64\n')
