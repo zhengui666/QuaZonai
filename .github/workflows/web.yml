@@ -1,17 +1,12 @@
 name: Web console
 on:
   workflow_dispatch:
-    inputs:
-      grep:
-        description: 'Optional Playwright test-name pattern; empty runs all scenarios'
-        required: false
-        default: ''
 permissions:
   contents: read
 jobs:
   browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -29,10 +24,9 @@ jobs:
       - run: npm ci --prefix apps/service --ignore-scripts --no-audit --no-fund
       - run: make check-web
       - run: node apps/web/node_modules/@playwright/test/cli.js install --with-deps chromium
-      - run: npm --prefix apps/web run test:e2e -- --max-failures=1 --grep "$PLAYWRIGHT_GREP"
+      - run: npm --prefix apps/web run test:e2e
         env:
           PI_SCRATCH_DIR: ${{ runner.temp }}
-          PLAYWRIGHT_GREP: ${{ inputs.grep }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: failure()
         with:

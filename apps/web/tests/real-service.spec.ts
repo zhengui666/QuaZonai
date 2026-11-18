@@ -25,18 +25,10 @@ async function service(downstream?: string) {
     async close() { if (child.exitCode !== null) return; const exited = new Promise<void>(resolve => child.once('exit', () => resolve())); child.send({ type: 'close' }); await exited; },
   };
 }
-async function owner(page: Page, url: string, language: 'en' | 'zh-CN' = 'zh-CN') {
-  await page.goto(url); await expect(page.getByRole('heading', { name: 'Set your workspace password' })).toBeVisible();
-  await page.getByLabel('Password', { exact: true }).fill('browser-owner-test-only'); await page.getByLabel('Confirm password', { exact: true }).fill('browser-owner-test-only'); await page.getByRole('button', { name: 'Create password' }).click();
-  await expect(page.getByRole('heading', { name: 'Research', exact: true })).toBeVisible();
-  expect((await (await page.request.get(`${url}/api/v3/settings`)).json()).language).toBe('en');
-  if (language === 'zh-CN') {
-    const saved = await page.request.patch(`${url}/api/v3/settings`, { data: { language } });
-    expect(saved.ok()).toBeTruthy(); expect((await saved.json()).language).toBe(language);
-    await page.reload(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
-  }
+async function owner(page: Page, url: string) {
+  await page.goto(url); await expect(page.getByRole('heading', { name: '设置工作台密码' })).toBeVisible();
+  await page.getByLabel('密码', { exact: true }).fill('browser-owner-test-only'); await page.getByLabel('确认密码', { exact: true }).fill('browser-owner-test-only'); await page.getByRole('button', { name: '创建密码' }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
 }
-
 async function start(page: Page, url: string, goal: string) {
   await page.goto(`${url}/#/research`); await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByRole('textbox', { name: /研究名称$/ }).fill(goal); await page.getByLabel('研究问题', { exact: true }).fill(goal); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled HTTP hypothesis; protocol coverage, not scientific qualification.');
   await page.getByLabel('数据集', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol dataset / USD', exact: true }).click();
@@ -300,31 +292,4 @@ test('real full-collection tables search older records, sort before pagination a
     await state.restart(); await page.reload(); await expect(page.locator('.workspace-table .ant-table-row').first()).toContainText('Row-01');
     expect(errors).toEqual([]);
   } finally { await state.close(); }
-});
-
-
-test('English is the default and the selected Chinese interface persists after reload', async ({ page }) => {
-  const server = await service();
-  try {
-    await owner(page, server.url, 'en');
-    await page.goto(`${server.url}/#/settings?section=general`);
-    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await page.getByLabel('Language', { exact: true }).click();
-    await page.getByRole('option', { name: '简体中文', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '通用', exact: true })).toBeVisible();
-    expect((await (await page.request.get(`${server.url}/api/v3/settings`)).json()).language).toBe('zh-CN');
-    await page.reload();
-    await expect(page.getByRole('heading', { name: '通用', exact: true })).toBeVisible();
-    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByLabel('语言', { exact: true }).click();
-    await page.getByRole('option', { name: 'English', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('link', { name: 'Connections', exact: true })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-    await page.reload();
-    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
-  } finally { await server.close(); }
 });
