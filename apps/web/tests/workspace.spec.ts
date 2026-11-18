@@ -1058,7 +1058,7 @@ test('clearing a metric or currency scope also clears its dependent sorting and 
 test('English research list, conversation and original result remain readable at 390px without translating user content', async ({ page }) => {
   const state = await contract(page);
   await page.route('**/api/v3/settings', route => route.fulfill({ json: { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null } }));
-  const original = state.researchDetails(8)!;
+  const original = state.researchDetails.get(8)!;
   const originalQuestion = '保留原始中文研究问题，不自动翻译。';
   const originalAnswer = '原始中文结论：这里只验证界面，不构成收益证据。';
   await page.route('**/api/v3/research/8', route => route.fulfill({ json: { ...original, messages: [
