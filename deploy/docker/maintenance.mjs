@@ -108,7 +108,11 @@ async function exitedBacktest(storage, selection) {
     || process.signal !== null || process.terminationRequested !== false) fail();
   const call = await doc('qz.native-call', {kind:'task',taskId:ownerTaskId}, input.basis);
   const stderr = await doc('qz.native-evidence-part', scope, `${nativeTaskId}:private-native-stderr`);
+  // A replay precision failure can follow callbacks/partial files; inspection never rolls them back.
+  const deltaPrecision = typeof stderr?.data === 'string' ? /(?:^|\n)QZ_NATIVE_JOB_FAILED\nInvalid delta order (?:price|size) precision (0|[1-9][0-9]{0,2}), expected (0|[1-9][0-9]{0,2}) for [^\s]+\n(?![\s\S])/.exec(stripVTControlCharacters(stderr.data)) : null;
+  const deltaPrecisionRejected = !!deltaPrecision && Number(deltaPrecision[1]) <= 255 && Number(deltaPrecision[2]) <= 255 && deltaPrecision[1] !== deltaPrecision[2];
   const knownRejection = typeof stderr?.data === 'string' && (marketImport ? stderr.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
+    || deltaPrecisionRejected
     || /(?:^|\n)QZ_NATIVE_JOB_FAILED\nCash account cannot trade futures or perpetuals\n$/.test(stderr.data)
     // Query planning may fail after owner install: settling the exited chain is not rollback.
     || (`\n${stripVTControlCharacters(stderr.data)}`).endsWith('\nQZ_NATIVE_JOB_FAILED\ntype_coercion\ncaused by\nError during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64\n')
