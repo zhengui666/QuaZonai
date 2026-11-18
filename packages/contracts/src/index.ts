@@ -226,6 +226,6 @@ export interface NativeEnvironmentSettingsUpdate { expectedRevision: number; env
 
 /** Original native backtest Tasks, paged without selection or rewritten statistics. */
 export interface ResearchNativeBacktests {
-  items: { taskId: number; status: string; evidenceHref: string }[];
+  items: { taskId: number; ownerTaskId?: number | null; status: string; evidenceHref: string }[];
   nextCursor: string | null;
 }

@@ -1,3 +1,4 @@
+import { researchNativeTables } from './native-result-tables.ts';
 import { reconcileConfiguredFailure } from '../../research/src/native-execution.ts';
 import {remoteAccounts,assertRemoteAccountAccess} from './remote-accounts.ts';
 import { registerImplementationSources } from '../../research/src/implementation-source.ts';
@@ -257,6 +258,7 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
   app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/messages`, request => researchMessagePage(research, Number(request.params.id), request.query.cursor));
   app.get<{ Params: { id: string }; Querystring: { resultTaskId: string; offset?: string } }>(`${API}/research/:id/native-runs`, request => researchNativeRuns(research,Number(request.params.id),Number(request.query.resultTaskId),Number(request.query.offset??'0')));
+  app.get<{ Params: { id: string }; Querystring: { taskId: string; path?: string; offset?: string; pageSize?: string } }>(`${API}/research/:id/native-tables`, request => researchNativeTables(research, Number(request.params.id), Number(request.query.taskId), request.query.path, Number(request.query.offset ?? '0'), Number(request.query.pageSize ?? '200')));
   app.get<{ Params: { id: string }; Querystring: { cursor?: string } }>(`${API}/research/:id/native-backtests`, request => readResearchNativeBacktests(research, Number(request.params.id), request.query.cursor));
   app.get<{ Params: { id: string; taskId: string } }>(`${API}/research/:id/evidence/:taskId`, request => researchTaskEvidence(research, Number(request.params.id), Number(request.params.taskId)));
   app.get<{ Params: { id: string } }>(`${API}/research/:id/events`, async (request, reply) => {
