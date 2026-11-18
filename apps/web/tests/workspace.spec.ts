@@ -130,7 +130,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     if (path.startsWith('/extensions/')) { const item = extensions.find(item => item.name === decodeURIComponent(path.split('/')[2]!))!; Object.assign(item, { enabled: request.postDataJSON().enabled, state: 'pending_restart' }); return reply(item); }
     return reply({ error: 'not_found' }, 404);
   });
-  return { writes, observation, portfolio, researchDetails, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { language: 'zh-CN', defaultModel: null, thinkingLevel: null, serviceTier: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
+  return { writes, observation, portfolio, researchDetails, researchDetail: detail, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { language: 'zh-CN', defaultModel: null, thinkingLevel: null, serviceTier: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function mandate(page: BrowserPage, question: string) { await page.getByRole('textbox', { name: /研究名称$/ }).fill(question); await page.getByLabel('研究问题', { exact: true }).fill(question); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled hypothesis, protocol coverage only.'); }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
@@ -1058,13 +1058,13 @@ test('clearing a metric or currency scope also clears its dependent sorting and 
 test('English research list, conversation and original result remain readable at 390px without translating user content', async ({ page }) => {
   const state = await contract(page);
   await page.route('**/api/v3/settings', route => route.fulfill({ json: { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null } }));
-  const original = state.researchDetails.get(8)!;
+  const original = state.researchDetail(8)!;
   const originalQuestion = '保留原始中文研究问题，不自动翻译。';
   const originalAnswer = '原始中文结论：这里只验证界面，不构成收益证据。';
-  await page.route('**/api/v3/research/8', route => route.fulfill({ json: { ...original, messages: [
+  state.researchDetails.set(8, { ...original, messages: [
     { entryId: 801, role: 'user', text: originalQuestion },
     { entryId: 802, role: 'assistant', text: originalAnswer },
-  ], final: { ...original.final, reason: originalAnswer } } }));
+  ], final: { ...original.final!, reason: originalAnswer } });
   await page.route('**/api/v3/research/8/native-backtests*', route => route.fulfill({ json: { items: [], nextCursor: null } }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/research');
