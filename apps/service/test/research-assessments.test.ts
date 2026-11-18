@@ -44,6 +44,9 @@ test('research API preserves original advisory reports, scoped evidence links an
     const actualStudy = await state.service.research.harness.snapshot(Study, receipt.conversationId, context);
     const failedNative = await conversation!.commit(tx => tx.createTask(NativeStrategyBacktestTask, { request: native, catalog: actualStudy!.input!.data.catalog as string, target: '/missing-native-evidence-binary' }, { ownership: { kind: 'conversation' } }), context);
     assert.equal((await state.service.research.harness.waitForTask(failedNative, context)).state.outcome.status, 'failed');
+    const originalRuns = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}/native-backtests`, headers: state.headers });
+    assert.equal(originalRuns.statusCode, 200);
+    assert.equal(originalRuns.json().items.find((row: {taskId:number}) => row.taskId === failedNative).ownerTaskId, null, 'conversation-owned tasks do not invent a tool owner');
     const nativeEvidence = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}/evidence/${failedNative}`, headers: state.headers });
     assert.equal(nativeEvidence.statusCode, 200); assert.equal(nativeEvidence.json().state.outcome.status, 'failed'); assert.deepEqual(nativeEvidence.json().input.request, native);
     state.faux.setResponses([

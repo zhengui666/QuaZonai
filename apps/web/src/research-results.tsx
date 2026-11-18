@@ -4,6 +4,7 @@ import { useState, useRef } from 'react';
 import { Alert, Descriptions, Pagination, Table, Tag } from 'antd';
 import { api } from './api';
 import { ErrorNotice } from './ui';
+import NativeResultCharts from './native-result-charts';
 import type { ResearchDetail } from '../../../packages/contracts/src/index.ts';
 
 const t = (key: string) => i18n.t(key, { ns: 'shared' });
@@ -72,6 +73,8 @@ export function NativeStrategyResultView({ value, researchId }: { value: NonNull
         { key: 'returns', label: t("Days in return series"), children: scalar(equity.return_days) },
       ]} />
     </section>
+    {researchId && typeof value.resultTaskId === 'number' && <NativeResultCharts key={`${researchId}:${value.resultTaskId}`} researchId={researchId} taskId={value.resultTaskId} />}
+    {[...(Array.isArray(value.notes) ? value.notes : []), ...(Array.isArray(equity.notes) ? equity.notes : [])].filter((note): note is string => typeof note === 'string').map((note, index) => <p key={`native-note-${index}`} role="note">{note}</p>)}
     {total > 0 && <section className="result-card"><h4>{t("Native run records")}</h4><ErrorNotice error={error} /><Table loading={loading} size="small" pagination={false} rowKey={(_, index) => String(index)} dataSource={runs.slice(0, 20).map(record)} columns={[
       { title: t("Order count"), dataIndex: 'total_orders', render: scalar },
       { title: t("Position count"), dataIndex: 'total_positions', render: scalar },

@@ -15,6 +15,8 @@ Turn the accepted research objective into strategy source, builds, native execut
 
 Internal logic assessment uses registered implementation-source materials and `native_assessment_read_source`. Data synthesis assessment uses the original task's evidence manifest and paginated `native_assessment_read_exposure`. Base judgments on what was actually read, not on treating the parent research summary as independent verification. Registering materials and reading native results do not restrict strategy categories or trading logic.
 
+For result presentation, see [Native result charts and evidence](references/native-result-charts.md). The same guide is included in the internal research context. Web charts read original task tables; their display is not proof that an assessment agent read the evidence. There is no `render_chart` tool.
+
 ## 1. Owner and launcher responsibilities
 
 The owner is a library crate with a configurable factory module. For example, selecting `research` requires `pub mod research;` in src/lib.rs. The configured module must expose these exact signatures:

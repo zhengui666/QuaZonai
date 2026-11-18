@@ -88,7 +88,7 @@ export async function readResearchNativeBacktests(host: ResearchHost, id: number
     const study = await tx.doc(Study, id as ConversationId);
     if (!study.input || study.deletedAt) throw new Problem('research_not_found', 404);
     const page = await tx.scanTasks({ conversationId: id as ConversationId, kind: 'qz.native-strategy.backtest', order: 'ascending' }, 20, cursor);
-    return { items: page.items.map(task => ({ taskId: task.id, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
+    return { items: page.items.map(task => ({ taskId: task.id, ownerTaskId: task.owner ?? null, status: task.state.status === 'terminal' ? task.state.outcome.status : task.state.status,
       evidenceHref: `/api/v3/research/${id}/evidence/${task.id}` })),
       nextCursor: page.next ? Buffer.from(JSON.stringify({ conversationId: id, cursor: page.next })).toString('base64url') : null };
   }, context);
