@@ -1,3 +1,4 @@
+import { nativeToolSchema } from '../src/native-tool-schema.ts';
 import { isNativeTable } from '../src/native-table.ts';
 import { nativeResultView, nativeToolText, nativeToolOutputLimits, nativeToolMaxBytes } from '../src/native-result-view.ts';
 import type { JsonValue } from '@earendil-works/chord';
@@ -62,7 +63,7 @@ function catalogBindingInput(data: JsonObject): { catalogBindings?: JsonObject[]
 export const nativeStrategyCatalogTool = defineTool({
   name: 'native_strategy_catalog',
   description: 'Inspect only a registered Nautilus catalog bound to this research; omit datasetId for the primary catalog, or use an exact datasetId from native_strategy_brief catalogBindings for an additional catalog. Inspect the catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. data_types uses exact official NautilusDataType names, for example TradeTick, QuoteTick, Bar or OrderBookDelta; TradeTick also accepts trades/trade/trade_tick. TRADE_TICK is QZ modality metadata, not a valid native selector name. Omit data_types to discover the available selectors rather than guessing; use returned selector names for subsequent queries. next_cursor non-null means INCOMPLETE: pass cursor unchanged and repeat the same datasetId (when selected) to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
-  parameters: catalogToolSchema,
+  parameters: nativeToolSchema(catalogToolSchema),
   prepareArguments(args) {
     validateNumbers(args);
     if (!validateCatalogToolQuery.check(args)) throw new Error('native_catalog_query_schema_invalid');
@@ -113,7 +114,7 @@ export const NativeStrategyCatalogTask = defineTask<{ catalog: string; target: N
 export const nativeStrategyConfigureTool = defineTool({
   name: 'native_strategy_configure',
   description: 'Configure an official compiled Nautilus strategy on the unchanged registered catalog in this research conversation. First inspect native_strategy_catalog for real instrument definitions, selectors and file coverage. Use the generated request schema verbatim. Explicitly choose source event and availability windows, instrument, native strategy, simulation venue balances, currency, leverage and fees from the owner mandate and registered evidence; ask for missing consequential assumptions. Never invent prices, convert USDT/USDC, infer historical fee rates from current instrument definitions or claim file intervals prove completeness. MARGIN starting balances are collateral rather than a position-notional cap; OBI max_trade_size is per trade, not a cumulative-position limit. leverage=1 alone does not prove unlevered exposure because native margin requirements also depend on instrument.margin_init. This saves configuration only; the Rust runner validates native semantics when run. Existing official Tasks keep prior results. An unresolved execution must be settled before replacing configuration. No live trading.',
-  parameters: obj({ request: nativeStrategyRequestSchema }), replay: 'safe', executionMode: 'sequential',
+  parameters: nativeToolSchema(obj({ request: nativeStrategyRequestSchema })), replay: 'safe', executionMode: 'sequential',
   prepareArguments(args) {
     // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
     validateNumbers(args);
@@ -456,7 +457,7 @@ export function nativeParameterGridPage(args: unknown): JsonObject {
     execution: 'NOT_EXECUTED_PASS_REQUESTS_TO_NATIVE_PARAMETER_BATCH', ranking: null, best: null };
 }
 export const nativeParameterGridTool = defineTool({
-  name: 'native_parameter_grid', parameters: parameterGridSchema, outputLimits: nativeToolOutputLimits,
+  name: 'native_parameter_grid', parameters: nativeToolSchema(parameterGridSchema), outputLimits: nativeToolOutputLimits,
   description: 'QuaZonai generates Cartesian combinations of explicit axis values over an existing complete native request. Paths are arrays of exact existing object keys (array indices as strings); axes cannot overlap. Last axis varies fastest, input order and exact JSON values are retained. No numeric range arithmetic, execution, ranking or statistics. Read every page with unchanged request/axes and nextOffset, declare the complete candidates and their purposes before validation, then pass the generated requests to native_parameter_batch. Batch execution uses Pi Tasks and Nautilus native calculations. Do not claim this generator is Nautilus native or that a selected candidate is independent OOS evidence.',
   prepareArguments(args) { const { total: _total, ...prepared } = prepareNativeParameterGrid(args); return prepared; }, replay: 'safe',
   async execute(args) { return { output: [{ type: 'text', text: JSON.stringify(nativeParameterGridPage(args)) }] }; },
@@ -465,7 +466,7 @@ export const nativeParameterGridTool = defineTool({
 export const nativeParameterBatchTool = defineTool({
   name: 'native_parameter_batch', outputLimits: nativeToolOutputLimits,
   description: 'Run an explicit list of complete native requests, in order, on the unchanged registered catalog/executor. configured=false uses upstream strategy requests; true uses installed Rust factory requests. Pi Durable orchestrates independent child Tasks, each calling Nautilus BacktestNode and preserving its original results. This is NOT a Nautilus grid generator or optimizer: the research Agent/owner supplies all candidates and their purposes before execution, optionally using QuaZonai native_parameter_grid to generate combinations. Declare these exact requests in native_strategy_logic_review before running a validation study. No automatic parameter combinations, ranking, winner selection, aggregate performance, OOS qualification or trading permission. A failure stops later cases; UNKNOWN remains on the original Task without replacement. Read each returned Task with the existing native evidence readers, then request native_strategy_assessment_report.',
-  parameters: obj({ configured: bool(), requests: arr(nativeParameterRequestSchema) }),
+  parameters: nativeToolSchema(obj({ configured: bool(), requests: arr(nativeParameterRequestSchema) })),
   prepareArguments: prepareNativeParameterBatch, replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const { configured, requests } = prepareNativeParameterBatch(args);
