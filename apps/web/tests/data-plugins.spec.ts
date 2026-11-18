@@ -112,7 +112,11 @@ test('saving cleared optional number and password fields keeps them empty', asyn
 });
 
 test('English built-in data fields are localized while third-party labels remain unchanged at 390px', async ({ page }) => {
-  const state = await plugins(page);
+  await plugins(page);
+  const writes: string[] = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/v3/data-sources/') && request.method() !== 'GET') writes.push(`${request.method()} ${request.url()}`);
+  });
   await page.route('**/api/v3/settings', route => route.fulfill({ json: { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null } }));
   const source = (name: string, fields: DataSourceView['fields']): DataSourceView => ({ name, version: '1.0', enabled: false, state: 'disabled', fields, config: {}, datasetIds: [], lastLoadedAt: null, error: null });
   await page.route('**/api/v3/data-sources', route => route.fulfill({ json: [
@@ -128,5 +132,5 @@ test('English built-in data fields are localized while third-party labels remain
   await expect(page.getByLabel('Prepared dataset configuration', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Custom source path · 原样', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  expect(state.writes).toEqual([]);
+  expect(writes).toEqual([]);
 });

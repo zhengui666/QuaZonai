@@ -1054,3 +1054,34 @@ test('clearing a metric or currency scope also clears its dependent sorting and 
   await expect(page).not.toHaveURL(/metric=|sort=criterionValue/);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+test('English research list, conversation and original result remain readable at 390px without translating user content', async ({ page }) => {
+  const state = await contract(page);
+  await page.route('**/api/v3/settings', route => route.fulfill({ json: { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null } }));
+  const original = state.researchDetails(8)!;
+  const originalQuestion = '保留原始中文研究问题，不自动翻译。';
+  const originalAnswer = '原始中文结论：这里只验证界面，不构成收益证据。';
+  await page.route('**/api/v3/research/8', route => route.fulfill({ json: { ...original, messages: [
+    { entryId: 801, role: 'user', text: originalQuestion },
+    { entryId: 802, role: 'assistant', text: originalAnswer },
+  ], final: { ...original.final, reason: originalAnswer } } }));
+  await page.route('**/api/v3/research/8/native-backtests*', route => route.fulfill({ json: { items: [], nextCursor: null } }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#/research');
+  await expect(page.getByRole('heading', { name: 'Research', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '测试 · 横截面价值', exact: true })).toBeVisible();
+  await fits(page, 390);
+  await page.getByRole('link', { name: '测试 · 横截面价值', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '测试 · 横截面价值', exact: true })).toBeVisible();
+  const conversation = page.getByRole('region', { name: 'Research conversation', exact: true });
+  await expect(conversation).toContainText(originalQuestion);
+  await expect(conversation).toContainText(originalAnswer);
+  await expect(page.getByRole('tab', { name: 'Conversation', exact: true })).toBeVisible();
+  await fits(page, 390);
+  await page.getByRole('tab', { name: 'Results and evaluation', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'All native backtest records', exact: true })).toBeVisible();
+  await page.getByText('Research conclusion', { exact: true }).click();
+  await expect(page.locator('.reason-disclosure')).toContainText(originalAnswer);
+  await fits(page, 390);
+  expect(state.writes).toEqual([]);
+});
