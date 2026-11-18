@@ -164,3 +164,7 @@ pub fn finalize_after_node_run(
 使用原 `config` / `install` 工厂；新构建生成器保存参数并注册可选回调。省略/false保持旧接口，不要求旧模块新增函数。回调要求配置 `dispose_on_completion=false`，且只有原 `node.run()` 返回成功并产生匹配 configuration 的原生结果才进入。此时上游可能已经 `clear_data`，但原 node/engine/actor 仍可检查；不能声称处于 clear_data 之前。
 
 原生成功结果本身不证明自然 EOF。owner 必须核对原 canonical outcome 与自身处理状态，区分正常完成、提前停止及缺失材料；不能把 `on_stop` 或仅 `Ok` 当自然 EOF。回调返回错误时保留失败并执行清理，不宣称成功。保存开关不修改旧 Build/已有研究，需正式重新构建再新建绑定。此接口不新增订单、行情读取旁路或评分逻辑。
+
+盘口数量的有损变换必须显式授权，默认仍严格无损。仅在已授权的 manifest `book_snapshots` stream 中声明 `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["明确的原生InstrumentId"]}`；不使用通配符，列出实际授权市场。它仅将指定市场正数量按所提供 instrument 的 size_precision 做 Decimal 四舍五入（恰好中点向上），价格和其他市场仍严格，不修改 raw 或静态定义，也不证明定义在历史时点有效。TRADE_TICK 不接受该政策。
+
+报告 `book_quantity_rounding` 按原生市场列出 processed_levels、changed_levels、changed_snapshot_groups、rounded_to_zero_levels、target_size_precisions，以及精确字符串 signed_quantity_error、absolute_quantity_error、maximum_absolute_quantity_error。统计是已处理输入档位，包含随后失败的快照，不是成交量、已成功输出或收益。归零档位不静默删掉：原完整快照转换以 NONPOSITIVE_BOOK_SIZE 拒绝该组，导入为 INCOMPLETE，报告/partial 输出保留，不承诺原子回滚。确认零归零及实际报告后才能宣称保留所有档位；不能用政策声明代替真实结果。

@@ -150,6 +150,33 @@ enum Command {
     },
 }
 
+/// Explicit opt-in for selected book instruments only; absence preserves exact conversion.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BookQuantityRounding {
+    method: BookQuantityRoundingMethod,
+    instrument_ids: Vec<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+enum BookQuantityRoundingMethod {
+    #[serde(rename = "DECIMAL_HALF_UP")]
+    DecimalHalfUp,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct BookQuantityRoundingStats {
+    processed_levels: u64,
+    changed_levels: u64,
+    changed_snapshot_groups: u64,
+    rounded_to_zero_levels: u64,
+    target_size_precisions: BTreeSet<u8>,
+    // Decimal strings, not binary floating point or traded-volume estimates.
+    signed_quantity_error: String,
+    absolute_quantity_error: String,
+    maximum_absolute_quantity_error: String,
+}
+
 #[derive(Clone, Deserialize)]
 struct Stream {
     name: String,
@@ -174,6 +201,8 @@ struct Stream {
     /// Supplied subsecond BAR interval; mutually exclusive with bar_seconds.
     bar_milliseconds: Option<u32>,
     bar_timestamp: Option<String>,
+    #[serde(default)]
+    quantity_rounding: Option<BookQuantityRounding>,
 }
 
 #[derive(Deserialize)]
@@ -274,6 +303,9 @@ struct Report {
     one_sided_books: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     book_snapshot_groups: Option<u64>,
+    /// Processed input levels/groups, including rejected snapshots; not successful output or traded volume.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    book_quantity_rounding: BTreeMap<String, BookQuantityRoundingStats>,
     native_records: BTreeMap<String, BTreeMap<String, u64>>,
     readback_records: u64,
     missing_partitions: Vec<serde_json::Value>,
@@ -1233,6 +1265,19 @@ fn import(
         .filter(|f| f.stream.is_some() && selected_path(&f.path, &prefixes))
         .collect::<Vec<_>>();
     ensure!(!selected_files.is_empty(), "SOURCE_SELECTION_EMPTY");
+    for file in &selected_files {
+        let stream = manifest.stream(file.stream.as_deref().unwrap())?;
+        if let Some(policy) = &stream.quantity_rounding {
+            ensure!(stream.kind == "book_snapshots" && !options.native_precision,
+                "BOOK_QUANTITY_ROUNDING_REQUIRES_INSTRUMENT_PRECISION");
+            let BookQuantityRoundingMethod::DecimalHalfUp = policy.method;
+            ensure!(!policy.instrument_ids.is_empty()
+                && policy.instrument_ids.iter().collect::<BTreeSet<_>>().len() == policy.instrument_ids.len()
+                && policy.instrument_ids.iter().all(|id| id.parse::<InstrumentId>().is_ok()),
+                "BOOK_QUANTITY_ROUNDING_EXPLICIT_INSTRUMENTS_REQUIRED");
+        }
+    }
+
     let book_snapshots = !options.trade_ticks && selected_files.iter().all(|file| {
         manifest.stream(file.stream.as_deref().unwrap()).is_ok_and(|stream| stream.kind == "book_snapshots")
     });
@@ -3296,6 +3341,13 @@ mod tests {
         assert_eq!(ticks[0].size.precision, 16);
         assert_eq!(ticks[0].price.as_decimal().to_string(), "10.1234567890123456");
         assert_eq!(ticks[0].size.as_decimal(), "0.1234567890".parse::<rust_decimal::Decimal>().unwrap());
+        let mut source: serde_json::Value = json(&manifest).unwrap();
+        source["profile"]["streams"][0]["quantity_rounding"] = serde_json::json!({"method":"DECIMAL_HALF_UP","instrument_ids":["BTCUSDT.BINANCE"]});
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+        let invalid = serde_json::json!({"schema_version":1,"manifest_path":manifest,
+            "instruments_path":instruments,"output_path":temp.path().join("invalid-trade-policy"),"path_prefixes":["perps/"]});
+        assert!(native_market_import(serde_json::from_value(invalid).unwrap()).unwrap_err().to_string().contains("BOOK_QUANTITY_ROUNDING_REQUIRES_INSTRUMENT_PRECISION"));
+
     }
 
     #[test]
@@ -3432,6 +3484,72 @@ mod tests {
             assert_eq!(fs::read_to_string(&csv).unwrap(), rows);
             assert_eq!(fs::read(&instruments).unwrap(), original_definitions);
         }
+        // Explicit source policy is scoped to native IDs, never inferred from value shape.
+        for (name, bid_price, bid_size, selected_id, succeeds, reason) in [
+            ("half-up", "10.123456", "2.5", instrument.id().to_string(), true, ""),
+            ("zero-after-round", "10.123456", "0.49", instrument.id().to_string(), false, "NONPOSITIVE_BOOK_SIZE"),
+            ("price-still-strict", "10.1234567", "2.5", instrument.id().to_string(), false, "PRICE_PRECISION_LOSS"),
+            ("other-id-still-strict", "10.123456", "2.5", "ETHUSDT.BINANCE".into(), false, "SIZE_PRECISION_LOSS"),
+        ] {
+            let rows = format!("symbol,time,received,event_type,side,price,quantity\nALIAS,{},{},snapshot,bid,{bid_price},{bid_size}\nALIAS,{},{},snapshot,ask,11,1.49\n", start * 1000, at + 123, start * 1000, at + 123);
+            fs::write(&csv, &rows).unwrap();
+            source["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
+            source["profile"]["streams"][0]["quantity_rounding"] = serde_json::json!({
+                "method":"DECIMAL_HALF_UP", "instrument_ids":[selected_id]});
+            fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+            let selected_output = temp.path().join(name);
+            let mut rounded = request.clone();
+            rounded["output_path"] = selected_output.to_string_lossy().as_ref().into();
+            let original_definitions = fs::read(&instruments).unwrap();
+            let result = native_market_import(serde_json::from_value(rounded).unwrap());
+            let report: serde_json::Value = json(&selected_output.join("import-report.json")).unwrap();
+            if succeeds {
+                result.unwrap();
+                assert_eq!(report["status"], "IMPORTED");
+                let mut native = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(&selected_output.join("catalog"), None, None, None, None);
+                let deltas = native.order_book_deltas(None, None, None).unwrap();
+                assert_eq!(deltas.len(), 3); // CLEAR + both original levels; no silent deletion.
+                assert_eq!(deltas[1].order.size.as_decimal(), rust_decimal::Decimal::from(3));
+                assert_eq!(deltas[2].order.size.as_decimal(), rust_decimal::Decimal::from(1));
+                assert_eq!(deltas[1].order.price.as_decimal(), "10.123456".parse::<rust_decimal::Decimal>().unwrap());
+                assert_eq!(report["empty_books"], 0);
+                assert_eq!(report["one_sided_books"], 0);
+                let stats = &report["book_quantity_rounding"][instrument.id().to_string()];
+                assert_eq!(stats["processed_levels"], 2);
+                assert_eq!(stats["changed_levels"], 2);
+                assert_eq!(stats["changed_snapshot_groups"], 1);
+                assert_eq!(stats["rounded_to_zero_levels"], 0);
+                for (key, expected) in [("signed_quantity_error", "0.01"), ("absolute_quantity_error", "0.99"), ("maximum_absolute_quantity_error", "0.5")] {
+                    assert_eq!(stats[key].as_str().unwrap().parse::<rust_decimal::Decimal>().unwrap(), expected.parse::<rust_decimal::Decimal>().unwrap());
+                }
+            } else {
+                assert!(result.unwrap_err().to_string().contains("INCOMPLETE_IMPORT"));
+                assert_eq!(report["status"], "INCOMPLETE");
+                assert!(report["rejected_rows"].as_object().unwrap().keys().any(|key| key.contains(reason)));
+                if name == "zero-after-round" {
+                    assert_eq!(report["book_quantity_rounding"][instrument.id().to_string()]["rounded_to_zero_levels"], 1);
+                }
+                if name == "other-id-still-strict" { assert!(report.get("book_quantity_rounding").is_none()); }
+            }
+            assert_eq!(fs::read_to_string(&csv).unwrap(), rows);
+            assert_eq!(fs::read(&instruments).unwrap(), original_definitions);
+        }
+        // A typo or empty/broad scope is not permission to round any market.
+        for policy in [
+            serde_json::json!({"method":"DECIMAL_HALF_UP","instrument_ids":[]}),
+            serde_json::json!({"method":"DECIMAL_HALF_UP","instrument_ids":["*"]}),
+            serde_json::json!({"method":"ROUND","instrument_ids":[instrument.id().to_string()]}),
+            serde_json::json!({"method":"DECIMAL_HALF_UP","instrument_ids":[instrument.id().to_string()],"price":true}),
+        ] {
+            source["profile"]["streams"][0]["quantity_rounding"] = policy;
+            fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+            let destination = temp.path().join("invalid-policy");
+            let mut invalid = request.clone(); invalid["output_path"] = destination.to_string_lossy().as_ref().into();
+            assert!(native_market_import(serde_json::from_value(invalid).unwrap()).is_err());
+            assert!(!destination.exists());
+        }
+        source["profile"]["streams"][0].as_object_mut().unwrap().remove("quantity_rounding");
+        fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
         // Default trades cannot silently accept books, and books cannot accept a trade stream.
         let mut wrong = request.clone(); wrong.as_object_mut().unwrap().remove("modality");
         wrong["output_path"] = temp.path().join("wrong-trades").to_string_lossy().as_ref().into();

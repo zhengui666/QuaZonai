@@ -176,7 +176,11 @@ fn snapshot(
 }
 
 #[derive(Default)]
-pub(super) struct FlatSnapshots(crate::source_market::FlatSnapshots);
+pub(super) struct FlatSnapshots {
+    native: crate::source_market::FlatSnapshots,
+    current_group: Option<(InstrumentId, u64, u64)>,
+    current_group_changed: bool,
+}
 
 impl FlatSnapshots {
     pub(super) fn push(
@@ -188,8 +192,49 @@ impl FlatSnapshots {
         available: u64,
         report: &mut Report,
     ) -> Result<Vec<Data>> {
+        let group = (encoding.id, event, available);
+        if self.current_group != Some(group) {
+            self.current_group = Some(group);
+            self.current_group_changed = false;
+        }
+        let row = if stream.quantity_rounding.as_ref().is_some_and(|policy|
+            policy.instrument_ids.iter().any(|id| id == &encoding.id.to_string()))
+            && scalar(stream.field(&row, "side")?)? != "noop"
+        {
+            let original = decimal(stream.field(&row, "size")?)?;
+            ensure!(original > Decimal::ZERO, "NONPOSITIVE_BOOK_SIZE");
+            let rounded = original.round_dp_with_strategy(u32::from(encoding.size_precision),
+                rust_decimal::RoundingStrategy::MidpointAwayFromZero);
+            let difference = rounded - original;
+            let stats = report.book_quantity_rounding.entry(encoding.id.to_string()).or_default();
+            stats.processed_levels += 1;
+            stats.target_size_precisions.insert(encoding.size_precision);
+            // Initialize exact decimal totals even when all selected values are unchanged.
+            for total in [&mut stats.signed_quantity_error, &mut stats.absolute_quantity_error,
+                &mut stats.maximum_absolute_quantity_error] {
+                if total.is_empty() { *total = "0".into(); }
+            }
+            if difference != Decimal::ZERO {
+                stats.changed_levels += 1;
+                if !self.current_group_changed {
+                    stats.changed_snapshot_groups += 1;
+                    self.current_group_changed = true;
+                }
+                let absolute = difference.abs();
+                stats.signed_quantity_error = Decimal::from_str_exact(&stats.signed_quantity_error)?.checked_add(difference).context("BOOK_ROUNDING_ERROR_TOTAL_OVERFLOW")?.to_string();
+                stats.absolute_quantity_error = Decimal::from_str_exact(&stats.absolute_quantity_error)?.checked_add(absolute).context("BOOK_ROUNDING_ERROR_TOTAL_OVERFLOW")?.to_string();
+                stats.maximum_absolute_quantity_error = Decimal::from_str_exact(&stats.maximum_absolute_quantity_error)?.max(absolute).to_string();
+            }
+            stats.rounded_to_zero_levels += u64::from(rounded == Decimal::ZERO);
+            // Change only this in-memory level. The original file is never rewritten.
+            // Zero remains present so the native snapshot path rejects the whole group,
+            // rather than silently deleting a level or changing sidedness.
+            let quantity_column = stream.columns.get("size").context("COLUMN_MAPPING_MISSING: size")?;
+            Row::new(row.get_column_iter().map(|(name, value)| (name.clone(),
+                if name == quantity_column { Field::Str(rounded.to_string()) } else { value.clone() })).collect())
+        } else { row };
         Ok(self
-            .0
+            .native
             .push(&stream.columns, row, encoding, event, available)?
             .map(|snapshot| recorded_snapshot(snapshot, report))
             .unwrap_or_default())
@@ -197,7 +242,7 @@ impl FlatSnapshots {
 
     pub(super) fn finish(&mut self, stream: &Stream, report: &mut Report) -> Result<Vec<Data>> {
         Ok(self
-            .0
+            .native
             .finish(&stream.columns)?
             .map(|snapshot| recorded_snapshot(snapshot, report))
             .unwrap_or_default())
@@ -446,6 +491,42 @@ mod tests {
             ("price".into(), Field::Str(price.into())),
             ("quantity".into(), Field::Str(size.into())),
         ])
+    }
+
+    #[test]
+    fn explicit_half_up_counts_input_levels_and_distinct_snapshot_receipts() {
+        let mut stream = flat_stream();
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        stream.quantity_rounding = Some(serde_json::from_value(serde_json::json!({
+            "method":"DECIMAL_HALF_UP", "instrument_ids":[id.to_string()]
+        })).unwrap());
+        let encoding = Encoding { id, price_precision: 2, size_precision: 1 };
+        let mut snapshots = FlatSnapshots::default();
+        let mut report = Report::default();
+        let mut output = Vec::new();
+        for (event, received, side, price, size) in [
+            (10, 20, "bid", "1.2", "2.05"),
+            (10, 20, "ask", "1.3", "3.0"),
+            (10, 20, "ask", "1.4", "4.04"),
+            (10, 21, "bid", "1.2", "2.15"), // same event, different actual receipt
+            (10, 21, "ask", "1.3", "3.0"),
+            (11, 22, "bid", "1.2", "2.0"), // wholly unchanged snapshot
+            (11, 22, "ask", "1.3", "3.0"),
+        ] {
+            output.extend(snapshots.push(&stream, flat_row(side, price, size), encoding,
+                event, received, &mut report).unwrap());
+        }
+        output.extend(snapshots.finish(&stream, &mut report).unwrap());
+        assert_eq!(output.len(), 10); // all seven levels and three CLEAR records
+        let stats = &report.book_quantity_rounding[&id.to_string()];
+        assert_eq!(stats.processed_levels, 7);
+        assert_eq!(stats.changed_levels, 3);
+        assert_eq!(stats.changed_snapshot_groups, 2);
+        assert_eq!(stats.rounded_to_zero_levels, 0);
+        assert_eq!(stats.signed_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.06").unwrap());
+        assert_eq!(stats.absolute_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.14").unwrap());
+        assert_eq!(stats.maximum_absolute_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.05").unwrap());
+        assert_eq!(stats.target_size_precisions, std::collections::BTreeSet::from([1]));
     }
 
     #[test]

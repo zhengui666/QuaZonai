@@ -1,0 +1,52 @@
+name: Native market import
+on:
+  pull_request:
+    paths:
+      - 'apps/job/src/market_history.rs'
+      - 'apps/job/src/source_market.rs'
+      - 'apps/job/src/bin/market/**'
+      - 'apps/job/Cargo.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/native-market-import.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-market-import-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  TEST_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  market-import:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TEST_REVISION }}
+          persist-credentials: false
+      - name: Record exact tested revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$TEST_REVISION"
+          git rev-parse HEAD
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-market-import-v1
+          key: ubuntu-22-rust-1.99.1-debug0
+          cache-bin: false
+          cache-workspace-crates: false
+      - name: Native market importer synthetic tests
+        run: |
+          cargo test --locked -p job --features market-history --lib market_history::tests:: -- --test-threads=1
+      - name: Native record conversion synthetic tests
+        run: |
+          cargo test --locked -p job --features market-history --lib market_history::records::tests:: -- --test-threads=1
