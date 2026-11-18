@@ -4,6 +4,7 @@ on:
     paths:
       - 'apps/job/src/market_history.rs'
       - 'apps/job/src/source_market.rs'
+      - 'apps/job/src/catalog/publish.rs'
       - 'apps/job/src/bin/market/**'
       - 'apps/job/Cargo.toml'
       - 'Cargo.toml'
@@ -57,6 +58,9 @@ jobs:
       - name: Native record conversion synthetic tests
         run: |
           cargo test --locked -p job --features market-history --lib market_history::records::tests:: -- --test-threads=1
+      - name: Exact publication comparison regression
+        run: |
+          cargo test --locked -p job --features market-history --lib catalog::publish::tests:: -- --test-threads=1
       - name: Optimized public synthetic import timing
         if: ${{ inputs.profile }}
         run: |
