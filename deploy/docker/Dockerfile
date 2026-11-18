@@ -32,6 +32,7 @@ COPY --chmod=755 apps/service/src /opt/quazonai/apps/service/src
 COPY --chmod=644 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
 COPY --chmod=644 apps/nautilus/src/rust-environment.ts apps/nautilus/src/rust-launcher-build.ts apps/nautilus/src/rust-native-dependencies.ts apps/nautilus/src/rust-launcher-import.ts apps/nautilus/src/account-credentials.ts apps/nautilus/src/account-runtime.ts apps/nautilus/src/account-configurations.ts apps/nautilus/src/capital-account.ts apps/nautilus/src/account-receipt-lock.ts apps/nautilus/src/hyperliquid-account.ts apps/nautilus/src/remote-account-client.ts apps/nautilus/src/remote-account-ssh.ts apps/nautilus/src/remote-account-supervisor.ts /opt/quazonai/apps/nautilus/src/
 COPY --chmod=644 apps/research/skills/strategy-authoring/SKILL.md /opt/quazonai/apps/research/skills/strategy-authoring/SKILL.md
+COPY --chmod=644 apps/research/skills/strategy-authoring/references/native-result-charts.md /opt/quazonai/apps/research/skills/strategy-authoring/references/native-result-charts.md
 COPY --chmod=644 apps/research/skills/strategy-authoring/assets/research.rs /opt/quazonai/apps/research/skills/strategy-authoring/assets/research.rs
 COPY --chmod=755 apps/research/src /opt/quazonai/apps/research/src
 COPY --chmod=755 apps/research/plugins /opt/quazonai/apps/research/plugins

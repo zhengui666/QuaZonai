@@ -45,6 +45,10 @@ test('official coding tools author and edit Rust in an explicit workspace, prese
     assert.ok(authoringPrompt.includes('nautilus_strategy!(CallbackCheck)'));
     assert.ok(authoringPrompt.includes('native_configured_configure'));
     assert.ok(authoringPrompt.includes('special_event_observation'));
+    assert.ok(authoringPrompt.includes('Presenting native research evidence'));
+    assert.ok(authoringPrompt.includes('There is no `render_chart` tool'));
+    assert.ok(authoringPrompt.includes('native_assessment_read_exposure'));
+    assert.ok(authoringPrompt.includes('not the full history') || authoringPrompt.includes('only the loaded table page'));
     await assert.rejects(readFile(join(root, 'new.txt')), { code: 'ENOENT' });
     await assert.rejects(readFile(join(root, 'not-created.txt')), { code: 'ENOENT' });
     await assert.rejects(readFile(join(root, 'not-created-directory/new.rs')), { code: 'ENOENT' });
