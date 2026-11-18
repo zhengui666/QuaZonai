@@ -263,7 +263,7 @@ main { max-width: 1360px; margin: 0 auto; padding: 32px 40px 48px; }
 .observation-footer .ant-btn { margin-left: auto; }
 .settings-page { max-width: 900px; margin-inline: auto; }
 .settings-page > .page-heading { margin-bottom: 9px; }
-.settings-nav { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.settings-nav { display: flex; flex-wrap: wrap; column-gap: 26px; row-gap: 0; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
 .settings-nav a { padding: 13px 0; color: var(--secondary); font-size: 14px; border-bottom: 2px solid transparent; }
 .settings-nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
 .settings-hub > .settings-page > .page-heading h2 { font-size: 20px; font-weight: 550; }

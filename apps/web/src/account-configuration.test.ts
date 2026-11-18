@@ -138,6 +138,6 @@ vi.mock('react-i18next', async importOriginal => {
   const actual = await importOriginal<typeof import('react-i18next')>();
   const { default: translations } = await import('i18next');
   return { ...actual, useTranslation: (namespace?: string | string[]) => ({
-    t: translations.getFixedT(null, namespace), i18n: translations, ready: true,
+    t: translations.getFixedT(null, namespace ?? null), i18n: translations, ready: true,
   }) };
 });

@@ -317,5 +317,14 @@ test('English is the default and the selected Chinese interface persists after r
     await page.reload();
     await expect(page.getByRole('heading', { name: '通用', exact: true })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByLabel('语言', { exact: true }).click();
+    await page.getByRole('option', { name: 'English', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.getByRole('link', { name: 'Connections', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
   } finally { await server.close(); }
 });
