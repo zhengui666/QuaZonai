@@ -6,7 +6,7 @@ import { dirname, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { JsonObject } from '../../../packages/contracts/src/index.ts';
-import type { DataSourceView } from '../../../packages/contracts/src/data-sources.ts';
+import type { DataSourceView, DatasetRegistryView } from '../../../packages/contracts/src/data-sources.ts';
 import { bindScienceData, resolveDatasetPaths, scienceDataWithoutBinding, validateDatasetInput } from './config.ts';
 import type { DatasetConfig, ServiceConfig } from './config.ts';
 import { Application, object, Problem } from './facts.ts';
@@ -42,7 +42,7 @@ function datasets(value: unknown): DatasetConfig[] {
   }
   return structuredClone(value) as DatasetConfig[];
 }
-export const DataSourceState = defineDoc<{ sources: DurableJson }>({
+export const DataSourceState = defineDoc<{ sources: DurableJson; selectedDatasetIds?: string[] }>({
   kind: 'qz.data-sources', version: 1, scope: 'session', initial: () => ({ sources: {} }),
   checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 32,
 });
@@ -51,6 +51,7 @@ export const DataSourceState = defineDoc<{ sources: DurableJson }>({
 export async function dataSources(config: ServiceConfig) {
   const base = structuredClone(config.datasets);
   let stored: Record<string, SavedSource> = {};
+  let selectedDatasetIds: string[] | undefined;
   const sources = new Map<string, Source>();
   // Persisted provider records are now ordinary dataset references. Never import
   // old modules or reread their source descriptors while opening the registry.
@@ -87,6 +88,7 @@ export async function dataSources(config: ServiceConfig) {
     }
     config.retainedDatasets = [...retained.values()].map(dataset => ({ ...structuredClone(dataset), data: (config.nativeProcess ?? config.nautilus?.backtest)
       ? bindScienceData(scienceDataWithoutBinding(dataset.data), (config.nativeProcess ?? config.nautilus?.backtest)!) : scienceDataWithoutBinding(dataset.data) }));
+    if (selectedDatasetIds !== undefined) config.datasets = selectedDatasetIds.flatMap(id => { const dataset = config.retainedDatasets!.find(row => row.id === id); return dataset ? [structuredClone(dataset)] : []; });
   }
   apply();
   let host: ResearchHost | undefined;
@@ -95,8 +97,8 @@ export async function dataSources(config: ServiceConfig) {
   const context = BACKGROUND_CONTEXT;
   const State = DataSourceState;
   function connected() { if (!host || closing) throw new Problem('data_source_runtime_unavailable', 503); return host; }
-  function hydrate(saved: Record<string, SavedSource>) {
-    stored = structuredClone(saved);
+  function hydrate(saved: Record<string, SavedSource>, selected?: string[]) {
+    stored = structuredClone(saved); selectedDatasetIds = selected === undefined ? undefined : [...selected];
     for (const [name, value] of Object.entries(stored)) {
       const source = sources.get(name);
       sources.set(name, { name, version: source?.version ?? null, ...structuredClone(value) });
@@ -105,7 +107,7 @@ export async function dataSources(config: ServiceConfig) {
   }
   async function synchronize() {
     const value = await connected().harness.snapshot(State, context);
-    if (value) hydrate(value.sources as unknown as Record<string, SavedSource>);
+    if (value) hydrate(value.sources as unknown as Record<string, SavedSource>, value.selectedDatasetIds);
   }
   const CancelRefresh = defineTask<{ target: number }, { phase: 'cancel' }, null>({
     name: 'qz.data-source.cancel', version: 1, initial: () => ({ phase: 'cancel' }),
@@ -214,6 +216,23 @@ export async function dataSources(config: ServiceConfig) {
     await synchronize();
     return receipt;
   }
+  async function selectDatasets(value: unknown) {
+    const body = object(value, 'dataset_selection');
+    if (Object.keys(body).some(key => key !== 'datasetIds') || body.datasetIds !== null && (!Array.isArray(body.datasetIds) || body.datasetIds.some(id => typeof id !== 'string') || new Set(body.datasetIds).size !== body.datasetIds.length)) throw new Problem('dataset_selection_invalid', 422);
+    const ids = body.datasetIds as string[] | null;
+    await connected().harness.commit(async tx => {
+      assertBusinessAdmission(await tx.doc(Application));
+      const state = await tx.doc(State);
+      const available = new Set((Object.values(state.sources) as unknown as SavedSource[]).flatMap(source => [...source.datasets, ...(source.retainedDatasets ?? [])].map(dataset => dataset.id)));
+      if (ids?.some(id => !available.has(id))) throw new Problem('dataset_selection_unknown_id', 422);
+      if (ids === null) delete state.selectedDatasetIds;
+      else state.selectedDatasetIds = [...ids];
+    }, context);
+    await synchronize(); return registry();
+  }
+  function registry(): DatasetRegistryView {
+    return { revision: found(registeredName).revision ?? 1, datasetIds: config.datasets.map(row => row.id), availableDatasetIds: (config.retainedDatasets ?? []).map(row => row.id), selectedDatasetIds: selectedDatasetIds === undefined ? null : [...selectedDatasetIds] };
+  }
   async function taskStatus(name: string, requestedId?: number) {
     const source = found(name); const id = requestedId ?? source.taskId;
     if (!id) return { taskId: null, status: 'idle', source: viewOne(source) };
@@ -240,19 +259,20 @@ export async function dataSources(config: ServiceConfig) {
         for (const [name, saved] of Object.entries(state.sources)) assertOwnership(state.sources as unknown as Record<string, SavedSource>, name, saved as unknown as SavedSource);
       }, context);
       const observation = await host.harness.observeDoc(State, {
-        advance(call) { if (call.kind === 'value') hydrate(call.value.sources as unknown as Record<string, SavedSource>); },
+        advance(call) { if (call.kind === 'value') hydrate(call.value.sources as unknown as Record<string, SavedSource>, call.value.selectedDatasetIds); },
         end() {},
       }, context);
-      if (observation) { hydrate(observation.value.sources as unknown as Record<string, SavedSource>); detach = () => observation.detach(); }
+      if (observation) { hydrate(observation.value.sources as unknown as Record<string, SavedSource>, observation.value.selectedDatasetIds); detach = () => observation.detach(); }
     },
     view: () => [...sources.values()].map(viewOne),
-    registry: () => ({ revision: found(registeredName).revision ?? 1, datasetIds: config.datasets.map(row => row.id) }),
+    registry, selectDatasets,
     async close() { closing = true; detach?.(); },
   };
 }
 export function registerDataSources(app: FastifyInstance, sources: Awaited<ReturnType<typeof dataSources>>) {
   app.get(`${API}/datasets/registry`, sources.registry);
   app.post(`${API}/datasets/register`, request => sources.registerDatasets(request.body));
+  app.put(`${API}/datasets/selection`, request => sources.selectDatasets(request.body));
   // Historical read and registration addresses remain thin aliases, not plugins.
   app.get(`${API}/data-sources`, sources.view);
   app.post(`${API}/data-sources/qz.data.registered/datasets`, request => sources.registerDatasets(request.body));

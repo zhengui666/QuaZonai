@@ -693,3 +693,6 @@ export const zhCN: Record<string, string> = {
   "Equity": "权益"
 };
 export const en: Record<string, string> = Object.fromEntries(Object.keys(zhCN).map(key => [key, key]));
+
+Object.assign(en, { 'Not specified': 'Not specified' });
+Object.assign(zhCN, { 'Not specified': '未指定' });

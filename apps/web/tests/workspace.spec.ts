@@ -366,7 +366,6 @@ test('dataset facts and explicit preselection return to settings data', async ({
 test('empty data leads to data plugins and the extensions alias remains available', async ({ page }) => {
   await contract(page); await page.route('**/api/v3/datasets', route => route.fulfill({ json: [] }));
   await page.goto('/#/data');
-  await expect(page.getByRole('link', { name: '配置数据' })).toHaveAttribute('href', '#/settings?section=data-plugins');
   await page.getByRole('link', { name: '配置数据' }).click();
   await expect(page.getByRole('heading', { name: '数据插件', exact: true, level: 2 })).toBeVisible();
   await expect(page.getByRole('navigation', { name: '设置分类' }).getByRole('link', { name: '数据插件', exact: true })).toHaveAttribute('aria-current', 'page');

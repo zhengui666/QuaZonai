@@ -46,3 +46,57 @@ test('configured retired data modules are never evaluated and historical project
     assert.equal(state.service.research.registry.snapshot().extension('custom.data'), undefined);
   } finally { await state.cleanup(); }
 });
+
+test('dataset selection persists without deleting historical datasets or rebinding research', async () => {
+  const state = await setup();
+  const request = (method: 'GET' | 'PUT' | 'POST', url: string, payload?: object) => state.service.app.inject({ method, url, headers: state.headers, ...(payload === undefined ? {} : { payload }) });
+  try {
+    assert.equal((await state.service.app.inject({ method: 'PUT', url: '/api/v3/datasets/selection', payload: { datasetIds: [] } })).statusCode, 401);
+    const { receipt } = await studied(state);
+    const originalInput = structuredClone((await state.service.research.state(receipt.conversationId)).research!.input);
+    const originalDataset = (await request('GET', '/api/v3/datasets/controlled')).json();
+    const registry = (await request('GET', '/api/v3/datasets/registry')).json();
+    assert.equal(registry.selectedDatasetIds, null);
+    await writeFile(join(state.directory, 'selection-dataset.json'), JSON.stringify({ ...state.options.config.datasets[0], id: 'selected-native', name: 'Selected native catalog' }));
+    const registered = await request('POST', '/api/v3/datasets/register', { requestId: 'selection-registration', expectedRevision: registry.revision, path: 'selection-dataset.json' });
+    assert.equal(registered.statusCode, 200, registered.body);
+
+    const selected = await request('PUT', '/api/v3/datasets/selection', { datasetIds: ['selected-native'] });
+    assert.equal(selected.statusCode, 200, selected.body);
+    const expectedIds = ['controlled', 'selected-native'];
+    const assertSelection = async () => {
+      const current = (await request('GET', '/api/v3/datasets/registry')).json();
+      assert.deepEqual(current.availableDatasetIds.slice().sort(), expectedIds);
+      assert.deepEqual(current.selectedDatasetIds, ['selected-native']);
+      assert.deepEqual(current.datasetIds, ['selected-native']);
+      for (const url of ['/api/v3/datasets', '/api/v3/datasets?view=summary']) {
+        assert.deepEqual((await request('GET', url)).json().map((row: { id: string }) => row.id), ['selected-native']);
+      }
+      const historical = await request('GET', '/api/v3/datasets/controlled');
+      assert.equal(historical.statusCode, 200, historical.body);
+      assert.deepEqual(historical.json(), originalDataset);
+      assert.deepEqual((await state.service.research.state(receipt.conversationId)).research!.input, originalInput);
+    };
+    await assertSelection();
+    const savedDoc = structuredClone(await state.service.research.harness.snapshot(DataSourceState, context));
+    const savedConfig = structuredClone({ datasets: state.options.config.datasets, retainedDatasets: state.options.config.retainedDatasets });
+    const unknown = await request('PUT', '/api/v3/datasets/selection', { datasetIds: ['missing-native'] });
+    assert.equal(unknown.statusCode, 422, unknown.body);
+    assert.match(unknown.body, /dataset_selection_unknown_id/);
+    assert.deepEqual(await state.service.research.harness.snapshot(DataSourceState, context), savedDoc);
+    assert.deepEqual({ datasets: state.options.config.datasets, retainedDatasets: state.options.config.retainedDatasets }, savedConfig);
+    await assertSelection();
+    await state.restart();
+    await assertSelection();
+
+    const reset = await request('PUT', '/api/v3/datasets/selection', { datasetIds: null });
+    assert.equal(reset.statusCode, 200, reset.body);
+    await state.restart();
+    const restored = (await request('GET', '/api/v3/datasets/registry')).json();
+    assert.equal(restored.selectedDatasetIds, null);
+    assert.deepEqual(restored.availableDatasetIds.slice().sort(), expectedIds);
+    assert.deepEqual(restored.datasetIds.slice().sort(), expectedIds);
+    assert.deepEqual((await request('GET', '/api/v3/datasets')).json().map((row: { id: string }) => row.id).sort(), expectedIds);
+    assert.deepEqual((await state.service.research.state(receipt.conversationId)).research!.input, originalInput);
+  } finally { await state.cleanup(); }
+});

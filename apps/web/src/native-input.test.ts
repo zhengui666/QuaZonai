@@ -52,3 +52,10 @@ describe('native input evidence presentation', () => {
   });
 
 });
+
+it('shows original mixed catalog types without inventing BAR when modality is absent', () => {
+  const mixed = renderToStaticMarkup(createElement(NativeInputFacts, { coverage: { native_data_types: ['OrderBookDelta', 'TradeTick'] } }));
+  expect(mixed).toContain('OrderBookDelta / TradeTick'); expect(mixed).not.toContain('BAR');
+  const unknown = renderToStaticMarkup(createElement(NativeInputFacts, {}));
+  expect(unknown).toContain('未指定'); expect(unknown).not.toContain('BAR');
+});

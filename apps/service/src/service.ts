@@ -24,7 +24,7 @@ import { API } from '../../../packages/contracts/src/index.ts';
 import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import type { ExtensionView, ResearchSummary, WorkspaceView, UsageView } from '../../../packages/contracts/src/index.ts';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
-import type { ServiceOptions } from './config.ts';
+import { existingDataset, type ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { createParameterScanExtension, parameterScanWorkbench, registerParameterScanRoutes } from './parameter-scans.ts';
 import { registerAuth } from './auth.ts';
@@ -216,22 +216,24 @@ export async function createService(options: ServiceOptions) {
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
   const datasetView = ({ data, policy: _policy, strategy, ...view }: (typeof config.datasets)[number], summary = false) => {
-    const researchSettings = view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
+    const hasResearchSettings = data.nativeInput !== undefined || data.request !== undefined || view.nativeModality === 'BAR';
+    const researchSettings = !hasResearchSettings || view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
+    const nativeDataTypes = Array.isArray(view.inputCoverage?.native_data_types) ? view.inputCoverage.native_data_types.filter(value => typeof value === 'string') : undefined;
     const { inputCoverage: _coverage, ...metadata } = view;
-    return { ...(summary ? metadata : view), nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
+    return { ...(summary ? metadata : view), ...(nativeDataTypes ? { nativeDataTypes } : {}), nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
   };
   app.get<{ Querystring: { view?: string } }>(`${API}/datasets`, async request => {
     if (request.query.view !== undefined && request.query.view !== 'summary') throw new Problem('dataset_view_invalid', 400);
     return config.datasets.map(dataset => datasetView(dataset, request.query.view === 'summary'));
   });
   app.get<{ Params: { id: string } }>(`${API}/datasets/:id`, async request => {
-    const dataset = config.datasets.find(row => row.id === request.params.id);
+    const dataset = existingDataset(config, request.params.id);
     if (!dataset) throw new Problem('dataset_not_found', 404);
     return datasetView(dataset);
   });
   // Read-only native file metadata; never admits a dataset or triggers backfill.
   app.post<{ Params: { id: string } }>(`${API}/datasets/:id/coverage`, async request => {
-    const dataset = config.datasets.find(row => row.id === request.params.id);
+    const dataset = existingDataset(config, request.params.id);
     if (!dataset) throw new Problem('dataset_not_found', 404);
     const catalog = dataset.data.catalog;
     if (typeof catalog !== 'string' || !catalog) throw new Problem('dataset_catalog_required', 422);

@@ -101,3 +101,20 @@ test('research descriptor registration respects real workspace and replays origi
   assert.deepEqual(receipt.datasetIds,['prepared']);
  }finally{await state.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('mixed native catalog metadata is preserved without a fabricated BAR research modality', async () => {
+  const { setup } = await import('./support.ts'); const state = await setup();
+  try {
+    const path = join(state.directory, 'mixed.json');
+    await writeFile(path, JSON.stringify({ ...dataset('mixed'), inputCoverage: { native_data_types: ['OrderBookDelta', 'TradeTick'], coverage_kind: 'DISCONTINUOUS_EXPOSED_TRAINING_WINDOWS' } }));
+    const added = await state.service.app.inject({ method: 'POST', url: '/api/v3/datasets/register', headers: state.headers, payload: { requestId: 'mixed-types', expectedRevision: 1, path } });
+    assert.equal(added.statusCode, 200, added.body);
+    for (const url of ['/api/v3/datasets/mixed', '/api/v3/datasets?view=summary']) {
+      const response = (await state.service.app.inject({ url, headers: state.headers })).json();
+      const row = Array.isArray(response) ? response.find(value => value.id === 'mixed') : response;
+      assert.deepEqual(row.nativeDataTypes, ['OrderBookDelta', 'TradeTick']);
+      assert.equal(row.nativeModality, undefined); assert.equal(row.researchSettings, undefined);
+      assert.equal(row.start, null); assert.equal(row.end, null);
+    }
+  } finally { await state.cleanup(); }
+});
