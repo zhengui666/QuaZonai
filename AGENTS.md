@@ -411,16 +411,17 @@ cache and output sizes; it does not run market-data research or publish/deploy.
 
 ## Explicit review of retained native failures
 
-`POST /api/v3/research/:id/native-failure-review` provides explicit, source-reviewed reconciliation for the six diagnostic classes accepted by `reconcileConfiguredFailure`:
+`POST /api/v3/research/:id/native-failure-review` provides explicit, source-reviewed reconciliation for the seven diagnostic classes accepted by `reconcileConfiguredFailure`:
 
 - `EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD`
 - `MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL`
 - `CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL`
 - `QUERY_PLANNING_TYPE_COERCION_REJECTED`
 - `DELTA_PRECISION_REJECTED_DURING_REPLAY`
-- `SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT` (only for `native-market-import`; the other five require `native-configured-backtest`)
+- `NATIVE_SHUTDOWN_REJECTED_AT_COMPLETION`
+- `SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT` (only for `native-market-import`; the other six require `native-configured-backtest`)
 
-Requests must include the original `nativeTaskId`, `ownerTaskId`, `requestId`, classification, and `sourceReview`/`sources` documenting the original source and rejection call chain. This is not an automatic log classifier or a general failure-settlement interface. Inspect original source and execution evidence without rerunning the request to “verify” it. A matching diagnostic or exit code does not establish that arbitrary owner code had no side effects. Query planning can follow owner installation and catalog metadata access or prefetch; delta-precision rejection occurs during replay and may follow callbacks and partial output. Preserve those effects and materials; reconciliation is not rollback.
+Requests must include the original `nativeTaskId`, `ownerTaskId`, `requestId`, classification, and `sourceReview`/`sources` documenting the original source and rejection call chain. This is not an automatic log classifier or a general failure-settlement interface. Inspect original source and execution evidence without rerunning the request to “verify” it. A matching diagnostic or exit code does not establish that arbitrary owner code had no side effects. Query planning can follow owner installation and catalog metadata access or prefetch; delta-precision rejection occurs during replay and may follow callbacks and partial output. A source-reviewed completion hook can also reject shutdown as exhaustion after partial replay. Its exact terminal diagnostic does not establish the initial shutdown cause, especially when earlier logs were truncated. Preserve callbacks, partial output, and that uncertainty; reconciliation is not rollback.
 
 In one official Pi transaction, the service checks the original conversation, task/owner/request/target identities, command, reconcile checkpoint, call binding, saved process facts, and the class-specific original stderr match. The native Task must retain its terminal `nautilus_execution_unknown` failure, the owner must still be reconciling it, and the matching process facts must show `native_process_failed`, an observed exit code 1, no signal, and no requested termination. The service adopts a FAILED receipt through existing `NativeCalls.adoptedReceipt`; the original owner Task then settles through its existing reconcile failure path. It does not rewrite the native Task's UNKNOWN terminal state, request, stderr, process facts, history, or partial output. Original uncertainty and source-review provenance remain retained. This produces no successful backtest/import result, automatic resubmission/new research, or trading permission. Mismatched evidence remains unresolved. Account executions and import failures other than the exact source-prefix rejection are outside this interface.
 
