@@ -11,7 +11,7 @@ Every command below omits the common `quazonai` prefix. `ID`, filenames, and `NA
 | `schema list` / `schema show NAME` | Read business TypeScript contracts |
 | `schema list --domain` / `schema show NAME --domain` | Read native science JSON Schema |
 | `datasets` | Read datasets, ready states, and research settings |
-| `datasets registry` | Read data sources and registration revision |
+| `datasets registry` | Read the registration revision and current/retained dataset IDs |
 | `datasets register --file REQUEST.json` | Append a new ID only; file contains requestId, expectedRevision, path. The path is a service-readable DatasetConfig JSON file, not a client upload |
 | `native-runner status` | Read current environment revision without building or selecting |
 | `native-runner import --file REQUEST.json` | Explicitly inspect a trusted executable; requestId, expectedRevision, environmentId, sourceExecutable, and optional expectedIdentity. Runs capabilities but neither connects accounts nor selects the global default |

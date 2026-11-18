@@ -35,7 +35,6 @@ test('append registration preserves sources, replays without rereading and survi
     await writeFile(join(directory, 'new.json'), '{broken');
     assert.deepEqual(await state.sources.registerDatasets(request), receipt);
     await assert.rejects(state.sources.registerDatasets({ ...request, path: 'different.json' }), /request_id_conflict/);
-    for (const action of [() => state.sources.refresh('qz.data.registered'), () => state.sources.save('qz.data.registered', { enabled: true, config: {} }), () => state.sources.toggle('qz.data.registered', false)]) await assert.rejects(action, /data_source_append_only/);
     const tasks = await state.host.harness.commit(tx => tx.scanTasks({ kind: 'qz.data-source.refresh' }, 100), context);
     assert.equal(tasks.items.length, 0);
     await state.close(); state = await open(directory);
@@ -56,8 +55,7 @@ test('registration CAS publishes one concurrent append and rejects retained/cros
     assert.match(String(rejected.reason), /data_source_revision_conflict/);
     await assert.rejects(state.sources.registerDatasets({ requestId: 'base', expectedRevision: 2, path: 'base.json' }), /data_source_dataset_id_conflict/);
     await state.host.harness.commit(async tx => {
-      const source = (await tx.doc(DataSourceState)).sources['qz.data.local-config'] as unknown as { retainedDatasets: DatasetConfig[] };
-      source.retainedDatasets = [dataset('retained')];
+      (await tx.doc(DataSourceState)).sources['qz.data.local-config'] = { enabled: false, config: {}, datasets: [], retainedDatasets: [dataset('retained')], lastLoadedAt: null, error: null } as never;
     }, context);
     await assert.rejects(state.sources.registerDatasets({ requestId: 'retained', expectedRevision: 2, path: 'retained.json' }), /data_source_dataset_id_conflict/);
     assert.equal(state.config.datasets.length, 2);
@@ -67,7 +65,7 @@ test('registration CAS publishes one concurrent append and rejects retained/cros
 test('registration HTTP route validates input and exposes the current CAS revision without execution', async () => {
   const { setup } = await import('./support.ts');
   const state = await setup();
-  const url = '/api/v3/data-sources/qz.data.registered/datasets';
+  const url = '/api/v3/datasets/register';
   try {
     const path = join(state.directory, 'registered.json');
     await writeFile(path, JSON.stringify(dataset('http-new')));
@@ -79,10 +77,10 @@ test('registration HTTP route validates input and exposes the current CAS revisi
     const added = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload });
     assert.equal(added.statusCode, 200, added.body);
     assert.deepEqual(added.json().datasetIds, ['http-new']);
-    const sources = (await state.service.app.inject({ url: '/api/v3/data-sources', headers: state.headers })).json();
-    assert.equal(sources.find((source: { name: string }) => source.name === 'qz.data.registered').revision, 2);
+    const registry = (await state.service.app.inject({ url: '/api/v3/datasets/registry', headers: state.headers })).json();
+    assert.equal(registry.revision, 2); assert.ok(registry.datasetIds.includes('http-new'));
     await writeFile(path, '[]');
-    const replay = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload });
+    const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/data-sources/qz.data.registered/datasets', headers: state.headers, payload });
     assert.deepEqual(replay.json(), added.json());
     const empty = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { ...payload, requestId: 'empty', expectedRevision: 2 } });
     assert.equal(empty.statusCode, 422);
@@ -102,4 +100,21 @@ test('research descriptor registration respects real workspace and replays origi
   await assert.rejects(state.sources.registerDatasets({requestId:'stale',expectedRevision:1,path},workspace),/data_source_revision_conflict/);
   assert.deepEqual(receipt.datasetIds,['prepared']);
  }finally{await state.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('mixed native catalog metadata is preserved without a fabricated BAR research modality', async () => {
+  const { setup } = await import('./support.ts'); const state = await setup();
+  try {
+    const path = join(state.directory, 'mixed.json');
+    await writeFile(path, JSON.stringify({ ...dataset('mixed'), inputCoverage: { native_data_types: ['OrderBookDelta', 'TradeTick'], coverage_kind: 'DISCONTINUOUS_EXPOSED_TRAINING_WINDOWS' } }));
+    const added = await state.service.app.inject({ method: 'POST', url: '/api/v3/datasets/register', headers: state.headers, payload: { requestId: 'mixed-types', expectedRevision: 1, path } });
+    assert.equal(added.statusCode, 200, added.body);
+    for (const url of ['/api/v3/datasets/mixed', '/api/v3/datasets?view=summary']) {
+      const response = (await state.service.app.inject({ url, headers: state.headers })).json();
+      const row = Array.isArray(response) ? response.find(value => value.id === 'mixed') : response;
+      assert.deepEqual(row.nativeDataTypes, ['OrderBookDelta', 'TradeTick']);
+      assert.equal(row.nativeModality, undefined); assert.equal(row.researchSettings, undefined);
+      assert.equal(row.start, null); assert.equal(row.end, null);
+    }
+  } finally { await state.cleanup(); }
 });

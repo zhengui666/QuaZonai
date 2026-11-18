@@ -19,7 +19,8 @@ export function NativeInputFacts({ modality, settings, preparation, coverage }: 
   const received = (settings?.availability ?? coverage?.availability) === 'RECEIVED_TIME_OBSERVED';
   const flow = coverage?.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1' || coverage?.representation === 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1';
   const cache = flow || coverage?.representation === 'EVENT_TIME_COHORT_CACHE_V1' || coverage?.representation === 'RECEIVED_TIME_COHORT_CACHE_V1';
-  const items: Parameters<typeof Facts>[0]['items'] = [[tr("Input type"), flow ? tr("Derived trade-group cache with signed volume") : cache ? tr("Derived trade-group cache") : tick ? tr("Native TradeTick records") : 'BAR']];
+  const nativeTypes = Array.isArray(coverage?.native_data_types) ? coverage.native_data_types.filter(value => typeof value === 'string').join(' / ') : '';
+  const items: Parameters<typeof Facts>[0]['items'] = [[tr("Input type"), flow ? tr("Derived trade-group cache with signed volume") : cache ? tr("Derived trade-group cache") : tick ? tr("Native TradeTick records") : (modality ?? settings?.modality) === 'BAR' ? 'BAR' : nativeTypes || tr("Not specified")]];
   if (flow) items.push([tr("Features"), tr("8 features, including signed_quantity (aggressive buy volume minus aggressive sell volume)")]);
   if (settings?.sampling) items.push([tr("Sampling"), settings.sampling === 'EVENT_TIME_COHORT_V1' ? tr("Complete trade groups per instrument and event timestamp") : settings.sampling === 'RECEIVED_TIME_COHORT_V1' ? tr("Trade groups per instrument and receipt timestamp") : settings.sampling]);
   if (settings) items.push([tr("Label horizon"), labelHorizon(settings)]);

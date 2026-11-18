@@ -1,3 +1,4 @@
+import { DataSourceState } from '../src/data-sources.ts';
 import { PmTargetTask, pmTargetPayload, targetEligibility } from '../src/pm-target.ts';
 import { AdjustAccount } from '../src/automatic.ts';
 import { retainPmControlRecord } from './pm-account-fixture.ts';
@@ -55,17 +56,12 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
     if (dataPlugin) {
       state.options.config.datasets[0]!.id = datasetId;
       await writeFile(join(state.directory, 'pm-plugin-datasets.json'), JSON.stringify(state.options.config.datasets));
+      const originalDatasets = structuredClone(state.options.config.datasets);
+      await state.service.research.harness.commit(async tx => { (await tx.doc(DataSourceState)).sources['qz.data.local-config'] = json({ enabled: true, config: { path: 'pm-plugin-datasets.json' }, datasets: originalDatasets, retainedDatasets: originalDatasets, lastLoadedAt: '2026-01-01T00:00:00.000Z', error: null, revision: 2 }); }, context);
       state.options.config.datasets = [];
     }
     await state.restart();
-    if (dataPlugin) {
-      const source = '/api/v3/data-sources/qz.data.local-config';
-      assert.equal((await state.service.app.inject({ method: 'PUT', url: source, headers: state.headers, payload: { enabled: true, config: { path: 'pm-plugin-datasets.json' } } })).statusCode, 200);
-      const loaded = await state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: state.headers });
-      assert.equal(loaded.statusCode, 202, loaded.body);
-      const refreshTask = await state.service.research.harness.waitForTask(loaded.json().taskId as TaskId, context);
-      assert.equal(refreshTask.state.outcome.status, 'completed', JSON.stringify(refreshTask.state.outcome));
-    }
+    if (dataPlugin) assert.ok(state.service.config.datasets.some(dataset => dataset.id === datasetId));
     const observedAtNs = (BigInt(nowNs()) - 1_000_000_000n).toString();
     const account: ObservationFact = {
       input: { requestId: 'controlled-account-observation', portfolioId: 'controlled-existing-position', mode: 'paper', connectionId: connection.id },
@@ -170,7 +166,7 @@ async function eventually(check: () => Promise<boolean>, reason: string) {
   assert.fail(reason);
 }
 
-test('PM monitoring retains plugin source lookup after disable, omitted datasets and restart', { timeout: 45_000 }, async () => {
+test('PM monitoring retains historical source lookup after disabled or omitted datasets and restart', { timeout: 45_000 }, async () => {
   const f = await fixture(true, 'AUTHORIZED_TARGETS', true);
   let accountReads = 0;
   f.remote.server.on('request', request => { if (request.url === '/account') accountReads++; });
@@ -184,16 +180,22 @@ test('PM monitoring retains plugin source lookup after disable, omitted datasets
     assert.notEqual(record.artifacts['source-health']?.state, 'FAILED');
   }
   try {
-    const disabled = await f.state.service.app.inject({ method: 'PATCH', url: '/api/v3/extensions/qz.data.local-config', headers: f.state.headers, payload: { enabled: false } });
-    assert.equal(disabled.statusCode, 200, disabled.body);
+    // Represent pre-upgrade disabled/omitted source records in the original Doc;
+    // the retired mutation endpoints must not recreate provider execution.
+    await f.state.service.research.harness.commit(async tx => {
+      const saved = (await tx.doc(DataSourceState)).sources['qz.data.local-config'] as Record<string, any>;
+      saved.enabled = false;
+    }, context);
+    await f.state.restart();
     assert.deepEqual(f.state.service.config.datasets, []);
     await nextMonitorRounds();
-    await f.state.service.app.inject({ method: 'PATCH', url: '/api/v3/extensions/qz.data.local-config', headers: f.state.headers, payload: { enabled: true } });
+    await f.state.service.research.harness.commit(async tx => {
+      const saved = (await tx.doc(DataSourceState)).sources['qz.data.local-config'] as Record<string, any>;
+      saved.enabled = true; saved.datasets = [];
+    }, context);
     await writeFile(join(f.state.directory, 'pm-plugin-datasets.json'), '[]');
     const loaded = await f.state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: f.state.headers });
-    assert.equal(loaded.statusCode, 202, loaded.body);
-    await f.state.service.research.harness.waitForTask(loaded.json().taskId as TaskId, context);
-    assert.deepEqual(f.state.service.config.datasets, []);
+    assert.equal(loaded.statusCode, 410, loaded.body);
     await f.state.restart();
     await nextMonitorRounds();
   } finally { await f.cleanup(); }

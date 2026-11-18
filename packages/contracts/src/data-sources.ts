@@ -19,3 +19,8 @@ export interface DataSourceRefreshView {
   outcome?: import('@earendil-works/pi-durable').TaskOutcome<JsonObject>['status'];
   source: DataSourceView;
 }
+
+/** Existing catalog descriptors are registered, not executed or copied. */
+export interface DatasetRegistryView { revision: number; datasetIds: string[]; availableDatasetIds: string[]; selectedDatasetIds: string[] | null }
+export interface DatasetRegistrationRequest { requestId: string; expectedRevision: number; path: string }
+export interface DatasetRegistrationReceipt { requestId: string; revision: number; datasetIds: string[] }

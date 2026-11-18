@@ -22,6 +22,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
     Trusted executable code may have side effects; SSH timeout does not prove remote termination.
   datasets | usage
   datasets registry | register --file REQUEST.json (append-only new IDs; requestId, expectedRevision, path)
+  datasets select --file SELECTION.json (datasetIds array; null restores defaults; history retained)
   native-runner status | import --file REQUEST.json | build-status REQUEST_ID
     Import inspects trusted executable capabilities; never selects a global runner or starts research/accounts.
   datasets coverage ID --file REQUEST.json (selectors [{data_type,identifier}] or bar_types; start_ns/end_ns as inclusive ts_init strings)
@@ -302,11 +303,14 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 0) throw new CliError('expected_revision_required');
       path = '/settings/instances/import'; method = 'POST'; body = file.bytes;
     } else throw new CliError('unknown_native_runner_command');
-  } else if (group === 'datasets' && action === 'registry') path = '/data-sources';
+  } else if (group === 'datasets' && action === 'registry') path = '/datasets/registry';
   else if (group === 'datasets' && action === 'register') {
     const file = await fileBody(values.file); requestId(file.body, values['request-id']);
     if (!Number.isSafeInteger(file.body.expectedRevision) || Number(file.body.expectedRevision) < 1) throw new CliError('expected_revision_required');
-    path = '/data-sources/qz.data.registered/datasets'; method = 'POST'; body = file.bytes;
+    path = '/datasets/register'; method = 'POST'; body = file.bytes;
+  }
+  else if (group === 'datasets' && action === 'select') {
+    path = '/datasets/selection'; method = 'PUT'; body = (await fileBody(values.file)).bytes;
   }
   else if (group === 'datasets' && action === 'coverage') {
     path = `/datasets/${resourceId(id)}/coverage`; method = 'POST'; body = (await fileBody(values.file)).bytes;

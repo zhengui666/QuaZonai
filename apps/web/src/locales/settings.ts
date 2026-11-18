@@ -928,3 +928,47 @@ Object.assign(zhCN, {
  "Broker or exchange adapter": "券商或交易所适配器",
  "The selected runner does not provide this account adapter.": "当前运行器未提供此账户适配器。",
 });
+Object.assign(en, {
+  "Register a native catalog": "Register a native catalog",
+  "Register an existing server-side DatasetConfig JSON descriptor that points to a Nautilus catalog. This does not download, copy, convert, or replay data.": "Register an existing server-side DatasetConfig JSON descriptor that points to a Nautilus catalog. This does not download, copy, convert, or replay data.",
+  "Data plugins are retired. Existing data and research bindings are preserved; old provider configuration files are no longer reloaded.": "Data plugins are retired. Existing data and research bindings are preserved; old provider configuration files are no longer reloaded.",
+  "Server descriptor path": "Server descriptor path",
+  "Registration request ID": "Registration request ID",
+  "Expected registry revision": "Expected registry revision",
+  "Keep the same request ID, revision, and path when retrying an uncertain result. A successful replay returns the original receipt without rereading the file.": "Keep the same request ID, revision, and path when retrying an uncertain result. A successful replay returns the original receipt without rereading the file.",
+  "Register dataset": "Register dataset",
+  "Registered dataset IDs": "Registered dataset IDs",
+  "Registry revision": "Registry revision"
+});
+Object.assign(zhCN, {
+  "Register a native catalog": "登记原生目录",
+  "Register an existing server-side DatasetConfig JSON descriptor that points to a Nautilus catalog. This does not download, copy, convert, or replay data.": "登记服务端已有的 DatasetConfig JSON 描述文件，引用 Nautilus catalog；不会下载、复制、转换或回放数据。",
+  "Data plugins are retired. Existing data and research bindings are preserved; old provider configuration files are no longer reloaded.": "数据插件已退役。已有数据与研究绑定保留；旧数据源配置文件不再重新加载。",
+  "Server descriptor path": "服务端描述文件路径",
+  "Registration request ID": "登记请求 ID",
+  "Expected registry revision": "预期登记版本",
+  "Keep the same request ID, revision, and path when retrying an uncertain result. A successful replay returns the original receipt without rereading the file.": "结果不确定时，请保留原请求 ID、版本和路径重试。已成功的请求直接返回原回执，不重新读取文件。",
+  "Register dataset": "登记数据集",
+  "Registered dataset IDs": "已登记数据集 ID",
+  "Registry revision": "登记版本"
+});
+
+Object.assign(en, {
+  "Current dataset references": "Current dataset references",
+  "Choose the registered catalog references offered for new research. This setting does not merge or delete data, change existing research bindings, or turn legacy files into a native catalog.": "Choose the registered catalog references offered for new research. This setting does not merge or delete data, change existing research bindings, or turn legacy files into a native catalog.",
+  "Save current references": "Save current references",
+  "Restore default references": "Restore default references",
+  "Archived references remain readable": "Archived references remain readable",
+  "These references are not offered for new research. Their original IDs, data, and historical bindings are preserved, not deleted.": "These references are not offered for new research. Their original IDs, data, and historical bindings are preserved, not deleted."
+});
+Object.assign(zhCN, {
+  "Current dataset references": "当前数据集引用",
+  "Choose the registered catalog references offered for new research. This setting does not merge or delete data, change existing research bindings, or turn legacy files into a native catalog.": "选择用于新研究的已登记目录引用。此设置不合并或删除数据、不改变已有研究绑定，也不将旧格式文件转换成原生目录。",
+  "Save current references": "保存当前引用",
+  "Restore default references": "恢复默认引用",
+  "Archived references remain readable": "归档引用仍可读取",
+  "These references are not offered for new research. Their original IDs, data, and historical bindings are preserved, not deleted.": "这些引用不在新研究候选中；原 ID、数据及历史绑定保留，未被删除。"
+});
+
+Object.assign(en, { 'Not specified': 'Not specified' });
+Object.assign(zhCN, { 'Not specified': '未指定' });

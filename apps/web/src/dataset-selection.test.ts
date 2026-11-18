@@ -1,0 +1,42 @@
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import i18n from './i18n';
+vi.mock('antd', () => ({ Button: (props: Record<string, unknown>) => createElement('button', props), Select: (props: Record<string, unknown>) => createElement('select', props) }));
+vi.mock('./api', () => ({ api: vi.fn() }));
+vi.mock('./data-hooks', () => ({ useResource: vi.fn() }));
+vi.mock('./ui', () => ({ ErrorNotice: ({ error }: { error?: unknown }) => error ? createElement('p', { role: 'alert' }, String(error)) : null }));
+import { api } from './api';
+import { useResource } from './data-hooks';
+import DatasetSelection from './dataset-selection';
+let renderer: ReactTestRenderer | undefined; let cache: QueryClient;
+const original = { revision: 9, datasetIds: ['old', 'unified'], availableDatasetIds: ['old', 'unified'], selectedDatasetIds: null };
+beforeEach(async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); await i18n.changeLanguage('en'); vi.clearAllMocks();
+  cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.mocked(useResource).mockReturnValue({ data: original, refetch: vi.fn() } as never);
+});
+afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; cache.clear(); vi.unstubAllGlobals(); });
+it('saves only the chosen existing IDs and retains readable archived references', async () => {
+  const saved = { ...original, datasetIds: ['unified'], selectedDatasetIds: ['unified'] };
+  vi.mocked(api).mockResolvedValue(saved);
+  await act(async () => { renderer = create(createElement(QueryClientProvider, { client: cache }, createElement(DatasetSelection))); });
+  await act(async () => { renderer!.root.findByType('select').props.onChange(['unified']); });
+  await act(async () => { renderer!.root.findAllByType('button')[0]!.props.onClick(); });
+  expect(api).toHaveBeenCalledWith('/datasets/selection', { method: 'PUT', body: { datasetIds: ['unified'] } });
+  expect(cache.getQueryData(['/datasets/registry'])).toEqual(saved);
+  vi.mocked(useResource).mockReturnValue({ data: saved, refetch: vi.fn() } as never);
+  await act(async () => { renderer!.update(createElement(QueryClientProvider, { client: cache }, createElement(DatasetSelection))); });
+  expect(renderer!.root.findAllByType('code').map(row => row.children.join(''))).toEqual(['old']);
+  expect(JSON.stringify(renderer!.toJSON())).toContain('not deleted');
+  await act(async () => { renderer!.root.findAllByType('button')[1]!.props.onClick(); });
+  expect(api).toHaveBeenLastCalledWith('/datasets/selection', { method: 'PUT', body: { datasetIds: null } });
+});
+it('keeps saved registry evidence when selection fails', async () => {
+  cache.setQueryData(['/datasets/registry'], original); vi.mocked(api).mockRejectedValue(new Error('dataset_selection_unknown_id'));
+  await act(async () => { renderer = create(createElement(QueryClientProvider, { client: cache }, createElement(DatasetSelection))); });
+  await act(async () => { renderer!.root.findAllByType('button')[0]!.props.onClick(); });
+  expect(renderer!.root.findByProps({ role: 'alert' }).children.join('')).toContain('dataset_selection_unknown_id');
+  expect(cache.getQueryData(['/datasets/registry'])).toEqual(original);
+});

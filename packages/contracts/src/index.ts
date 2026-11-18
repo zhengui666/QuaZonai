@@ -121,6 +121,8 @@ export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;
   start: string | null; end: string | null; ready: boolean;
   nativeModality?: 'BAR' | 'TRADE_TICK';
+  /** Declared original catalog types; not inferred from a missing legacy modality. */
+  nativeDataTypes?: string[];
   preparation?: DatasetPreparation;
   inputCoverage?: JsonObject;
   researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonNs?: string; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS' | 'EVENT_TIME_NS' | 'RECEIVED_TIME_NS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };

@@ -19,7 +19,6 @@ vi.mock('./extensions', () => ({ default: () => null }));
 vi.mock('./instance-settings', () => ({ default: () => null }));
 vi.mock('./account-settings', () => ({ default: () => null }));
 vi.mock('./data', () => ({ default: () => null }));
-vi.mock('./data-plugins', () => ({ default: () => null }));
 import Settings from './settings';
 
 const original: SettingsView = { defaultModel: { provider: 'original', modelId: 'original-model' }, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8 };
