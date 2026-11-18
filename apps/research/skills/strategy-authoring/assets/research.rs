@@ -1,4 +1,4 @@
-//! Compileable owner module for a no-order CustomData callback validation.
+//! Compilable owner module for a no-order CustomData callback validation.
 //! Export from the owner library with `pub mod research;`.
 use std::{path::Path, fmt};
 use anyhow::{Context, Result, ensure};

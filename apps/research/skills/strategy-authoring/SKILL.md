@@ -1,23 +1,23 @@
 ---
 name: strategy-authoring
-description: 内部 Pi Durable 研究 Agent 编写、构建和运行兼容 Nautilus 的 Rust 策略；规定接口，不限定策略类型。
+description: Write, build, and run Nautilus-compatible Rust strategies as an internal Pi Durable research agent. Defines interfaces, not permitted strategy categories.
 ---
 
-# Rust 策略编写合同
+# Rust Strategy Authoring Contract
 
-**本合同只明确接口与执行方式，不限定可编写的策略。** 任何兼容当前 Nautilus 原生能力的策略均可实现；策略种类、交易逻辑、参数、标的数量与频率由研究目标决定，不设预注册名称白名单。下文数据、订单与完整代码都只是接口示例，不是唯一模板；可按需组合原生 Strategy、Actor、Controller 及其公开能力，实际可执行范围取决于已配置的数据、适配器与版本。
+**This contract defines interfaces and execution, not which strategies you may write.** Any strategy supported by the configured native Nautilus capabilities may be implemented. The research objective determines strategy type, trading logic, parameters, instrument count, and frequency; there is no whitelist of preregistered strategy names. The data, orders, and complete example below illustrate interfaces, not a mandatory template. Combine native Strategy, Actor, Controller, and their public capabilities as needed. What can actually execute depends on the configured data, adapters, and version.
 
-本参考适用于**已显式配置的可信 owner Rust crate**，不是动态 Python、任意目录编译或改写 QuaZonai/Nautilus。先读 `native_runner_preparation_status` 和 owner 的 Cargo.toml、src/lib.rs、现有 factory。这里的实际 Rust API 对应 Nautilus `634e09456c949f488b2bfcf6b6897b33cbf218d7`；若环境版本不同，先核对该版本签名，不照搬 develop 文档。所有 Nautilus crate 采用同一官方 rev/兼容 features，避免两份不相容类型。不得改上游或另写撮合/指标/收益引擎。
+This reference applies to an **explicitly configured, trusted owner Rust crate**, not dynamic Python, compilation in arbitrary directories, or changes to QuaZonai/Nautilus. First read `native_runner_preparation_status` and the owner's Cargo.toml, src/lib.rs, and existing factory. The Rust APIs shown here correspond to Nautilus `634e09456c949f488b2bfcf6b6897b33cbf218d7`. If the environment uses another version, verify its signatures rather than copying develop documentation. Use the same official revision and compatible features for every Nautilus crate to avoid incompatible duplicate types. Do not modify upstream or implement a replacement matching, indicator, or return-calculation engine.
 
-## 与外部操作 Agent 的协作
+## Working with the external operator agent
 
-外部 Agent 通过 QuaZonai CLI 提交目标、续接指令、读取研究对话和结果；本内部 skill 负责把已受理目标落实为策略源码、构建、运行和评价。使用当前研究绑定的 workspace 与原生任务工具，保留构建、执行、报告的原任务 ID；把结论、实际验证范围和下一步写入研究回复，便于外部通过同一研究读取与继续。
+The external agent uses the QuaZonai CLI to submit objectives, continue research, and read conversations and results. This internal skill turns accepted objectives into strategy source, builds, execution, and evaluation. Use the workspace bound to the current research and its native task tools. Retain the original task IDs for builds, executions, and reports. Include conclusions, the actual scope of verification, and next steps in research replies so the external agent can read and continue the same research.
 
-内部逻辑评估使用已登记的 implementation source 材料与 `native_assessment_read_source`；数据综合评估使用原任务 evidence manifest 与 `native_assessment_read_exposure` 分页读取。按实际读取范围形成判断，而不是把主研究摘要当独立验证。材料登记与原生结果读取不改变策略种类或交易逻辑。
+Internal logic assessment uses registered implementation-source materials and `native_assessment_read_source`. Data synthesis assessment uses the original task's evidence manifest and paginated `native_assessment_read_exposure`. Base judgments on what was actually read, not on treating the parent research summary as independent verification. Registering materials and reading native results do not restrict strategy categories or trading logic.
 
-## 1. owner 与 launcher 各写什么
+## 1. Owner and launcher responsibilities
 
-owner 是 library crate，factory module 名称可配置；例如选 `research` 时，`src/lib.rs` 导出 `pub mod research;`。实际配置的 module 必须提供这两个准确签名：
+The owner is a library crate with a configurable factory module. For example, selecting `research` requires `pub mod research;` in src/lib.rs. The configured module must expose these exact signatures:
 
 ```rust
 pub fn config(catalog: &std::path::Path, name: &str, config: &serde_json::Value)
@@ -26,23 +26,23 @@ pub fn install(engine: &mut nautilus_backtest::engine::BacktestEngine,
     name: &str, config: &serde_json::Value) -> anyhow::Result<()>;
 ```
 
-`name` 选择 owner 实现，`config` 解析并保留明确参数。config 返回**原生 BacktestRunConfig**，不是 `ConfiguredNativeRun`。后者由 QZ 生成的 launcher 包装，install closure 调用 owner install。不要手写/替换生成的 launcher 或 main，不把当前进程的全局 runner 当已更新。
+`name` selects an owner implementation; `config` parses and retains explicit parameters. The config function returns a **native BacktestRunConfig**, not ConfiguredNativeRun. The QZ-generated launcher supplies that wrapper and an install closure calling the owner's install function. Do not handwrite or replace the generated launcher/main, or assume the current global runner has been updated.
 
-准确执行顺序：factory config → 原生 BacktestNode 构建 → node.build → 获取对应 BacktestEngine → owner install → node.run → 原生结果。owner 不再创建第二个 node、调用 run 或自行回放循环。install 用 `engine.add_strategy(strategy)?`（不传 Box）或 `engine.add_actor(actor)?` 注册，必要时 `engine.add_instrument(instrument)?` 和 `engine.add_data(data, None, true, true)?`。不要在 config 调用交易或用另一个进程冒充本次执行。
+The exact execution order is: factory config → native BacktestNode construction → node.build → retrieve the matching BacktestEngine → owner install → node.run → native results. The owner must not create a second node, call run, or implement its own replay loop. Register with `engine.add_strategy(strategy)?` (not a Box) or `engine.add_actor(actor)?`; use `engine.add_instrument(instrument)?` and `engine.add_data(data, None, true, true)?` when needed. Do not trade from config or present another process as this execution.
 
-## 2. Strategy 的准确写法
+## 2. Writing a Strategy
 
-策略结构包含 `core: StrategyCore`；构造 `StrategyCore::new(StrategyConfig { strategy_id: Some(...), order_id_tag: Some(...), ..Default::default() })`。使用 `nautilus_trading::nautilus_strategy!(Type)`，然后 `impl nautilus_common::actor::DataActor for Type` 实现生命周期/数据回调。每个实例使用唯一 strategy ID/order ID tag。
+The strategy struct contains `core: StrategyCore`. Construct it with `StrategyCore::new(StrategyConfig { strategy_id: Some(...), order_id_tag: Some(...), ..Default::default() })`. Use `nautilus_trading::nautilus_strategy!(Type)`, then implement lifecycle/data callbacks through `impl nautilus_common::actor::DataActor for Type`. Give each instance a unique strategy ID and order ID tag.
 
-以下仅列常见回调，非可用数据类型清单；Bar、订单簿、定时器等同样可使用该版本原生 API。
+These are common callbacks, not an exhaustive list of supported data. Bars, order books, timers, and other native APIs are available in the configured version as appropriate.
 
-| 数据 | on_start 订阅 | 回调签名（返回 anyhow::Result<()>） |
+| Data | Subscription in on_start | Callback signature (returns anyhow::Result<()>) |
 | --- | --- | --- |
 | TradeTick | `self.subscribe_trades(instrument_id, None, None)` | `fn on_trade(&mut self, tick: &TradeTick)` |
 | QuoteTick | `self.subscribe_quotes(instrument_id, None, None)` | `fn on_quote(&mut self, tick: &QuoteTick)` |
 | CustomData | `self.subscribe_data(data_type.clone(), None, None)` | `fn on_data(&mut self, data: &CustomData)` |
 
-不是 Python 的 `on_trade_tick` / `subscribe_trade_ticks`。指标直接使用该版官方 indicators 和其更新方法，先核签名。以下 market 单仅演示调用签名，不限定订单类型；limit、stop、撤改单等按原生 API 使用。此例下单需 `use nautilus_trading::strategy::Strategy;`：
+These are not Python's `on_trade_tick` / `subscribe_trade_ticks`. Use the version's official indicators and update methods after checking their signatures. The market order below illustrates a call signature, not an order-type restriction. Use native APIs for limit/stop orders, amendments, cancellations, and other operations. This example requires `use nautilus_trading::strategy::Strategy;`:
 
 ```rust
 let order = self.order().market(
@@ -58,98 +58,103 @@ let order = self.order().market(
 self.submit_order(order, None, None, None)?;
 ```
 
-`quantity` 用实际 instrument 精度与最小量；side/quantity/时机来自用户策略，不从此片段推定。订单回调、撤单、持仓、资金、费用和统计继续复用原生 Strategy/Cache/Portfolio。仅观察信号可以用 `DataActorCore` + `nautilus_actor!`，但 Actor 回调数不代表交易收益，注册 Strategy 而不下单也不产生盈利证据。
+Use the actual instrument's precision and minimum quantity. Side, quantity, and timing come from the requested strategy, not this snippet. Reuse native Strategy/Cache/Portfolio for order callbacks, cancellations, positions, funding, fees, and statistics. Signal-only observation may use `DataActorCore` + `nautilus_actor!`, but callback counts are not trading returns. Registering a Strategy that never orders does not produce profitability evidence.
 
-## 3. 回测配置与数据
+## 3. Backtest configuration and data
 
-- BacktestRunConfig 至少一个实际配置的 venue，显式 oms/account/book type、starting_balances 和 fee_model。纯观察运行也不能省略 venue/fees。
-- `BacktestVenueConfig::builder().fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()))` 接 **FeeModelAny**；不要照抄低层 SimulatedVenueConfig 的 handle 转换。零费仅限明确的无订单接线验收；真实收益研究必须提供有来源的费率并核对实际成交收费，不能默认零成本。
-- 开始/结束纳秒、价格、数量和金额保持准确字符串/原生类型。原生输入用 DataConfig/目录查询，按数据实际覆盖指定窗口；查询范围不等于文件里每条记录都符合范围。区分 ts_event 与 ts_init，不按 tid 排序推断真实顺序。
-- 普通市场数据由原生 BacktestDataConfig 加载。当前版本不接受 Custom 的此路径，使用公开 install 钩子加载已注册 CustomData，再由同一个 Nautilus engine 回放。此路径是有界内存加载，不宣称流式无限数据。只读批准训练目录/窗口。
-- configured 路径当前仅 file catalog，并检查原生 config.data 的真实路径属于绑定 root。owner 自己查询数据也必须使用同一绑定目录与允许范围，不能另读 OOS。
-- `dispose_on_completion(false)` 才能保留 QZ 所读的 canonical/equity 结果；true 的不可用结果不是零收益。
+- BacktestRunConfig needs at least one actual venue with explicit OMS/account/book types, starting_balances, and fee_model. Observation-only runs must also specify the venue and fees.
+- `BacktestVenueConfig::builder().fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()))` accepts **FeeModelAny**. Do not copy the handle conversion used by lower-level SimulatedVenueConfig. Zero fees are only appropriate for an explicitly declared no-order integration check. Return research requires sourced fee assumptions and verification of actual fill charges; do not assume zero costs.
+- Keep start/end nanoseconds, prices, quantities, and amounts as exact strings/native types. Use native DataConfig/catalog queries and windows supported by actual coverage. A query range does not prove every file record falls inside it. Distinguish ts_event from ts_init; do not infer real event order from tid sorting.
+- Ordinary market data is loaded through native BacktestDataConfig. This version does not accept Custom through that path. Use the public install hook to load registered CustomData for replay by the same Nautilus engine. This is bounded in-memory loading, not unlimited streaming. Read only approved training catalogs/windows.
+- The configured path currently accepts file catalogs only and checks the real config.data paths against bound roots. Owner-side queries must use the same bound catalogs and approved scope, not out-of-sample data.
+- `dispose_on_completion(false)` retains the canonical/equity results read by QZ. Results unavailable with true do not mean zero returns.
 
-### Chainticks 账户 fill 特别约定
+### Chainticks account-fill conventions
 
-本节仅适用于选用此来源的研究，不要求其他策略使用 Chainticks 或只做主动成交分析。
+This section applies only when this source is selected. Other strategies need not use Chainticks or restrict themselves to aggressive-fill analysis.
 
-配置的 launcher 必须启用相应 source import 并在 factory 前调用 `job::chainticks_fill::register_observation_type()`。使用已登记 `ChainticksFillObservation`，不要复制一个同名但不同 Rust 类型。动态读取使用 `data.data.to_json()?`，实际字段有 `source_row_zero_based`、`raw_envelope`（event 与 block），不是猜测的 row/index/fill 字段。
+The configured launcher must enable the corresponding source import and call `job::chainticks_fill::register_observation_type()` before the factory. Use the registered ChainticksFillObservation, not a new Rust type with the same name. Dynamic access uses `data.data.to_json()?`; actual fields include `source_row_zero_based` and `raw_envelope` (event and block), not guessed row/index/fill fields.
 
-账户 fill **不等于完整公共市场逐笔**。普通主动 fill 筛选必须消费既有 `classification == "taker_fill_observation"`，而不能只看 crossed=true；`maker_fill_observation`、`special_event_observation`、`unknown_fill_observation`、`unsupported_fill_observation` 保留各自含义：maker 是被动成交，可用于相应研究；特殊、未知及不支持事件不能混作普通主动成交。tid=0 不是独立删除规则；来源行身份、重放、账户双方记录和交易身份必须区分，保留原行。Spot Dust Conversion 等特殊事件可 crossed=true。账户 fill 不能据此声称盘口/滑点/可执行收益。
+Account fills **are not a complete public trade feed**. Ordinary aggressive-fill selection must consume `classification == "taker_fill_observation"`, not merely crossed=true. Preserve the meanings of maker_fill_observation, special_event_observation, unknown_fill_observation, and unsupported_fill_observation. Maker fills are passive executions and may support appropriate research; special/unknown/unsupported events are not ordinary aggressive fills. tid=0 alone is not a deletion rule. Distinguish source-row identity, replay, both account sides, and trade identity; retain original rows. Special events such as Spot Dust Conversion may have crossed=true. Account fills alone do not establish order-book state, slippage, or executable returns.
 
-## 4. 可编译、无订单的完整 owner 例子
+## 4. Complete, compilable no-order owner example
 
-同发行包的 [assets/research.rs](assets/research.rs) 是完整 module，不是伪代码；内部研究 Agent 同时收到原文。它用原生 Strategy 消费已登记 CustomData，并验证 loaded/received 数量，不下单、不生成假收益。只用于验证生命周期和正确接线，不规定真实策略必须使用 CustomData、此数据源、无订单逻辑或示例名称/参数。可以完全替换示例实现，编写符合研究目标的任何原生兼容策略。
+The packaged [assets/research.rs](assets/research.rs) is a complete module, not pseudocode; the internal research agent also receives its full text. It uses a native Strategy to consume registered CustomData and verify loaded/received counts without ordering or fabricating returns. It validates lifecycle and integration only. It does not require real strategies to use CustomData, this source, no-order logic, or the example's names/parameters. Replace the implementation completely when needed to implement any native-compatible strategy serving the objective.
 
-owner Cargo 需要 anyhow、serde_json，及同一固定 rev 的 nautilus-backtest（streaming）、nautilus-common、nautilus-core、nautilus-execution、nautilus-model、nautilus-persistence、nautilus-trading。沿用当前环境 features/锁定依赖，不抄另一版锁文件。示例配置为：
+The owner Cargo dependencies need anyhow, serde_json, and the same pinned revision of nautilus-backtest (streaming), nautilus-common, nautilus-core, nautilus-execution, nautilus-model, nautilus-persistence, and nautilus-trading. Preserve the environment's features and locked dependencies; do not copy a lockfile from another version. Example configuration:
 
 ```json
-{"schema_version":1,"name":"custom-callback-check","config":{"catalog":"实际已注册训练目录","start_ns":"实际训练起点纳秒","end_ns":"实际训练终点纳秒"}}
+{"schema_version":1,"name":"custom-callback-check","config":{"catalog":"ACTUAL_REGISTERED_TRAINING_CATALOG","start_ns":"ACTUAL_TRAINING_START_NS","end_ns":"ACTUAL_TRAINING_END_NS"}}
 ```
 
-这些是需替换的资源值，不是可提交的真实数据；具体请求字段还要与本版本 schema 核对。该例不负责注册数据集或创建目录，不可拿 OOS 做接线测试。
+Replace these resource placeholders with real evidence before submission and check request fields against this version's schema. The example does not register a dataset or create a catalog. Do not use out-of-sample data for integration checks.
 
-## 5. 编辑 → 构建 → 绑定 → 验证
+## 5. Edit → build → bind → verify
 
-内部研究 Agent 用官方 read/write/edit 编辑显式 workspace，不用 shell。每次调用准确工具：
+The internal research agent uses official read/write/edit tools in the explicit workspace, not a shell. Use the actual tools:
 
-1. `native_runner_preparation_status {}`，读取真实 owner/factory、revision 和可用环境。
-2. 修改 owner 源码。改 Cargo.toml 依赖后调用 `native_runner_build {requestId, expectedRevision, prepareOwnerLock:true}` 让官方 Cargo 离线准备锁；未改依赖通常省略该标志。绝不手改 Cargo.lock，也不与另一研究同时改/编译同一 owner。
-3. `native_runner_build_status {requestId}` 读原构建状态和 preflight/build 诊断，直到真实成功。running/checkpoint unknown 不代表终态；终态 UNKNOWN 不改 ID 重发。修正编译错误是新构建，保留旧失败。
-4. 用完成 build 的 requestId、当前配置 revision、实际 dataset/model 调 `native_research_start_bound`；它创建**显式绑定新二进制的新研究**，不更新旧研究 executor，也不需要 native_runner_select 全局切换。
-5. 由该研究读取 brief/实际 request，先以 `native_strategy_logic_review` 记录全部计划运行的完整请求、窗口和假设，再以 `native_configured_configure {request: 完整原生请求}` 设置 factory/name/config，再通过 `native_configured_backtest` 执行准确配置。先声明窗口/参数/假设，不把 build 成功当回放成功。检查原任务状态、stderr、回调、原生结果、订单/成交及费用证据；无订单例子的成功仅是接线成功。
+1. `native_runner_preparation_status {}`: read the real owner/factory, revision, and available environment.
+2. Edit owner source. After changing Cargo.toml dependencies, call `native_runner_build {requestId, expectedRevision, prepareOwnerLock:true}` so official Cargo prepares the lock offline. Usually omit that flag when dependencies are unchanged. Never hand-edit Cargo.lock or concurrently edit/compile the same owner from another research task.
+3. `native_runner_build_status {requestId}`: follow the original build's status and preflight/build diagnostics until actual success. Running/checkpoint-unknown is not terminal; do not resubmit a terminal UNKNOWN under a new ID. Correcting a compile error requires a new build while retaining the old failure.
+4. Call `native_research_start_bound` with the completed build's requestId, current configuration revision, and actual dataset/model. It creates **a new research explicitly bound to the new binary**. It does not update an old research executor and does not require a global native_runner_select change.
+5. In that research, read the brief and actual request. First record complete planned requests, windows, and assumptions with `native_strategy_logic_review`; then set factory/name/config using `native_configured_configure {request: complete native request}` and execute the exact configuration with native_configured_backtest. Declare windows/parameters/assumptions first. A successful build is not successful replay. Inspect original task state, stderr, callbacks, native results, orders/fills, and fee evidence. A no-order example demonstrates integration only.
 
-这些是内部 Agent tools，不是同名 CLI 子命令。外部调用仍用 research start/resume 交给研究 Agent；终止的 submission 才正常 resume。可用 tools 和绑定 capabilities 为准，不编造缺失能力或自动重发原 UNKNOWN。
+These are internal agent tools, not identically named CLI subcommands. External agents submit through research start/resume to the research agent; normally resume only after the submission has terminated. Use actual available tools and bound capabilities. Do not invent capabilities or automatically resubmit an original UNKNOWN execution.
 
-## 6. 回测不是账户策略
+## 6. Backtest factories are not account strategies
 
-此 factory 只建 BacktestRunConfig；paper/live 需要独立已编译 account registration、适配器、账户配置和显式启动，不能将历史 factory 自动用于 live，也不从回测成功推导实盘许可。不得在此接线例子里加钱包、账户连接或实盘订单。配置保存、构建与 capabilities 读取均不表示策略已启动。
+This factory builds BacktestRunConfig only. Paper/live execution requires a separately compiled account registration, adapters, account configuration, and explicit start. Do not automatically use a historical factory for live trading or infer permission from backtest success. Do not add wallet access, account connections, or live orders to this integration example. Saving configuration, building, and inspecting capabilities do not start a strategy.
 
-已有执行后的源码/逻辑复核，使用同一 `native_strategy_logic_review`，显式传 `reviewTiming:"POST_EXECUTION"` 和已授权的 `sourceRequestId`。这是新的独立审查 Task，不重发回测、不替换旧事前逻辑评级或报告，也不能补成事前验证协议。子 Agent 仍只读取指定源码材料，不自动获取历史回测或父对话；结合原结果评价时分别读取原审查及执行证据。省略 reviewTiming 仍是事前审查，已有执行时会拒绝。
+For source/logic review after an existing execution, use the same native_strategy_logic_review with explicit `reviewTiming:"POST_EXECUTION"` and an authorized sourceRequestId. This creates a new independent review Task. It does not rerun the backtest, replace earlier pre-execution logic ratings/reports, or retroactively satisfy a pre-execution protocol. The child still reads only the specified source materials; it does not automatically receive historical backtests or the parent transcript. Read the original review and execution evidence separately when combining them. Omitting reviewTiming still requests pre-execution review, which rejects requests with an existing execution.
 
-综合评估子 Agent 在配置了研究工作区时，可用 `native_assessment_read_report {taskId, offset, limit}` 分页读取该评估清单内原生 Task 的 `request.config.report`。这复用官方 Pi read 的行分页，不运行回测；报告是原 Task 声明路径上的当前文件，不自动等同不可变原生结果或生产者证明。逐页读所需范围、保留截断提示并披露未读内容；不将父 Agent 摘要冒充独立读取。
+When a research workspace is configured, a synthesis assessment child may use `native_assessment_read_report {taskId, offset, limit}` to read request.config.report from an original native Task in its assessment manifest. This reuses official Pi read line pagination and does not execute a backtest. The report is the current file at the path declared by that Task, not automatically an immutable native result or proof of its producer. Read the required pages, retain truncation warnings, and disclose unread material. A parent summary is not independent reading.
 
-### 已有行情的正式导入能力
+### Formal import of existing market data
 
-原生 owner 环境可显式设置 `marketImport:true`，下一次 `native_runner_build` 才会编译已有 `market-history` 导入入口；保存配置不编译，也不改变旧研究/旧 Build。该入口使用 high-precision：owner 的官方依赖图必须已显式选择相同精度，否则构建报 `rust_market_import_requires_high_precision_owner`，不静默改变策略精度。通过 owner 自有 Cargo feature 选择官方 high-precision、官方 Cargo 准备锁，再新建 Build 并读取真实 capabilities；不要改旧 capability 回执或切全局 runner来替代绑定。
+The native owner environment may explicitly enable `marketImport:true`. Only the next native_runner_build compiles the existing market-history importer entrypoint. Saving configuration neither compiles it nor changes old research/builds. This entrypoint uses high precision: the owner's official dependency graph must explicitly select the same precision, or the build reports rust_market_import_requires_high_precision_owner. It never silently changes strategy precision. Select official high precision through the owner's own Cargo feature, prepare the lock using official Cargo, create a new Build, and read its actual capabilities. Do not rewrite old capability receipts or substitute a global runner switch for binding.
 
-已有登记 catalog 时，新研究绑定后可用 `native_market_import`。尚无 catalog 时不要冒用其他 dataset 或创建占位研究，按以下正式准备顺序：
-1. 在当前普通研究中调用 `native_runner_market_import {runnerBuildRequestId: "成功 Build 的原 requestId", expectedRunnerRevision: 当前实例配置 revision, request: 完整 NativeMarketImportRequestV1}`。request 至少为 `{schema_version:1, manifest_path:"明确授权的manifest绝对路径", instruments_path:"原生定义绝对路径", output_path:"新的输出目录"}`；可选 `start_seconds`/`end_seconds` 为字符串，`path_prefixes` 为相对目录前缀字符串数组，每项必须以 `/` 结尾（如 `trades/2026-04-14/`），不能传单个文件名。只需manifest全部已授权文件时省略或传空数组，不猜前缀；选单文件应在manifest中明确files，而非用文件名冒充目录前缀。可选 `modality` 省略时为 `TRADE_TICK`；完整盘口快照使用 `BOOK_SNAPSHOT`，不把源快照宣称为源增量。输入 manifest 可声明 `parquet-zstd`，字段映射按原文件实际列声明。每个快照按原生 `OrderBookDelta` 的 Clear + 全部档位 Add 表达，保留所有档位的价格和数量，不截档；盘口导入按所提供 instrument 的 price/size precision 编码，并逐值严格检查转换后数值等于原值；超精度非零数字会使导入不完整并拒绝成功，不舍入、不静默跳过市场。定义是输入场景，不因此证明历史时点有效；现有 TRADE_TICK 导入仍保留原生编码精度。源 `order_count` 不是原生 delta 字段，不宣称它被保留到 delta。`received_time:true` 按接收时钟选窗，必须显式传字符串 `maximum_receive_delay_ns`；否则按事件时钟选窗，不混用时钟或伪造时间。原生合同不支持 bars/resume。此工具复用同一原生 import Task，仅用成功 Build 解析 target，不修改当前研究的旧执行绑定。
-2. 读取原 import 结果的 `catalog_path`、`report_path` 和完整所需报告。结果大时按返回提示用 `native_assessment_read_exposure` 分页，不以工具受理当导入成功。
-3. 用官方 write 在配置的研究源码工作区写 dataset descriptor JSON，顶层是一个对象或对象数组。现有合同如下，所有值须替换成实际证据，不照抄占位符：
+With a registered catalog, a newly bound research can use native_market_import. Without a catalog, do not borrow an unrelated dataset or create a placeholder research. Follow the formal preparation sequence:
+
+1. In the current ordinary research, call `native_runner_market_import {runnerBuildRequestId: "original requestId of a successful Build", expectedRunnerRevision: current instance configuration revision, request: complete NativeMarketImportRequestV1}`. At minimum, the request is `{schema_version:1, manifest_path:"authorized absolute manifest path", instruments_path:"absolute native definitions path", output_path:"new output directory"}`. Optional start_seconds/end_seconds are strings. path_prefixes is an array of relative directory prefixes, each ending in `/` (for example `trades/2026-04-14/`), not individual filenames. Omit it or use an empty array when all manifest files are authorized; do not guess prefixes. Select individual files through the manifest's explicit files list. Optional modality defaults to TRADE_TICK; use BOOK_SNAPSHOT for full book snapshots, not claims of source incremental updates. The manifest can declare parquet-zstd; map fields from actual source columns. Each snapshot becomes native OrderBookDelta Clear + Add for every level, with no depth truncation. By default, book prices/sizes use the supplied instrument precision and must remain exactly equal after conversion. Nonzero excess digits cause an incomplete import rather than rounding or silently skipping markets. The definition is an input scenario, not proof of historical validity. TRADE_TICK retains native encoding precision. Source order_count is not a native delta field; do not claim it is retained. `received_time:true` selects by receipt time and requires an explicit maximum_receive_delay_ns string; otherwise selection uses event time. Do not mix clocks or invent timestamps. This native contract does not support bars/resume. The tool reuses the original native import Task and resolves its target from the successful Build only; it does not change the current research's old execution binding.
+2. Read the original import result's catalog_path, report_path, and the required report content. For large results, follow the returned instructions and use paginated native_assessment_read_exposure. Acceptance of a tool call is not successful import.
+3. Use official write to place a dataset-descriptor JSON object or object array in the configured research source workspace. The existing contract is below; replace every placeholder with actual evidence:
+
 ```json
-{"id":"新的数据集标识","name":"真实描述","assetClass":"CRYPTO","currency":"实际计价币种","source":"真实来源","start":null,"end":null,"ready":true,"nativeModality":"TRADE_TICK","data":{"catalog":"原import返回的catalog_path"},"policy":{},"preparation":{"archiveLoaded":true,"nativePrepared":true,"scientificQualification":"NOT_ASSESSED"}}
+{"id":"NEW_DATASET_ID","name":"ACTUAL_DESCRIPTION","assetClass":"CRYPTO","currency":"ACTUAL_QUOTE_CURRENCY","source":"ACTUAL_SOURCE","start":null,"end":null,"ready":true,"nativeModality":"TRADE_TICK","data":{"catalog":"catalog_path returned by the original import"},"policy":{},"preparation":{"archiveLoaded":true,"nativePrepared":true,"scientificQualification":"NOT_ASSESSED"}}
 ```
-上面的 `nativeModality:"TRADE_TICK"` 是成交示例；盘口快照的 descriptor 应省略该可选字段，现有登记合同仅接受 BAR/TRADE_TICK，不能用它冒充盘口或写入不受支持的 BOOK_SNAPSHOT。盘口实际 catalog 数据类型为 `OrderBookDelta`，查询和回放采用原生 selector；导入请求的 `modality` 与 descriptor 的 `nativeModality` 不是同一合同。
-`id/name/assetClass/currency/source` 必须是非空字符串；`start/end` 为明确的日期时间字符串或 null，不猜测覆盖；`ready` 为布尔值，只有实际可用时才为 true；`data` 是对象，catalog相对路径按descriptor文件目录解析，优先用实际绝对路径。准备状态不是研究合格，报告中的冲突/缺失、晚到定义等限制写入研究说明，不能伪造收益或准入。不要在descriptor加入凭据或未授权数据。
-4. 调 `native_dataset_registration_status {}` 取得**数据源** revision（不同于实例配置 revision），再调 `native_dataset_register {requestId:"本次登记稳定标识", expectedRevision:数据源revision, path:"工作区内descriptor绝对路径"}`。复用既有append-only registry，校验真实工作区路径（含符号链接）；原request重放返回原回执，不覆盖旧dataset。
-5. 使用登记返回的真实 datasetId、成功 Build 原requestId、当前实例配置revision和真实model调用 `native_research_start_bound`。导入、登记、绑定是不同事实；不改全局runner、不重绑旧研究。
-原请求/输出与失败记录保留；UNKNOWN不重发。晚到定义只能保留其真实 ts_init 并披露静态情景，不能回填历史定义。导入成功不等于数据准入、OOS有效或策略回测完成。
 
-### 目录查询与导入回执关联
+The TRADE_TICK nativeModality above is a trade example. Omit this optional field for book snapshot descriptors: the current registration contract accepts only BAR/TRADE_TICK, so do not mislabel books or insert unsupported BOOK_SNAPSHOT. The actual book catalog type is OrderBookDelta, queried/replayed with native selectors. Import-request modality and descriptor nativeModality are different contracts.
 
-`native_strategy_catalog` 的 `data_types` 使用原生 NautilusDataType 名称，例如 `["TradeTick"]`，不是数据集 modality 的 `["TRADE_TICK"]`。可以省略此过滤条件先发现实际 selectors，再原样采用返回名称；按 next_cursor 分页。查询解析失败不代表缺少数据或执行过回放，不把错误改写为成功。
+id/name/assetClass/currency/source must be nonempty strings. start/end are explicit date-time strings or null; do not guess coverage. ready is a boolean and may be true only when the data is actually usable. data is an object; relative catalog paths resolve against the descriptor file's directory, though an actual absolute path is preferable. Preparation is not research qualification. Disclose conflicts, missing coverage, late definitions, and other report limitations; do not fabricate returns or admission. Do not include credentials or unauthorized data in the descriptor.
 
-导入工具返回原始 import `taskId` 供关联与分页读取，小结果和大结果提示均保留该关联；catalog_path/report_path与真实manifest/report仍是准备结果的直接证据。任务编号不是策略必填参数，不应给observer或全市场通用流程增加不必要的编号门槛。旧小结果未含编号时可通过外部正式research evidence读取原Task关联，无需重跑导入。
+4. Call `native_dataset_registration_status {}` for the **data-source** revision, which differs from the instance configuration revision. Then call `native_dataset_register {requestId:"stable ID for this registration", expectedRevision: data-source revision, path:"absolute descriptor path inside the workspace"}`. This reuses the existing append-only registry and validates real workspace paths, including symlinks. Replaying the original request returns its receipt without overwriting an old dataset.
+5. Call native_research_start_bound with the actual registered datasetId, successful Build's original requestId, current instance configuration revision, and actual model. Import, registration, and binding are distinct facts. Do not change the global runner or rebind old research.
 
-永续/期货数据的原生模拟 venue 使用与 instrument 兼容的 `AccountType::Margin`，不能因为observer不下单就设为 Cash：固定上游在 `add_instrument` 会拒绝现金账户加载永续/期货。股票/现货仍按实际账户语义配置，不将此变成所有策略一律Margin的限制。仿真账户类型/余额/杠杆参数不表示实盘账户已连接或获交易许可。
+Retain original requests, outputs, and failure records; do not resubmit UNKNOWN. Late definitions must retain their actual ts_init and be disclosed as a static scenario, never backdated into historical definitions. Import success is not data admission, valid out-of-sample evidence, or a completed strategy backtest.
 
-正式 `native_runner_build` 请求可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
+### Catalog queries and import receipt linkage
 
-### 已登记多 catalog 的正式绑定
+native_strategy_catalog data_types uses native NautilusDataType names such as `["TradeTick"]`, not dataset modality names such as `["TRADE_TICK"]`. Omit the filter to discover actual selectors when needed, then reuse returned names exactly and paginate with next_cursor. Query-planning failure does not mean data is missing or replay occurred; do not recast an error as success.
 
-当一个配置式原生回测需要不同已登记 dataset 的 catalog（例如独立盘口和逐笔成交）时，新研究以 `datasetId` 指定主数据集，以可选 `additionalDatasetIds` 列出其他已登记数据集。`native_research_start_bound` 保留各原始 root 和登记身份；不扩大为父目录、不复制数据、不通过 install 回调旁路读行情。旧研究绑定不会因此改变。
+Import tools return the original import taskId for linkage and paginated reading, both for small results and large-result prompts. catalog_path/report_path and the real manifest/report remain direct preparation evidence. Task IDs are not mandatory strategy parameters. Do not add unnecessary ID requirements to an observer or general full-market workflow. For older small results without an ID, read the original Task linkage through the external research evidence interface rather than rerunning import.
 
-先读 `native_strategy_brief.catalogBindings` 的主/附加 dataset 身份与 catalog；`native_strategy_catalog` 默认检查主 catalog，传精确 `datasetId` 可检查该研究已绑定的其他 catalog，并逐页读所需证据。配置式工厂仍收到原主 root，可在显式 config 中用已绑定附加路径构造多个官方 `BacktestDataConfig`；只有 `native_configured_backtest` 和 configured 参数批次使用附加 root。单策略适配器仍用主 catalog。绑定不是数据齐全、历史规则、独立 OOS 或科学合格证明；评估材料必须说明每个数据源实际用途及局限。
+Native simulated venues for perpetuals/futures must use an instrument-compatible AccountType::Margin. An observer that never orders still cannot use Cash: the pinned upstream rejects loading perpetuals/futures into a cash account in add_instrument. Configure equities/spot according to their actual account semantics; this is not a Margin-only restriction on all strategies. Simulated account types, balances, and leverage do not imply a live account connection or trading permission.
 
-同一 instrument/type 在多个 catalog 中的重叠记录不会由 QZ 自动去重或择优；按原 Nautilus 多流行为处理，明确实际选择、时间重叠与同时间戳顺序，不能把绑定的总行数当实际消费记录数。
+A formal native_runner_build request may include `optimizationLevel: 0 | 1 | 2 | 3`, controlling only the new build's compiler optimization. Omission preserves prior behavior and changes neither owner configuration nor old Builds. A different optimization level requires a new requestId; replaying an original requestId must retain its original parameters. This is not an executable-import option and does not automatically select a runner, rebind research, or start a backtest.
 
-多 root 执行要求新 runner 的真实 capabilities.research.multiCatalogBindings=true；旧 build 缺省不支持，须按当前正式 glue 重新构建并新建研究绑定，不修改旧 capability 或旧研究。单 root 不要求新增 capability。
+### Formal binding of multiple registered catalogs
 
+When a configured native backtest needs catalogs from multiple registered datasets, such as separate books and trades, use datasetId for the primary dataset and optional additionalDatasetIds for the others in a new research. native_research_start_bound retains each original root and registration identity. It does not broaden access to a parent directory, copy data, or permit bypass reads from install. Old research bindings do not change.
 
-### 显式原生运行完成检查
+Read the primary/additional dataset identities and catalogs in native_strategy_brief.catalogBindings first. native_strategy_catalog defaults to the primary catalog; pass an exact datasetId to inspect another catalog already bound to that research, and read the required pages. The configured factory still receives the original primary root. Explicit config may use bound additional paths to construct multiple official BacktestDataConfig entries. Only native_configured_backtest and configured parameter batches use additional roots; the single-strategy adapter still uses the primary catalog. Binding does not prove complete data, historical rules, independent out-of-sample evaluation, or scientific qualification. Assessment materials must explain each source's actual use and limitations.
 
-需要在原生 `node.run()` 返回后检查并写出最终材料时，在 owner 环境显式保存 `backtestCompletion:true`，同 `backtestFactory` 模块提供：
+QZ does not automatically deduplicate or choose between overlapping records for the same instrument/type across catalogs. Preserve Nautilus's native multi-stream behavior and disclose selection, temporal overlaps, and equal-timestamp ordering. Total bound rows are not the number of records actually consumed.
+
+Multi-root execution requires a new runner with actual capabilities.research.multiCatalogBindings=true. An old build lacking that field does not support it. Rebuild with current formal glue and create a new research binding; do not edit old capabilities or research. Single-root execution does not require this additional capability.
+
+### Explicit native post-run completion checks
+
+To inspect and write final materials after native node.run() returns, explicitly save backtestCompletion:true in the owner environment and provide this function in the same backtestFactory module:
 
 ```rust
 pub fn finalize_after_node_run(
@@ -161,10 +166,12 @@ pub fn finalize_after_node_run(
 ) -> anyhow::Result<()>;
 ```
 
-使用原 `config` / `install` 工厂；新构建生成器保存参数并注册可选回调。省略/false保持旧接口，不要求旧模块新增函数。回调要求配置 `dispose_on_completion=false`，且只有原 `node.run()` 返回成功并产生匹配 configuration 的原生结果才进入。此时上游可能已经 `clear_data`，但原 node/engine/actor 仍可检查；不能声称处于 clear_data 之前。
+Keep the original config/install factory contract. A new generated build retains parameters and registers the optional callback. Omitted/false preserves the old interface without requiring existing modules to add a function. The callback requires dispose_on_completion=false and runs only when the original node.run() succeeds and returns a native result matching the configuration. Upstream may already have called clear_data, but the original node/engine/actor remain inspectable. Do not claim this occurs before clear_data.
 
-原生成功结果本身不证明自然 EOF。owner 必须核对原 canonical outcome 与自身处理状态，区分正常完成、提前停止及缺失材料；不能把 `on_stop` 或仅 `Ok` 当自然 EOF。回调返回错误时保留失败并执行清理，不宣称成功。保存开关不修改旧 Build/已有研究，需正式重新构建再新建绑定。此接口不新增订单、行情读取旁路或评分逻辑。
+A successful native result alone does not prove natural EOF. The owner must check the original canonical outcome and its own processing state, distinguishing normal completion, early stop, and missing materials. Neither on_stop nor Ok alone proves EOF. A callback error retains failure and performs cleanup; do not claim success. Saving the option does not change old Builds or existing research: build again formally and create a new binding. This interface adds no orders, bypass market reads, or scoring logic.
 
-盘口数量的有损变换必须显式授权，默认仍严格无损。仅在已授权的 manifest `book_snapshots` stream 中声明 `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["明确的原生InstrumentId"]}`；不使用通配符，列出实际授权市场。它仅将指定市场正数量按所提供 instrument 的 size_precision 做 Decimal 四舍五入（恰好中点向上），价格和其他市场仍严格，不修改 raw 或静态定义，也不证明定义在历史时点有效。TRADE_TICK 不接受该政策。
+### Explicit book-quantity rounding
 
-报告 `book_quantity_rounding` 按原生市场列出 processed_levels、changed_levels、changed_snapshot_groups、rounded_to_zero_levels、target_size_precisions，以及精确字符串 signed_quantity_error、absolute_quantity_error、maximum_absolute_quantity_error。统计是已处理输入档位，包含随后失败的快照，不是成交量、已成功输出或收益。归零档位不静默删掉：原完整快照转换以 NONPOSITIVE_BOOK_SIZE 拒绝该组，导入为 INCOMPLETE，报告/partial 输出保留，不承诺原子回滚。确认零归零及实际报告后才能宣称保留所有档位；不能用政策声明代替真实结果。
+Lossy book-quantity transformation requires explicit authorization; strict lossless conversion remains the default. Declare `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["EXACT_NATIVE_INSTRUMENT_ID"]}` only in an authorized manifest book_snapshots stream. List the actual authorized markets, without wildcards. Only positive quantities for those instruments are rounded to the supplied instrument's size_precision using Decimal half-up (ties round upward). Prices and other markets remain strict. This changes neither raw data nor static definitions and does not establish historical definition validity. TRADE_TICK does not accept this policy.
+
+The book_quantity_rounding report lists processed_levels, changed_levels, changed_snapshot_groups, rounded_to_zero_levels, target_size_precisions, and exact string totals signed_quantity_error, absolute_quantity_error, and maximum_absolute_quantity_error by native market. These are processed input levels, including snapshots later rejected, not traded volume, successful output, or returns. Zero-rounded levels are not silently deleted: the original full-snapshot conversion rejects the group with NONPOSITIVE_BOOK_SIZE, the import is INCOMPLETE, and reports/partial output remain. There is no atomic rollback guarantee. Check the actual report and confirm that no levels rounded to zero before claiming every level was preserved; a policy declaration is not a result.

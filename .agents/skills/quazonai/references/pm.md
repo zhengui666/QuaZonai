@@ -1,9 +1,9 @@
-# 保留的历史查询与控制
+# Retained historical queries and controls
 
-新研究使用 `research` 和原生参数扫描，不新建旧 PM mandate、campaign、因子或组合。先看实际 `quazonai --help`、`pm capabilities`，不可把仍存在的历史类型当可创建能力。
+New research uses `research` and native parameter grids, not new legacy PM mandates, campaigns, factors, or portfolios. Read the actual `quazonai --help` and `pm capabilities`; retained historical types do not imply creation capabilities.
 
-保留的读取包括 `pm list/get/decision/history/events`、`campaign get/trials/compare`、`strategy versions/assessments`、`pm cycle/capacity`。仅使用已有对象真实 ID，空结果不补造。
+Retained reads include `pm list/get/decision/history/events`, `campaign get/trials/compare`, `strategy versions/assessments`, and `pm cycle/capacity`. Use real IDs of existing objects; do not fabricate empty results.
 
-既有对象的 retire、pause、refresh-data、recompute、strategy resume 等只按服务实际能力和用户授权执行，不恢复退役的 BUILD/STUDY 科研。先读取所属 mandate 的当前 revision，再依相应 schema 形成原请求。旧目标接口不能用于仅原生策略账户；不能把历史 PM strategy resume 当 `account-strategy start`。
+Retire, pause, refresh-data, recompute, strategy resume, and similar operations on existing objects require actual service support and user authorization. Do not restore retired BUILD/STUDY research. Read the owning mandate's current revision before forming the original request from its schema. Legacy target interfaces cannot operate native-strategy-only accounts; historical PM strategy resume is not `account-strategy start`.
 
-账户启动/停止请用 [账户与资金](accounts.md)。停止历史任务、隐藏对象与资金清仓是不同动作；保留账户资金、持仓、订单和原回执，不通过删除数据修复失败。
+For account start/stop, use [Accounts and capital](accounts.md). Stopping historical work, hiding objects, and liquidating capital are separate actions. Preserve account funds, positions, orders, and original receipts; do not repair failures by deleting data.

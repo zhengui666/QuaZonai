@@ -1,264 +1,266 @@
-# QuaZonai 开发者指南
+# QuaZonai Developer Guide
 
-## 项目定位与首要原则
+## Project purpose and primary principles
 
-QuaZonai 是基于 **NautilusTrader 与官方 Pi Durable 封装**的单人量化研究工作台。它连接想法、Agent 研究、显式原生策略回测、目标交付和账户观测。项目的价值在业务集成、研究体验与结果表达，不在重新实现底层框架。
+QuaZonai is a single-user quantitative research workbench built around **NautilusTrader and official Pi Durable integration**. It connects ideas, agent research, explicit native strategy backtests, target delivery, and account observation. Its value lies in business integration, research experience, and presenting results, not reimplementing underlying frameworks.
 
-**尽可能不造重复轮子：先查 NautilusTrader 和 Pi Durable 的官方能力，优先直接复用，再做最薄的业务适配。** 只有现有公开接口确实不能满足具体需求时才写项目代码；不要因为不了解上游能力而新增替代实现。依赖使用官方包或已固定的官方上游版本，通过公开 API 集成，不复制上游实现、不维护补丁或 fork。
+**Avoid reinventing existing capabilities: inspect official NautilusTrader and Pi Durable functionality first, reuse it directly wherever possible, and add only the thinnest business integration.** Write project code only when existing public interfaces genuinely cannot meet the specific need. Do not build alternatives because upstream capabilities are unfamiliar. Use official packages or pinned official upstream versions through public APIs, without copying upstream implementations or maintaining patches or forks.
 
-- NautilusTrader 负责市场数据目录、原生指标、回测、撮合、共享账户模拟和原生交易模型。沿用其数据格式、精度和公开接口，不修改、裁剪或替换上游功能与行为，不另写回测引擎、撮合器或指标框架。QuaZonai 尚未接入的能力必须明确标为接线范围，而不是限制 Nautilus 本体。
-- Pi Durable 负责 Agent 的 Conversation、Submission、Task、Doc、持久化、恢复、重放、子任务、等待、取消和工具循环。沿用其 Harness、Extension 和 Storage，不另建 Agent 调度器、任务状态机、任务数据库或恢复协议。
-- 模型与提供方调用复用官方 pi-ai；并发和上下文能力复用 Chord；列式数据复用 Arrow。旧资金 forward、自研 Clarabel 分配与 WASM 执行链已退役，不得恢复为研究或账户执行入口；历史合同、错误诊断和原始资金记录不因此删除。已存在的库能力不重复实现。
-- 新功能先找同类入口、合同与调用链，在原位置扩展。局部需求用局部修改解决，避免平行系统、通用平台和多层转接。
+- NautilusTrader owns market-data catalogs, native indicators, backtesting, matching, shared-account simulation, and native trading models. Preserve its formats, precision, and public interfaces. Do not modify, trim, or replace upstream features or behavior, or write another backtest engine, matcher, or indicator framework. Describe capabilities not yet wired into QuaZonai as integration scope, not limitations of Nautilus itself.
+- Pi Durable owns agent Conversation, Submission, Task, Doc, persistence, recovery, replay, child tasks, waiting, cancellation, and tool loops. Reuse its Harness, Extension, and Storage; do not create another agent scheduler, task state machine, task database, or recovery protocol.
+- Reuse official pi-ai for model/provider calls, Chord for concurrency and context, and Arrow for columnar data. Legacy capital forward, custom Clarabel allocation, and WASM execution chains are retired and must not return as research or account execution entrypoints. Retain historical contracts, diagnostics, and original capital records. Do not reimplement existing library capabilities.
+- Find existing equivalent entrypoints, contracts, and call chains before adding features, and extend them in place. Solve local needs with local changes rather than parallel systems, generic platforms, or multiple forwarding layers.
 
-## 当前架构：必须保持
+## Current architecture: preserve it
 
-以下描述是当前实现的架构约束。**严禁擅自修改架构设计。需要修改时，必须先向项目所有者说明具体变化、必要性、影响范围与迁移方式，并获得针对该变化的明确审批后才能实施。** 一般功能授权、修复授权、清理授权或合并授权不等于架构变更审批。不得先改架构再补说明，也不得通过改写本文件自行解除约束。
+The following are architectural constraints of the current implementation. **Do not change the architecture without approval. Before implementing a necessary change, explain the exact change, necessity, impact, and migration to the project owner and obtain explicit approval for that architectural change.** General feature, repair, cleanup, or merge authorization is not architectural approval. Do not change the architecture first and explain later, or edit this document to exempt yourself.
 
-### 分层与目录
+### Layers and directories
 
-| 路径 | 职责与边界 |
+| Path | Responsibility and boundary |
 | --- | --- |
-| `packages/contracts/src/` | TypeScript 公共业务类型、HTTP/CLI/Web DTO 与共享规则；跨入口保持同一合同。 |
-| `apps/service/src/` | Fastify HTTP `/api/v3`、实例与模型配置、所有者会话、业务事实、研究准入、科学适配、组合、目标回执和账户观测。业务编排留在这一层。 |
-| `apps/research/src/` | 官方 Pi Durable 宿主、研究文档和账本、工具调用、延续与恢复、文献与原生结果。`host.ts` 负责打开官方存储及 Harness。 |
-| `apps/research/plugins/` | 通过官方 Extension 接入研究与原生指标工具；使用原宿主，不自建运行时。 |
-| `apps/nautilus/src/` | 既有远程 Nautilus HTTP 适配层，连接科学进程、数据目录及显式配置的账户原生宿主；账户与科学执行复用现有容器。 |
-| `apps/job/src/` | Rust 原生入口，执行科学计算及官方 LiveNode 账户宿主；订单、成交、持仓与账户恢复沿用 Nautilus 公开接口，业务控制留在 TypeScript。 |
-| `crates/contracts/src/` | 原生科学 Wire 类型、Arrow 类型与可生成的科学合同。 |
-| `crates/domain/src/` | 科学计算所需的纯规则、数值与结果校验，不承担 HTTP 服务和 Agent 调度。 |
-| `apps/cli/src/` | 同一 HTTP API 的客户端、命令和合同读取；不得直接打开或修改服务存储。 |
-| `apps/web/src/` | React、TypeScript、官方 Ant Design 与 ECharts。负责交互和展示，不运行后台研究调度。 |
-| `runtimes/data/` | Python 数据获取及来源适配，向原生科学入口提供数据，不重写 Nautilus 引擎。 |
-| `contracts/generated/` | 从 Rust 科学合同生成、供程序实际读取的机器合同；它不是手写开发文档，不手工修改。 |
-| `deploy/`、`runtimes/native/` | 安装、容器、CLI 分发和原生镜像构建。 |
-| `.github/` | 保留的 CI、构建和发布配置。 |
+| `packages/contracts/src/` | Shared TypeScript business types, HTTP/CLI/Web DTOs, and rules; one contract across entrypoints. |
+| `apps/service/src/` | Fastify HTTP `/api/v3`, instance/model configuration, owner sessions, business facts, research admission, science adaptation, portfolios, target receipts, and account observation. Business orchestration belongs here. |
+| `apps/research/src/` | Official Pi Durable host, research documents and ledgers, tool calls, continuation/recovery, literature, and native results. `host.ts` opens official storage and Harness. |
+| `apps/research/plugins/` | Research/native-metric tools through official Extension; reuse the host, not a custom runtime. |
+| `apps/nautilus/src/` | Existing remote Nautilus HTTP adapter connecting science processes, catalogs, and explicitly configured native account hosts. Account/science execution reuse existing containers. |
+| `apps/job/src/` | Rust native entrypoints for science and official LiveNode account hosting. Orders, fills, positions, and account recovery use Nautilus public interfaces; business control stays in TypeScript. |
+| `crates/contracts/src/` | Native science Wire types, Arrow types, and generatable science contracts. |
+| `crates/domain/src/` | Pure rules, numeric logic, and result validation required for science, not HTTP service or agent scheduling. |
+| `apps/cli/src/` | Client, commands, and contract reads for the same HTTP API; never directly open or modify service storage. |
+| `apps/web/src/` | React, TypeScript, official Ant Design, and ECharts for interaction/display, not background research scheduling. |
+| `runtimes/data/` | Python data acquisition/source adaptation feeding native science, not a rewritten Nautilus engine. |
+| `contracts/generated/` | Machine-consumed contracts generated from Rust science definitions, not handwritten developer documentation; do not edit manually. |
+| `deploy/`, `runtimes/native/` | Installation, containers, CLI distribution, and native image builds. |
+| `.github/` | Retained CI, build, and release configuration. |
 
-Rust workspace 只保留 `apps/job`、`crates/contracts` 和 `crates/domain`。非科学控制面使用 TypeScript；不得重新引入 Rust Server、Store、Runtime 网关或 Rust CLI 作为另一套控制面。
+The Rust workspace retains only `apps/job`, `crates/contracts`, and `crates/domain`. Use TypeScript for the non-scientific control plane. Do not reintroduce a Rust Server, Store, Runtime gateway, or Rust CLI as another control plane.
 
-### 调用与数据流
+### Calls and data flow
 
 ```text
 Web / CLI
     → TypeScript Service / api/v3
-        → Research Host / 官方 Pi Durable / pi-ai
-            → 远程 Nautilus HTTP 适配
+        → Research Host / official Pi Durable / pi-ai
+            → remote Nautilus HTTP adapter
                 → Rust job / NautilusTrader / Arrow
-        → 独立的模拟盘或实盘账户连接：目标回执与观测
+        → independent paper/live account connections: target receipts and observation
 ```
 
-当前研究入口直接调用显式原生策略回测，不再走自研因子生成、WASM 拟合、独立评分或 PM BUILD/STUDY 准入链。回测结果是历史计算，不是 PASS、不代表样本外有效，也不自动生成交易许可。目标交付和账户观测是独立业务事实，研究完成不等于已交付，收到回执不等于已成交。
+Current research directly invokes explicit native strategy backtests, not custom factor generation, WASM fitting, independent scoring, or PM BUILD/STUDY admission. Backtests are historical computations, not PASS, out-of-sample validity, or automatic trading permission. Target delivery and account observation are separate business facts: completed research does not establish delivery, and a receipt does not establish a fill.
 
-- `apps/service/src/service.ts` 是服务装配入口；`facts.ts`、`pm-facts.ts` 等通过官方 Durable Doc 表达业务事实。不要另建事实数据库。
-- `apps/research/src/host.ts` 装配官方 Harness 与 SQLite Storage；研究、工具和科学子任务使用原 Conversation/Submission/Task 身份。
-- `apps/service/src/science.ts`、`apps/research/src/native-execution.ts` 和 `apps/nautilus/src/` 连接现有科学链路；适配应薄且直接。
-- 研究/回测使用 `nautilus.backtest` 连接；模拟盘和实盘使用各自实例连接、账户和凭据。各用途独立配置，不互相静默回退。
-- 应用启动时重开原 Durable 存储，由官方运行时恢复原 Task。浏览器断开不构成研究取消，本地进程退出不代表远端任务终止。
-- 配置、凭据、研究状态、原生结果和既有数据随安装目录持久化。不得以清空数据或更换对象身份掩盖升级失败。旧科研流程不提供兼容执行；已有账户事实、资金记录和未决订单仍须保留并核实，不得据此恢复已删除的科研算法。
-- QZ 本身不持有券商账户、不直接发送金融订单；通过配置的下游接口交付目标并读取账户事实。
-- 资金退出复用上述账户下游及现有容器，由官方 LiveNode、Strategy、RiskEngine、ExecutionEngine、Cache 与 Hyperliquid 适配器执行。QZ 通过现有 Pi Durable 保存退出意图、预留和命令；外部划转和提现由用户完成并以平台流水对账。资金合同校验在共享 TypeScript 层执行，不依赖科学 Worker。
+- `apps/service/src/service.ts` assembles the service. `facts.ts`, `pm-facts.ts`, and related modules express business facts through official Durable Doc; do not add a separate facts database.
+- `apps/research/src/host.ts` assembles official Harness and SQLite Storage. Research, tools, and science child tasks retain original Conversation/Submission/Task identities.
+- `apps/service/src/science.ts`, `apps/research/src/native-execution.ts`, and `apps/nautilus/src/` connect the existing science chain; keep adaptation thin and direct.
+- Research/backtesting uses the `nautilus.backtest` connection. Paper/live use their own instance connections, accounts, and credentials. Configure each purpose independently without silent fallback between them.
+- Startup reopens original Durable storage and lets the official runtime recover original Tasks. A browser disconnect does not cancel research; local process exit does not establish remote termination.
+- Configuration, credentials, research state, native results, and existing data persist with the installation directory. Never conceal upgrade failure by clearing data or changing object identity. Retired science workflows have no compatibility execution. Preserve and verify existing account facts, capital records, and pending orders without restoring deleted scientific algorithms.
+- QZ itself neither holds brokerage accounts nor directly sends financial orders; it delivers targets and reads account facts through configured downstream interfaces.
+- Capital exits reuse the account downstream and containers above, with official LiveNode, Strategy, RiskEngine, ExecutionEngine, Cache, and Hyperliquid adapters. QZ persists exit intentions, reservations, and commands through existing Pi Durable. The user performs external transfers/withdrawals, reconciled against platform records. Shared TypeScript validates capital contracts independently of the science Worker.
 
-### 合同与数值
+### Contracts and numeric meaning
 
-TypeScript 的公共合同放在 `packages/contracts/src/`，原生科学合同放在 `crates/contracts/src/`。前端和 CLI 消费同一服务与合同，不维护另一个业务实现。生成合同从源定义生成，不在生成结果上手改。
+Public TypeScript contracts belong in `packages/contracts/src/`; native science contracts belong in `crates/contracts/src/`. Web and CLI consume the same service/contracts, not separate business implementations. Generate contracts from source definitions rather than editing generated output.
 
-保留真实数值含义：金额、十进制和纳秒不要先转成不精确的 JavaScript Number；缺失值不要补成零，失败不要包装成成功。只保留实际业务需要的校验，不为假设性风险增加防御层。
+Preserve numeric meaning: do not first convert money, decimals, or nanoseconds to imprecise JavaScript Numbers. Do not replace missing values with zero or present failure as success. Keep validation needed by actual business behavior, not defensive layers for hypothetical risks.
 
-## 开发中严格禁止的做法
+## Strictly prohibited development practices
 
-以下是明确禁止项，不是可以默认新增的工程惯例：
+These are explicit prohibitions, not engineering conventions to add by default:
 
-- **过度设计**：没有当前需求的抽象、通用框架、插件平台、重复封装、多层转发，以及为未来可能性预留整套系统。
-- **过度安全、过度防御**：与单人实际使用无关的安全层、权限体系、重复验证、兜底链、隐式降级和防御性协议。实际错误直接、准确地处理，不堆叠机制。
-- **SHA256**：禁止新增或推广 SHA256/sha256sum 校验、内容指纹、哈希清单、证明链和依赖这类摘要的开发流程。依赖工具原有锁文件与上游发布元数据不手工重写。
-- **冒烟**：禁止新增、运行或要求 smoke/冒烟脚本与流程；验证要针对具体改动和真实行为。
-- **夹具**：禁止新增独立 fixture/夹具体系、虚构数据交付、样板环境和用固定假结果代替真实结果的验收。
-- **浏览器测试**：禁止新增、运行或要求 Playwright、浏览器端到端、截图比较等浏览器测试流程。
-- **门禁**：禁止增加自设审批链、质量门禁、安全门禁、形式化评审签字，以及无实际收益的检查步骤。保留必要 CI，不擅自扩充流程。
-- **冻结、基线**：禁止新增冻结清单、冻结快照、基线归档、基线证明、对照证据包等工程机制。
-- 禁止恢复 `.opensdlc`、SKILL、任务文档、报告目录及各种额外非代码材料；开发说明统一维护在根目录本文件。必要构建/运行配置、CI 和程序使用的生成合同保留。
+- **Overengineering:** abstractions without a current need, generic frameworks, plugin platforms, duplicate wrappers, layered forwarding, or entire systems reserved for hypothetical future uses.
+- **Excessive security/defensiveness:** security layers, permission systems, repeated validation, fallback chains, implicit degradation, and defensive protocols unrelated to actual single-user use. Handle real errors directly and accurately, without stacking mechanisms.
+- **SHA256:** do not introduce or promote SHA256/sha256sum checks, content fingerprints, hash manifests, proof chains, or development workflows dependent on such digests. Do not manually rewrite existing dependency-tool lockfiles or upstream release metadata.
+- **Smoke workflows:** do not add, run, or require smoke scripts/processes. Validate the specific change and real behavior.
+- **Fixtures:** do not add independent fixture systems, fabricated data deliveries, template environments, or acceptance based on fixed fake results instead of real outcomes.
+- **Browser tests:** do not add, run, or require Playwright, browser end-to-end tests, screenshot comparisons, or similar browser testing workflows.
+- **Gates:** do not add custom approval chains, quality/security gates, formal review sign-offs, or checks without practical benefit. Preserve necessary CI without unilaterally expanding the process.
+- **Freezes/baselines:** do not add frozen manifests/snapshots, baseline archives/proofs, comparative evidence bundles, or similar engineering mechanisms.
+- Do not restore `.opensdlc`, SKILL, task documents, report directories, or other extra non-code material. Maintain development guidance centrally in this root document. Retain necessary build/runtime configuration, CI, and program-consumed generated contracts.
 
-这些规则约束后续开发与执行。仓库现有业务可能使用同名字段或历史实现；不要仅为清除关键词而更改科学语义、持久化格式或既有运行架构。确需改变架构时仍必须先获得明确审批。
+These rules govern subsequent development and execution. Existing business code may use similarly named fields or historical implementations. Do not alter scientific semantics, persistent formats, or runtime architecture merely to remove keywords. Architectural changes still require explicit prior approval.
 
-## 如何开展修改
+## Making changes
 
-1. 从用户要完成的具体行为出发，找到现有入口、合同和调用链。
-2. 先查 NautilusTrader 与 Pi Durable 的官方接口和已安装版本，再决定项目需要多少适配代码。
-3. 在当前分层内做最小修改，复用已有业务规则与组件，不新建平行路径。
-4. 根据影响运行必要的类型检查、编译或相关单元测试。不要运行上面禁止的流程，不以数量代替验证价值。
-5. 交付时说明行为变化、实际验证结果与未完成事项；用户要求合并到 dev 时完成远程合并并读回提交状态。
+1. Start from the concrete user behavior and locate existing entrypoints, contracts, and call chains.
+2. Inspect official NautilusTrader/Pi Durable interfaces and installed versions before deciding how much adaptation is needed.
+3. Make minimal changes within existing layers, reusing business rules and components rather than adding parallel paths.
+4. Run only necessary type checks, compilation, or relevant unit tests based on impact. Do not run prohibited workflows above or substitute quantity for validation value.
+5. Deliver behavior changes, actual validation results, and unfinished work. When asked to merge into dev, complete the remote merge and read back its commit state.
 
-## 原生研究与历史扫描记录的实际范围
+## Actual scope of native research and historical scans
 
-- `native_strategy_configure` 在同一 Pi Conversation 保存官方策略的明确请求；`native_strategy_backtest` 通过原 Task、远端执行回执和已绑定 catalog 运行，不另建策略状态机。
-- 当前单标的回测已接官方 EMA_CROSS（QuoteTick）、ORDER_BOOK_IMBALANCE（L2）、GRID_MARKET_MAKER（QuoteTick）及 HURST_VPIN_DIRECTIONAL（官方 BAR/QuoteTick/TradeTick 订阅）。Grid 的策略专属字段逐一映射官方 GridMarketMakerConfig，instrument_id 来自原请求；可选 base 原样由官方 StrategyConfig 解析。省略 trade_size/expire_time_secs 保持官方 None 语义，其余数值/开关显式提供，不由胶水补交易规则。尚未接任意 Python 策略、多标的或全部原生策略。
-- Hurst/VPIN 的所有策略专属配置按公开 HurstVpinDirectionalConfig 字段映射，窗口校验与指标/交易算法由上游执行。官方 INTERNAL BAR 由 DataEngine 按真实 TradeTick 聚合；EXTERNAL BAR 使用完整 BarType 标识，不能以 instrument ID 替代。同标的不同 BarType 可并列读取。外部非时间 BAR 若只用作策略输入，应显式设置官方 venue.bar_execution=false 并提供真实 Quote/Trade 执行数据；省略保持官方 true 及其原生拒绝行为，不静默改变撮合语义。
-- 回放使用原始事件与可用时间窗口、官方账户/撮合/费用及原生统计；不把缺失值补零，不把回测当独立样本外验证。账户运行仍仅允许原有 EMA_CROSS，Grid、Hurst/VPIN 和订单簿不因回测注册而开放账户执行。
-- 自研参数网格枚举、批量择优与扫描执行已退役，Web/API/CLI 不再创建、重试或取消后重提扫描。历史扫描保留原始请求、Task、结果及回执，展示只读状态；必要的停止操作只沿原身份处理未决子任务，不创建新回测。
-- 已退役的研究评分、review allocation、ensemble fit/apply/freeze、自研因子工具和旧 PM 科研创建入口不提供兼容执行，不为旧记录重装旧插件。Rust job 已不依赖 WASM 解释器或 Clarabel 求解器；历史 Wire 类型及拒绝旧请求的测试仍可保留相关标识，不等于支持执行。真实资金/账户与原始数据代码须按调用图保留，不能按关键词盲删。
-- 原生兼容方向是使用官方配置、策略、指标、数据与报告接口，而不是再造策略 DSL。当前 Rust `add_strategy<T>` 需要编译时具体类型；尚无任意 Python `ImportableStrategyConfig` 动态执行接线，原生策略入口也不支持用户源码即席运行。已接入的策略不是 Nautilus 全部能力，扩展应接官方公开接口，不修改上游。
+- `native_strategy_configure` saves an explicit official strategy request in the same Pi Conversation. `native_strategy_backtest` executes through the original Task, remote receipt, and bound catalog, without another strategy state machine.
+- Current single-instrument backtesting wires official EMA_CROSS (QuoteTick), ORDER_BOOK_IMBALANCE (L2), GRID_MARKET_MAKER (QuoteTick), and HURST_VPIN_DIRECTIONAL (official BAR/QuoteTick/TradeTick subscriptions). Grid-specific fields map individually to official GridMarketMakerConfig; instrument_id comes from the original request and optional base is parsed unchanged by official StrategyConfig. Omitted trade_size/expire_time_secs retain official None semantics. Other numbers/switches are explicit, without glue-supplied trading rules. Arbitrary Python strategies, multiple instruments, and all native strategies are not yet wired.
+- All Hurst/VPIN-specific fields map to public HurstVpinDirectionalConfig. Upstream performs window validation and indicator/trading algorithms. Official DataEngine aggregates INTERNAL BARs from actual TradeTicks; EXTERNAL BARs require complete BarType identifiers, not instrument IDs. Different BarTypes for one instrument can be read together. External non-time BARs used only as strategy inputs should explicitly set official venue.bar_execution=false and provide actual Quote/Trade execution data. Omission retains official true and its rejection behavior; do not silently alter matching semantics.
+- Replay uses original event/availability windows, official accounts/matching/fees, and native statistics. Do not fill missing values with zero or treat a backtest as independent OOS validation. Account execution still allows only existing EMA_CROSS; registering Grid, Hurst/VPIN, or order-book backtests does not enable account execution.
+- Custom parameter-grid enumeration, batch selection, and scan execution are retired. Web/API/CLI no longer create, retry, or cancel-and-resubmit scans. Historical scans retain original requests, Tasks, results, and receipts as read-only state. Necessary stop actions address pending child tasks under original identities, without new backtests.
+- Retired research scoring, review allocation, ensemble fit/apply/freeze, custom factor tools, and legacy PM science creation have no compatibility execution. Do not reinstall old plugins for historical records. Rust job no longer depends on the WASM interpreter or Clarabel solver. Historical Wire types and rejection tests may retain identifiers without supporting execution. Preserve actual capital/account and source-data code according to its call graph, not keyword deletion.
+- Native compatibility means using official configuration, strategy, indicator, data, and report interfaces, not another strategy DSL. Rust `add_strategy<T>` currently requires a concrete compile-time type. Arbitrary Python `ImportableStrategyConfig` dynamic execution is not wired, and native strategy entrypoints do not execute ad hoc user source. Wired strategies are not all Nautilus capabilities; extend public interfaces without changing upstream.
 
-`market-history hyperliquid-funding` 默认仍保存官方适配器原始 `FundingRateUpdate`。显式同时给出 `--settled-history-jsonl <原侧车>` 与 `--historical-settlement` 时走离线事后结算适配，不请求网络：保留原 `event_ns`/费率，以该原始时间同值设置 `next_funding_ns`、`ts_event` 和假定的 `ts_init`，不取整、不计算资金费。输出目录须为新目录；目标 native catalog 可已有行情，但不得已有资金费，此模式不做增量混合/覆盖。既有资金费 manifest 在数据写入前保存明确范围，失败不留下无标签的适配数据。
+`market-history hyperliquid-funding` still defaults to saving original official-adapter `FundingRateUpdate` records. Explicitly supplying both `--settled-history-jsonl <original-sidecar>` and `--historical-settlement` selects offline post-hoc settlement adaptation with no network request. Preserve original `event_ns`/rate, setting `next_funding_ns`, `ts_event`, and assumed `ts_init` to that same original timestamp without rounding or computing funding payments. Output must be a new directory. A target native catalog may already contain market data but not funding data; this mode neither incrementally mixes nor overwrites funding. The existing funding manifest records explicit scope before writing data, so failure does not leave unlabeled adapted data.
 
-该目录用于 `native-strategy-backtest` 时须显式选择 `FundingRateUpdate`，不能只导入不回放；正式结果保留事后结算限制 notes。真实接收/发布时间未知，不能称严格 PIT 或无前视认证；策略若将这些费率用于信号仍有前视风险。导入不提供历史结算价格，官方引擎采用已有 mark 或盘口中点，不等于 Hyperliquid 真实支付；读取行数不证明全部结算，须核对官方持仓资金调整与账户事件。L2 OBI 加资金费仍保持原生 book-to-quote 管道；加入 MarkPrice 等其他选择器的组合不在本次接线范围。
+Using that catalog with `native-strategy-backtest` requires explicit `FundingRateUpdate` selection, not import without replay. Formal results retain post-hoc settlement limitation notes. Actual receipt/publication times are unknown, so do not claim strict PIT or no-lookahead certification; using these rates as signals still risks lookahead. Import provides no historical settlement prices. The official engine uses existing marks or book midpoints, not necessarily actual Hyperliquid payments. Read row counts do not establish all settlements; inspect official position funding adjustments and account events. L2 OBI plus funding retains the native book-to-quote pipeline. Combinations with other selectors such as MarkPrice are outside this wiring scope.
 
-## 市场数据职责边界
+## Market-data responsibility boundary
 
-原生行情以 Nautilus `ParquetDataCatalog` 为权威。QuaZonai 保存来源适配、任务回执及 DatasetConfig 引用，不另外定义行情格式或因登记而复制 catalog。CHD 等外部格式仍须转换为原生记录；其来源接收时钟与重连重复语义不能用通用时间戳去重替代。
+Native market data is authoritative in Nautilus `ParquetDataCatalog`. QuaZonai stores source adaptation, task receipts, and DatasetConfig references, not another market-data format or catalog copies created by registration. External formats such as CHD still require native conversion. Source receipt clocks and reconnection-duplicate semantics cannot be replaced by generic timestamp deduplication.
 
-流式适配器只保留有界缓冲、同一 `ts_init` 记录不跨文件及连续精度版本分段；编码 metadata 由上游 `EncodeToRecordBatch` 提供，读写使用官方 catalog API。固定上游会拒绝混合精度与重叠文件区间，因此不能把这些来源分段误删为重复存储引擎。
+Streaming adapters retain only bounded buffering, keep records with the same `ts_init` within a file, and segment contiguous precision versions. Upstream `EncodeToRecordBatch` provides encoding metadata; official catalog APIs perform reads/writes. Pinned upstream rejects mixed precision and overlapping file intervals. Do not delete these source segments as if they were a duplicate storage engine.
 
-## 账户资金退出运行配置
+## Account capital-exit runtime configuration
 
-既有远程 Nautilus 入口通过 `QZ_NAUTILUS_ACCOUNTS` 显式配置账户数组；每项包含 `id`、`clientId`、`accountId`、`mode` 和原生现货 `instruments`。Paper 另外要求 `startingBalance` 与显式 `paperFeeRate`；LIVE 使用 `accountAddress` 指定 master 地址，`network` 选择 mainnet/testnet。签名密钥通过账户宿主读取的 `HYPERLIQUID_PK` / `HYPERLIQUID_TESTNET_PK` 注入，不写入源码或业务请求。
+The existing remote Nautilus entrypoint explicitly configures an account array through `QZ_NAUTILUS_ACCOUNTS`. Each entry contains `id`, `clientId`, `accountId`, `mode`, and native spot `instruments`. Paper additionally requires `startingBalance` and explicit `paperFeeRate`. LIVE uses `accountAddress` for the master address and `network` for mainnet/testnet. Inject signing keys through the account host's `HYPERLIQUID_PK` / `HYPERLIQUID_TESTNET_PK`, never source code or business requests.
 
-应用账户连接 URL 指向既有 Nautilus 服务的 `/accounts/<id>/`，凭据沿用该服务配置。`QZ_ACCOUNT_BINARY` 可指定原生宿主，默认使用科学可执行文件同目录的 `account-runtime`。账户业务记录与官方缓存保存在既有 Nautilus 数据目录下 `accounts/<id>/`；保留该目录以恢复原始账户和未决订单。原生宿主使用 `cargo build --locked -p job --features account-runtime --bin account-runtime` 构建，并由现有镜像构建脚本打包。
+Application account URLs point to `/accounts/<id>/` on the existing Nautilus service and use its credentials. `QZ_ACCOUNT_BINARY` optionally selects the native host, defaulting to `account-runtime` beside the science executable. Account business records and official caches reside in `accounts/<id>/` under the existing Nautilus data directory. Preserve it for original account/pending-order recovery. Build the native host with `cargo build --locked -p job --features account-runtime --bin account-runtime`; existing image scripts package it.
 
-新模拟请求的原生模型版本须声明 `0.69.0`，旧 `0.68.0` 模型请求不会被静默按新版执行；账户观测仅接受当前 `0.69.0`；旧版本不支持。账户缓存版本与上游 revision 必须和当前固定版本完全一致，否则明确拒绝，不自动迁移、重标版本、删除或清空原文件。
+New simulation requests must declare native model version `0.69.0`; old `0.68.0` requests are not silently executed as the new version. Account observation accepts only current `0.69.0`, not old versions. Cache version and upstream revision must exactly match the current pin; otherwise reject explicitly without migrating, relabeling, deleting, or clearing original files.
 
-Nautilus 固定到官方 `634e09456c949f488b2bfcf6b6897b33cbf218d7`（0.69.0）。账户 `executionProductTypes` 可显式设置为 `["SPOT"]`，复用上游订单、私有报告和恢复的产品范围限制；省略时仍包含所有产品，不改变旧账户恢复可见性。缩小范围前必须处理范围外未结订单与本地未决提交，范围外订单不会自动撤销；余额及定时全账户撤单仍是账户级，产品范围不是账户隔离。保留原账户目录，不通过清缓存完成升级。提交恢复显式采用官方 `RetainUnresolved`：未知提交结果保持未决，不把查询缺失推断成拒绝或完成；上游恢复预算耗尽后不再自动逐单重查，未确认的撤单/改单可恢复之前的已接受状态，须继续核实真实状态。
+Nautilus is pinned to official `634e09456c949f488b2bfcf6b6897b33cbf218d7` (0.69.0). Accounts may explicitly set `executionProductTypes` to `["SPOT"]`, reusing upstream product-scope restrictions for orders, private reports, and recovery. Omission still includes all products and preserves old recovery visibility. Before narrowing scope, handle out-of-scope open orders and local pending submissions. Out-of-scope orders are not automatically canceled. Balances and scheduled account-wide cancellations remain account-level; product scope is not account isolation. Retain original directories rather than clearing caches for upgrades. Submission recovery explicitly uses official `RetainUnresolved`: unknown submissions remain unresolved; absence from queries is not rejection/completion. Once the upstream recovery budget is exhausted, automatic per-order rechecks stop. Unconfirmed cancels/modifications may recover their previous accepted state and still require verification.
 
-资金流程使用账户页的“退出资金”或同一 HTTP API 的 CLI `capital context/status/preview/command/get`。Paper 的现金与可提取证据始终标记为模拟；实盘现货余额、提现路径可提取额和用户外部已完成提取分别核实。
+Capital operations use the account page's capital-exit action or the same HTTP API through CLI `capital context/status/preview/command/get`. Paper cash/withdrawable evidence always remains labeled simulated. Verify live spot balances, withdrawal-path availability, and user-completed external withdrawals separately.
 
-## 常用入口与命令
+## Common entrypoints and commands
 
-Node 版本由应用 `package.json` 的 engines 与部署配置约定；Rust 版本由 `rust-toolchain.toml` 固定，依赖由对应锁文件管理。
+Application `package.json` engines and deployment configuration specify Node versions; `rust-toolchain.toml` pins Rust. Respective lockfiles manage dependencies.
 
-| 目的 | 命令 |
+| Purpose | Command |
 | --- | --- |
-| 安装某个 TypeScript 应用依赖 | `npm ci --prefix apps/<应用名>` |
-| 检查服务、研究宿主或 CLI 类型 | `npm --prefix apps/service run typecheck`，或替换为 `research` / `cli` |
-| 检查 Web 类型 | `npm --prefix apps/web run typecheck` |
-| 构建 Web | `npm --prefix apps/web run build` |
-| 运行某个应用的单元测试 | `npm --prefix apps/<应用名> test`，只选择与改动有关的测试 |
-| 检查 Rust 格式 | `cargo fmt --all -- --check` |
-| 检查科学纯规则 | `cargo test --locked -p contracts -p domain --lib --tests` |
-| 生成科学合同 | `make generate-native-schema` |
-| 启动服务 | `npm --prefix apps/service start` |
-| 启动远程 Nautilus 适配 | `npm --prefix apps/nautilus start` |
-| 使用开发 CLI | `npm --prefix apps/cli start -- --help` |
+| Install one TypeScript application's dependencies | `npm ci --prefix apps/<application>` |
+| Check service, research host, or CLI types | `npm --prefix apps/service run typecheck`, replacing service with `research` / `cli` as needed |
+| Check Web types | `npm --prefix apps/web run typecheck` |
+| Build Web | `npm --prefix apps/web run build` |
+| Run one application's unit tests | `npm --prefix apps/<application> test`, selecting only relevant tests |
+| Check Rust formatting | `cargo fmt --all -- --check` |
+| Check pure science rules | `cargo test --locked -p contracts -p domain --lib --tests` |
+| Generate science contracts | `make generate-native-schema` |
+| Start the service | `npm --prefix apps/service start` |
+| Start the remote Nautilus adapter | `npm --prefix apps/nautilus start` |
+| Use the development CLI | `npm --prefix apps/cli start -- --help` |
 
-升级时若旧版本无法停靠已退出的空 venue 原生回测，可显式使用部署管理器 `apply-update --resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION`。须先用现有维护入口进入 DRAINING；部署管理器通过原 CLI/API 确认除该研究等待链外无其他活动后，才正常关闭原 app。目标发行版随后检查同一维护 epoch、原进程退出证据和唯一等待链；保留原任务、UNKNOWN、提交、数据与外部 Nautilus。启动后先恢复同一维护 epoch，再通过研究的原生失败复核 API 完成对账，不会自动重发或把退出当成取消。其他未完成工作仍阻止升级。
+If an old version cannot settle an exited empty-venue native backtest during upgrade, explicitly use deployment manager `apply-update --resume-exited-backtest CONVERSATION:OWNER:NATIVE:SUBMISSION`. First enter DRAINING through existing maintenance. The manager uses the original CLI/API to confirm no activity outside that research wait chain before normally shutting down the original app. The target release then checks the same maintenance epoch, original process-exit evidence, and unique wait chain. Preserve original tasks, UNKNOWN, submission, data, and external Nautilus. After startup, resume the same maintenance epoch and reconcile through the research native-failure review API. This neither automatically resubmits nor treats exit as cancellation. Other unfinished work still blocks upgrade.
 
-科学计算需要配置真实远程实例和数据路径；不得以虚构结果冒充原生运行完成。只运行当前需求必要的检查，不盲目执行 Makefile 中所有历史目标。
+Science requires actual remote instance/data-path configuration. Never substitute fabricated results for native completion. Run checks necessary for the current need rather than every historical Makefile target.
 
-## 原生条件订单预览
+## Native conditional-order preview
 
-既有账户适配器提供 `POST /accounts/<id>/orders/preview`（相同 client/account 身份合同；请求类型见 `packages/contracts/src/native-order-preview.ts`）。它直接用 Nautilus `OrderFactory` 构造 STOP_LOSS (`StopMarket`)、TAKE_PROFIT (`MarketIfTouched`) 或 BRACKET，再调用官方 Hyperliquid 校验；价格和数量必须符合已配置合约的原生精度与步长。Bracket 使用 IOC Limit 入场、OTO 关联和 OUO 减仓退出腿，不另写触发或订单组引擎。
+The existing account adapter provides `POST /accounts/<id>/orders/preview` with the same client/account identity contract; see `packages/contracts/src/native-order-preview.ts`. It directly constructs STOP_LOSS (`StopMarket`), TAKE_PROFIT (`MarketIfTouched`), or BRACKET through Nautilus `OrderFactory`, then invokes official Hyperliquid validation. Price/quantity must match the configured instrument's native precision/increments. Bracket uses an IOC Limit entry, OTO association, and OUO reducing exit legs, not a custom trigger/order-group engine.
 
-此入口仅预览：独立临时 OrderFactory 不消耗账户策略订单 ID、不写 Cache、不提交订单，也不启用自动保护。当前 Hyperliquid 官方适配器在 entry 成交后激活暂存子单，不得解释为交易所原子 OCO；Sandbox 模拟也不是实盘支持证明。预览不检查余额或市场接受性，不保证止损成交价。既有目标和资金退出默认仍按原 IOC 路径执行，不自动附加保护单。
+This entrypoint is preview-only. Its temporary independent OrderFactory does not consume account strategy order IDs, write Cache, submit orders, or enable automatic protection. Current official Hyperliquid activates staged children after the entry fill; do not describe it as exchange-atomic OCO. Sandbox simulation is not evidence of live support. Preview checks neither balances nor market acceptance and does not guarantee stop execution prices. Existing targets/capital exits retain their original IOC path without automatically attaching protective orders.
 
-当前新 paper bracket 返回 `account_native_paper_bracket_recovery_unverified`，live bracket 返回 `account_native_live_brackets_not_supported`；capabilities 均标为不支持。未完成父成交/子腿缩量、出口成交/关联撤单等中间恢复窗口的完整验证，不得将预览、协议 ACK、Sandbox 或稳定态重启测试宣传为实盘保护单支持。普通无 bracket 的 IOC 路径不变。这是 QZ 接线的真实边界，不修改或限制 Nautilus 本体。
+New paper brackets currently return `account_native_paper_bracket_recovery_unverified`; live brackets return `account_native_live_brackets_not_supported`. Both capabilities are unsupported. Complete verification of intermediate recovery windows, including parent fills/child resizing and exit fills/linked cancellations, is unfinished. Do not market preview, protocol ACK, Sandbox, or steady-state restart tests as live protective-order support. Ordinary non-bracket IOC remains unchanged. This is QZ's actual integration boundary, not a modification or limitation of Nautilus itself.
 
-现有协议中的 `nativeBrackets` 字段及 `observation cancel-protection` / `POST /api/v3/observations/:id/cancel-protection` 不代表新 bracket 可提交。原保护订单的查询与取消沿用真实账户绑定和官方订单状态；不得伪造恢复、自动放行或清空原缓存。
+Existing `nativeBrackets`, `observation cancel-protection`, and `POST /api/v3/observations/:id/cancel-protection` do not imply support for submitting new brackets. Query/cancel existing protective orders through actual account bindings and official states; do not fabricate recovery, automatically allow execution, or clear original caches.
 
-## 原生绩效与可选价格基准
+## Native performance and optional price benchmarks
 
-账户收益报告额外注册 Nautilus Calmar、95% VaR、95% Expected Shortfall 与 Ulcer Index；既有普通账户沿用 252 天年化，现货日报沿用 365 天。不可计算项保持空值及原因，不补零。Observed Spot 的 hold/rebalance 比较另外输出以真实 hold 账户为基准的原生相对统计。
+Account returns additionally register Nautilus Calmar, 95% VaR, 95% Expected Shortfall, and Ulcer Index. Ordinary accounts retain 252-day annualization; spot daily reports retain 365 days. Uncomputable metrics remain null with reasons, not zero. Observed Spot hold/rebalance comparisons also return native relative statistics against the actual hold account.
 
-既有策略参数/科学请求的 `simulationSettings`（原生请求中的 `settings`）可配置 `price_benchmark`，值为一个完整的 `NativeBarSelectionV1`：`schema_version`、单元素 `bar_types`、十进制字符串 `event_start_ns` / `event_end_ns` / `decision_cutoff_ns`，以及可省略的 `maximum_rows`。不配置则不计算价格基准；这不是对旧版本科研请求的兼容承诺。
+Existing strategy/science `simulationSettings` (native request `settings`) may include `price_benchmark`, a complete `NativeBarSelectionV1`: `schema_version`, single-element `bar_types`, decimal-string `event_start_ns` / `event_end_ns` / `decision_cutoff_ns`, and optional `maximum_rows`. Omission means no price benchmark. This is not compatibility for older science requests.
 
-基准读取本次任务已授权的同一 catalog，不下载或生成市场价格。选择窗口须包含首个收益日起点的闭合价格和各日终点的闭合价格；窗口可以比策略交易窗口早一根 bar。仅支持已知右开时间语义的 INTERNAL 时间 bar，报价币种必须等于报告币种，且各 UTC 日界必须有真实闭合价格和完整账户收益；不匹配时报告 `BENCHMARK_*` 原因，不转换币种、不前填、不自动换用其他标的。输出明确标记为价格收益基准，排除费用及资金费率，采用零无风险利率，不等价于实际买入持有账户。统计直接调用 Nautilus 原生 Alpha、Beta、Information Ratio、Tracking Error、Treynor 和上下行捕获率。
+Benchmarks read the same catalog authorized for the task without downloading or generating market prices. The selected window must include closed prices at the first return day's start and every day end; it may begin one bar before the trading window. Only INTERNAL time bars with known right-open semantics are supported. Quote currency must equal report currency, with actual closed prices and complete account returns at every UTC day boundary. Mismatches return `BENCHMARK_*` reasons without currency conversion, forward fill, or automatic instrument substitution. Output explicitly identifies a price-return benchmark excluding fees/funding and using a zero risk-free rate, not an actual buy-and-hold account. Statistics directly use native Nautilus Alpha, Beta, Information Ratio, Tracking Error, Treynor, and upside/downside capture.
 
-价格基准的实际读取截止取配置截止与当前 simulation.selection.decision_cutoff_ns 的较早者，避免同一策略参数跨验证/留出窗口复用时读取未来才到达的历史 bar。比较必须覆盖当前请求内全部完整 UTC 日，缺首日、尾日、中间日、重复日或未知账户收益均不可用；部分首尾日不参与比较，不能用原生快照环形缓冲区的残留尾段冒充完整窗口。
+Actual benchmark read cutoff is the earlier of configured cutoff and current simulation.selection.decision_cutoff_ns, preventing future-arriving historical bars when reusing strategy parameters across validation/holdout windows. Comparisons must cover all complete UTC days in the current request. Missing first/last/intermediate days, duplicates, or unknown account returns make them unavailable. Partial boundary days are excluded. Do not present a residual tail of the native snapshot ring buffer as a complete window.
 
-## 双路研究评级的当前接线
+## Current dual-path research assessment wiring
 
-`native_strategy_logic_review` 在已配置策略执行前创建官方 Pi Durable 子 Task。子 Task 用官方 pi-ai 的独立上下文审阅声明的经济机制、前视风险、自由度、参数依据和执行假设；对上游策略可显式传入需审阅的 `strategies` 与预声明完整请求列表，省略时只审阅已注册策略，不读取主对话或原生回测结果，也不声称检查过未提供的源码。结果绑定原始策略请求、配置 Task ID、模型与评级规则版本；模型缺失或响应无效按真实失败处理。逻辑星级仅为研究判断，不是收益概率。
+`native_strategy_logic_review` creates an official Pi Durable child Task before executing the configured strategy. The child uses independent official pi-ai context to review declared economic mechanisms, lookahead risks, degrees of freedom, parameter rationale, and execution assumptions. Upstream strategies may be explicitly selected with `strategies` and preregistered complete requests. Omission reviews only the registered strategy, without reading the parent conversation/native results or claiming inspection of unsupplied source. Results bind the original strategy request, configuration Task ID, model, and assessment-rule version. Missing models/invalid responses fail honestly. Logic stars are research judgments, not profit probabilities.
 
-`native_strategy_assessment_report` 创建另一个官方子 Task，读取同一配置的真实逻辑审阅 Task 及原生执行 Task。此入口读取显式回测及原生敏感性事实；历史 WF 仅作为原始历史。未运行时数据状态为 `NOT_RUN`，缺少事前方法或必要结果时综合星级为 `null`，不以模型建议覆盖缺失事实；完整局部方法的评级范围见下文。历史原生回测及探索参数扫描不得冒称独立验证。旧报告仍通过原 Task ID 留存，改参后的综合报告不复用不匹配的逻辑评级。
+`native_strategy_assessment_report` creates another official child Task to read actual logic-review and native-execution Tasks for the same configuration. It reads explicit backtests/native sensitivity facts; historical WF remains historical. Before execution, data state is `NOT_RUN`. Missing pre-execution methodology or required results leaves combined stars `null`, without model advice overriding absent facts. See below for ratings of complete local methods. Historical backtests/exploratory scans are not independent validation. Old reports remain under original Task IDs; changed parameters do not reuse mismatched logic ratings.
 
-这是完整自动双路流程的首个接线切片，不是已完成的数据验证产品；现有普通研究回测仍保持原收尾方式。审阅工具可在同一 Conversation 的后续 Submission 调用，不增设交易门禁、审批或资金权限。
+This is the first integration slice of a complete automatic dual-path flow, not a finished data-validation product. Ordinary research backtests retain their existing completion behavior. Review tools may run in later Submissions of the same Conversation without new trading gates, approvals, or capital permissions.
 
-自动 walk-forward 分折与训练择优执行已退役，不提供新调用。历史 WF Task、原请求和原始报告仍可只读，并沿原回执恢复或取消未决执行；历史大型表继续用有界流式解析，不能因入口退役退回全量读取。
+Automatic walk-forward fold generation/training selection is retired with no new calls. Historical WF Tasks, requests, and reports remain read-only, and pending execution may recover/cancel through original receipts. Large historical tables still use bounded streaming parsing; retirement is not a reason to read everything into memory.
 
-新研究由 Pi 在见到结果前声明完整显式原生请求及训练/验证用途，逐次配置并调用同一原生回测。每次执行使用各自明确窗口、账户与上游配置；QZ 不生成折、不选胜出候选、不重新计算统计。原始事件窗口、可用时间边界、费用与原生报告保持原样。
+For new research, Pi declares complete explicit native requests and training/validation purposes before seeing results, then configures and invokes native backtests sequentially. Each execution has explicit windows, accounts, and upstream configuration. QZ does not generate folds, select winners, or recompute statistics. Original event/availability boundaries, fees, and reports remain unchanged.
 
-事前逻辑审阅可在 validationMethod.requests 中声明多个完整请求。后续每个回测按原始请求、catalog、target 和事前 Task 时序关联原预审，不因逐次配置的 Task ID 改变就丢失已声明覆盖，也不把未声明请求或旧 WF 形状纳入覆盖。综合报告保留本会话全部真实尝试与失败；跨会话试验完整性未经核查。
+Pre-execution logic review may declare multiple complete requests in validationMethod.requests. Each subsequent backtest links to the pre-review through original request, catalog, target, and task timing. Sequential configuration Task ID changes do not lose declared coverage; undeclared requests/old WF shapes do not gain coverage. Combined reports retain all actual attempts/failures in this conversation; completeness across conversations is unverified.
 
-事前逻辑工具的 `validationMethod` 记录显式完整请求、用途及邻域/费用假设；这些声明不是 QZ 分折或择优参数。敏感性工具仅按明确场景调用原生回测，原始结果、失败与每次调用均保留原 Task，取消和恢复复用原回执，不把同窗口敏感性冒充独立样本外。
+The pre-review tool's `validationMethod` records explicit complete requests, purpose, and neighborhood/cost assumptions, not QZ fold/selection parameters. Sensitivity tools invoke native backtests only for explicit scenarios. Original results, failures, and each call retain their Tasks; cancellation/recovery reuse receipts. Same-window sensitivity is not independent OOS validation.
 
-综合审阅读取真实 Task，核对事前候选/方法与实际执行，并呈现原生统计、显式窗口与敏感性、交易笔数及已记录试验。可用证据齐备后由独立 Pi 子 Agent 判断是否足以给出 0–5 星，逻辑与数据分开、综合不取平均；材料不足或 Agent 认为不充分时保持 `null`。有效评级明确标记 `RATED_WITH_DISCLOSED_LIMITATIONS`，只评价本会话已记录方法，不是概率、全面防过拟合认证或交易门禁。CPCV、跨会话试验历史和独立源数据审计未执行时如实披露，不机械禁止有限范围研究判断。官方统计保留原值，IEEE754 十六进制只作展示解码，缺失/非有限数不补零。
+Synthesis reads actual Tasks, compares preregistered candidates/methods with execution, and presents native statistics, explicit windows/sensitivity, trade counts, and recorded trials. With available evidence complete, an independent Pi child agent judges whether it supports 0–5 stars. Logic/data remain separate and combined stars are not their average. Missing material or insufficient evidence in the agent's judgment leaves `null`. Valid ratings are explicitly `RATED_WITH_DISCLOSED_LIMITATIONS`, assessing only this conversation's recorded method, not probability, comprehensive overfitting certification, or a trading gate. Disclose unperformed CPCV, cross-conversation trial review, or independent source-data audits without mechanically forbidding scoped research judgment. Preserve official statistics; IEEE754 hexadecimal decoding is display-only, and missing/nonfinite values are not zero.
 
-审阅绑定同时比较官方归一化请求、实际 catalog 和原生执行 target。省略与官方等义的 null 不构成新策略，不能绕过事前结果检查；相同请求在不同 catalog/target 的结果不拼接为同一研究证据。这里记录的是执行来源，不是数据内容独立审计、不可变快照或证明。报告保留原生 `run.outcome`、notes 与数据行数；官方 `stopped` 是真实停止结果，不冒充完整验证。样本范围按本次原始窗口与实际数据记录说明，不把派生缓存的更长日期范围当原始行情覆盖；USDT/USDC 不由胶水默认等值。
+Review binding compares the officially normalized request, actual catalog, and native target. Omission versus an officially equivalent null is not a new strategy or a way to bypass prior-results checks. Identical requests on different catalogs/targets are not combined as one evidence set. This records execution provenance, not an independent data audit, immutable snapshot, or proof. Reports retain native `run.outcome`, notes, and row counts. Official `stopped` is an actual stop, not complete validation. Describe sample scope using original windows/actual records, not longer derived-cache date ranges as raw coverage. Glue does not assume USDT/USDC equivalence.
 
-完整原生研究使用同一 Pi 工具循环：先 `native_strategy_brief` 读取已注册的原始请求与来源，再由 Agent 在未见结果时声明候选/方法并逻辑审阅，随后执行预声明显式窗口的原生历史回测、邻域/成本与综合报告。`native_strategy_backtest` 默认保存真实历史结果但不强制结束整个研究；单次独立回测可显式 `finishResearch: true` 收尾。此连接不另建调度器，不运行新策略DSL、不推断币种换算，也不下实盘订单。没有已注册的原生请求、catalog、target 或必需账户/费用假设时仍须取得真实输入，不能冒充已自动完成数据登记。
+Complete native research uses the same Pi tool loop: `native_strategy_brief` reads registered original requests/provenance, the agent declares candidates/methods and reviews logic before results, then executes declared native windows, neighborhood/cost checks, and synthesis. `native_strategy_backtest` saves actual history without forcibly ending the entire research by default. An independent single backtest may explicitly set `finishResearch: true`. This integration adds no scheduler, strategy DSL, currency-conversion inference, or live orders. Missing original request/catalog/target or required account/fee assumptions still require actual input; do not claim automatic data registration.
 
-费用/邻域证据须对应实际执行的显式策略配置，不得以策略 A 的结果冒称覆盖策略 B。原始费用、变更场景与 Task ID 原样保留，覆盖不足如实披露；已运行过的配置不能重新登记后冒充事前审阅。
+Cost/neighborhood evidence must match the actual explicit strategy configurations executed. Strategy A's results do not cover strategy B. Preserve original fees, changed scenarios, and Task IDs; disclose insufficient coverage. An executed configuration cannot be re-registered as if newly preregistered.
 
-最大化训练 Sharpe 只用于真实训练候选比较，不证明样本外或年化目标；报告保留官方收益口径、每折可用时间窗口、数据行数、成交数及选择历史，让 Agent 评价短样本与选择偏差，不把高值当稳定年化绩效。
+Maximizing training Sharpe only compares actual training candidates; it does not establish OOS or annualized objectives. Retain official return basis, per-fold availability windows, row/trade counts, and selection history so the agent can judge short samples and selection bias, rather than treating a high value as stable annualized performance.
 
-研究详情的 `assessments` 直接读取原 Pi 审阅 Task，返回真实状态、原始报告和 `CURRENT`/`HISTORICAL` 配置标识；比对原生请求、catalog/target 与配置 Task，不从 Agent 文本重算星级。现有 CLI `research get` 原样返回同一字段，Web 显示三路星级、未评级、限制和历史。证据链接 `/api/v3/research/:id/evidence/:taskId` 只读本研究原生回测/WF及审阅 Task，沿用 owner 认证；不暴露私有工具任务或跨研究记录，不建立第二报告存储。
+Research detail `assessments` directly reads original Pi review Tasks, returning actual states, original reports, and `CURRENT`/`HISTORICAL` configuration labels by comparing native requests, catalog/target, and configuration Task. It does not recompute stars from agent text. CLI `research get` returns the same field unchanged; Web displays three rating paths, unrated state, limitations, and history. Evidence links `/api/v3/research/:id/evidence/:taskId` read only this research's native backtest/WF/review Tasks with owner authentication, without exposing private tool tasks or other research or adding a second report store.
 
-历史回测已保存后，后续验证仍由官方活跃 Task/Submission 决定是否可停止，不能因 `COMPUTED` 隐藏停止入口。用户停止，或历史结果保存后模型调用失败（`model_error`），均可继续同一研究，历史结果移入原 `previousNativeResults`，原 Task 不重写。新提交前核查本会话全部原生回测/WF/敏感性 Task 及原远端回执，未决只读原回执，不重新 POST、不把取消/未知变成成功；新提交获得新的停止任务，避免重复使用已完成的停止命令。
+After historical results are saved, official active Task/Submission state still determines stoppability. Do not hide stop because of `COMPUTED`. User stops and later `model_error` after result persistence both permit same-research continuation. Historical results move to original `previousNativeResults`; original Tasks are not rewritten. Before a new submission, inspect all conversation backtest/WF/sensitivity Tasks and remote receipts. For unresolved work, only read original receipts: do not POST again or convert cancellation/unknown into success. New submissions get new stop tasks rather than reusing completed stop commands.
 
-## 显式固定规格研究情景
+## Explicit fixed-specification research scenarios
 
-原生策略请求默认按窗口起点读取当时已进入 catalog 的 instrument 定义。可显式使用 `instrument_definition.mode=STATIC_SCENARIO` 并指定目录中原始定义的精确 `ts_init_ns` 与 `ts_event_ns`，将该版本作为整个窗口的固定模拟规格交给官方 `BacktestEngine.add_instrument`。此路径不改原定义时间、不回填历史、不改行情数据、不重写上游，也不在情景中混入其他规格更新。
+Native strategy requests default to instrument definitions available in the catalog at the window start. Explicit `instrument_definition.mode=STATIC_SCENARIO` with an original catalog definition's exact `ts_init_ns` and `ts_event_ns` supplies that version as fixed simulation rules throughout the window to official `BacktestEngine.add_instrument`. It does not alter original definition timestamps, backfill history, change market data/upstream, or mix other specification updates into the scenario.
 
-每个显式窗口的原生回测结果均携带实际使用的定义时间和 `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED` 口径。时间外测试只表示该假设下按时间分离的结果，不验证历史规格，也不构成实盘证据。费用、币种和资金费模型仍须分别明确；无隐式 USDT/USDC 转换。默认严格路径的 `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` 仅描述目录可用时间，不冒称独立历史来源审计。
+Each explicit-window result carries actual definition times and `HYPOTHETICAL_STATIC_RULES_NOT_HISTORICALLY_VERIFIED`. Out-of-time tests only describe temporal separation under this assumption, not verified historical specifications or live evidence. Fees, currencies, and funding models remain separate explicit assumptions with no implicit USDT/USDC conversion. Default strict `CATALOG_DEFINITION_AVAILABLE_AT_WINDOW_START` describes catalog availability only, not an independent historical-source audit.
 
-原生请求的 `instrument_definition` 缺省为严格目录时点定义；只有显式 `STATIC_SCENARIO` 并给出真实目录定义的精确 `ts_init_ns`/`ts_event_ns` 才表示“假设这一规格整个窗口不变”。不改目录、行情或定义时间，不将未来定义偷偷重标历史。每个原生结果必须保存定义依据，严格模式仅证明目录定义在窗口开始已可用，不是独立源准确性审计。
+Omitted `instrument_definition` uses strict catalog-time definitions. Only explicit `STATIC_SCENARIO` with exact actual catalog `ts_init_ns`/`ts_event_ns` means assuming that specification throughout the window. Do not modify catalog/data/definition times or relabel future definitions as historical. Every native result retains definition basis. Strict mode establishes availability at window start, not an independent source-accuracy audit.
 
-STATIC_SCENARIO 原样贯穿配置、各显式回测与成本/邻域候选；原生指标不变。可作有限条件研究评级，状态为 `RATED_CONDITIONAL_STATIC_SCENARIO`、结论为条件情景，始终披露历史规格未核实，不能解释为真实历史可交易性、实盘证据或自动交易许可。报告/API/Web和历史扫描保留定义原时间与scope，不能混用严格历史与情景依据。
+STATIC_SCENARIO passes unchanged through configuration, each explicit backtest, and cost/neighborhood candidates; native metrics remain unchanged. It may support limited conditional ratings marked `RATED_CONDITIONAL_STATIC_SCENARIO`, with conditional conclusions and historical specifications always disclosed as unverified. It is not actual historical tradability, live evidence, or automatic trading permission. Reports/API/Web and historical scans retain original definition times/scope without mixing strict historical and scenario bases.
 
-历史扫描只读展示原生 Task 及原结果状态：stopped 仍为真实停止，不重标完整验证，不再计算排名或生成热图。恢复、查看与停止均不得重新运行旧候选；原始指标、时间与数据口径保持。
+Historical scans display original native Tasks/results read-only: stopped remains stopped, not complete validation. They no longer rank or generate heatmaps. Recovery, viewing, and stopping must not rerun old candidates. Preserve original metrics, timestamps, and data basis.
 
-原生策略结果的 `equity_performance` 只读官方 PortfolioAnalyzer 的 portfolio_returns（原始权益快照），直接调用官方 CAGR/Sharpe 的252与365两种频率，完全独立于可能回退到持仓收益的 canonical 默认统计。官方权益不可用时保留原因，不以持仓收益替代或隐式转换币种。原始快照UTC日期数、收益日数、未定价快照和时间范围同时展示；官方跨日延续不是每天实际观测，短样本CAGR只是外推，不是已实现年收益。WF可显式选择 `EQUITY_PERFORMANCE` 与频率，扫描以独立权益指标ID保持同名canonical值分离；无需新增交易门禁。
-盘口快照不等于逐事件增量数据；报告必须披露已知档位、采样频率、遗漏空簿/异常档位及carry/checkpoint语义，不把快照撮合结果宣称真实高频可成交性。
+Native result `equity_performance` only reads official PortfolioAnalyzer portfolio_returns (original equity snapshots), directly invoking official CAGR/Sharpe at 252/365 frequencies independently of canonical defaults that may fall back to position returns. If equity is unavailable, retain the reason without position substitution or implicit currency conversion. Display original snapshot UTC-date count, return-day count, unpriced snapshots, and range. Official cross-day carry-forward is not daily observation; short-sample CAGR is extrapolation, not realized annual profit. WF may explicitly select `EQUITY_PERFORMANCE` and frequency; scans use independent equity metric IDs to distinguish same-named canonical values without new trading gates.
 
-原生策略回放在既有 Rust job 内使用官方 `BacktestNode(chunk_size=4096)`，不新增服务或回放引擎。catalog 适配只提供精确选定的原始初始定义、严格模式后续定义及原窗口数据；静态情景不混入定义更新。数据 `start_time` 用于可用时间过滤，node 的 `start` 只映射显式 `available_start_ns`；缺省仍由官方引擎从首个完整回放事件推导。canonical 的固定 `run_config_id` 为 `native-strategy`，原始账户/权益/订单/时间字段不改写。
+Order-book snapshots are not event-by-event deltas. Reports must disclose known depth, sampling frequency, omitted empty books/invalid levels, and carry/checkpoint semantics. Snapshot matching results do not establish actual high-frequency executability.
 
-按公开 catalog 文件时间区间将相交、同端点及连锁重叠文件归为一组，耗尽并释放当前组后再开下一组；组内使用官方 `optimize_file_loading=false` 的逐文件合并。不得用目录优化替代：已验证其在跨文件同 `ts_init` 的 CLEAR/ADD/F_LAST 帧中可能交错行。F_LAST 聚合、跨 selector 时序、同时间块、撮合与统计全部由官方 node/engine 处理。可用内存仍取决于最大重叠文件组、同时间数据量及订单历史，不保证固定 RSS。
+Native replay uses official `BacktestNode(chunk_size=4096)` inside existing Rust job, not a new service/engine. Catalog adaptation supplies only exact selected original initial definitions, strict-mode subsequent definitions, and window data. Static scenarios do not mix definition updates. Data `start_time` filters availability; node `start` maps only explicit `available_start_ns`, otherwise upstream infers it from the first complete replay event. Canonical fixed `run_config_id` is `native-strategy`; original account/equity/order/time fields remain unchanged.
 
-原生策略在启动 node 前复用既有有界文件读取完整计数并校验帧尾，`data_rows_by_type` 仅表示预运行校验扫描当时观察到的原始行数，不是回放消费数或一致目录快照。报告现有 notes 同时披露实际reader读取行数（含预取）及目录一致性未验证；Parquet仅支持Latest，read-only不阻止其他导入者，组发现后添加的文件可能包含或不包含，替换文件即使行数不变也可能改变内容。不同fold/candidate不保证同一目录内容，不以相同行数冒充一致输入；不新增冻结、哈希或交易门禁。测试中的启动即停得到选中9行、预取6行、回放0帧，三者口径不同。具体 native_strategy 集成测试与相同 canonical 对照覆盖真实上游策略执行、费用、资金率同时间排序、显式/缺省起点及静态/历史定义；临时合成数据不充当历史交易或盈利证据。
+Group intersecting, shared-endpoint, and transitively overlapping files using public catalog time ranges. Exhaust/release the current group before opening the next. Within a group, use official per-file merging with `optimize_file_loading=false`, not directory optimization: the latter has been observed to interleave cross-file CLEAR/ADD/F_LAST frames sharing `ts_init`. Official node/engine handles F_LAST aggregation, cross-selector order, same-time blocks, matching, and statistics. Memory still depends on the largest overlapping file group, same-time volume, and order history; fixed RSS is not guaranteed.
 
-本次顺序独立进程压力测试使用临时合成648份原生Parquet、2653560行delta及884520完整帧，官方OBI dry-run：原预载路径峰值648732 KiB、回放35.91秒；延迟组官方node含选中行预计数峰值160028 KiB、69.59秒。完整canonical结果仅显式run标签不同，资金与时间字段未删改。此样本内峰值约降75%、时间约增94%，不外推真实27天数据或实盘效果。相关定向验证使用jobs=1、debug=0；因共享构建空间不足，最终定向重试关闭incremental缓存，不扩展为额外验证流程。
+Before node startup, native strategies reuse bounded file reads for complete counts/frame-tail validation. `data_rows_by_type` describes raw rows observed by that pre-run scan, not consumed replay rows or a consistent catalog snapshot. Existing notes disclose actual reader rows including prefetch and unverified catalog consistency. Parquet supports Latest only; read-only access does not block other importers. Files added after group discovery may or may not be included, and replacement can change contents without row-count changes. Folds/candidates do not guarantee identical contents; equal counts are not identical inputs. Add no freezes, hashes, or trading gates. A startup-then-stop test selected 9 rows, prefetched 6, and replayed 0 frames, distinct measures. Targeted native_strategy integration tests and same-canonical comparisons cover actual upstream strategies, fees, funding same-time ordering, explicit/default starts, and static/historical definitions. Temporary synthetic data is not historical trading/profit evidence.
 
-本轮科学减法已删除自有 BAR 容量估算、账户 sizing、目标混合、资金曲线规划、旧目标回放、组合数值优化和库存估值执行入口。历史合同和原始资金记录保留，不代表旧算法可执行。界面只展示上游统计与原始权益，不重算年化、收益或回撤；原始回撤负值保留，越接近 0 损失越小，API 数值排序不变，界面首次按降序显示。
-## 用户 Rust 原生策略的静态接线
+This sequential independent-process stress test used 648 temporary synthetic native Parquet files, 2653560 delta rows, and 884520 complete frames with official OBI dry-run. Original preload peaked at 648732 KiB and replayed in 35.91 seconds; deferred-group official node including selected-row pre-counting peaked at 160028 KiB and took 69.59 seconds. Complete canonical results differed only in explicit run labels; capital/time fields were retained. In this sample peak memory fell about 75% and time rose about 94%; do not extrapolate to real 27-day data or live effects. Targeted checks used jobs=1/debug=0. Final targeted retries disabled incremental caching due to shared-build disk pressure, not as a new validation workflow.
 
-用户策略作为独立 Rust crate 实现官方 Nautilus `Strategy`，不属于 QZ 的科学计算实现。请求可使用 `strategy: { kind: "REGISTERED", name, config }`；名称和配置由用户 crate 的注册函数解释，QZ 不维护策略名称白名单、不实现策略 DSL、不推断参数或重写算法。默认发行 `job` 未注册用户策略时明确拒绝，不回退到四个示例。
+This science simplification removed custom BAR capacity estimation, account sizing, target blending, capital-curve planning, old target replay, portfolio numeric optimization, and inventory valuation entrypoints. Retain historical contracts and capital records without implying executable old algorithms. UI displays upstream statistics/raw equity without recomputing annualization, returns, or drawdowns. Preserve negative drawdowns, where nearer 0 means less loss. API numeric sorting stays unchanged; UI initially displays descending order.
 
-现有 job 库公开 `native_strategy::registry::StrategyRegistration`：函数接收官方 `BacktestEngine`、请求的 `InstrumentId`、名称及原配置，构造用户策略并调用官方 `engine.add_strategy(...)`。用户 crate 的二进制入口调用 `job::cli::main_with_registration(Some(register))`，复用相同 CLI、日志隔离、单次回测 与结果传输；每个回测均创建独立原生实例。用户 crate 依赖此仓库 `apps/job` 及与 Cargo.lock 固定 revision 完全相同的 Nautilus crate，使用统一 precision feature；新策略类型需要编译部署，已编入策略的配置变更不要求重新编译。此机制不是 `.so` 动态加载，也不增加 Python 环境。
+## Static wiring of user Rust native strategies
 
-部署沿用现远程 native 服务的 `QZ_JOB_BINARY` 和 `QZ_TICK_JOB_BINARY`。原生策略 走后者，未配置则使用前者；必须将相应路径指向新构建的用户 runner。既有 `runtimes/native/build-native-image.mjs --job-binary /path/to/user-runner --output-dir /outside/new-directory` 支持打包实际二进制并生成其原生 manifest；若部署配置了 `QZ_NATIVE_MANIFEST`，必须一起安装对应新产物，旧 manifest 与新二进制不匹配会拒绝启动。保留 catalog、任务回执、账户缓存与登录数据，不删除存储完成升级。
+User strategies implement official Nautilus `Strategy` in an independent Rust crate, outside QZ's scientific implementation. Requests may use `strategy: { kind: "REGISTERED", name, config }`, interpreted by the user crate's registration function. QZ has no strategy-name whitelist or DSL and does not infer parameters/rewrite algorithms. A default release `job` without registered user strategies rejects explicitly rather than falling back to four examples.
 
-此接缝放开的是策略 Rust 类型，不声称现有数据/账户接线支持 Nautilus 所有用法：请求仍为既有单 `instrument_id`、selectors 和 venue 合同；多标的、其他市场适配与实盘生命周期需另按原生能力接线。不得把构造 API 完成等同于某个用户策略已编译、部署或回测成功。
+Existing job exposes `native_strategy::registry::StrategyRegistration`, receiving official `BacktestEngine`, requested `InstrumentId`, name, and original configuration to construct the user strategy and invoke official `engine.add_strategy(...)`. The crate's binary calls `job::cli::main_with_registration(Some(register))`, reusing CLI, log isolation, single backtests, and result transport. Every backtest creates a separate native instance. The crate depends on repository `apps/job` and Nautilus crates at exactly the Cargo.lock revision with unified precision features. New strategy types require build/deployment; configuration changes to compiled types do not. This is neither `.so` loading nor a Python environment.
 
-用户 crate 若需多标的、多 venue 或完整引擎配置，可实现 `native_configured::ConfiguredRunFactory`，并调用 `cli::main_with_native_hooks(single_registration, Some(factory))`。工厂接收实际绑定的 catalog 根目录、用户注册名与原始配置，返回 `ConfiguredNativeRun { config: BacktestRunConfig, install }`；`config` 由用户代码调用官方 typed builders 构造，`install` 在新建的官方 engine 上安装一个或多个原生 Strategy。工厂必须对未知注册名返回错误，默认 job 未注册工厂明确失败。typed工厂可先安装官方Actor/Controller，再由上游生命周期动态创建策略，QZ不在运行前强制策略数量；输出原生结果，不将空结果或无交易推断为策略验证成功。单策略REGISTERED入口仍约定立即安装Strategy，不能将该窄契约当作完整配置限制。
+Deployment reuses remote native service `QZ_JOB_BINARY` and `QZ_TICK_JOB_BINARY`. Native strategies use the latter, falling back to the former if unset; point the appropriate path at the new user runner. Existing `runtimes/native/build-native-image.mjs --job-binary /path/to/user-runner --output-dir /outside/new-directory` packages the actual binary and generates its native manifest. If `QZ_NATIVE_MANIFEST` is configured, install the matching new artifact too; an old manifest/new binary mismatch rejects startup. Preserve catalogs, task receipts, account caches, and login data rather than deleting storage to upgrade.
 
-对应 `native-configured-backtest --catalog ...` 输入为 `{ schema_version: 1, name, config }`，仍在现 job 进程/远端 worker 内执行。QZ 不复制多 venue/data/engine 的字段 schema，也不覆盖用户选择的 `DataEngineConfig`、`emit_quotes_from_book`、官方流式块大小或撮合参数。运行前检查工厂返回配置中每个 catalog 的真实路径仍在本次允许根目录下，当前仅接本地 file 协议；这项路径检查不是对任意用户 Rust 代码的沙箱隔离。工厂不得另写数据源或算法来绕过官方 API。
+This seam opens Rust strategy types, not all Nautilus data/account use cases. Requests still use existing single `instrument_id`, selectors, and venue contracts. Multi-instrument, other markets, and live lifecycle require separate native integration. Implemented construction APIs do not establish that a particular strategy compiled, deployed, or backtested successfully.
 
-返回 `native_results` 为官方 `BacktestResult` 原序列化值，不重新年化、打分、择优或聚合；当官方配置 `dispose_on_completion=false` 时附原 `canonical_result`，启用官方释放则明确 `OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG`，不修改该选择。官方 `raise_exception=false` 可能产生空 results；空数组不是已完成完整窗口或策略有效性证明。此入口不自动生成现单标的 `equity_performance` 包装，不把两种报告形状混用。现Pi任务与远端回执仍拥有执行状态，不能把重新构建node称为从中途checkpoint恢复。
+For multiple instruments/venues or complete engine configuration, the crate may implement `native_configured::ConfiguredRunFactory` and call `cli::main_with_native_hooks(single_registration, Some(factory))`. The factory receives the actual bound catalog root, registered name, and original configuration, returning `ConfiguredNativeRun { config: BacktestRunConfig, install }`. User code builds `config` through official typed builders; `install` adds native Strategies to the new official engine. Unknown names must fail, as does a default job without a factory. Typed factories may install official Actors/Controllers first and dynamically create strategies through upstream lifecycle; QZ does not enforce a pre-run strategy count. Return native results without treating empty/no-trade output as strategy validation. Single-strategy REGISTERED still requires immediate Strategy installation; that narrow contract does not limit full configuration.
 
-多标的/多 venue 配置接口与实际策略、数据源覆盖须分别验收；它不是LiveNode账户策略注册接口，不解除现账户策略生命周期限制，也不启动模拟盘/实盘。用户策略的官方save/load、订单归属和账户恢复仍需另行接线与验证。
+`native-configured-backtest --catalog ...` takes `{ schema_version: 1, name, config }` in the existing job/remote worker. QZ does not duplicate multi-venue/data/engine schemas or override `DataEngineConfig`, `emit_quotes_from_book`, official streaming chunk size, or matching parameters. Before execution, check every returned catalog's canonical path remains under this run's allowed root; only local file protocol is currently wired. This path check is not an OS sandbox for arbitrary Rust. Factories must not create alternative data sources/algorithms to bypass official APIs.
 
-## 用户账户策略的静态 Rust 接线
+`native_results` contains original official `BacktestResult` serialization, without reannualization, scoring, winner selection, or aggregation. Official `dispose_on_completion=false` also returns original `canonical_result`; disposal enabled yields explicit `OMITTED_BY_DISPOSE_ON_COMPLETION_CONFIG` without changing the choice. Official `raise_exception=false` may return empty results, not proof of full-window completion or strategy validity. This entrypoint does not automatically generate the single-instrument `equity_performance` wrapper; do not mix report shapes. Existing Pi Tasks/remote receipts own execution state. Rebuilding a node is not recovery from a mid-run checkpoint.
 
-账户继续使用现有独立 `account-runtime` 协议与 `QZ_ACCOUNT_BINARY`。用户 crate 可在 current-thread Tokio 入口调用 `job::account_runtime::run_with_registration(Some(register))`，并保留 `build-identity` 输出 `job::build_identity()`。用户 runner 依赖同一固定 Nautilus revision、`account-runtime` feature 与 high precision；不是新增服务或动态源码加载。
+Accept the multi-instrument/multi-venue interface separately from actual strategies/data coverage. It is not LiveNode account registration, does not remove account lifecycle limits, and starts neither paper nor live trading. User strategies' official save/load, order ownership, and account recovery require separate wiring/verification.
 
-账户配置沿用 `native_strategy: { instrument_id, strategy: { kind: "REGISTERED", name, config } }`，`config` 为原始 JSON 值。只有明确 START 通过原控制准入后调用静态回调；回调通过 `AccountStrategyRegistrar::add` 注册一个具体官方 Strategy 类型，官方 Controller 完成注册、官方 Cache 与 DataActor callback 恢复状态，随后官方启动。无回调、未知名称或未注册任何策略均真实失败，不回退示例。新增类型需构建部署用户账户 runner；已有类型仅改配置不需重新编译。回调可读取原账户的全部 instrument IDs，但当前账户宿主仍为已接入的 Hyperliquid/Sandbox 与既有账户模型，不能据此声称所有多 venue LiveNode 配置已支持。
+## Static Rust wiring of user account strategies
 
-RECOVER 不实例化或加载用户信号策略，也不调用其 `on_start`。既有独占缓存锁下先调用官方 `ExecutionEngine.load_cache`，完整性失败或含任何 emulated 订单则在连接/启动前拒绝恢复，保留原订单文件。官方 emulator 会自动恢复此类订单且无禁用配置，不能通过 HALTED 冒称没有自动撤单。普通非 emulated 恢复、显式 START 与参数变化仍须官方 Sandbox 以及独立用户 crate 编译验证；不得将回测工厂或无行情生命周期验收冒充已完成真实账户/实盘验收。
-## 应用部署与用户原生环境分离
+Accounts retain the independent `account-runtime` protocol and `QZ_ACCOUNT_BINARY`. The crate may call `job::account_runtime::run_with_registration(Some(register))` from a current-thread Tokio entrypoint and retain `build-identity` returning `job::build_identity()`. Depend on the same pinned Nautilus revision, `account-runtime` feature, and high precision, not a new service/dynamic source loader.
 
-默认 dev/release 仅发布、安装和更新 QuaZonai 应用及 CLI，不携带或自动管理 Nautilus 运行环境。安装器仅操作 Compose 的 `app --no-deps`，不更新、启动、停止或删除用户已有 Nautilus 容器及账户/目录数据；旧 `--local-runtime` 已退役。已有外部服务必须由所有者单独维护。
+Account configuration retains `native_strategy: { instrument_id, strategy: { kind: "REGISTERED", name, config } }` with original JSON `config`. Only explicit START accepted by existing controls invokes the static callback. `AccountStrategyRegistrar::add` registers a concrete official Strategy; official Controller registers it, official Cache/DataActor callbacks recover state, then upstream starts it. Missing callbacks, unknown names, or no registered strategy fail without example fallback. New types require building/deploying the account runner; existing-type configuration changes do not. The callback may read all original account instrument IDs, but the host remains wired to Hyperliquid/Sandbox and existing account models, not every multi-venue LiveNode configuration.
 
-上游 NautilusTrader 是库，并不自带本项目 HTTP API。当前连接要求兼容 QuaZonai worker 协议：研究 `/v1/capabilities`、`/v1/execute`、原请求回执；账户使用独立 `/accounts/<id>`。仅安装上游包或任意填写 URL 不代表接线可用。用户可以自行实现兼容适配，或显式从源码构建本仓库可选适配器（不是默认发布附件）：
+RECOVER neither instantiates/loads user signal strategies nor calls their `on_start`. Under the existing exclusive cache lock, first call official `ExecutionEngine.load_cache`. Integrity failure or any emulated order rejects recovery before connection/start, retaining original order files. The official emulator automatically restores such orders without a disabling setting; HALTED is not proof of no automatic cancellation. Ordinary non-emulated recovery, explicit START, and parameter changes still need official Sandbox and independent user-crate compilation verification. Backtest factories or no-market lifecycle acceptance are not actual account/live acceptance.
+
+## Separate application deployment from user native environments
+
+Default dev/release publishes, installs, and updates only the QuaZonai app/CLI, without bundling or automatically managing Nautilus. Installer operations target Compose `app --no-deps` and do not update/start/stop/delete existing Nautilus containers or account/catalog data. Legacy `--local-runtime` is retired. Owners maintain external services independently.
+
+Upstream NautilusTrader is a library, not this project's HTTP API. Connections currently require the QuaZonai worker protocol: research `/v1/capabilities`, `/v1/execute`, and original request receipts; accounts independently use `/accounts/<id>`. Installing upstream or entering a URL does not establish compatibility. Users may provide their own compatible adapter or explicitly build this repository's optional source adapter, not a default release attachment:
 
 ```bash
-# 在可信源码 checkout 中，用户自行准备官方 Rust 工具链和 Docker。
+# In a trusted source checkout, the user prepares official Rust tools and Docker.
 bash deploy/docker/native-build.sh release /absolute/new-native-artifacts
 docker buildx build --load --target nautilus --file deploy/docker/Dockerfile \
   --build-context native=/absolute/new-native-artifacts \
   --tag owner-quazonai-native:local .
 ```
 
-这只构建用户自管的协议适配器镜像，不部署、不连接交易所、不交易。自行运行时显式配置持久目录、catalog 根目录、worker token 和网络；应用中分别填写回测实例与账户实例，不能借用回测凭据作实盘。需要自定义策略时使用前述用户 Rust crate runner 接口，默认 runner 不包含用户策略。账户凭据由用户在其原生环境配置，勿写入策略 JSON 或聊天。账户连接、恢复与真实交易启动是独立显式步骤，不因应用更新或保存配置而执行。
+This only builds a user-managed protocol adapter image; it does not deploy, connect exchanges, or trade. Explicitly configure persistent directories, catalog roots, worker token, and network when running it. Configure backtest/account instances separately in the app; do not borrow backtest credentials for live trading. Custom strategies use the Rust crate interfaces above; the default runner contains no user strategies. Configure account credentials in the user's native environment, not strategy JSON/chat. Account connection, recovery, and actual trading start are separate explicit steps, never side effects of application updates or saving settings.
 
-本部署调整不代表任意已有 Nautilus 环境已接入；Rust 原生环境直接接入仍须独立实现，不要求用户把预部署 QZ worker 当作最终通用接入的前提。上述源码适配器只是当前可用的一条显式路径，不引入 Python 策略执行环境。自动 `restore` 会替换应用专属 `data/`，保持当前 Compose override 不变；发现其他 Compose 服务、已知原生账户目录或检查失败时拒绝执行。原生环境数据应位于应用目录外；无法从 Compose 证明其他独立进程未共享该目录，混用数据目录必须单独制定有范围的恢复，不能把本工具称为所有原生数据的安全恢复器。
-
+This deployment change does not mean arbitrary Nautilus environments are integrated. Direct Rust environment integration still needs independent implementation, without requiring a predeployed QZ worker as the final general solution. The source adapter above is one available explicit path, not a Python strategy runtime. Automatic `restore` replaces app-specific `data/` while retaining current Compose overrides. It rejects other Compose services, known native account directories, or failed checks. Native data should live outside the app directory. Compose cannot prove unrelated processes do not share that directory. Mixed data directories need separately scoped recovery; this tool is not a safe restorer for every native dataset.
 
 ## Approved owner Rust process integration: source delivery boundary
 
@@ -407,11 +409,11 @@ is not proof that a new strategy was compiled or run. The opt-in native CI build
 inside the application container with networking disabled and records image,
 cache and output sizes; it does not run market-data research or publish/deploy.
 
-## 已保留原生失败的明确核对
+## Explicit review of retained native failures
 
-`POST /api/v3/research/:id/native-failure-review` 仅对旧 `native-configured-backtest` 的原始空 venues 配置拒绝提供明确核对接缝。请求必须给出原 `nativeTaskId`、`ownerTaskId`、`requestId`，分类 `EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD`，以及对原 owner 工厂与拒绝调用链的 `sourceReview` 和 `sources`。它不是自动日志分类器，不能仅凭退出码推断任意用户 Rust 代码没有副作用；调用方须先核查原源码和执行证据，不能重跑请求进行“核实”。
+`POST /api/v3/research/:id/native-failure-review` provides an explicit reconciliation seam only for the original empty-venues configuration rejection of an old `native-configured-backtest`. Requests must include original `nativeTaskId`, `ownerTaskId`, `requestId`, classification `EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD`, and `sourceReview`/`sources` reviewing the original owner factory and rejection call chain. It is not an automatic log classifier. Exit codes alone cannot establish that arbitrary user Rust had no side effects. Callers must inspect original source and execution evidence first, without rerunning the request to “verify” it.
 
-服务在同一官方 Pi transaction 核对原任务、绑定、已保存退出事实和精确原 stderr，然后采用现有 `NativeCalls.adoptedReceipt` 的 FAILED 结果。原 native Task 的 UNKNOWN 终态、请求、stderr 和进程事实不改写，原未知状态与核对来源继续保留；原回测 Task 沿已有 reconcile 失败路径终结。没有回测结果、自动重发、自动新建研究或交易权限。不同退出/终止/诊断、其他命令或身份不符保持 UNKNOWN；本接口不关闭账户或数据导入的未决执行。
+In one official Pi transaction, the service checks original tasks, bindings, saved exit facts, and exact original stderr, then adopts a FAILED result through existing `NativeCalls.adoptedReceipt`. It does not rewrite the native Task's UNKNOWN terminal state, request, stderr, or process facts. Original uncertainty and review provenance remain retained; the original backtest Task settles through its existing reconcile failure path. This produces no backtest result, automatic resubmission/new research, or trading permission. Different exits, termination, diagnostics, commands, or mismatched identities remain UNKNOWN. This interface does not settle unresolved account or data-import executions.
 
 ### Model discovery and Ultra collaboration
 

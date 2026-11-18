@@ -1,75 +1,75 @@
-# 连接、输出与错误
+# Connection, output, and errors
 
-## CLI 与实例
+## CLI and instance
 
-使用现有 `quazonai` 可执行文件。发布版 CLI 自带 Node；直接使用 JavaScript 包需要 Node 22.19 或更新版本。
+Use the existing `quazonai` executable. Release CLI bundles include Node; running the JavaScript package directly requires Node 22.19 or later.
 
-缺少可执行文件时，使用项目发布包中的官方安装器。在 Linux/macOS 只安装客户端时执行 `bash install.sh --cli-only`；Linux 默认路径还会安装或更新服务栈，因此不要省略这个选项。Windows x86_64 使用发布包的 `install.ps1`。安装完成后重新运行 `quazonai --version` 与 `quazonai --help`。不要假定 npm 包已发布，也不要用源码构建替代用户所需的客户端安装。
+If the executable is missing, use the official installer from the project's release. For client-only installation on Linux/macOS, run `bash install.sh --cli-only`. The default Linux path also installs or updates the service stack, so do not omit this option. Windows x86_64 uses the release's `install.ps1`. Then rerun `quazonai --version` and `quazonai --help`. Do not assume a published npm package or substitute a source build for the requested client installation.
 
-先运行 `quazonai identity`。正常会话返回 `authenticated: true`；未认证结果可能仍输出 JSON，但退出码为 `1`。
+Run `quazonai identity` first. A valid session returns `authenticated: true`. An unauthenticated response may still be JSON but exits with `1`.
 
-首次登录由用户在自己的终端执行：
+For initial login, the user runs this in their own terminal:
 
 ```sh
 quazonai login --origin https://qz.example.com --name my-agent
 ```
 
-将示例域名替换为真实实例源地址。源地址只含协议、主机和可选端口，不附 `/api/v3`、用户名、密码、查询或片段。CLI 自己添加 `/api/v3`。
+Replace the example domain with the actual instance origin: scheme, host, and optional port only, without `/api/v3`, username, password, query, or fragment. The CLI adds `/api/v3`.
 
-- 密码从交互 TTY 隐藏输入。不要索取聊天中的密码，不通过 stdin 管道或命令行参数传密码。
-- 已有有效登录时 `login` 复用当前会话；切换实例或更换登录用 `login --origin URL --replace`。普通命令上的 `--origin` 不能切换已有配置。
-- 自定义 CA 用 `--ca-certificate /absolute/path/ca.pem`，登录时保存的路径可复用；不要关闭 TLS 校验。
-- `set_instance_password_in_auth_ui` 表示实例尚未设置密码，需用户在实例认证页面完成设置后再登录。
-- 无 TTY 的 Agent 遇到 `login_requires_user_terminal` 时，提供上述登录命令，等待用户在同一执行环境完成后重新运行 `identity`。
+- Password input is hidden in an interactive TTY. Do not request a password in chat or pass it through a stdin pipe or command-line argument.
+- `login` reuses a valid current session. To switch instance or login, use `login --origin URL --replace`. An ordinary command's `--origin` cannot switch saved configuration.
+- Use `--ca-certificate /absolute/path/ca.pem` for a custom CA; the path saved at login can be reused. Do not disable TLS validation.
+- `set_instance_password_in_auth_ui` means the user must first set a password through the instance authentication page.
+- For `login_requires_user_terminal` in a non-TTY agent environment, give the command above, wait for the user to complete it in the same execution environment, then rerun `identity`.
 
-配置保存在 Unix 的 `$XDG_CONFIG_HOME/quazonai/client.json`，未设置 XDG 时使用 `~/.config/quazonai/client.json`；Windows 使用 `%APPDATA%\quazonai\client.json`。其中包含设备 token，不读取、复制或输出它来完成普通业务操作。
+Configuration is stored at `$XDG_CONFIG_HOME/quazonai/client.json` on Unix, or `~/.config/quazonai/client.json` if XDG is unset; Windows uses `%APPDATA%\quazonai\client.json`. It contains a device token. Do not read, copy, or print it for ordinary business operations.
 
-| 命令 | 结果 |
+| Command | Result |
 | --- | --- |
-| `logout` | 撤销当前远端设备凭据，成功后忘记本地配置 |
-| `forget` | 仅删除本地配置，输出 `remoteRevocationRequested: false` |
+| `logout` | Revoke the current remote device credential, then forget local configuration on success |
+| `forget` | Remove only local configuration; returns `remoteRevocationRequested: false` |
 
-`logout` 失败时不要以 `forget` 冒充已撤销凭据。
+If `logout` fails, do not present `forget` as credential revocation.
 
-## 输出与退出码
+## Output and exit codes
 
-| 场景 | 退出码 | 判读方式 |
+| Situation | Exit code | Interpretation |
 | --- | --- | --- |
-| 普通命令成功 | `0` | 读取 JSON 业务状态；提交回执只说明受理 |
-| 输入、认证、HTTP 或连接失败 | `1` | 读取 stderr 的 `{error, status?}` |
-| `identity` 未认证 | `1` | 读取 stdout 的会话字段 |
-| 研究观察到 submission `done` | `0` | `settled: true`；继续检查研究结果 |
-| 研究观察到 submission `unanswered` | `2` | 已结束但非成功提交；查看 diagnostics |
-| 组合观察到 `COMPUTED` | `0` | `settled: true`；检查指标、限制和容量 |
-| 组合观察到 `FAILED` / `STOPPED` | `2` | 读取业务错误和已有结果 |
-| `wait` 达到观察超时 | `124` | `settled: false`、`cancellationRequested: false` |
-| `watch` 达到观察超时 | `0` | 同样可能 `settled: false`，不能只看退出码 |
-| `watch` / `wait` 被 SIGINT/SIGTERM 分离 | `130` | 不等于远端任务已取消 |
+| Ordinary command success | `0` | Read JSON business state; a submission receipt only establishes acceptance |
+| Input, authentication, HTTP, or connection failure | `1` | Read stderr `{error, status?}` |
+| Unauthenticated `identity` | `1` | Read session fields on stdout |
+| Research observes submission `done` | `0` | `settled: true`; still inspect research results |
+| Research observes submission `unanswered` | `2` | Settled but not a successful submission; inspect diagnostics |
+| Portfolio observes `COMPUTED` | `0` | `settled: true`; inspect metrics, limitations, and capacity |
+| Portfolio observes `FAILED` / `STOPPED` | `2` | Read business errors and existing results |
+| `wait` observation timeout | `124` | `settled: false`, `cancellationRequested: false` |
+| `watch` observation timeout | `0` | May also be `settled: false`; do not rely solely on exit code |
+| SIGINT/SIGTERM detaches `watch` / `wait` | `130` | Does not mean remote work was canceled |
 
-按行解析 `watch` 输出，不把整个 NDJSON 当成一个 JSON 对象。普通请求没有默认网络超时；外部终止写命令时，结果可能未知，应按未知写入处理。
+Parse `watch` output line by line, not as one JSON object. Ordinary requests have no default network timeout. Externally terminating a write command can leave its outcome unknown; handle it as an unknown write.
 
-## 错误恢复
+## Error recovery
 
-| 错误或状态 | 操作 |
+| Error or state | Action |
 | --- | --- |
-| `login_required` | 由用户完成交互登录，再读取身份 |
-| `login_replace_required` | 核对目标实例；需要更换时重新登录并使用 `--replace` |
-| `client_profile_invalid` | 保留错误信息；确需重置时用 `forget` 后重新登录，不手改 token |
-| `invalid_origin` | 使用源地址，去掉路径、嵌入凭据及查询 |
-| `service_unavailable` / `invalid_response` | 核对实例连接，恢复后重试读取；不重新创建业务对象 |
-| `event_stream_unavailable` / `invalid_event_stream` | 用同一 ID 执行 `get`；连接恢复后重新 `watch` / `wait` |
-| `write_outcome_unknown_retain_original_request` | 保留原文件与 ID，先查询结果，禁止自动生成新请求重试 |
-| `request_id_conflict` | 同一 ID 对应了不同内容；找回原请求或明确创建新操作 |
-| `mandate_revision_conflict` / `capital_exit_revision_conflict` | 读回所属对象修订号，重新判断操作；不盲目递增 |
-| `file_required` / `input_file_unreadable` / `input_json_invalid` | 使用存在且可读的 JSON 对象文件，不能是数组、裸字符串或 stdin 的 `-` |
-| `invalid_json_number_use_decimal_string` | 按合同将大整数/十进制改成字符串，保留真实精度 |
-| `schema_not_found` | 从同一版本的 `schema list` 或 `schema list --domain` 选名称 |
-| `installed_schema_unavailable` | 报告安装缺少合同资源，修复客户端安装；不猜请求结构 |
-| `404` | 核对实例及 ID；删除隐藏的资源也可能无法读取 |
-| `409`、业务 blocker、`UNSUPPORTED` / `BLOCKED` | 读取原因和最新状态；不要循环提交或扩展操作范围绕过限制 |
+| `login_required` | Have the user log in interactively, then read identity |
+| `login_replace_required` | Check the target instance; use `--replace` when a replacement is intended |
+| `client_profile_invalid` | Retain the error; if a reset is needed, use `forget` then login rather than manually editing tokens |
+| `invalid_origin` | Use an origin without a path, embedded credentials, or query |
+| `service_unavailable` / `invalid_response` | Check connectivity, then retry reads; do not recreate business objects |
+| `event_stream_unavailable` / `invalid_event_stream` | `get` the same ID; resume `watch` / `wait` after reconnection |
+| `write_outcome_unknown_retain_original_request` | Preserve the file and ID, query first; never automatically retry with a new request |
+| `request_id_conflict` | The ID was used with different content; recover the original request or explicitly start a new operation |
+| `mandate_revision_conflict` / `capital_exit_revision_conflict` | Read the owning object's revision and reassess; do not blindly increment |
+| `file_required` / `input_file_unreadable` / `input_json_invalid` | Use an existing readable JSON object file, not an array, bare string, or stdin `-` |
+| `invalid_json_number_use_decimal_string` | Represent large integers/decimals as contract-required strings without losing precision |
+| `schema_not_found` | Choose a name from the same version's `schema list` or `schema list --domain` |
+| `installed_schema_unavailable` | Report missing contract assets and repair the client installation; do not guess request shapes |
+| `404` | Check instance and ID; hidden deleted resources may also be unreadable |
+| `409`, business blockers, `UNSUPPORTED` / `BLOCKED` | Read reasons and current state; do not loop submissions or broaden scope to bypass limits |
 
-不能由 CLI 完成的首次实例配置、模型凭据配置、账户连接创建或数据源准备，应明确指出缺少的前置条件，并指向实例现有界面。不要虚构 `connections`、`models login`、`datasets import` 或 `request` 子命令。
+For initial instance setup, model credentials, account connection creation, or data preparation not available through the CLI, identify the missing prerequisite and point to the existing instance UI. Do not invent `connections`, `models login`, `datasets import`, or `request` subcommands.
 
-对已退出但仍保留 `UNKNOWN` 的原生调用，只能沿已有源码审查结算接口提供原任务身份与原始诊断证据，不能仅凭非零退出自动重试。`QUERY_PLANNING_TYPE_COERCION_REJECTED` 仅识别已支持的精确查询规划诊断；执行阶段须由原入口源码和记录确认。owner install 可能已写出 pending header，前序 catalog 可能已读元数据或预取，结算不回滚这些副作用、不把 header 当成完成报告，也不重写原 terminal Task 或 stderr。SQL 修正属于研究策略自身，产品不会全局改写过滤表达式。
+For an exited native call still marked `UNKNOWN`, use only the existing source-review settlement interface with original task identities and diagnostic evidence. A nonzero exit alone does not authorize retry. `QUERY_PLANNING_TYPE_COERCION_REJECTED` recognizes only the supported exact query-planning diagnostic; establish execution phase from original entrypoint source and records. Owner install may already have written a pending header, and earlier catalogs may have read metadata or prefetched. Settlement does not roll back these side effects, treat a header as a completed report, or rewrite the original terminal Task or stderr. SQL correction belongs to the research strategy; the product does not globally rewrite filters.
 
-`DELTA_PRECISION_REJECTED_DURING_REPLAY` 仅识别已退出原 configured backtest 的精确盘口 Add/Update 价格或数量精度不匹配诊断。它是运行期失败，不是执行前拒绝：可能已处理部分行情、调用 Actor 并写出 pending header、观察记录和 STOP_NON_EOF。结算保留全部 partial、原 UNKNOWN Task 和 stderr，不回滚任意 owner 副作用、不自动重放，不把部分输出升级为完成报告。修改数据/定义精度是另一个明确处理步骤，不能通过此结算静默舍入或覆盖原 catalog。
+`DELTA_PRECISION_REJECTED_DURING_REPLAY` recognizes only the exact order-book Add/Update price or quantity precision mismatch from an exited original configured backtest. It is a runtime failure, not pre-execution rejection: some market data and Actor callbacks may already have run and produced pending headers, observations, and STOP_NON_EOF. Settlement retains all partial output, the original UNKNOWN Task, and stderr. It neither rolls back arbitrary owner side effects nor automatically replays or promotes partial output to a completed report. Changing data/definition precision is a separate explicit step; settlement must not silently round or overwrite the original catalog.

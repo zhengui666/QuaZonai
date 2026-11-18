@@ -1,10 +1,10 @@
-# 账户与资金
+# Accounts and capital
 
-## 创建和读取账户观测
+## Create and read an account observation
 
-先读取 `observation list` 和 `schema show ObservationStart`。观测需要已有的 `connectionId`，模式必须与连接匹配。可从既有观测读取连接身份；不存在时由用户提供或在实例界面配置，CLI 当前没有连接创建/列举命令。
+Read `observation list` and `schema show ObservationStart` first. An observation requires an existing `connectionId`, with a matching mode. Read connection identity from an existing observation; otherwise ask the user or configure it through the instance UI. The CLI currently has no connection creation/listing command.
 
-形成请求：
+Form the request:
 
 ```json
 {
@@ -15,7 +15,7 @@
 }
 ```
 
-示例使用 paper；仅按实际用户目标选择 paper/live，不把切换模式当作普通故障恢复。
+This example uses paper. Choose paper/live only according to the user's actual goal; switching modes is not ordinary failure recovery.
 
 ```sh
 quazonai observation start --file observation-request.json
@@ -23,9 +23,9 @@ quazonai observation get "$observation_id"
 quazonai observation refresh "$observation_id"
 ```
 
-读取 `status`、`updatedAt`、`positions`、`equity`、`cash`、`receipt`、`error` 及 `provenance`。保留 client/account/sequence/nativeClock 身份和时间依据，`null` 数值不补零。`observation stop ID` 停止观测，不是下单、清仓或撤销券商账户。
+Read `status`, `updatedAt`, `positions`, `equity`, `cash`, `receipt`, `error`, and `provenance`. Preserve client/account/sequence/nativeClock identity and timing basis; do not replace `null` numbers with zero. `observation stop ID` stops observation, not orders, positions, or the brokerage account.
 
-## 显式控制已配置的原生策略
+## Explicit control of a configured native strategy
 
 ```sh
 quazonai account-strategy status "$observation_id"
@@ -34,40 +34,40 @@ quazonai account-strategy stop "$observation_id" --request-id "$stop_request_id"
 quazonai account-strategy receipt "$observation_id" "$request_id"
 ```
 
-START 的 accountSourceId/strategyRevision 必须来自用户决定启动时已读到的 status。过期拒绝后先报告，不自动获取新修订替旧命令重新授权。STOP 不要求修订；仍须明确用户操作意图。当前账户仅已接入官方 EMA_CROSS；ORDER_BOOK_IMBALANCE、GRID_MARKET_MAKER、HURST_VPIN_DIRECTIONAL 目前只接研究回测，不支持账户运行。连接中的策略配置并非由历史回测自动部署；当前 CLI 不是策略代码上传器或连接配置器。
+START's accountSourceId/strategyRevision must come from the status read when the user decided to start. Report a stale-revision rejection first; do not automatically refresh the revision and reauthorize the old command. STOP does not require a revision but still requires explicit user intent. Account execution currently wires only the official EMA_CROSS strategy. ORDER_BOOK_IMBALANCE, GRID_MARKET_MAKER, and HURST_VPIN_DIRECTIONAL currently support research backtests, not account execution. Historical backtests do not deploy strategy configuration into connections. The CLI is not a strategy source uploader or connection configurator.
 
-默认启动宿主不等于启动交易。paper/live 使用独立连接；live START 可能实际下单，必须满足用户明确授权及适用确认要求，不能因回测评级良好自行启动。恢复会重新预热，不承诺无缝恢复策略内部指标状态。STOP 沿用上游配置语义，不保证不撤单或不清仓；观测停止也不是策略 STOP。
+Starting the default host does not start trading. paper/live use separate connections. A live START may place actual orders and must satisfy explicit user authorization and applicable confirmation requirements; a favorable backtest rating is not authorization. Recovery warms up again and does not promise seamless restoration of internal indicator state. STOP follows upstream configuration semantics and does not guarantee that orders or positions remain untouched. Stopping observation is not strategy STOP.
 
-命令回执分别报告 REJECTED、UNCERTAIN 与真实原生结果。persisted:false 表示回执未持久化，即使结果显示 STOPPED 也不能称已可靠记账或跨重启防重放。网络不确定时查询原 requestId，不自动重发，不用当前 STATUS 冒充旧命令已完成。取消保护、订单预览和仓位计算按实际能力报告，预览不是下单。
+Command receipts distinguish REJECTED, UNCERTAIN, and actual native outcomes. persisted:false means the receipt was not persisted; even STOPPED is not proof of durable recording or replay protection across restarts. When the network outcome is uncertain, query the original requestId rather than automatically resending. Current STATUS is not proof that an old command completed. Describe cancellation protection, order previews, and sizing according to actual capabilities; a preview is not an order.
 
-## 资金退出：状态 → 预览 → 命令 → 对账
+## Capital exit: status → preview → command → reconciliation
 
-1. 运行 `capital status OBSERVATION_ID`。先检查 `capability`、`reason`、`controlRevision`、`exits` 与 `commands`。`UNSUPPORTED` / `BLOCKED` 时停止该操作并报告原因。
-2. 将用户指定金额和观测币种保存为预览请求，使用新的 requestId：
+1. Run `capital status OBSERVATION_ID`. Inspect `capability`, `reason`, `controlRevision`, `exits`, and `commands`. Stop that operation and report the reason for `UNSUPPORTED` / `BLOCKED`.
+2. Save the user-specified amount and observation currency in a preview request with a new requestId:
 
 ```json
 {"requestId":"REPLACE_PREVIEW_REQUEST_ID","amount":"1000","currency":"USD"}
 ```
 
-省略 policy 时服务使用 `CASH_ONLY`。不要为了完成提现擅自改成减仓策略。金额和币种是示例，替换成用户实际值；更复杂的 policy 必须来自已有合法请求或明确的下游合同。
+Omitting policy uses `CASH_ONLY`. Do not switch to position reduction merely to complete a withdrawal. Replace the example amount and currency with the user's actual values. More complex policies must come from an existing valid request or an explicit downstream contract.
 
-3. 执行 `capital preview OBSERVATION_ID --file preview-request.json`，读取 `id`、`capability`、`valid_until`、`plan_artifact_id`、预览资金、拟撤销项和减仓腿。预览不会自动成为退出命令。
-4. 在用户已授权执行的范围内，使用预览 ID 构造独立的 START 请求：
+3. Run `capital preview OBSERVATION_ID --file preview-request.json`. Read `id`, `capability`, `valid_until`, `plan_artifact_id`, previewed funds, proposed cancellations, and reduction legs. A preview does not automatically become an exit command.
+4. Within the user's authorization, construct a separate START request referencing the preview ID:
 
 ```json
 {"requestId":"REPLACE_COMMAND_REQUEST_ID","action":"START","previewId":"REPLACE_PREVIEW_ID"}
 ```
 
-5. 执行 `capital command OBSERVATION_ID --file capital-command.json`，再用 `capital status OBSERVATION_ID` 查询同一 requestId 的状态。`PENDING`、`UNCERTAIN`、`ACCEPTED`、`REJECTED` 分别保留原意；`ACCEPTED` 不是已提现。
+5. Run `capital command OBSERVATION_ID --file capital-command.json`, then query the same requestId through `capital status OBSERVATION_ID`. Preserve the distinct meanings of `PENDING`, `UNCERTAIN`, `ACCEPTED`, and `REJECTED`; `ACCEPTED` is not a completed withdrawal.
 
-预览过期或账户修订变化时，先读取状态，按新操作重新预览。未知结果的原命令仍保留原文件和 requestId，不把它改指向新预览。
+If a preview expires or the account revision changes, read status and obtain a new preview as a new operation. Preserve the original file and requestId for a command with an unknown outcome; do not redirect it to another preview.
 
-## 恢复与外部提款对账
+## Recovery and external withdrawal reconciliation
 
-非 START 操作绑定实际 `exitId` 和从 `capital status` 返回的 `exit.revision`。这里的 `expectedRevision` 不来自 PM mandate，也不来自账户 controlRevision。
+Non-START actions bind the actual `exitId` and `exit.revision` returned by `capital status`. This `expectedRevision` is neither the PM mandate revision nor account controlRevision.
 
-- `RESUME`：提交 `{requestId,action:"RESUME",exitId,expectedRevision,previewId}`，使用有效的预览。
-- `RECONCILE_WITHDRAWAL`：仅在用户提供真实外部转账事实时提交 `{requestId,action:"RECONCILE_WITHDRAWAL",exitId,expectedRevision,amount,currency,externalTransferRef}`。金额是字符串，externalTransferRef 使用真实转账引用。
-- 其他下游动作仅按已确认的动作合同构造，不从名称猜出 `withdraw`、`sell` 或 `cancel` CLI 子命令。
+- `RESUME`: submit `{requestId,action:"RESUME",exitId,expectedRevision,previewId}` with a valid preview.
+- `RECONCILE_WITHDRAWAL`: only with actual external transfer facts supplied by the user, submit `{requestId,action:"RECONCILE_WITHDRAWAL",exitId,expectedRevision,amount,currency,externalTransferRef}`. Amount is a string; externalTransferRef is the actual transfer reference.
+- Construct other downstream actions only from confirmed action contracts; do not infer `withdraw`, `sell`, or `cancel` CLI subcommands from their names.
 
-分别报告 requested、reserved、released cash、verified withdrawable 与 reconciled withdrawal；缺少可提现或已转账证据时，不能依据一个成功退出码宣称资金已到账。
+Report requested, reserved, released cash, verified withdrawable, and reconciled withdrawal separately. Without withdrawable-funds or transfer evidence, a successful exit code cannot establish that funds arrived.

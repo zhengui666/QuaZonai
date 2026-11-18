@@ -1,93 +1,92 @@
-# 命令索引
+# Command index
 
-以下各行省略统一前缀 `quazonai`。`ID`、文件名和 `NAME` 是占位符；仅使用真实回执中的值。命令不支持按资源名称自动查找，先列表再取 ID。
+Every command below omits the common `quazonai` prefix. `ID`, filenames, and `NAME` are placeholders; use actual receipt values. Commands do not automatically resolve resource names: list resources first, then use their IDs.
 
-## 会话、合同与查询
+## Sessions, contracts, and queries
 
-| 命令 | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `login [--origin URL] [--name NAME] [--replace] [--ca-certificate FILE]` | 交互登录或复用会话 |
-| `identity` / `logout` / `forget` | 查身份、撤销当前设备、仅忘记本地登录 |
-| `schema list` / `schema show NAME` | 查看业务 TypeScript 合同 |
-| `schema list --domain` / `schema show NAME --domain` | 查看原生科学 JSON Schema |
-| `datasets` | 查询数据集、ready 状态及研究设置 |
-| `datasets registry` | 读取各数据源及登记 revision |
-| `datasets register --file REQUEST.json` | 仅追加新 ID，文件含 requestId、expectedRevision、path；path 是服务端可读的 DatasetConfig JSON，不是客户端上传 |
-| `native-runner status` | 读取当前环境 revision，不构建或选择 |
-| `native-runner import --file REQUEST.json` | 显式检查可信可执行文件，含 requestId、expectedRevision、environmentId、sourceExecutable 及可选 expectedIdentity；会运行 capabilities，但不连接账户或选为全局默认 |
-| `native-runner build-status REQUEST_ID` | 读取原构建/导入任务，不重复执行 |
-| `research models` | 查询可选模型及推理等级、服务档位 |
-| `usage` | 查询用量；`null` 费用或 token 数不是零 |
+| `login [--origin URL] [--name NAME] [--replace] [--ca-certificate FILE]` | Interactive login or session reuse |
+| `identity` / `logout` / `forget` | Read identity, revoke this device, or only forget local login |
+| `schema list` / `schema show NAME` | Read business TypeScript contracts |
+| `schema list --domain` / `schema show NAME --domain` | Read native science JSON Schema |
+| `datasets` | Read datasets, ready states, and research settings |
+| `datasets registry` | Read data sources and registration revision |
+| `datasets register --file REQUEST.json` | Append a new ID only; file contains requestId, expectedRevision, path. The path is a service-readable DatasetConfig JSON file, not a client upload |
+| `native-runner status` | Read current environment revision without building or selecting |
+| `native-runner import --file REQUEST.json` | Explicitly inspect a trusted executable; requestId, expectedRevision, environmentId, sourceExecutable, and optional expectedIdentity. Runs capabilities but neither connects accounts nor selects the global default |
+| `native-runner build-status REQUEST_ID` | Read the original build/import task without repeating execution |
+| `research models` | List available models, reasoning levels, and service tiers |
+| `usage` | Read usage; `null` costs or token counts are not zero |
 
-## 原生研究与历史组合
+## Native research and historical portfolios
 
-| 命令 | 请求或注意事项 |
+| Command | Request or note |
 | --- | --- |
-| `research list [--cursor JSON]` | 从返回的 `cursor` 对象继续分页 |
-| `research get ID` / `research diagnostics ID` | 详情、原 submission 与运行诊断 |
-| `research messages ID [--cursor CURSOR]` | 同一研究的用户目标、续接指令与 Agent 回复；原样使用 nextCursor |
-| `research native-runs ID --result-task-id TASK_ID [--offset OFFSET]` | 当前结果的原生运行元数据分页；使用详情的 final.nativeStrategyResult.resultTaskId 和分页返回的 nextOffset |
-| `research native-backtests ID [--cursor CURSOR]` / `research evidence ID TASK_ID` | 原生子任务列表与指定任务的原请求、状态和证据 |
-| `research implementation-sources ID --file REQUEST.json [--request-id ORIGINAL_ID]` | 登记明确授权给当前研究模型的源码文本，供内部独立逻辑评估 |
+| `research list [--cursor JSON]` | Continue pagination with the returned `cursor` object |
+| `research get ID` / `research diagnostics ID` | Details, original submission, and execution diagnostics |
+| `research messages ID [--cursor CURSOR]` | User goals, continuation instructions, and agent replies for the same research; reuse nextCursor unchanged |
+| `research native-runs ID --result-task-id TASK_ID [--offset OFFSET]` | Paginated native metadata for the current result; use final.nativeStrategyResult.resultTaskId from details and returned nextOffset |
+| `research native-backtests ID [--cursor CURSOR]` / `research evidence ID TASK_ID` | Native child tasks and a selected task's original request, state, and evidence |
+| `research implementation-sources ID --file REQUEST.json [--request-id ORIGINAL_ID]` | Register source text explicitly authorized for the current research model's independent internal logic assessment |
 | `research start --file REQUEST.json [--request-id ORIGINAL_ID]` | `ResearchStart` |
-| `research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID` | 简单研究；不能同时加 `--file` |
-| `research watch ID [--timeout SECONDS]` / `research wait ID [--timeout SECONDS]` | 状态流或等待结束；ID 为 conversationId |
-| `research stop ID` | 请求停止，之后读回状态 |
-| `research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]` | 使用 diagnostics 确认的原终止 submission |
-| `research delete ID` | 隐藏可删除研究，保留原始证据 |
-| `portfolio list` / `portfolio get ID` / `portfolio delete ID` | 组合列表、结果、隐藏 |
-| `portfolio watch ID [--timeout SECONDS]` / `portfolio wait ID [--timeout SECONDS]` | 等待同一组合结束 |
+| `research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID` | Simple research; cannot be combined with `--file` |
+| `research watch ID [--timeout SECONDS]` / `research wait ID [--timeout SECONDS]` | State stream or wait for settlement; ID is conversationId |
+| `research stop ID` | Request a stop, then read back state |
+| `research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION [--instruction TEXT]` | Use the original terminal submission confirmed by diagnostics |
+| `research delete ID` | Hide eligible research while retaining original evidence |
+| `portfolio list` / `portfolio get ID` / `portfolio delete ID` | List, read results, or hide portfolios |
+| `portfolio watch ID [--timeout SECONDS]` / `portfolio wait ID [--timeout SECONDS]` | Wait for the same portfolio to settle |
 
+The old `portfolio replay-ticks` / `tick-replay` service routes have been removed. Do not use the historical TickEconomicReplayStart type for new requests. Native replay runs through `research`.
 
-旧 `portfolio replay-ticks` / `tick-replay` 服务路由已移除；不要用历史 TickEconomicReplayStart 类型构造新请求。原生回放通过 `research` 执行。
+## PM, Campaign, and Strategy
 
-## PM、Campaign 与 Strategy
-
-| 命令 | 请求或 ID 类型 |
+| Command | Request or ID type |
 | --- | --- |
-| `pm capabilities` / `pm list` / `pm get ID` | 能力、mandate 列表及完整视图 |
-| `pm decision ID` / `pm history ID` / `pm events ID` | mandate ID；events 是一次 JSON 查询 |
+| `pm capabilities` / `pm list` / `pm get ID` | Capabilities, mandate list, and complete view |
+| `pm decision ID` / `pm history ID` / `pm events ID` | Mandate ID; events is a single JSON query |
 | `pm recompute ID --file COMMAND.json` | `PmCommand` |
-| `pm refresh-data ID --file COMMAND.json` | `PmCommand`，捕获已存在数据的新修订 |
-| `pm targets ID --file COMMAND.json` | `PmCommand` 加 `decisionId`，显式请求目标交付 |
-| `pm retire ID --file COMMAND.json` | `PmCommand`，可选 `strategyVersionId`；退出策略运行路径 |
-| `pm delete ID` | 隐藏可删除 mandate |
-| `pm cycle ID` | cycle ID，不是 mandate ID |
-| `pm capacity ID` | capacity estimate ID，不是 mandate/portfolio ID |
-| `campaign get ID` / `campaign trials ID` / `campaign compare ID` | campaign ID |
-| `strategy versions ID` / `strategy assessments ID` | 可查询策略版本或定义 ID |
-| `strategy pause ID --file COMMAND.json` / `strategy resume ID --file COMMAND.json` | 使用当前 strategy version ID；修订号来自所属 mandate |
+| `pm refresh-data ID --file COMMAND.json` | `PmCommand`; capture a new revision of existing data |
+| `pm targets ID --file COMMAND.json` | `PmCommand` plus `decisionId`; explicitly request target delivery |
+| `pm retire ID --file COMMAND.json` | `PmCommand`, optional `strategyVersionId`; retire the strategy execution path |
+| `pm delete ID` | Hide an eligible mandate |
+| `pm cycle ID` | Cycle ID, not mandate ID |
+| `pm capacity ID` | Capacity estimate ID, not mandate/portfolio ID |
+| `campaign get ID` / `campaign trials ID` / `campaign compare ID` | Campaign ID |
+| `strategy versions ID` / `strategy assessments ID` | Queryable strategy version or definition ID |
+| `strategy pause ID --file COMMAND.json` / `strategy resume ID --file COMMAND.json` | Current strategy version ID; revision comes from the owning mandate |
 
-## 账户与资金
+## Accounts and capital
 
-| 命令 | 请求或含义 |
+| Command | Request or meaning |
 | --- | --- |
-| `observation start --file REQUEST.json` | `ObservationStart`，绑定已存在连接 |
-| `observation list` / `observation get ID` | 全部观测或指定观测 |
-| `observation refresh ID` / `observation stop ID` | 刷新账户事实或停止观测 |
-| `capital status OBSERVATION_ID` | 刷新并读取资金退出状态与命令状态 |
-| `capital preview OBSERVATION_ID --file REQUEST.json` | 退出计划预览；仍需要原 `requestId` |
-| `capital command OBSERVATION_ID --file REQUEST.json` | 提交资金退出动作；请求字段见账户参考 |
+| `observation start --file REQUEST.json` | `ObservationStart`; bind an existing connection |
+| `observation list` / `observation get ID` | All observations or a selected observation |
+| `observation refresh ID` / `observation stop ID` | Refresh account facts or stop observation |
+| `capital status OBSERVATION_ID` | Refresh and read capital exit and command states |
+| `capital preview OBSERVATION_ID --file REQUEST.json` | Preview an exit plan; still requires the original `requestId` |
+| `capital command OBSERVATION_ID --file REQUEST.json` | Submit a capital exit action; see the account reference for request fields |
 
-## 设置、扩展与维护
+## Settings, extensions, and maintenance
 
-| 命令 | 请求或检查 |
+| Command | Request or check |
 | --- | --- |
-| `settings get` | 读取默认模型、thinkingLevel、serviceTier、tickBookCores |
-| `settings set --file SETTINGS.json` | PATCH 所需设置，完成后用 `settings get` 读回 |
-| `settings set --tick-book-cores COUNT` | 正安全整数；不能同时带 `--file` |
-| `extensions list` | 查看名称、enabled、required、state、error |
-| `extensions enable NAME` / `extensions disable NAME` | 使用实际名称，读回 loaded/disabled/pending_restart/error；required 扩展可能拒绝关闭 |
-| `maintenance status` | 读取 RUNNING/DRAINING/QUIESCED、epoch 与 blockers |
-| `maintenance enter --file REQUEST.json` | `MaintenanceEnter`：`requestId`，可选 `reason` |
-| `maintenance resume --file REQUEST.json` | `MaintenanceResume`：新操作的 `requestId`、当前 `epoch` |
+| `settings get` | Read language (`en` default or `zh-CN`), default model, thinkingLevel, serviceTier, and tickBookCores; use language for normal responses unless the user explicitly requests another language |
+| `settings set --file SETTINGS.json` | PATCH required settings, then read back with `settings get` |
+| `settings set --tick-book-cores COUNT` | Positive safe integer; cannot be combined with `--file` |
+| `extensions list` | Read name, enabled, required, state, and error |
+| `extensions enable NAME` / `extensions disable NAME` | Use actual names and read back loaded/disabled/pending_restart/error; required extensions may reject disabling |
+| `maintenance status` | Read RUNNING/DRAINING/QUIESCED, epoch, and blockers |
+| `maintenance enter --file REQUEST.json` | `MaintenanceEnter`: `requestId`, optional `reason` |
+| `maintenance resume --file REQUEST.json` | `MaintenanceResume`: new operation's `requestId` and current `epoch` |
 
-维护进入回执不等于已经 `QUIESCED`。读取 `blockingTasks`、`blockingSubmissions`、`blockingExternal` 和 `activeBusinessRequests`；不要为消除阻塞而自行停止工作。恢复必须使用读回的 epoch；重放原维护请求保留原 epoch 和 ID。维护命令本身不更新软件，也不改变研究结论。
+An enter receipt does not establish `QUIESCED`. Read `blockingTasks`, `blockingSubmissions`, `blockingExternal`, and `activeBusinessRequests`; do not stop work on your own merely to clear blockers. Resume with the epoch read from status; replay of the original maintenance request retains its epoch and ID. Maintenance commands do not update software or change research conclusions.
 
-## 原生扫描与账户策略
+## Native grids and account strategies
 
-新参数网格通过 `research start` 或原研究的 `research resume` 提交意图；使用 `research native-backtests ID [--cursor CURSOR]` 分页列出原始任务，`research evidence ID TASK_ID` 读取各组原始请求与结果。旧 `parameter-scan list/get/stop/trials/watch/wait` 仅处理历史记录，不存在新的 options/preview/create/surface 入口。职责与证据限制见 [原生研究](research-and-portfolios.md)。
+Request new parameter grids through `research start` or the original research's `research resume`. Page original tasks with `research native-backtests ID [--cursor CURSOR]` and read each group's original request and result with `research evidence ID TASK_ID`. Legacy `parameter-scan list/get/stop/trials/watch/wait` handles historical records only; there are no new options/preview/create/surface interfaces. See [Native research](research-and-portfolios.md) for responsibilities and evidence limits.
 
-账户命令：`account-strategy status OBSERVATION_ID`、`receipt OBSERVATION_ID REQUEST_ID`、`start OBSERVATION_ID --request-id ID --account-source-id SOURCE --expected-revision REV`、`stop OBSERVATION_ID --request-id ID`。START 的来源及修订不能自动更新。详见 [账户与资金](accounts.md)。
+Account commands: `account-strategy status OBSERVATION_ID`, `receipt OBSERVATION_ID REQUEST_ID`, `start OBSERVATION_ID --request-id ID --account-source-id SOURCE --expected-revision REV`, and `stop OBSERVATION_ID --request-id ID`. Do not automatically refresh START's source or revision. See [Accounts and capital](accounts.md).
 
-`observation size ID --file SCENARIO.json` 与 `preview-order ID --file ORDER.json` 是只读能力，不提交订单。`capital context ID`、`capital get OBSERVATION_ID EXIT_ID` 读取现有退出信息；`observation cancel-protection ID` 是显式账户控制，不是回测功能。
+`observation size ID --file SCENARIO.json` and `preview-order ID --file ORDER.json` are read-only capabilities, not order submission. `capital context ID` and `capital get OBSERVATION_ID EXIT_ID` read existing exit information. `observation cancel-protection ID` is explicit account control, not a backtest feature.
