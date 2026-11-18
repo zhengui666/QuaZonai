@@ -110,6 +110,8 @@ async function exitedBacktest(storage, selection) {
   const stderr = await doc('qz.native-evidence-part', scope, `${nativeTaskId}:private-native-stderr`);
   const knownRejection = typeof stderr?.data === 'string' && (marketImport ? stderr.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : (stderr.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
     || /(?:^|\n)QZ_NATIVE_JOB_FAILED\nCash account cannot trade futures or perpetuals\n$/.test(stderr.data)
+    // Query planning may fail after owner install: settling the exited chain is not rollback.
+    || (`\n${stripVTControlCharacters(stderr.data)}`).endsWith('\nQZ_NATIVE_JOB_FAILED\ntype_coercion\ncaused by\nError during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64: Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64\n')
     || /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(stderr.data))));
   if (call?.taskId !== nativeTaskId || call.adoptedReceipt || !knownRejection) fail();
   return {tasks:new Set([ownerTaskId, tool.id, generation.id]), submissionId};

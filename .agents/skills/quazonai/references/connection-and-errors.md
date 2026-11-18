@@ -69,3 +69,5 @@ quazonai login --origin https://qz.example.com --name my-agent
 | `409`、业务 blocker、`UNSUPPORTED` / `BLOCKED` | 读取原因和最新状态；不要循环提交或扩展操作范围绕过限制 |
 
 不能由 CLI 完成的首次实例配置、模型凭据配置、账户连接创建或数据源准备，应明确指出缺少的前置条件，并指向实例现有界面。不要虚构 `connections`、`models login`、`datasets import` 或 `request` 子命令。
+
+对已退出但仍保留 `UNKNOWN` 的原生调用，只能沿已有源码审查结算接口提供原任务身份与原始诊断证据，不能仅凭非零退出自动重试。`QUERY_PLANNING_TYPE_COERCION_REJECTED` 仅识别已支持的精确查询规划诊断；执行阶段须由原入口源码和记录确认。owner install 可能已写出 pending header，前序 catalog 可能已读元数据或预取，结算不回滚这些副作用、不把 header 当成完成报告，也不重写原 terminal Task 或 stderr。SQL 修正属于研究策略自身，产品不会全局改写过滤表达式。

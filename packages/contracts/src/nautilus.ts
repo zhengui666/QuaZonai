@@ -128,8 +128,8 @@ export interface NativeConfiguredFailureReview {
   nativeTaskId: number;
   ownerTaskId: number;
   requestId: string;
-  classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD' | 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL' | 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT' | 'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL';
-  /** Human/source review of the original native entry point and the classified rejection boundary. */
+  classification: 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD' | 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL' | 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT' | 'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL' | 'QUERY_PLANNING_TYPE_COERCION_REJECTED';
+  /** Source review of the original entry point and rejection boundary, including retained install effects or reads; never a rollback guarantee. */
   sourceReview: string;
   sources: string[];
 }
