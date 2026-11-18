@@ -136,7 +136,7 @@ export function NativeBacktestHistory({ researchId, active }: { researchId: numb
 export function ResearchRating({ value }: { value: unknown }) {
   useTranslation('core');
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5) return <span className="quiet">{tr("Unrated")}</span>;
-  return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value}  {tr("/ 5 stars")}</span></span>;
+  return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value} {tr("/ 5 stars")}</span></span>;
 }
 function AssessmentLimitations({ value }: { value: Record<string, unknown> }) {
   useTranslation('core');

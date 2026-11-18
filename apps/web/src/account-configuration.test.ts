@@ -2,7 +2,7 @@ import { beforeEach as beforeLocaleTest, afterEach as afterLocaleTest } from 'vi
 import i18n from './i18n';
 beforeLocaleTest(async () => { await i18n.changeLanguage('zh-CN'); });
 afterLocaleTest(async () => { await i18n.changeLanguage('en'); });
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import {accountConfigurationInput} from './account-configuration';
 describe('explicit account configuration input',()=>{
  it('preserves original registered configuration JSON without converting decimal strings',()=>{
@@ -128,4 +128,16 @@ it('switches account labels and validation while preserving native input values'
  expect(renderToStaticMarkup(createElement(AccountFields,{text,onChange:()=>{},disabled:false}))).toContain('本地账户名称');
  expect(()=>accountConfigurationInput('[]')).toThrow('账户配置必须是 JSON 对象');
  expect(accountConfigurationInput(text)).toEqual(JSON.parse(text));
+});
+
+// These legacy tests inspect component elements/handlers directly (and, in the
+// demand test, supply manual state slots). Keep that boundary hook-free while
+// translating through the real singleton at the current test language. Mounted
+// language-settings tests separately exercise actual react-i18next subscriptions.
+vi.mock('react-i18next', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-i18next')>();
+  const { default: translations } = await import('i18next');
+  return { ...actual, useTranslation: (namespace?: string | string[]) => ({
+    t: translations.getFixedT(null, namespace), i18n: translations, ready: true,
+  }) };
 });

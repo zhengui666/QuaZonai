@@ -16,3 +16,15 @@ it('does not mount closed accounts; preserves the same subtree and drafts when c
  expect(hidden.props.children.at(-1).props.value.id).toBe('paper-original');
  panel.props.onToggle({currentTarget:{open:true}});expect(render().props.children[1].props.value).toBe(true);
 });
+
+// These legacy tests inspect component elements/handlers directly (and, in the
+// demand test, supply manual state slots). Keep that boundary hook-free while
+// translating through the real singleton at the current test language. Mounted
+// language-settings tests separately exercise actual react-i18next subscriptions.
+vi.mock('react-i18next', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-i18next')>();
+  const { default: translations } = await import('i18next');
+  return { ...actual, useTranslation: (namespace?: string | string[]) => ({
+    t: translations.getFixedT(null, namespace), i18n: translations, ready: true,
+  }) };
+});

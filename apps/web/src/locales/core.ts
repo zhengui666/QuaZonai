@@ -689,6 +689,7 @@ export const zhCN: Record<string, string> = {
   "Not combinable": "不可组合",
   "Information coefficient (IC)": "信息系数（IC）",
   "Not evaluated": "未评价",
-  "Not reviewed": "未审阅"
+  "Not reviewed": "未审阅",
+  "Equity": "权益"
 };
 export const en: Record<string, string> = Object.fromEntries(Object.keys(zhCN).map(key => [key, key]));
