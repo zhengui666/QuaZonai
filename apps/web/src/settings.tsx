@@ -24,7 +24,11 @@ function GeneralSettings() {
   const changeLanguage = async (language: InterfaceLanguage) => {
     setSaving(true); setError(undefined);
     try {
+      await cache.cancelQueries({ queryKey: ['/settings'], exact: true });
       const saved = await api<SettingsView>('/settings', { method: 'PATCH', body: { language } });
+      // Polling can start another read while the PATCH is in flight. Cancel it
+      // before publishing the authoritative receipt so an older GET cannot win.
+      await cache.cancelQueries({ queryKey: ['/settings'], exact: true });
       cache.setQueryData(['/settings'], saved);
       await i18n.changeLanguage(saved.language ?? 'en');
     } catch (reason) { setError(reason); }

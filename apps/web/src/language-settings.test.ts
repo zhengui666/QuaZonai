@@ -109,3 +109,41 @@ it('retains the previous language, settings and draft on save failure and displa
   expect(renderer!.root.findByProps({ role: 'alert' }).children.join('')).toBe(shortError('unavailable'));
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+
+it('cancels settings reads both before and during PATCH so late old GETs cannot overwrite the receipt', async () => {
+  // Unlike the basic cached-render cases, use normal stale queries so mounting
+  // starts a real GET. Explicit refetch below models polling during the PATCH.
+  cache.setDefaultOptions({ queries: { retry: false, staleTime: 0 }, mutations: { retry: false } });
+  const reads: { finish: (value: Response) => void; signal: AbortSignal }[] = [];
+  let finishPatch!: (value: Response) => void;
+  const fetch = vi.fn((_url: string, options: RequestInit) => {
+    if (options.method === 'PATCH') return new Promise<Response>(resolve => { finishPatch = resolve; });
+    // Deliberately ignore abort in the transport: TanStack cancellation must
+    // also prevent a late resolved response from publishing stale data.
+    return new Promise<Response>(resolve => { reads.push({ finish: resolve, signal: options.signal as AbortSignal }); });
+  });
+  vi.stubGlobal('fetch', fetch);
+  await mount();
+  expect(reads).toHaveLength(1);
+  await act(async () => { select().props.onChange('zh-CN'); });
+  expect(reads[0]!.signal.aborted).toBe(true);
+  expect(fetch.mock.calls.filter(([, options]) => options.method === 'PATCH')).toHaveLength(1);
+  let polling!: Promise<void>;
+  await act(async () => { polling = cache.refetchQueries({ queryKey: ['/settings'], exact: true }); });
+  expect(reads).toHaveLength(2);
+  expect(reads[1]!.signal.aborted).toBe(false);
+  const saved = { ...original, language: 'zh-CN' as const };
+  await act(async () => { finishPatch(Response.json(saved)); });
+  await vi.waitFor(() => expect(i18n.language).toBe('zh-CN'));
+  expect(reads[1]!.signal.aborted).toBe(true);
+  await act(async () => {
+    for (const read of reads) read.finish(Response.json({ ...original, language: 'en' }));
+    await polling;
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+  expect(cache.getQueryData(['/settings'])).toEqual(saved);
+  expect(select().props.value).toBe('zh-CN');
+  expect(i18n.language).toBe('zh-CN');
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
