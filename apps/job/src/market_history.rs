@@ -1850,10 +1850,9 @@ pub fn native_market_import(
             start,
             end,
             bar_interval: (None, None),
-            // MatchingEngine checks book Price/Quantity precision against the supplied
-            // instrument. Reuse the exact conversion path: it rejects any value loss.
-            // Trades retain their existing archive/native precision representation.
-            native_precision: !book_snapshots,
+            // MatchingEngine checks trade and book Price/Quantity precision against
+            // the supplied instrument. Reuse strict conversion; never round trades.
+            native_precision: false,
             trade_ticks: !book_snapshots,
             received_time: request.received_time,
             maximum_receive_delay_ns,
@@ -3323,31 +3322,82 @@ mod tests {
     }
 
     #[test]
-    fn formal_trade_import_keeps_native_precision_beyond_instrument_definition() {
+    fn formal_trade_import_uses_lossless_instrument_precision_and_original_identity() {
         let temp = tempfile::tempdir().unwrap();
-        let (manifest, instruments) = received_source(temp.path(),
-            "BTCUSDT,1767225600001,10.1234567890123456,0.1234567890,T-1,B,1767225600002000000\n", true);
+        let rows = concat!(
+            "BTCUSDT,1767225600001,10.1200000000000000,0.1000000000000000,T-1,B,1767225600003000000\n",
+            "BTCUSDT,1767225600001,11,2,T-2,S,1767225600002000000\n",
+            "BTCUSDT,1767225600001,10.1200000000000000,0.1000000000000000,T-1,B,1767225600002000000\n"
+        );
+        let (manifest, instruments) = received_source(temp.path(), rows, true);
+        let definitions: Vec<InstrumentAny> = json(&instruments).unwrap();
+        let instrument = &definitions[0];
+        let original_definitions = fs::read(&instruments).unwrap();
+        let original_source = fs::read(temp.path().join("source/perps/fills.csv")).unwrap();
         let output = temp.path().join("formal-trades");
         let request = serde_json::json!({"schema_version":1,
             "manifest_path":manifest,"instruments_path":instruments,"output_path":output,
             "path_prefixes":["perps/"],"start_seconds":"1767225600","end_seconds":"1767225601",
             "received_time":true,"maximum_receive_delay_ns":"2000000000"});
         let result = native_market_import(serde_json::from_value(request).unwrap()).unwrap();
-        assert!(result.report["record_precision"].as_str().unwrap().starts_with("NATIVE_ENCODING_16"));
+        assert!(result.report["record_precision"].as_str().unwrap().starts_with("INSTRUMENT_DEFINITION"));
+        // Query the published native Parquet, not merely the pre-publication objects:
+        // precision is reconstructed from the catalog's native metadata.
         let mut catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::new(&output.join("catalog"), None, None, None, None);
         let ticks = catalog.query::<TradeTick>(None, None, None, None, None, false).unwrap();
-        assert_eq!(ticks.len(), 1);
-        assert_eq!(ticks[0].price.precision, 16);
-        assert_eq!(ticks[0].size.precision, 16);
-        assert_eq!(ticks[0].price.as_decimal().to_string(), "10.1234567890123456");
-        assert_eq!(ticks[0].size.as_decimal(), "0.1234567890".parse::<rust_decimal::Decimal>().unwrap());
+        assert_eq!(ticks.len(), 2);
+        for (id, price, size, side) in [
+            ("T-1", "10.12", "0.1", nautilus_model::enums::AggressorSide::Buy),
+            ("T-2", "11", "2", nautilus_model::enums::AggressorSide::Sell),
+        ] {
+            let tick = ticks.iter().find(|tick| tick.trade_id.to_string() == id).unwrap();
+            assert_eq!(tick.instrument_id, instrument.id());
+            assert_eq!(tick.price.precision, instrument.price_precision());
+            assert_eq!(tick.size.precision, instrument.size_precision());
+            assert_eq!(tick.price.as_decimal(), price.parse::<rust_decimal::Decimal>().unwrap());
+            assert_eq!(tick.size.as_decimal(), size.parse::<rust_decimal::Decimal>().unwrap());
+            assert_eq!(tick.aggressor_side, side);
+            assert_eq!(tick.ts_event.as_u64(), 1767225600001000000);
+            assert_eq!(tick.ts_init.as_u64(), 1767225600002000000);
+        }
+        assert_eq!(fs::read(&instruments).unwrap(), original_definitions);
+        assert_eq!(fs::read(temp.path().join("source/perps/fills.csv")).unwrap(), original_source);
         let mut source: serde_json::Value = json(&manifest).unwrap();
         source["profile"]["streams"][0]["quantity_rounding"] = serde_json::json!({"method":"DECIMAL_HALF_UP","instrument_ids":["BTCUSDT.BINANCE"]});
         fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
         let invalid = serde_json::json!({"schema_version":1,"manifest_path":manifest,
             "instruments_path":instruments,"output_path":temp.path().join("invalid-trade-policy"),"path_prefixes":["perps/"]});
         assert!(native_market_import(serde_json::from_value(invalid).unwrap()).unwrap_err().to_string().contains("BOOK_QUANTITY_ROUNDING_REQUIRES_INSTRUMENT_PRECISION"));
+    }
 
+    #[test]
+    fn formal_trade_import_rejects_price_or_size_loss_without_changing_sources() {
+        for price_loss in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let (manifest, instruments) = received_source(temp.path(), "", true);
+            let definitions: Vec<InstrumentAny> = json(&instruments).unwrap();
+            let precision = if price_loss { definitions[0].price_precision() } else { definitions[0].size_precision() };
+            let excess = format!("0.{}1", "0".repeat(precision as usize));
+            let (price, size, reason) = if price_loss { (excess.as_str(), "1", "PRICE_PRECISION_LOSS") } else { ("10", excess.as_str(), "SIZE_PRECISION_LOSS") };
+            let csv = temp.path().join("source/perps/fills.csv");
+            let rows = format!("coin,timestamp,price,size,trade_id,side,received\nBTCUSDT,1767225600001,{price},{size},T-loss,B,1767225600002000000\n");
+            fs::write(&csv, &rows).unwrap();
+            let mut source: serde_json::Value = json(&manifest).unwrap();
+            source["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
+            fs::write(&manifest, serde_json::to_vec(&source).unwrap()).unwrap();
+            let original_definitions = fs::read(&instruments).unwrap();
+            let output = temp.path().join("lossy-trades");
+            let request = serde_json::json!({"schema_version":1,"manifest_path":manifest,
+                "instruments_path":instruments,"output_path":output,"path_prefixes":["perps/"],
+                "start_seconds":"1767225600","end_seconds":"1767225601"});
+            let error = native_market_import(serde_json::from_value(request).unwrap()).unwrap_err();
+            assert!(error.to_string().contains("INCOMPLETE_IMPORT"));
+            let report: serde_json::Value = json(&output.join("import-report.json")).unwrap();
+            assert_eq!(report["status"], "INCOMPLETE");
+            assert!(report["rejected_rows"].as_object().unwrap().keys().any(|key| key.contains(reason)));
+            assert_eq!(fs::read_to_string(&csv).unwrap(), rows);
+            assert_eq!(fs::read(&instruments).unwrap(), original_definitions);
+        }
     }
 
     #[test]
