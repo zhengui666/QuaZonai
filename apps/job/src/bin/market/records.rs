@@ -494,6 +494,42 @@ mod tests {
     }
 
     #[test]
+    fn explicit_half_up_counts_input_levels_and_distinct_snapshot_receipts() {
+        let mut stream = flat_stream();
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        stream.quantity_rounding = Some(serde_json::from_value(serde_json::json!({
+            "method":"DECIMAL_HALF_UP", "instrument_ids":[id.to_string()]
+        })).unwrap());
+        let encoding = Encoding { id, price_precision: 2, size_precision: 1 };
+        let mut snapshots = FlatSnapshots::default();
+        let mut report = Report::default();
+        let mut output = Vec::new();
+        for (event, received, side, price, size) in [
+            (10, 20, "bid", "1.2", "2.05"),
+            (10, 20, "ask", "1.3", "3.0"),
+            (10, 20, "ask", "1.4", "4.04"),
+            (10, 21, "bid", "1.2", "2.15"), // same event, different actual receipt
+            (10, 21, "ask", "1.3", "3.0"),
+            (11, 22, "bid", "1.2", "2.0"), // wholly unchanged snapshot
+            (11, 22, "ask", "1.3", "3.0"),
+        ] {
+            output.extend(snapshots.push(&stream, flat_row(side, price, size), encoding,
+                event, received, &mut report).unwrap());
+        }
+        output.extend(snapshots.finish(&stream, &mut report).unwrap());
+        assert_eq!(output.len(), 10); // all seven levels and three CLEAR records
+        let stats = &report.book_quantity_rounding[&id.to_string()];
+        assert_eq!(stats.processed_levels, 7);
+        assert_eq!(stats.changed_levels, 3);
+        assert_eq!(stats.changed_snapshot_groups, 2);
+        assert_eq!(stats.rounded_to_zero_levels, 0);
+        assert_eq!(stats.signed_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.06").unwrap());
+        assert_eq!(stats.absolute_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.14").unwrap());
+        assert_eq!(stats.maximum_absolute_quantity_error.parse::<Decimal>().unwrap(), Decimal::from_str_exact("0.05").unwrap());
+        assert_eq!(stats.target_size_precisions, std::collections::BTreeSet::from([1]));
+    }
+
+    #[test]
     fn flat_snapshots_sort_levels_clear_once_and_keep_nanosecond_receipts() {
         let stream = flat_stream();
         let encoding =
