@@ -119,3 +119,7 @@ owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Buil
 
 
 原生 owner 环境可显式设置 `backtestCompletion:true`，由内部策略模块提供 `finalize_after_node_run` 完成检查函数，再用原构建与新研究绑定流程启用。缺省/false保持旧工厂。此设置不是旧 Build 已支持的证明，也不是提前停止或自然 EOF 的判定；仅在原生运行返回成功且有匹配结果时执行注册回调，内部还须核对原始完成状态。不要让外部 Agent 用 on_stop 或补写文件伪装最终研究材料。
+
+盘口数量的有损变换必须显式授权，默认仍严格无损。仅在已授权的 manifest `book_snapshots` stream 中声明 `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["明确的原生InstrumentId"]}`；不使用通配符，列出实际授权市场。它仅将指定市场正数量按所提供 instrument 的 size_precision 做 Decimal 四舍五入（恰好中点向上），价格和其他市场仍严格，不修改 raw 或静态定义，也不证明定义在历史时点有效。TRADE_TICK 不接受该政策。
+
+报告 `book_quantity_rounding` 按原生市场列出 processed_levels、changed_levels、changed_snapshot_groups、rounded_to_zero_levels、target_size_precisions，以及精确字符串 signed_quantity_error、absolute_quantity_error、maximum_absolute_quantity_error。统计是已处理输入档位，包含随后失败的快照，不是成交量、已成功输出或收益。归零档位不静默删掉：原完整快照转换以 NONPOSITIVE_BOOK_SIZE 拒绝该组，导入为 INCOMPLETE，报告/partial 输出保留，不承诺原子回滚。确认零归零及实际报告后才能宣称保留所有档位；不能用政策声明代替真实结果。
