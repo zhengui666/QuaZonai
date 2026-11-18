@@ -91,9 +91,9 @@ fn records_equal(actual: &Data, expected: &Data) -> Result<bool> {
         return Ok(a.instrument_id == b.instrument_id
             && a.action == b.action
             && a.order.side == b.order.side
-            && a.order.price.raw == b.order.price.raw
+            && a.order.price.raw() == b.order.price.raw()
             && a.order.price.precision == b.order.price.precision
-            && a.order.size.raw == b.order.size.raw
+            && a.order.size.raw() == b.order.size.raw()
             && a.order.size.precision == b.order.size.precision
             && a.order.order_id == b.order.order_id
             && a.flags == b.flags
