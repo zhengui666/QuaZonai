@@ -1,8 +1,8 @@
-# 原生研究、参数扫描与证据评级
+# Native research, parameter grids, and evidence assessment
 
-## 自然语言研究
+## Natural-language research
 
-先读取 `quazonai datasets`、`quazonai research models` 和 `quazonai schema show ResearchStart`。使用真实已就绪数据集和模型，不编造目录、数据覆盖或费率。
+Read `quazonai datasets`, `quazonai research models`, and `quazonai schema show ResearchStart` first. Use real ready datasets and models; do not invent directories, coverage, or fees.
 
 ```sh
 quazonai research start --goal "$goal" --dataset "$dataset_id" --model "$provider:$model_id" --request-id "$request_id"
@@ -11,19 +11,19 @@ quazonai research diagnostics "$research_id"
 quazonai research wait "$research_id" --timeout 60
 ```
 
-`research_id` 为受理回执的 conversationId。复杂请求使用 `--file`，不与简单参数混用。模型的推理等级和服务档位取自实际列表。公开文献查询仅使用用户授权外发的内容。
+`research_id` is the accepted receipt's conversationId. Use `--file` for complex requests without mixing it with simple parameters. Select reasoning levels and service tiers from the actual model list. Public literature queries may include only content the user authorizes for external disclosure.
 
-自定义策略通过 `research start` 或终态后的 `research resume` 提交，向 QuaZonai 说明研究目标、策略逻辑、参数与数据范围。策略种类不受内置名称清单限制。内部 Pi Durable 研究 Agent 负责按其内部 skill 编写、构建、绑定及运行 Nautilus 策略；外部 Agent 不按本操作 skill 直接编辑策略源码或调用内部工具。需要源码工作区时，先确认产品已配置可用环境；未配置应报告阻碍，不冒充已经运行。
+Submit custom strategies through `research start` or terminal-state `research resume`, explaining goals, strategy logic, parameters, and data scope to QuaZonai. Strategy families are not restricted to a built-in name list. The internal Pi Durable research agent follows its own skill to author, build, bind, and run Nautilus strategies. External agents must not directly edit strategy source or call internal tools under this operating skill. If a source workspace is needed, first confirm a usable product environment is configured; otherwise report the blocker rather than claiming execution.
 
-EMA_CROSS、GRID_MARKET_MAKER、ORDER_BOOK_IMBALANCE、HURST_VPIN_DIRECTIONAL 等预注册入口只是便捷选项，不是可研究策略白名单。外部操作只提交目标与准确参数、跟踪回执和读取证据。
+Pre-registered entries such as EMA_CROSS, GRID_MARKET_MAKER, ORDER_BOOK_IMBALANCE, and HURST_VPIN_DIRECTIONAL are conveniences, not a strategy whitelist. External operation submits goals and accurate parameters, tracks receipts, and reads evidence.
 
-Hurst/VPIN 的 INTERNAL BAR 由官方 DataEngine 根据原 TradeTick 聚合；EXTERNAL BAR 必须使用原完整 BarType。外部非时间 BAR 若只供策略读取，应明确配置原生 venue.bar_execution=false，并提供用于撮合的原 Quote/Trade 数据；省略保持官方默认 true，不由胶水静默关闭。研究与账户的工厂注册及 capabilities 独立，研究配置不扩大账户执行能力。
+Official DataEngine aggregates Hurst/VPIN INTERNAL BARs from original TradeTicks; EXTERNAL BARs require the original complete BarType. If external non-time BARs are only for strategy consumption, explicitly configure native venue.bar_execution=false and supply original Quote/Trade data for execution. Omission retains the official default true; glue does not silently disable it. Research/account factory registration and capabilities are independent; research configuration does not expand account execution capabilities.
 
-先看真实数据类型及覆盖。数据准备不等于策略获利；缺失或未预热统计保留为空，官方统计名、币种和单位保留原意。回测不启动账户，也不把历史目标点当实时策略。
+Inspect actual data types and coverage first. Data preparation does not establish profitability. Preserve missing or un-warmed statistics as unavailable and retain official metric names, currencies, and units. Backtests do not start accounts or turn historical target points into live strategies.
 
-## 读取过程与原生结果
+## Read the process and native results
 
-`research get` 读取当前摘要、任务身份和评价；用 `research messages` 获取用户目标、续接指令及 Agent 回复，按 `nextCursor` 原样读取更早的页面。每页消息按发生顺序排列，分页从最新一页向前；页面可能没有消息但仍有 nextCursor，要继续读取。不要把摘要当作全部研究过程。
+`research get` reads the current summary, task identities, and assessments. Use `research messages` for user goals, continuation instructions, and agent replies, passing `nextCursor` unchanged to read earlier pages. Messages within each page are chronological, while pagination moves backward from the latest page. An empty page may still have nextCursor; continue. A summary is not the entire research process.
 
 ```sh
 quazonai research messages "$research_id"
@@ -32,94 +32,93 @@ quazonai research native-runs "$research_id" --result-task-id "$result_task_id"
 quazonai research native-runs "$research_id" --result-task-id "$result_task_id" --offset "$next_offset"
 ```
 
-`result_task_id` 从当前研究详情的 `final.nativeStrategyResult.resultTaskId` 取得；原样保留它直到读完该结果的 `nextOffset`。native-runs 读取原生运行元数据，不把大行情/订单表全部载入。逐组请求与结果使用下面的 native-backtests/evidence。结果更新时重新读详情，不把两次结果拼成同一轮；历史任务仍按其原 taskId 读取。
+Obtain `result_task_id` from current details at `final.nativeStrategyResult.resultTaskId`; preserve it while following that result's `nextOffset`. native-runs reads native run metadata without loading entire large market/order tables. Use native-backtests/evidence below for per-group requests and results. If results change, reread details rather than splicing two results into one run. Historical tasks remain readable by original taskId.
 
-## 同一研究继续和恢复
+## Continue and recover the same research
 
-保存 conversationId 与 submissionId。`watch`/`wait` 超时只退出客户端，不停止远端任务。需要停止时使用 `research stop ID` 并读回。通过 `diagnostics` 确认终止 submission 后：
+Retain conversationId and submissionId. `watch`/`wait` timeout only detaches the client. To stop, use `research stop ID` and read back state. After `diagnostics` confirms a terminal submission:
 
 ```sh
 quazonai research resume "$research_id" --submission-id "$terminal_submission_id" --instruction "$reply"
 ```
 
-用 instruction 回答追问、修改研究方向或在已结束/停止的研究中继续；仍在运行的任务不要重建。保留新回执身份。Web 研究页显示同一 Pi 消息并支持回复，CLI 没有另一个聊天发送命令。
+Use instruction to answer a question, redirect research, or continue ended/stopped research. Do not recreate running work. Preserve the new receipt identities. The web research page displays the same Pi messages and supports replies; the CLI has no separate chat-send command.
 
-## 参数网格与独立原生回测
+## Parameter grids and independent native backtests
 
-新网格使用同一 `research start` 或已终止 submission 的 `research resume`，不用已退役的 `parameter-scan options/preview/create/surface`。在 goal/instruction 中写清已安装策略或工厂、每个参数的明确候选值、训练/验证窗口、费用和目的；不要求用户手写工具 JSON，不凭空补充实质假设。
+Submit new grids through the same `research start` or terminal-submission `research resume`, not retired `parameter-scan options/preview/create/surface`. State the installed strategy/factory, explicit candidate values for each parameter, training/validation windows, costs, and purpose in goal/instruction. Do not require users to handwrite tool JSON or invent substantive assumptions.
 
-QuaZonai 的 `native_parameter_grid` 按完整原生请求和离散轴值生成笛卡尔组合。路径是现有字段的键数组，轴不能重叠，最后一轴变化最快；原始 JSON 值、十进制字符串保持不变，没有数值范围运算、自动切分或选优。工具分页返回 `requests`、`totalCandidates` 和 `nextOffset`；保持同一输入读完所需各页，不能将第一页冒充全部候选。这是研究 Agent 工具，不是同名 CLI 子命令，也不是 Nautilus 原生优化器。
+QuaZonai's `native_parameter_grid` produces Cartesian combinations from a complete native request and discrete axis values. Paths are arrays of existing field keys; axes cannot overlap and the last axis varies fastest. Original JSON values and decimal strings are preserved. There is no numerical range arithmetic, automatic splitting, or optimization. The tool pages `requests`, `totalCandidates`, and `nextOffset`; keep the same input while reading required pages, rather than treating the first page as all candidates. This is an internal research agent tool, not a same-named CLI command or Nautilus native optimizer.
 
-在数值运行前声明全部候选、用途及独立性假设，验证研究先用 `native_strategy_logic_review` 记录完整原请求。随后将生成的完整请求传给 `native_parameter_batch`：`configured=false` 用官方策略请求，`true` 用已安装 Rust factory 请求。Pi Durable 依次编排独立子任务，Nautilus 执行每组回测并提供原生统计。失败阻止后续组；UNKNOWN 保留原任务待核对，不重发或更换身份。支持的入口还取决于已绑定 runner 的真实 capabilities，不因应用更新自动获得新工厂或导入能力。
+Declare all candidates, purposes, and independence assumptions before numerical execution. Validation research first records complete original requests with `native_strategy_logic_review`. Then pass the generated complete requests to `native_parameter_batch`: `configured=false` uses official strategy requests; `true` uses installed Rust factory requests. Pi Durable sequentially orchestrates independent child tasks; Nautilus executes each backtest and supplies native statistics. Failure stops later groups. UNKNOWN retains the original task for reconciliation, not resubmission or identity replacement. Supported entrypoints also depend on the bound runner's actual capabilities; an application update does not automatically provide new factories or import capabilities.
 
 ```sh
 quazonai research native-backtests "$research_id"
-# nextCursor 非 null 时原样读取下一页
+# When nextCursor is non-null, pass it unchanged for the next page.
 quazonai research native-backtests "$research_id" --cursor "$next_cursor"
 quazonai research evidence "$research_id" "$task_id"
 ```
 
-结果列表按原始任务顺序分页，包括失败、未完成及同研究的历史运行。每个 task_id 取自实际返回值，逐组核对 input.request、状态及原 Nautilus result；原始任务结果不重算排名或合成组合收益。Web「结果与评价」提供同一分页及原始 JSON 链接。批量完成后默认展示最后一组，不是最优或组合结果。继续阅读原结果后请求研究评价，缺证据保持不可用，不据参数搜索声称独立 OOS 或实盘许可。
+Lists are paginated in original task order, including failed, unfinished, and historical runs within the same research. Use returned task_id values to inspect each input.request, state, and original Nautilus result. Original task results do not recalculate rankings or synthesize portfolio returns. The web results-and-assessments section offers the same pagination and original JSON links. After a batch, the default display is the last group, not the best group or a portfolio. Read the original results before requesting an assessment. Keep missing evidence unavailable; parameter search does not establish independent OOS validation or live trading permission.
 
-旧 `parameter-scan list/get/stop/trials/watch/wait` 仅读取或显式停止历史扫描；旧合同存在不意味着旧生成、评分或排名执行链仍可调用。
+Legacy `parameter-scan list/get/stop/trials/watch/wait` only reads or explicitly stops historical scans. Retained contracts do not mean old generation, scoring, or ranking execution chains remain callable.
 
-## 官方权益统计与收益口径
+## Official equity statistics and return basis
 
-查看 `equity_performance` 的真实 source、status/reason、币种、快照覆盖、收益日数与频率。它直接读取 Nautilus 官方 portfolio_returns，并调用官方 CAGR/Sharpe 的 252 与 365 两种频率；没有权益证据时保持不可用，不退回持仓收益冒充权益。canonical 默认统计可能使用持仓收益，不能按名称视为日权益收益。官方跨日延续也不等于每天实际观测，短样本年化不是已实现年收益。
+Inspect actual `equity_performance` source, status/reason, currency, snapshot coverage, number of return days, and frequency. It reads official Nautilus portfolio_returns and invokes official CAGR/Sharpe at both 252 and 365 periods. Without equity evidence it remains unavailable; position returns are not substituted as equity returns. Canonical default statistics may use position returns, so metric names alone do not establish daily equity returns. Official cross-day carry-forward is not an actual observation each day, and annualizing a short sample is not realized annual profit.
 
-通过研究 Agent 声明评价指标时，可明确 `metric_source:"EQUITY_PERFORMANCE"`、`annualization_days:252` 或 `365` 及该频率对应的 `native_key`。不得将旧 WF 工具或历史合同当作当前自动切分能力；各验证窗口需明确声明原生请求。股票常用频率与全天候市场频率只是计算假设，必须与用户目的及报告口径一致。
+When declaring assessment metrics through the research agent, specify `metric_source:"EQUITY_PERFORMANCE"`, `annualization_days:252` or `365`, and the corresponding `native_key`. Legacy WF tools or historical contracts are not current automatic splitting capabilities. Declare native requests explicitly for every validation window. Equity-market and around-the-clock frequencies are calculation assumptions and must match user goals and reporting conventions.
 
-## 防过拟合与 AI 综合意见
+## Overfitting checks and AI synthesis
 
-通过研究 Agent 请求逻辑预评估、明确候选/窗口的逐组原生验证、邻近参数及成本敏感性，然后读取实际研究结果。不宣称已执行未提供请求的 walk-forward/CPCV；没有自动折分或独立 CLI 优化子命令。原生回测和统计由 Nautilus 执行；逻辑分析与综合星级是模型判断，不是 Nautilus 官方评分。
+Ask the research agent for pre-execution logic assessment, native validation of explicit candidates/windows, neighboring parameter checks, and cost sensitivity, then read actual results. Do not claim walk-forward/CPCV without corresponding requests; there is no automatic fold splitting or independent CLI optimization command. Nautilus performs backtests and statistics. Logic analysis and synthesized star ratings are model judgments, not official Nautilus scores.
 
-逻辑预评估应先于对应数值运行，事先说明候选、窗口和优化目标。不得将全区间敏感性当新的样本外测试，不得在看完结果后声称事前注册。检查任务来源、运行状态、窗口、费用、缺失证据和限制；不能只凭任务 COMPLETED 或星级宣称验证通过。证据不足时保持星级不可用，AI 星级不表示获利概率、独立审计或交易授权。
+Logic pre-assessment precedes the corresponding numerical run and declares candidates, windows, and optimization objectives in advance. Full-period sensitivity is not a new out-of-sample test; do not claim preregistration after seeing results. Inspect task provenance, state, windows, fees, missing evidence, and limitations. Neither COMPLETED nor stars alone establish successful validation. Insufficient evidence leaves stars unavailable. AI stars are not profit probabilities, independent audits, or trading authorization.
 
-## 既有记录
+## Existing records
 
-`portfolio list/get` 保留历史只读结果。CLI 不再提供新建因子、组合 build 或容量评分入口。旧 `portfolio replay-ticks` / `portfolio tick-replay` 的服务路由已移除，不可用于新建或查询回放；使用同一 `research` 的官方原生策略入口，不尝试重新启用旧因子执行链。
+`portfolio list/get` retains historical read-only results. The CLI no longer creates factors, portfolio builds, or capacity scores. Removed `portfolio replay-ticks` / `portfolio tick-replay` routes cannot create or query replays. Use official native strategy execution in the same `research`, without reactivating the retired factor pipeline.
 
-## 显式授权的实现源码评审
+## Explicitly authorized implementation source review
 
-源码评审不自动扫描本机、下载 URL 或读取凭据。外部 Agent 使用 CLI 向同一研究登记所有者授权给指定模型的源码文本：
+Source review does not automatically scan local files, download URLs, or read credentials. External agents register owner-authorized source text for a specified model in the same research through the CLI:
 
 ```sh
 quazonai research implementation-sources "$research_id" --file source-material.json
 ```
 
-`source-material.json` 内容：
+`source-material.json`:
 
 ```json
-{"requestId":"source-material-1","shareWithResearchModel":true,"model":{"provider":"实际提供方","modelId":"当前研究模型"},"files":[{"id":"strategy","name":"strategy.rs","revision":"所有者声明的版本","content":"经过确认可以交给该模型的源码文本"}]}
+{"requestId":"source-material-1","shareWithResearchModel":true,"model":{"provider":"ACTUAL_PROVIDER","modelId":"CURRENT_RESEARCH_MODEL"},"files":[{"id":"strategy","name":"strategy.rs","revision":"OWNER_DECLARED_VERSION","content":"SOURCE_TEXT_AUTHORIZED_FOR_THIS_MODEL"}]}
 ```
 
-这明确授权把这些文本交给此研究的指定模型；不要包含密码、密钥、私有账户资料或未授权文件。回复只返回清单，不启动评审/编译/回测/交易。相同 requestId 的原材料不能被替换；材料绑定当时的原生研究请求和模型，修改配置需要重新登记相应材料。这是材料登记，不代替内部研究 Agent 的源码实现或评估。
+This explicitly authorizes sharing these texts with the research's specified model. Do not include passwords, secrets, private account details, or unauthorized files. The response contains a manifest only; it does not start review, compilation, backtesting, or trading. Original material under a requestId cannot be replaced. Material binds the then-current native research request and model; configuration changes require corresponding newly registered material. Registration does not replace the internal research agent's implementation or assessment.
 
-随后让原研究通过 `native_strategy_logic_review` 的 `sourceRequestId` 选择这份材料。Pi 子会话按 `native_assessment_read_source` 分页读取，报告实际读取的文件及 UTF-16 字元范围。未提供的依赖、未读区间、源码与构建产物的对应关系均保持未知；用户给出的版本标签不是构建证明。`SCOPED_SOURCE_LOGIC_REVIEW` 仅表示读过授权片段，不代表全部实现已审查。缺少材料仍是配置逻辑评价。旧 Task、报告和原始请求保留，不重新计算或授权交易。
+Next, instruct the original research to select this material through `native_strategy_logic_review`'s `sourceRequestId`. The Pi child conversation pages it with `native_assessment_read_source`, reporting actual files and UTF-16 character ranges read. Unsupplied dependencies, unread ranges, and source-to-build correspondence remain unknown. Owner-supplied version labels are not build evidence. `SCOPED_SOURCE_LOGIC_REVIEW` means authorized excerpts were read, not that the entire implementation was reviewed. Without material, assessment remains configuration-logic review. Preserve old Tasks, reports, and original requests; do not recalculate or authorize trading.
 
-## 新数据集与单次研究的独立 runner
+## New datasets and a per-research runner
 
-需要额外的可信 Rust runner 时，先 `native-runner status` 读取当前 revision，再用 `native-runner import --file` 提交一次原请求，随后 `native-runner build-status REQUEST_ID` 确认原任务完成且 configuredRunFactory 可用。导入执行可信代码的 capabilities，不等于数据/策略验收，不会选择全局 runner。
+For an additional trusted Rust runner, first read the current revision with `native-runner status`. Submit one original request with `native-runner import --file`, then confirm completion and configuredRunFactory capability with `native-runner build-status REQUEST_ID`. Import executes trusted code's capabilities; it is not data/strategy acceptance and does not select the global runner.
 
-新数据集通过 `datasets registry` 获取 `qz.data.registered` revision，使用 `datasets register --file` 追加服务端已准备的 DatasetConfig 文件。相同 ID 不可覆盖任何现有或保留数据集；保存原 requestId，未知结果只查询/重放原请求，不能另换 ID。登记不启动研究、不运行数据获取，也不改变旧数据源。
+For new datasets, obtain the `qz.data.registered` revision through `datasets registry`, then append a service-prepared DatasetConfig file with `datasets register --file`. An ID cannot overwrite any existing or reserved dataset. Retain the original requestId; for unknown outcomes, query/replay the original request rather than changing IDs. Registration does not start research, acquire data, or alter old sources.
 
-验收完成后，新的 `research start --file` 可带 `runnerBuildRequestId` 和当前 `expectedRunnerRevision` 显式绑定该完成构建；无需选择全局默认。原环境变化或 revision 冲突必须先核对，不能自动刷新并重发。已有研究及同 requestId 重放保留原 executor。数据集和 runner 就绪不代表允许实盘。
+After acceptance, a new `research start --file` may explicitly bind a completed build with `runnerBuildRequestId` and current `expectedRunnerRevision`, without changing the global default. Check environment changes or revision conflicts first rather than automatically refreshing and resubmitting. Existing research and same-requestId replay retain the original executor. Dataset/runner readiness is not live trading permission.
 
-已经执行过的研究仍可通过同一研究终态后的 resume 指令请求“事后源码/逻辑审查”，注明已登记 sourceRequestId，并要求内部 Agent 使用明确的 POST_EXECUTION 审查时序。读取 research get 中独立审查记录及其原 evidence 链接；事后记录不能替代旧事前评级、不能补成事前协议，也不会重跑历史任务。源码复核子 Agent 不自动读取历史回测结果，需将源码结论与原执行证据区分。
+Research that already executed may request a post-execution source/logic review by resuming the same research after settlement, specifying the registered sourceRequestId and explicit POST_EXECUTION timing for the internal agent. Read the independent review records in research get and their original evidence links. Post-execution records do not replace prior pre-execution ratings, retroactively create a preregistered protocol, or rerun historical tasks. Source-review child agents do not automatically read historical backtest results; distinguish source conclusions from execution evidence.
 
-owner 的 `marketImport:true` 是下一次正式构建的可选能力，旧 Build 不随保存配置改变。已有原生导入器要求 owner 显式 high-precision；构建保持同一官方依赖来源/版本/精度，不能通过伪改 capability 启用。让内部 Agent 按内部 skill 准备 owner feature/官方锁、新 Build，并用原 requestId 绑定新研究；不必切换全局 runner。随后由内部 Agent 使用已有 `native_market_import` 合同导入已授权训练文件，读取真实报告后再决定数据登记。请求 `modality` 省略默认 `TRADE_TICK`；`BOOK_SNAPSHOT` 表示全量盘口快照，以原生 Clear + 全档位 Add 的 `OrderBookDelta` 保存，不是源增量。价格和数量不截档，盘口导入按所提供 instrument 的 price/size precision 编码，并逐值严格检查转换后数值等于原值；超精度非零数字会使导入不完整并拒绝成功，不舍入、不静默跳过市场。定义是输入场景，不因此证明历史时点有效；现有 TRADE_TICK 导入仍保留原生编码精度。源 `order_count` 不在 delta 字段中；按真实 manifest 映射读取 `parquet-zstd` 文件，事件/接收时钟选择必须明确，接收时钟模式须显式最大延迟。外部 Agent 负责操作 QuaZonai、读取报告和确认登记结果，不直接运行原生导入器。
+Owner `marketImport:true` optionally enables the next formal build; saving configuration does not change old Builds. The existing native importer requires explicit owner high-precision. Builds preserve the same official dependency source/version/precision; do not fabricate capabilities to enable it. Have the internal agent follow its skill to prepare owner features/official lock, create a new Build, and bind new research using the original requestId, without changing the global runner. The internal agent then imports authorized training files through the existing `native_market_import` contract and reads the actual report before dataset registration. Omitted `modality` defaults to `TRADE_TICK`. `BOOK_SNAPSHOT` stores complete order-book snapshots as native Clear plus Add for every level in `OrderBookDelta`, not source incremental updates. Prices and quantities are not depth-truncated. Book import encodes the supplied instrument's price/size precision and strictly verifies each converted value equals its source; nonzero excess precision makes import incomplete and rejects success, without rounding or silently dropping markets. Definitions are input scenarios, not proof of historical applicability. Existing TRADE_TICK import retains native encoding precision. Source `order_count` is not a delta field. Read `parquet-zstd` using actual manifest mappings; choose event/receive clocks explicitly, with an explicit maximum delay for receive-clock mode. External agents operate QuaZonai, read reports, and confirm registration, rather than running the native importer directly.
 
-无已登记 catalog 时，让内部 Agent 先通过 `native_runner_market_import` 按成功 Build 原requestId调用既有导入 Task，再读取真实报告、在研究工作区写 descriptor 并用 `native_dataset_register` 登记，最后 `native_research_start_bound`。这些是内部 tools，不是 CLI 命令；外部只以 research resume 交付授权目标并读取原任务结果，不伪造dataset占位或切换全局runner来绕过准备。
+Without a registered catalog, have the internal agent call the existing import Task through `native_runner_market_import` using the successful Build's original requestId, read the actual report, write a descriptor in the research workspace, register it with `native_dataset_register`, then use `native_research_start_bound`. These are internal tools, not CLI commands. Externally, deliver authorized goals through research resume and read original task results. Do not fabricate dataset placeholders or change the global runner to bypass preparation.
 
-让内部 Agent 使用正式 `native_runner_build` 请求，可选 `optimizationLevel: 0 | 1 | 2 | 3`，仅控制本次新构建的编译优化；省略维持原行为，不改 owner 配置或旧 Build。需要不同优化等级时提交新的 requestId，原 requestId 重放必须保持原参数。该选项不是已有可执行文件 import 的参数，也不自动选择 runner、重绑研究或发起回测。
+Ask the internal agent to use formal `native_runner_build`, optionally with `optimizationLevel: 0 | 1 | 2 | 3`. It controls compilation optimization for this new build only; omission preserves existing behavior and does not modify owner configuration or old Builds. A different optimization level requires a new requestId; original-requestId replay retains its original parameters. This is not an existing-executable import parameter and does not automatically select a runner, rebind research, or start a backtest.
 
-### 多个已登记 catalog
+### Multiple registered catalogs
 
-新研究的 start JSON 保留 `datasetId` 为主数据集，可添加 `additionalDatasetIds: ["另一已登记datasetId"]`。服务解析并保留各 dataset 原 catalog 与身份，不复制行情、不扩大父目录；同 requestId 重试仍使用原绑定。只用于内部配置式 Nautilus 工厂/配置式参数批次的多 catalog 输入，旧研究与普通单 catalog 调用不变。外部 Agent 提交真实登记 ID 和研究要求，由 QuaZonai 内部通过 brief、指定绑定 datasetId 的 catalog 检查及原生回测工具执行，不直接编写或执行研究策略。
+New research start JSON keeps `datasetId` as the primary dataset and may add `additionalDatasetIds: ["ANOTHER_REGISTERED_DATASET_ID"]`. The service resolves and retains each dataset's original catalog and identity without copying market data or broadening access to a parent directory. Same-requestId retries retain original bindings. This supports multi-catalog inputs to internal configured Nautilus factories/configured parameter batches only; old research and ordinary single-catalog calls remain unchanged. External agents submit real registered IDs and research requirements. QuaZonai internally uses brief, catalog inspection with the specific bound datasetId, and native backtest tools, without external agents authoring or executing strategies.
 
+The native owner environment may explicitly set `backtestCompletion:true`. The internal strategy module supplies `finalize_after_node_run`, enabled through the existing build and new-research binding flow. Omitted/false retains old factories. This setting is neither proof that an old Build supports it nor a determination of early stopping or natural EOF. The registered callback runs only after native execution returns successfully with matching results; internal code must still inspect original completion state. External agents must not use on_stop or manually written files to fabricate final research material.
 
-原生 owner 环境可显式设置 `backtestCompletion:true`，由内部策略模块提供 `finalize_after_node_run` 完成检查函数，再用原构建与新研究绑定流程启用。缺省/false保持旧工厂。此设置不是旧 Build 已支持的证明，也不是提前停止或自然 EOF 的判定；仅在原生运行返回成功且有匹配结果时执行注册回调，内部还须核对原始完成状态。不要让外部 Agent 用 on_stop 或补写文件伪装最终研究材料。
+Lossy book-quantity transformation requires explicit authorization; strict lossless conversion remains the default. Declare `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["EXPLICIT_NATIVE_INSTRUMENT_ID"]}` only in an authorized manifest `book_snapshots` stream. List actual authorized markets, not wildcards. It rounds positive quantities for those markets to the supplied instrument's size_precision using Decimal half-up (exact ties upward). Prices and other markets remain strict. It changes neither raw data nor static definitions and does not establish historical applicability. TRADE_TICK does not accept this policy.
 
-盘口数量的有损变换必须显式授权，默认仍严格无损。仅在已授权的 manifest `book_snapshots` stream 中声明 `quantity_rounding: {"method":"DECIMAL_HALF_UP","instrument_ids":["明确的原生InstrumentId"]}`；不使用通配符，列出实际授权市场。它仅将指定市场正数量按所提供 instrument 的 size_precision 做 Decimal 四舍五入（恰好中点向上），价格和其他市场仍严格，不修改 raw 或静态定义，也不证明定义在历史时点有效。TRADE_TICK 不接受该政策。
-
-报告 `book_quantity_rounding` 按原生市场列出 processed_levels、changed_levels、changed_snapshot_groups、rounded_to_zero_levels、target_size_precisions，以及精确字符串 signed_quantity_error、absolute_quantity_error、maximum_absolute_quantity_error。统计是已处理输入档位，包含随后失败的快照，不是成交量、已成功输出或收益。归零档位不静默删掉：原完整快照转换以 NONPOSITIVE_BOOK_SIZE 拒绝该组，导入为 INCOMPLETE，报告/partial 输出保留，不承诺原子回滚。确认零归零及实际报告后才能宣称保留所有档位；不能用政策声明代替真实结果。
+The report's `book_quantity_rounding` lists processed_levels, changed_levels, changed_snapshot_groups, rounded_to_zero_levels, target_size_precisions, and exact string signed_quantity_error, absolute_quantity_error, maximum_absolute_quantity_error per native market. Counts describe processed input levels, including subsequently failed snapshots, not trade volume, successful output, or profit. Rounded-to-zero levels are not silently removed: original complete-snapshot conversion rejects that group with NONPOSITIVE_BOOK_SIZE, import becomes INCOMPLETE, and report/partial output is retained without an atomic rollback guarantee. Only after checking zero rounded-to-zero levels and the actual report may you claim all levels were retained; a policy declaration is not a result.

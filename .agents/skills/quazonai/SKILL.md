@@ -1,59 +1,62 @@
 ---
 name: quazonai
-description: 通过 quazonai CLI 操作 QuaZonai 量化研究工作台，将用户目标转成可执行命令并读取 JSON 回执。用于查询数据和模型、提交或恢复研究、跟踪任务、运行官方原生策略回测、参数扫描和证据评级、观测 paper/live 账户并显式控制已配置策略、处理资金退出，以及查看用量、设置、扩展和维护状态。适用于代用户使用已安装产品的 Agent；不用于修改项目源码、实现功能或部署后端。
+description: Operate the QuaZonai quantitative research workbench through the quazonai CLI, translating user goals into commands and reading JSON receipts. Use for datasets and models, research submission and continuation, task tracking, official native strategy backtests, parameter grids and evidence assessments, paper/live account observation and explicit control of configured strategies, capital exits, usage, settings, extensions, and maintenance. For agents using an installed product on the user's behalf, not editing its source, implementing features, or deploying its backend.
 ---
 
 # Quazonai
 
-把用户目标转成原生 `quazonai` 命令，保存请求与回执，再按真实业务状态交付结果。使用 CLI 提供的功能，不直接读写服务数据库或自行拼装另一套 HTTP 客户端。
+Translate user goals into native `quazonai` commands, retain requests and receipts, and report actual business outcomes. Use the CLI rather than accessing the service database or constructing a separate HTTP client.
 
-## 职责
+## Responsibilities
 
-本 skill 面向外部 Agent：把用户目标提交给 QuaZonai，读取同一研究的状态、对话、原生结果和评价，再向用户交付。CLI 是同一服务的操作与读取入口。内部 Pi Durable 研究 Agent 使用自己的策略编写 skill 与工具完成源码、构建、运行和研究评价；外部通过研究目标或续接指令协作，不代替内部执行。
+This skill is for external agents: submit goals to QuaZonai, read the same research's state, conversation, native results and assessments, and deliver them to the user. The CLI is the operating and reading interface to the same service. The internal Pi Durable research agent uses its own strategy-authoring skill and tools to implement source, build, run, and evaluate research. Collaborate through research goals or continuation instructions; do not replace internal execution or write strategy source under this operating skill.
 
-## 安装版本与技能
+## Release alignment and response language
 
-使用与服务、CLI 同一发行版本提供的技能。不要用移动中的 `dev` 技能指导旧版实例；安装与升级按发行包说明执行，不在此技能中自动安装其他 Agent 产品。
+Use the skill shipped with the same release as the service and CLI. Do not apply a moving `dev` skill to an older instance. Follow release instructions for installation and upgrades; this skill does not automatically install other agent products.
 
-## 1. 连接并识别能力
+Read `quazonai settings get` before composing normal responses. Follow its `language` setting, shared with the web settings: `en` (default) or `zh-CN`. An explicit language request from the user for the current exchange takes precedence. Keep CLI names, API fields, identifiers, and diagnostic strings unchanged. This English skill does not itself require English user-facing responses or change the saved language.
 
-先运行：
+## 1. Connect and identify available capabilities
+
+Start with:
 
 ```sh
 quazonai --version
 quazonai --help
 quazonai identity
+quazonai settings get
 ```
 
-复用当前登录。缺少 CLI、需要首次登录、切换实例或出现证书问题时，读取 [连接、输出与错误](references/connection-and-errors.md)。首次登录必须由用户在自己的交互终端输入密码。
+Reuse the current login. For a missing CLI, initial login, instance switch, or certificate issue, read [Connection, output, and errors](references/connection-and-errors.md). The user must enter the initial login password in their own interactive terminal.
 
-按实际安装版本的 `--help` 和 `schema` 选择命令。不要添加 `--json`、`--yes`、`--api-key`、`--password`、`--profile` 或任意 HTTP 请求子命令：当前 CLI 没有这些入口。
+Choose commands from the installed version's `--help` and `schema`. Do not add `--json`, `--yes`, `--api-key`, `--password`, `--profile`, or an arbitrary HTTP request subcommand: the current CLI has none of these interfaces.
 
-## 2. 选择最短操作路径
+## 2. Choose the shortest operating path
 
-| 用户目标 | 先读取 | 操作参考 |
+| User goal | Read first | Reference |
 | --- | --- | --- |
-| 自然语言研究、回测、追问或继续 | `datasets`、`research models`、`research get ID` | [原生研究与扫描](references/research-and-portfolios.md) |
-| 提交自定义策略研究 | `research start` / `research resume`，说明目标与约束 | [研究与证据](references/research-and-portfolios.md) |
-| 参数扫描与证据评级 | 原研究详情、已登记数据与 runner 能力、`research native-backtests ID` | [原生研究与扫描](references/research-and-portfolios.md) |
-| 绑定账户、显式启停原生策略或资金退出 | `observation list`、`account-strategy status ID`、`capital status ID` | [账户与资金](references/accounts.md) |
-| 读取既有 PM/组合记录 | 实际 `--help`、`pm capabilities` | [保留的历史查询](references/pm.md) |
-| 查用量、设置、扩展或维护模式 | 对应 `get`、`list`、`status` | [命令索引](references/commands.md) |
+| Natural-language research, backtests, questions, or continuation | `datasets`, `research models`, `research get ID` | [Native research and grids](references/research-and-portfolios.md) |
+| Custom strategy research | `research start` / `research resume`, specifying goals and constraints | [Research and evidence](references/research-and-portfolios.md) |
+| Parameter grids and evidence assessment | Original research detail, registered datasets and runner capabilities, `research native-backtests ID` | [Native research and grids](references/research-and-portfolios.md) |
+| Account binding, explicit native strategy start/stop, or capital exit | `observation list`, `account-strategy status ID`, `capital status ID` | [Accounts and capital](references/accounts.md) |
+| Existing PM/portfolio records | Actual `--help`, `pm capabilities` | [Retained historical queries](references/pm.md) |
+| Usage, settings, extensions, or maintenance | Corresponding `get`, `list`, `status` | [Command index](references/commands.md) |
 
-单独的研究不要求先创建 PM、组合或账户观测。目标已有关联资源时，使用原 ID 继续，不重新提交同一项工作。
+Independent research does not require a PM, portfolio, or account observation. Continue with original IDs when related resources already exist; do not resubmit the same work.
 
-## 3. 形成请求
+## 3. Form the request
 
-1. 从实际列表、详情或回执取得数据集、模型和业务 ID。保留原 ID；仅研究 `conversationId`、`submissionId` 使用原生安全整数，其余 ID 按不透明字符串传递。
-2. 对文件请求先查 `quazonai schema list`，再查 `quazonai schema show NAME`。原生科学合同使用 `--domain`，不要混用两套名称。
-3. 普通 `schema show` 返回 `{format:"typescript", entry, source}`，其中 `source` 包含多份合同；查找目标类型及依赖，不把整个输出作为请求。原生 `--domain` 返回 JSON Schema 及引用组件。Schema 是结构说明，不验证账户权限、数据可用性或科学结论。
-4. 将用户目标、真实资源和已明确的参数写成一个 JSON 对象文件。仅在必需的目标、资金、连接或授权范围无法从当前结果确定时补问；不要编造模型、连接、金额或约束。
-5. 为需要 `requestId` 的新操作生成一次唯一字符串并保存。复用原请求时同时保留原文件内容、`requestId`、资源 ID 和 `expectedRevision`。存在 `--request-id` 时，它必须与文件中的值一致。
-6. 将金额、权重、纳秒和十进制字段保留为字符串，例如 `"10000"`、`"0.25"`。保留 `null` 与缺失值；不要把不可用指标改成零。
+1. Obtain dataset, model, and business IDs from actual lists, details, or receipts. Preserve original IDs. Only research `conversationId` and `submissionId` are native safe integers; pass other IDs as opaque strings.
+2. For file requests, read `quazonai schema list`, then `quazonai schema show NAME`. Native science contracts use `--domain`; do not mix the two name sets.
+3. Ordinary `schema show` returns `{format:"typescript", entry, source}`; `source` contains multiple contracts. Locate the target type and dependencies rather than submitting the entire output. Native `--domain` returns JSON Schema and referenced components. Schemas describe structure, not account permissions, data availability, or scientific validity.
+4. Write one JSON object containing the user goal, actual resources, and explicit parameters. Ask only when a required goal, amount, connection, or authorization scope cannot be determined from current evidence. Do not invent models, connections, amounts, or constraints.
+5. Generate and retain one unique string for each new operation requiring `requestId`. When reusing a request, preserve its file contents, `requestId`, resource IDs, and `expectedRevision`. If supplied, `--request-id` must equal the value in the file.
+6. Keep monetary amounts, weights, nanoseconds, and decimal fields as strings, such as `"10000"` and `"0.25"`. Preserve `null` and missing values; do not replace unavailable metrics with zero.
 
-使用 JSON 序列化器写文件，使用参数数组或正确的 shell 引号传入文本和路径。不要将用户文本拼成 shell 代码。大请求优先用 `--file`，不要把请求塞入不存在的内联 JSON 参数。
+Write files with a JSON serializer. Pass text and paths through argument arrays or correct shell quoting; never turn user text into shell code. Prefer `--file` for large requests, not nonexistent inline JSON options.
 
-## 4. 提交一次并观察原对象
+## 4. Submit once and observe the original object
 
 ```sh
 quazonai research start --file research-request.json
@@ -61,21 +64,21 @@ quazonai research wait "$research_id" --timeout 60
 quazonai research get "$research_id"
 ```
 
-从第一条命令的回执取得 `research_id`，不要照抄示例 ID。把 stdout JSON、stderr 和退出码分开保存。
+Get `research_id` from the first receipt, not an example. Retain stdout JSON, stderr, and exit status separately.
 
-- 普通业务成功输出通常是一行 JSON；`watch` 输出多行状态 JSON，最后另有总结。`--help`、`--version` 是文本。
-- `watch` / `wait` 不带 `--timeout` 会持续等待。需要一次有限观察时显式设置秒数；超时或中断只分离客户端，不取消远端工作。
-- 研究以原 submission 的 `done` / `unanswered` 判定结束。`done` 仍需检查原生结果、证据完整性、指标及错误，不能等同于科学目标达成。
-- 组合以 `COMPUTED` / `FAILED` / `STOPPED` 判定结束。退出码 `0` 本身不能证明正在观察的对象已经完成。
-- 写入出现 `write_outcome_unknown_retain_original_request` 时，先查询原对象或列表。没有回执时保留未知状态；账户策略命令只查询原 requestId，不自动重发；其他操作仅按明确的幂等合同处理。
-- 出现修订冲突时读取当前详情，判断原意是否仍适用；若决定发起新操作，保存新请求并使用新的 `requestId`。不要在未知结果的原请求上偷偷换修订号。
+- Ordinary success usually produces one JSON line; `watch` emits multiple state JSON lines followed by a summary. `--help` and `--version` are text.
+- Without `--timeout`, `watch` / `wait` keep waiting. Specify seconds for bounded observation. Timeout or interruption only detaches the client, not the remote work.
+- Research ends when its original submission is `done` / `unanswered`. `done` still requires inspection of native results, evidence completeness, metrics, and errors; it does not establish the scientific goal.
+- Portfolios settle at `COMPUTED` / `FAILED` / `STOPPED`. Exit code `0` alone does not establish completion of the observed object.
+- On `write_outcome_unknown_retain_original_request`, query the original object or list first. Without a receipt, retain the unknown outcome. Account strategy commands only query the original requestId and are not automatically resent; other operations follow their explicit idempotency contracts.
+- On revision conflict, read current details and reassess the original intent. If starting a new operation, save a new request with a new `requestId`. Never silently change the revision of an original request whose outcome is unknown.
 
-详细退出码与恢复步骤见 [连接、输出与错误](references/connection-and-errors.md)。
+See [Connection, output, and errors](references/connection-and-errors.md) for exit codes and recovery.
 
-## 5. 按实际业务含义收尾
+## 5. Report actual business meaning
 
-报告所用实例、资源 ID、当前状态、关键结果、阻塞原因，以及请求/回执文件位置。未完成时附下一条读取原对象的命令。
+Report the instance, resource IDs, current state, key results, blockers, and request/receipt file locations. For unfinished work, include the next command to read the original object.
 
-区分历史回测、AI 建议和账户事实。paper/live 观测只绑定已有账户；研究完成不自动启动账户策略，策略启动回执不代表成交，资金退出命令被接收不代表资金已到账。
+Distinguish historical backtests, AI suggestions, and account facts. paper/live observation only binds an existing account. Completing research does not start an account strategy; a strategy start receipt is not a fill, and acceptance of a capital exit command is not receipt of funds.
 
-仅在用户操作范围内执行停止、删除和账户控制。`delete` 隐藏符合条件的非活动对象并保留证据；它不停止远端工作、不清仓。遇到活动状态或依赖阻塞，报告原因，不自行追加停止或删除关联资源。
+Stop, delete, and control accounts only within the user's authorized scope. `delete` hides eligible inactive objects while retaining evidence; it neither stops remote work nor liquidates positions. Report active-state or dependency blockers rather than additionally stopping or deleting related resources on your own.
