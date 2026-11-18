@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { JsonObject } from '@earendil-works/pi-durable';
+import type { JsonObject, ConversationId, TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { NativeTableReader } from '../../research/src/native-table.ts';
 import { nativeResultTableReferences, nativeWebTablePage, researchNativeTables } from '../src/native-result-tables.ts';
@@ -36,7 +36,7 @@ test('HTTP table page has a fixed byte budget, follows actual offsets and does n
 test('table read uses original stored pages and rejects unrelated tasks, paths and incomplete results', async () => {
   const parts = new Map<string, string>();
   const sourceRows = Array.from({ length: 180 }, (_, ordinal) => ({ ordinal, ts_event: '1776124800000000001', exact: '0.000000000000000001', description: 'x'.repeat(1000) }));
-  const parser = new NativeTableReader({ conversationId: 7, taskId: 12 }, async (key, data) => { parts.set(key, data); });
+  const parser = new NativeTableReader({ conversationId: 7 as ConversationId, taskId: 12 as TaskId }, async (key, data) => { parts.set(key, data); });
   await parser.write(JSON.stringify({ canonical_result: { fills: sourceRows, positions: [] }, equity_performance: { returns: [] } }));
   const result = await parser.finish() as JsonObject;
   let source: any = { id: 11, conversationId: 7, kind: 'qz.native-strategy.backtest', state: { status: 'terminal', outcome: { status: 'completed', result } } };
