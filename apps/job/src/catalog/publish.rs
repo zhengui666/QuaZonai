@@ -13,6 +13,8 @@ pub fn publish_batch(
     items: &[Data],
     verify_only: bool,
 ) -> Result<()> {
+    #[cfg(test)]
+    let profile_started = std::time::Instant::now();
     let first = items.first().context("EMPTY_NATIVE_BATCH")?;
     let identifier = match first {
         Data::Bar(bar) => bar.bar_type.to_string(),
@@ -29,9 +31,13 @@ pub fn publish_batch(
         }),
         "NATIVE_PUBLICATION_BATCH_MISMATCH"
     );
+    #[cfg(test)]
+    let write_started = std::time::Instant::now();
     if !verify_only {
         catalog.write_data_enum(items, None, None, None)?;
     }
+    #[cfg(test)]
+    profile::add(0, write_started.elapsed().as_nanos());
     let query = CatalogQuery::new(kind)
         .with_identifiers(Some(vec![identifier]))
         .with_range(Some(first.ts_init()), Some(items.last().unwrap().ts_init()));
@@ -42,7 +48,15 @@ pub fn publish_batch(
         items.len().saturating_add(1).min(4096),
     )?;
     let mut observed = 0;
-    while let Some(batch) = session.next_batch()? {
+    loop {
+        #[cfg(test)]
+        let read_started = std::time::Instant::now();
+        let batch = session.next_batch()?;
+        #[cfg(test)]
+        profile::add(1, read_started.elapsed().as_nanos());
+        let Some(batch) = batch else { break };
+        #[cfg(test)]
+        let compare_started = std::time::Instant::now();
         for index in 0..batch.len() {
             let expected = items
                 .get(observed)
@@ -56,7 +70,23 @@ pub fn publish_batch(
             );
             observed += 1;
         }
+        #[cfg(test)]
+        profile::add(2, compare_started.elapsed().as_nanos());
     }
     ensure!(observed == items.len(), "NATIVE_RECORD_READBACK_MISMATCH");
+    #[cfg(test)]
+    profile::add(3, profile_started.elapsed().as_nanos());
     Ok(())
+}
+
+// Test-only timing, never linked into the product. Samples are diagnostic, not
+// acceptance thresholds; whole-import wall time remains the primary measurement.
+#[cfg(test)]
+pub(crate) mod profile {
+    use std::cell::Cell;
+    thread_local! { static TOTALS: Cell<[u128; 4]> = const { Cell::new([0; 4]) }; }
+    pub(super) fn add(index: usize, value: u128) {
+        TOTALS.with(|totals| { let mut values = totals.get(); values[index] += value; totals.set(values); });
+    }
+    pub(crate) fn take() -> [u128; 4] { TOTALS.with(|totals| totals.replace([0; 4])) }
 }

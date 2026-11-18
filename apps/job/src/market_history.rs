@@ -3400,6 +3400,59 @@ mod tests {
         }
     }
 
+    // Explicit remote diagnostic only; reuses the importer tests' source and
+    // instrument constructors. No private market data or timing pass/fail gate.
+    #[test]
+    #[ignore = "manual optimized remote import profile"]
+    fn profile_synthetic_book_import() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest_path, instruments, csv) = tick_source(temp.path(), "");
+        let start = 1_767_225_600_u64;
+        let mut rows = String::from("coin,timestamp,received,event_type,side,price,size\n");
+        let groups = 10_000_u64;
+        for group in 0..groups {
+            for level in 0..20 {
+                for (side, price) in [("bid", 100 - level), ("ask", 101 + level)] {
+                    rows.push_str(&format!("BTCUSDT,{},{},snapshot,{side},{price},2\n",
+                        start * 1000 + group, start * 1_000_000_000 + group * 1_000_000 + 123));
+                }
+            }
+        }
+        fs::write(&csv, rows).unwrap();
+        let mut manifest: serde_json::Value = json(&manifest_path).unwrap();
+        manifest["repository"] = serde_json::json!("CryptoHFTData");
+        manifest["source_reference"] = serde_json::json!("https://www.cryptohftdata.com/docs/wire-format-hyperliquid-futures");
+        manifest["profile"]["streams"][0] = serde_json::json!({
+            "name":"trades", "kind":"book_snapshots", "format":"csv", "time_unit":"ms", "available_time_unit":"ns",
+            "columns":{"symbol":"coin","time":"timestamp","available_at":"received","event_type":"event_type","side":"side","price":"price","size":"size"}
+        });
+        let stream = manifest["files"][0]["stream"].clone();
+        manifest["profile"]["streams"][0]["name"] = stream;
+        manifest["files"].as_array_mut().unwrap().truncate(1);
+        manifest["missing"] = serde_json::json!([]);
+        manifest["files"][0]["size"] = fs::metadata(&csv).unwrap().len().into();
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        for repetition in 0..3 {
+            crate::catalog::publish::profile::take();
+            let output = temp.path().join(format!("profile-{repetition}"));
+            let request = serde_json::json!({"schema_version":1,"modality":"BOOK_SNAPSHOT",
+                "manifest_path":manifest_path,"instruments_path":instruments,"output_path":output,
+                "start_seconds":start.to_string(),"end_seconds":(start+11).to_string(),
+                "received_time":true,"maximum_receive_delay_ns":"2000000000"});
+            let started = std::time::Instant::now();
+            let result = native_market_import(serde_json::from_value(request).unwrap()).unwrap();
+            let whole_ns = started.elapsed().as_nanos();
+            let [write_ns, read_ns, compare_ns, publish_ns] = crate::catalog::publish::profile::take();
+            assert_eq!(result.report["book_snapshot_groups"], groups);
+            assert_eq!(result.report["readback_records"], groups * 41);
+            eprintln!("IMPORT_PROFILE {}", serde_json::json!({"repetition":repetition,
+                "source_rows":groups*40,"native_records":groups*41,"whole_ns":whole_ns,
+                "publish_ns":publish_ns,"write_ns":write_ns,"read_next_batch_ns":read_ns,
+                "json_compare_loop_ns":compare_ns,"outside_publish_ns":whole_ns.saturating_sub(publish_ns),
+                "scope":"synthetic CSV, one instrument, 20x2 levels; not private compressed Parquet throughput"}));
+        }
+    }
+
     #[test]
     fn flat_book_import_uses_source_root_alias_definitions_and_original_receipt_units() {
         let temp = tempfile::tempdir().unwrap();
