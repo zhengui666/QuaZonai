@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { tr } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Select, Tag, type TableColumnType, type TableProps } from 'antd';
 import { MagnifyingGlassIcon, SlidersHorizontalIcon } from '@phosphor-icons/react';
@@ -38,7 +40,7 @@ export function useListWorkspace<T>(route: Route, collection: string, defaultSor
     dataSource: query.data?.items ?? [], loading: query.isPending, className: 'workspace-table',
     pagination: { current: query.data?.page ?? Number(params.get('page') ?? 1), pageSize: query.data?.pageSize ?? Number(params.get('pageSize') ?? 20),
       total: query.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [20, 50, 100], hideOnSinglePage: false,
-      showTotal: total => `共 ${total} 条` },
+      showTotal: total => tr("{{count}} records", { count: total }) },
     onChange: (pagination, _filters, sorter, extra) => {
       if (extra.action === 'sort') {
         const selected = Array.isArray(sorter) ? sorter[0] : sorter;
@@ -57,9 +59,10 @@ export interface ListFilter {
   kind?: 'select' | 'number' | 'date'; disabled?: boolean; min?: number; max?: number; step?: number;
 }
 type ListWorkspace<T> = ReturnType<typeof useListWorkspace<T>>;
-export function ListTools<T>({ list, filters = [], searchLabel = '搜索记录', placeholder = '搜索名称、来源或原始编号' }: {
+export function ListTools<T>({ list, filters = [], searchLabel = tr("Search records"), placeholder = tr("Search names, sources, or original IDs") }: {
   list: ListWorkspace<T>; filters?: ListFilter[]; searchLabel?: string; placeholder?: string;
 }) {
+  useTranslation('core');
   const [search, setSearch] = useState(list.value('q'));
   const [advanced, setAdvanced] = useState(false);
   const composing = useRef(false); const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -71,7 +74,22 @@ export function ListTools<T>({ list, filters = [], searchLabel = '搜索记录',
     clearTimeout(timer.current);
     if (!composing.current) timer.current = setTimeout(() => { latest.current.update({ q: value.trim() || undefined }); }, 300);
   };
-  const options = (filter: ListFilter) => filter.options ?? list.data?.facets[filter.key] ?? [];
+  const options = (filter: ListFilter) => {
+    if (filter.options) return filter.options;
+    const values = list.data?.facets[filter.key] ?? [];
+    // Only protocol-defined facets are presentation labels. Dataset/source names remain user content.
+    if (!['status', 'scope', 'modality', 'evidence', 'reviewDecision', 'criterionStatus', 'combinable', 'criterion'].includes(filter.key)) return values;
+    const labels: Record<string, string> = {
+      UNKNOWN: 'Execution outcome unconfirmed', RUNNING: 'Running', STARTED: 'Computing', QUEUED: 'Queued', COMPUTED: 'Computed', FAILED: 'Failed', STOPPED: 'Stopped', IDLE: 'Idle',
+      'single-factor': filter.key === 'scope' ? 'Single-factor research' : 'Single member', ensemble: filter.key === 'scope' ? 'Portfolio research' : 'Multiple members', BAR: 'Bars', TRADE_TICK: 'Trade ticks',
+      independent: 'Independent evaluation', historical: 'Historical re-evaluation', component_only: 'Portfolio component', validation_only: 'Validation only', unavailable: 'No evidence',
+      met: 'Criterion met', not_met: 'Criterion not met', computed: 'Computed without a threshold', insufficient: 'Insufficient evidence', failed: 'Computation failed',
+      PASS: 'Passed', FAIL: 'Not passed', BLOCK: 'Blocked', REVIEW: 'Awaiting review', NEEDS_EVIDENCE: 'More evidence needed', REJECT: 'Rejected', INCONCLUSIVE: 'Insufficient evidence', REVIEW_BLOCKED: 'Review did not approve',
+      true: 'Combinable', false: 'Not combinable', pearson_ic: 'Information coefficient (IC)',
+      unknown: filter.key === 'criterionStatus' ? 'Not evaluated' : filter.key === 'reviewDecision' ? 'Not reviewed' : 'Not recorded',
+    };
+    return values.map(option => ({ ...option, label: labels[option.value] ? tr(labels[option.value]!) : option.label }));
+  };
   const control = (filter: ListFilter) => <div className="workspace-filter" key={filter.key}>
     <label htmlFor={`list-filter-${filter.key}`}>{filter.label}</label>
     {filter.kind === 'number' || filter.kind === 'date' ? <Input key={`${filter.key}:${list.value(filter.key)}`} id={`list-filter-${filter.key}`} aria-label={filter.label}
@@ -79,7 +97,7 @@ export function ListTools<T>({ list, filters = [], searchLabel = '搜索记录',
       min={filter.min} max={filter.max} step={filter.step ?? 'any'} inputMode={filter.kind === 'number' ? 'decimal' : undefined}
       onBlur={event => { const value = event.target.value; if (value !== list.value(filter.key)) list.update({ [filter.key]: value || undefined }); }}
       onPressEnter={event => { const value = event.currentTarget.value; if (value !== list.value(filter.key)) list.update({ [filter.key]: value || undefined }); }} />
-      : <Select id={`list-filter-${filter.key}`} aria-label={filter.label} mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={`全部${filter.label}`}
+      : <Select id={`list-filter-${filter.key}`} aria-label={filter.label} mode="multiple" allowClear showSearch optionFilterProp="label" placeholder={tr("All {{label}}", { label: filter.label })}
         disabled={filter.disabled} value={list.value(filter.key).split(',').filter(Boolean)} options={options(filter)} maxTagCount="responsive"
         onChange={(values: string[]) => list.update({ [filter.key]: values.join(',') || undefined })} />}
   </div>;
@@ -92,13 +110,13 @@ export function ListTools<T>({ list, filters = [], searchLabel = '搜索记录',
       onCompositionEnd={event => { composing.current = false; commitSearch(event.currentTarget.value); }}
       onPressEnter={() => { if (!composing.current) { clearTimeout(timer.current); list.update({ q: search.trim() || undefined }); } }} />
       {filters.filter(filter => !filter.advanced).map(control)}
-      {filters.some(filter => filter.advanced) && <Button icon={<SlidersHorizontalIcon size={16} />} aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}>更多筛选</Button>}
+      {filters.some(filter => filter.advanced) && <Button icon={<SlidersHorizontalIcon size={16} />} aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}>{tr("More filters")}</Button>}
     </div>
     {advanced && <div className="workspace-advanced-tools">{filters.filter(filter => filter.advanced).map(control)}</div>}
-    <div className="workspace-list-scope"><span role="status">{list.data ? `匹配 ${list.data.total} 条` : list.query.isPending ? '正在读取记录' : '记录暂不可用'}</span>
-      {list.hasFilters && <Button type="text" size="small" onClick={() => { setSearch(''); clearTimeout(timer.current); list.clear(); }}>清除全部</Button>}</div>
-    {(active.length > 0 || unknown.length > 0 || list.value('q')) && <div className="workspace-filter-tags" aria-label="当前筛选">
-      {list.value('q') && <Tag closable onClose={() => { setSearch(''); clearTimeout(timer.current); list.update({ q: undefined }); }}>搜索：{list.value('q')}</Tag>}
+    <div className="workspace-list-scope"><span role="status">{list.data ? tr("{{count}} matching records", { count: list.data.total }) : list.query.isPending ? tr("Loading records") : tr("Records temporarily unavailable")}</span>
+      {list.hasFilters && <Button type="text" size="small" onClick={() => { setSearch(''); clearTimeout(timer.current); list.clear(); }}>{tr("Clear all")}</Button>}</div>
+    {(active.length > 0 || unknown.length > 0 || list.value('q')) && <div className="workspace-filter-tags" aria-label={tr("Active filters")}>
+      {list.value('q') && <Tag closable onClose={() => { setSearch(''); clearTimeout(timer.current); list.update({ q: undefined }); }}>{tr("Search:")}{list.value('q')}</Tag>}
       {active.map(({ filter, value, label }) => <Tag key={`${filter.key}:${value}`} closable onClose={() => list.update({ [filter.key]: list.value(filter.key).split(',').filter(item => item !== value).join(',') || undefined })}>{filter.label}：{label}</Tag>)}
       {unknown.map(([key, value]) => <Tag key={key} closable onClose={() => list.update({ [key]: undefined })}>{value}</Tag>)}
     </div>}

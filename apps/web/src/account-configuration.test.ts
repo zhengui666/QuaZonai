@@ -1,3 +1,7 @@
+import { beforeEach as beforeLocaleTest, afterEach as afterLocaleTest } from 'vitest';
+import i18n from './i18n';
+beforeLocaleTest(async () => { await i18n.changeLanguage('zh-CN'); });
+afterLocaleTest(async () => { await i18n.changeLanguage('en'); });
 import {describe,it,expect} from 'vitest';
 import {accountConfigurationInput} from './account-configuration';
 describe('explicit account configuration input',()=>{
@@ -110,4 +114,18 @@ it('retains only the credential reference and clears it when switching to paper'
  const draft=accountConfigurationField(JSON.stringify({mode:'live'}),'credentialEnv','QZ_HYPERLIQUID_ONE_PK');
  expect(JSON.parse(draft).credentialEnv).toBe('QZ_HYPERLIQUID_ONE_PK');
  expect(JSON.parse(accountConfigurationField(draft,'mode','paper')).credentialEnv).toBeUndefined();
+});
+
+// Existing render/input tests also exercise switching without reloading modules.
+it('switches account labels and validation while preserving native input values', async () => {
+ const text=JSON.stringify({id:'exact-account',mode:'paper',startingBalance:'9007199254740993.00001',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'REGISTERED',name:'owner::strategy'}}});
+ await i18n.changeLanguage('en');
+ const english=renderToStaticMarkup(createElement(AccountFields,{text,onChange:()=>{},disabled:false}));
+ expect(english).toContain('Local account name');
+ expect(english).toContain('9007199254740993.00001');
+ expect(()=>accountConfigurationInput('[]')).toThrow('Account configuration must be a JSON object');
+ await i18n.changeLanguage('zh-CN');
+ expect(renderToStaticMarkup(createElement(AccountFields,{text,onChange:()=>{},disabled:false}))).toContain('本地账户名称');
+ expect(()=>accountConfigurationInput('[]')).toThrow('账户配置必须是 JSON 对象');
+ expect(accountConfigurationInput(text)).toEqual(JSON.parse(text));
 });

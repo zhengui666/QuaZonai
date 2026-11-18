@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import i18n from './i18n';
+const t = (key: string, values?: Record<string, unknown>): string => i18n.t(key, { ns: 'settings', ...values });
 import {useState} from 'react';
 import {Button,Table,Input} from 'antd';
 import {nativeStrategyControl,type NativeSessionBinding} from '../../../packages/contracts/src/native-strategy-control.ts';
@@ -12,12 +15,16 @@ export function cancellationInput(page:Page,order:Order){
 }
 type CancelPersistence={persisted?:boolean;error?:string};
 export function cancellationPersistenceNotice(receipt:CancelPersistence|null|undefined){
- return receipt?.persisted===false?'本次取消回执或观察尚未确认持久保存。保留原请求和 UNKNOWN，不代表取消未执行，也不清除已保存的历史；只核对原回执，不重新发送。':null;
+ return receipt?.persisted===false?t("Persistence of this cancellation receipt or observation is unconfirmed. Keep the original request and UNKNOWN state. This does not mean cancellation was not executed, and saved history remains. Check the original receipt only; do not resend."):null;
 }
 function CancellationPersistenceNotice({receipt}:{receipt:CancelPersistence|null|undefined}){
+ useTranslation('settings');
+
  const text=cancellationPersistenceNotice(receipt);return text?<p role="alert">{text}</p>:null;
 }
 export function CancelOrder({accountId,page,order}:{accountId:string;page:Page;order:Order}){
+ const { t } = useTranslation('settings');
+
  const key=`strategy:configured:${accountId}:CANCEL:${page.binding!.nativeSessionId}:${order.client_order_id}` as const;
  const path=`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/commands`;
  const [last,setLast]=useState(()=>readDraft<string>(key));const confirm=useConfirm();
@@ -25,34 +32,38 @@ export function CancelOrder({accountId,page,order}:{accountId:string;page:Page;o
  const requestId=command.values?.requestId as string|undefined ??last;
  const receipt=useResource<{status:string;error:string|null;receipt:{orderObservation?:{status:string;filledQuantity:string};error?:string;persisted?:boolean}|null}>(`${path}/${encodeURIComponent(requestId??'')}`,{enabled:!!requestId,poll:3000});
  const input=cancellationInput(page,order);
- return <div><Button disabled={!input||!!requestId||command.busy||!!command.pending} onClick={()=>confirm('取消这笔原模拟订单？',`原订单 ${order.client_order_id}，策略 ${order.strategy_id}。只向当前原会话发送本单取消请求；成交可能先于取消，官方终态不等于该请求成功或资金释放。`,()=>{if(input)void command.submit(input);})}>请求取消原单</Button>
- {requestId&&<><p>原请求：{requestId}。</p>{receipt.data&&<p>请求状态：<Status value={receipt.data.status}/>；官方订单：{receipt.data.receipt?.orderObservation?.status??'未取得'}；已成交：{receipt.data.receipt?.orderObservation?.filledQuantity??'未知'}。</p>}<Button onClick={()=>void receipt.refetch()}>核对原回执</Button></>}
- <CancellationPersistenceNotice receipt={receipt.data?.receipt}/>{!input&&!requestId&&<small>当前原身份、会话或普通订单条件不足，不能取消。</small>}<ErrorNotice error={command.error??receipt.error}/></div>;
+ return <div><Button disabled={!input||!!requestId||command.busy||!!command.pending} onClick={()=>confirm(t("Cancel this original paper order?"),t("Original order {{v0}}, strategy {{v1}}. Send only this cancellation request to the current original session. A fill may happen first. An official terminal state does not prove this request succeeded or funds were released.", { v0: order.client_order_id, v1: order.strategy_id }),()=>{if(input)void command.submit(input);})}>{t("Request cancellation of original order")}</Button>
+ {requestId&&<><p>{t("Original request:")}{requestId}{t("Sentence end")}</p>{receipt.data&&<p>{t("Request status:")}<Status value={receipt.data.status}/>{t("; official order:")}{receipt.data.receipt?.orderObservation?.status??t("Not retrieved")}{t("; filled:")}{receipt.data.receipt?.orderObservation?.filledQuantity??t("Unknown")}{t("Sentence end")}</p>}<Button onClick={()=>void receipt.refetch()}>{t("Check original receipt")}</Button></>}
+ <CancellationPersistenceNotice receipt={receipt.data?.receipt}/>{!input&&!requestId&&<small>{t("The original identity, session, or standard-order conditions do not allow cancellation.")}</small>}<ErrorNotice error={command.error??receipt.error}/></div>;
 }
 type CancelReceipt={requestId:string;status:string;binding?:{nativeSessionId:string};order?:{clientOrderId:string};receipt?:{persisted?:boolean;error?:string;orderObservation?:{status:string;filledQuantity:string}}|null};
 export function CancellationHistory({accountId}:{accountId:string}){
+ const { t } = useTranslation('settings');
+
  const [offset,setOffset]=useState(0);const [requestId,setRequestId]=useState('');const [query,setQuery]=useState('');
  const path=`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/commands`;
  const history=useResource<{items:CancelReceipt[];nextOffset:number|null}>(`${path}?offset=${offset}`,{poll:3000});
  const detail=useResource<CancelReceipt>(`${path}/${encodeURIComponent(query)}`,{enabled:!!query});
- return <section><h4>原取消请求与未决回执</h4>
+ return <section><h4>{t("Original cancellation requests and pending receipts")}</h4>
  <ErrorNotice error={history.error}/><Table<CancelReceipt> rowKey="requestId" pagination={false} dataSource={history.data?.items??[]} scroll={{x:600}} columns={[
- {title:'原请求',dataIndex:'requestId'},{title:'原会话',render:(_,r)=>r.binding?.nativeSessionId??'未提供'},{title:'原订单',render:(_,r)=>r.order?.clientOrderId??'未提供'},
- {title:'请求状态',dataIndex:'status',render:v=><Status value={v}/>},{title:'官方观察',render:(_,r)=><>{r.receipt?.orderObservation?.status??'未取得'}<CancellationPersistenceNotice receipt={r.receipt}/></>},
- {title:'操作',render:(_,r)=><Button onClick={()=>setQuery(r.requestId)}>只读核对原回执</Button>}
- ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>较早记录</Button><Button disabled={!history.data||history.data.nextOffset===null} onClick={()=>setOffset(history.data!.nextOffset!)}>更多记录</Button>
- <Input aria-label="原取消请求 ID" value={requestId} onChange={e=>setRequestId(e.target.value)} placeholder="也可输入保留的原请求 ID"/><Button disabled={!requestId} onClick={()=>setQuery(requestId)}>只读查询</Button>
- {detail.data&&<p>原请求 {detail.data.requestId}：<Status value={detail.data.status}/>；官方订单 {detail.data.receipt?.orderObservation?.status??'未取得'}；已成交 {detail.data.receipt?.orderObservation?.filledQuantity??'未知'}。</p>}
- <CancellationPersistenceNotice receipt={detail.data?.receipt}/>{!!query&&<Button onClick={()=>void detail.refetch()}>刷新原回执</Button>}<ErrorNotice error={detail.error}/></section>;
+ {title:t("Original request"),dataIndex:'requestId'},{title:t("Original session"),render:(_,r)=>r.binding?.nativeSessionId??t("Not provided")},{title:t("Original order"),render:(_,r)=>r.order?.clientOrderId??t("Not provided")},
+ {title:t("Request status"),dataIndex:'status',render:v=><Status value={v}/>},{title:t("Official observation"),render:(_,r)=><>{r.receipt?.orderObservation?.status??t("Not retrieved")}<CancellationPersistenceNotice receipt={r.receipt}/></>},
+ {title:t("Actions"),render:(_,r)=><Button onClick={()=>setQuery(r.requestId)}>{t("Read original receipt")}</Button>}
+ ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>{t("Earlier records")}</Button><Button disabled={!history.data||history.data.nextOffset===null} onClick={()=>setOffset(history.data!.nextOffset!)}>{t("More records")}</Button>
+ <Input aria-label={t("Original cancellation request ID")} value={requestId} onChange={e=>setRequestId(e.target.value)} placeholder={t("Or enter a retained original request ID")}/><Button disabled={!requestId} onClick={()=>setQuery(requestId)}>{t("Read-only lookup")}</Button>
+ {detail.data&&<p>{t("Original request")}{detail.data.requestId}{t("Label separator")}<Status value={detail.data.status}/>{t("; official order")}{detail.data.receipt?.orderObservation?.status??t("Not retrieved")}{t("; filled")}{detail.data.receipt?.orderObservation?.filledQuantity??t("Unknown")}{t("Sentence end")}</p>}
+ <CancellationPersistenceNotice receipt={detail.data?.receipt}/>{!!query&&<Button onClick={()=>void detail.refetch()}>{t("Refresh original receipt")}</Button>}<ErrorNotice error={detail.error}/></section>;
 }
 export default function AccountOrders({accountId,readOnly=false}:{accountId:string;readOnly?:boolean}){
+ const { t } = useTranslation('settings');
+
  const [offset,setOffset]=useState(0);const page=useResource<Page>(`/accounts/configurations/${encodeURIComponent(accountId)}/strategy/orders?offset=${offset}`,{poll:3000});
- return <section className="result-section"><h3>{readOnly?'原生订单（只读）':'原生订单与显式模拟取消'}</h3><p>{readOnly?'远端取消尚未开放。':'仅支持普通模拟订单取消。'}实时分页可能重复或遗漏。</p><ErrorNotice error={page.error} retry={()=>void page.refetch()}/>
- {page.data&&!page.data.available&&<p>原会话不可用，订单状态未知。</p>}
- {page.data?.available&&<><p>取消能力：{readOnly?'当前连接不提供取消':page.data.capability.supported?'当前节点报告支持受限模拟取消':'当前节点未报告支持'}。</p><Table<Order> rowKey="client_order_id" pagination={false} dataSource={page.data.items} scroll={{x:750}} columns={[
- {title:'原订单',dataIndex:'client_order_id'},{title:'原策略',dataIndex:'strategy_id',render:v=>v??'原节点未提供'},{title:'标的',dataIndex:'instrument_id'},{title:'官方状态',dataIndex:'status'},{title:'数量',dataIndex:'quantity'},{title:'已成交',dataIndex:'filled_quantity'},
- {title:'操作',render:(_,order)=>!readOnly&&page.data!.binding?<CancelOrder key={`${page.data!.binding.nativeSessionId}:${order.client_order_id}`} accountId={accountId} page={page.data!} order={order}/>:null},
- ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</Button><Button disabled={page.data.nextOffset===null} onClick={()=>setOffset(page.data!.nextOffset!)}>下一页</Button></>}
+ return <section className="result-section"><h3>{readOnly?t("Native orders (read-only)"):t("Native orders and explicit paper cancellation")}</h3><p>{readOnly?t("Remote cancellation is not available yet."):t("Only standard paper orders can be cancelled.")}{t("Live pagination may repeat or omit records.")}</p><ErrorNotice error={page.error} retry={()=>void page.refetch()}/>
+ {page.data&&!page.data.available&&<p>{t("The original session is unavailable; order status is unknown.")}</p>}
+ {page.data?.available&&<><p>{t("Cancellation support:")}{readOnly?t("This connection does not support cancellation"):page.data.capability.supported?t("This node reports limited paper cancellation support"):t("This node has not reported support")}{t("Sentence end")}</p><Table<Order> rowKey="client_order_id" pagination={false} dataSource={page.data.items} scroll={{x:750}} columns={[
+ {title:t("Original order"),dataIndex:'client_order_id'},{title:t("Original strategy"),dataIndex:'strategy_id',render:v=>v??t("Not provided by the original node")},{title:t("Instrument"),dataIndex:'instrument_id'},{title:t("Official status"),dataIndex:'status'},{title:t("Quantity"),dataIndex:'quantity'},{title:t("Filled"),dataIndex:'filled_quantity'},
+ {title:t("Actions"),render:(_,order)=>!readOnly&&page.data!.binding?<CancelOrder key={`${page.data!.binding.nativeSessionId}:${order.client_order_id}`} accountId={accountId} page={page.data!} order={order}/>:null},
+ ]}/><Button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-50))}>{t("Previous page")}</Button><Button disabled={page.data.nextOffset===null} onClick={()=>setOffset(page.data!.nextOffset!)}>{t("Next page")}</Button></>}
  {!readOnly&&<CancellationHistory accountId={accountId}/>}
  </section>;
 }

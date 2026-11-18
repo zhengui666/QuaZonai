@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { tr, locale } from './i18n';
 import { lazy, Suspense } from 'react';
 import { Table, Tabs, Tooltip } from 'antd';
 import { ArrowLeftIcon } from '@phosphor-icons/react';
@@ -17,76 +19,83 @@ import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import type { PortfolioPerformanceSummary } from '../../../packages/contracts/src/portfolio-performance.ts';
 const EquityPlot = lazy(() => import('./equity-plot'));
 export default function Portfolios({ route }: { route: Route }) {
-  if (route.creating || route.params.get('view') === 'allocations') return <Empty title="该自研组合创建入口已移除" action={<a href={href('/research/new')}>使用原生研究</a>} />;
+  useTranslation('core');
+  if (route.creating || route.params.get('view') === 'allocations') return <Empty title={tr("The custom portfolio creation workflow has been removed")} action={<a href={href('/research/new')}>{tr("Use native research")}</a>} />;
   const view = route.params.get('view') ?? 'strategies';
   if (route.id) return view === 'tick' ? <TickReplayDetail key={route.id} id={route.id} route={route} /> : <PortfolioDetail id={route.id} route={route} />;
-  return <div className="index-page"><header className="page-heading"><h1>组合回测</h1></header>
+  return <div className="index-page"><header className="page-heading"><h1>{tr("Portfolio backtests")}</h1></header>
     <Tabs destroyOnHidden activeKey={view === 'tick' ? view : 'strategies'} onChange={key => navigate(`/portfolios?view=${key}`)} items={[
-      { key: 'strategies', label: '策略组合', children: <StrategyPortfolios route={route} /> },
-      { key: 'tick', label: 'Tick 经济回放', children: <TickEconomicReplays route={route} /> },
+      { key: 'strategies', label: tr("Strategy portfolios"), children: <StrategyPortfolios route={route} /> },
+      { key: 'tick', label: tr("Tick-level economic replays"), children: <TickEconomicReplays route={route} /> },
     ]} />
   </div>;
 }
-const progressLabels: Record<string, string> = { QUEUED: '等待回测', FORECASTING: '生成成员预测', SIMULATING: '账户回测', CAPACITY: '评估容量', COMPLETED: '回测完成', FAILED: '回测失败', STOPPED: '回测已停止' };
+const progressLabels: Record<string, string> = { QUEUED: "Awaiting backtest", FORECASTING: "Generating member predictions", SIMULATING: "Account backtest", CAPACITY: "Assessing capacity", COMPLETED: "Backtest completed", FAILED: "Backtest failed", STOPPED: "Backtest stopped" };
 function PortfolioListProgress({ value }: { value: PortfolioListItem }) {
+  useTranslation('core');
   if (['COMPUTED', 'FAILED', 'STOPPED'].includes(value.status) || !value.progress) return null;
   const { phase, completed, total } = value.progress;
   const percentage = typeof completed === 'number' && typeof total === 'number' && total > 0 ? Math.min(100, Math.max(0, completed / total * 100)) : undefined;
-  return <span className="quiet">{progressLabels[phase] ?? '回测进行中'}{percentage !== undefined ? ` ${percentage.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : ''}</span>;
+  return <span className="quiet">{progressLabels[phase] ? tr(progressLabels[phase]!) : tr("Backtest in progress")}{percentage !== undefined ? ` ${percentage.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : ''}</span>;
 }
 function PerformanceValue({ value, percent = false }: { value: number | null | undefined; percent?: boolean }) {
-  return <span>{value == null || !Number.isFinite(value) ? '未提供' : percent ? `${(value * 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}%` : value.toLocaleString('zh-CN', { maximumFractionDigits: 3 })}</span>;
+  useTranslation('core');
+  return <span>{value == null || !Number.isFinite(value) ? tr("Not provided") : percent ? `${(value * 100).toLocaleString(locale(), { maximumFractionDigits: 2 })}%` : value.toLocaleString(locale(), { maximumFractionDigits: 3 })}</span>;
 }
 function PerformanceSummary({ value }: { value?: PortfolioPerformanceSummary }) {
+  useTranslation('core');
   if (!value) return null;
-  return <section className="result-section"><h3>回测表现</h3><Facts items={[
-    ['Sharpe（夏普比率）', <PerformanceValue value={value.sharpe} />],
-    ['年化收益率', <PerformanceValue value={value.annualizedReturn} percent />],
-    ['最大回撤（原始值）', <PerformanceValue value={value.maxDrawdown} percent />],
-    ['年化天数', value.annualizationDays ?? '未记录'],
-  ]} /><details><summary>统计口径</summary><Facts items={[['Sharpe 与最大回撤', value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? '原生现货 CASH 账户完整日收益（含费用）' : '原生账户日收益序列，可能包含首尾非完整日'], ['年化收益率', value.basis.annualizedReturn === 'NATIVE_CAGR' ? '上游原始 CAGR' : '上游未提供'], ['应覆盖完整日', value.basis.expectedDays ?? '未记录'], ['已观测完整日', value.basis.observedDays ?? '未记录'], ['首尾非完整日', value.basis.partialDays ?? '未记录']]} /></details></section>;
+  return <section className="result-section"><h3>{tr("Backtest performance")}</h3><Facts items={[
+    [tr("Sharpe ratio"), <PerformanceValue value={value.sharpe} />],
+    [tr("Annualized return"), <PerformanceValue value={value.annualizedReturn} percent />],
+    [tr("Maximum drawdown (original value)"), <PerformanceValue value={value.maxDrawdown} percent />],
+    [tr("Annualization days"), value.annualizationDays ?? tr("Not recorded")],
+  ]} /><details><summary>{tr("Calculation basis")}</summary><Facts items={[[tr("Sharpe and maximum drawdown"), value.basis.sharpe === 'NATIVE_SPOT_CASH_COMPLETE_DAY_RETURNS' ? tr("Native spot CASH account returns for complete days, including fees") : tr("Native daily account returns; the first and last days may be incomplete")], [tr("Annualized return"), value.basis.annualizedReturn === 'NATIVE_CAGR' ? tr("Original upstream CAGR") : tr("Not provided upstream")], [tr("Expected complete days"), value.basis.expectedDays ?? tr("Not recorded")], [tr("Observed complete days"), value.basis.observedDays ?? tr("Not recorded")], [tr("Partial boundary days"), value.basis.partialDays ?? tr("Not recorded")]]} /></details></section>;
 }
 function StrategyPortfolios({ route }: { route: Route }) {
+  useTranslation('core');
   const list = useListWorkspace<PortfolioListItem>(route, '/portfolios', 'createdAt');
   const currency = list.value('currency');
-  return <section aria-label="策略组合列表"><ListTools list={list} searchLabel="搜索组合" placeholder="搜索组合、数据集或来源" filters={[
-    { key: 'status', label: '执行状态' }, { key: 'datasetId', label: '数据集' },
-    { key: 'memberType', label: '成员数量', advanced: true, options: [{ value: 'single-factor', label: '单成员' }, { value: 'ensemble', label: '多成员' }] },
-    { key: 'currency', label: '币种', advanced: true }, { key: 'capitalMin', label: '最低本金', kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
-    { key: 'capitalMax', label: '最高本金', kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
-    { key: 'createdFrom', label: '创建日期起', kind: 'date', advanced: true }, { key: 'createdTo', label: '创建日期止', kind: 'date', advanced: true },
-    { key: 'source', label: '来源因子或研究', advanced: true },
+  return <section aria-label={tr("Strategy portfolio list")}><ListTools list={list} searchLabel={tr("Search portfolios")} placeholder={tr("Search portfolios, datasets, or sources")} filters={[
+    { key: 'status', label: tr("Execution status") }, { key: 'datasetId', label: tr("Dataset") },
+    { key: 'memberType', label: tr("Member count"), advanced: true, options: [{ value: 'single-factor', label: tr("Single member") }, { value: 'ensemble', label: tr("Multiple members") }] },
+    { key: 'currency', label: tr("Currency"), advanced: true }, { key: 'capitalMin', label: tr("Minimum capital"), kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
+    { key: 'capitalMax', label: tr("Maximum capital"), kind: 'number', advanced: true, disabled: !currency || currency.includes(',') },
+    { key: 'createdFrom', label: tr("Created from"), kind: 'date', advanced: true }, { key: 'createdTo', label: tr("Created through"), kind: 'date', advanced: true },
+    { key: 'source', label: tr("Source factor or research"), advanced: true },
   ]} /><ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
-    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<PortfolioListItem> {...list.tableProps} rowKey="id" dataSource={list.items} scroll={{ x: 1340 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的策略组合' : '尚无策略组合'} /> }} columns={[
-      { title: '组合名称', key: 'name', width: 200, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_value, row) => <a className="record-link" {...list.linkProps(row.id)}>{shortTitle(row.name, undefined, '组合')}</a> },
-      { title: '执行状态', width: 130, render: (_value, row) => <div><Status plain value={row.status} /><PortfolioListProgress value={row} /></div> },
-      { title: '数据集', key: 'datasetName', width: 150, ellipsis: true, ...list.sortColumn('datasetName'), render: (_value, row) => row.datasetName ?? '名称未记录' },
-      { title: <Tooltip title="该记录保存的原始成员数量。"><span>成员数</span></Tooltip>, key: 'memberCount', width: 80, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<PortfolioListItem> {...list.tableProps} rowKey="id" dataSource={list.items} scroll={{ x: 1340 }} locale={{ emptyText: <Empty title={list.hasFilters ? tr("No matching strategy portfolios") : tr("No strategy portfolios yet")} /> }} columns={[
+      { title: tr("Portfolio name"), key: 'name', width: 200, fixed: 'left', ellipsis: true, ...list.sortColumn('name'), render: (_value, row) => <a className="record-link" {...list.linkProps(row.id)}>{shortTitle(row.name, undefined, tr("Portfolio"))}</a> },
+      { title: tr("Execution status"), width: 130, render: (_value, row) => <div><Status plain value={row.status} /><PortfolioListProgress value={row} /></div> },
+      { title: tr("Dataset"), key: 'datasetName', width: 150, ellipsis: true, ...list.sortColumn('datasetName'), render: (_value, row) => row.datasetName ?? tr("Name not recorded") },
+      { title: <Tooltip title={tr("The original member count saved in this record.")}><span>{tr("Members")}</span></Tooltip>, key: 'memberCount', width: 80, align: 'right', ...list.sortColumn('memberCount'), dataIndex: 'memberCount' },
       { title: <MetricLabel metricKey="capital" />, key: 'capital', width: 140, align: 'right', ...(currency && !currency.includes(',') ? list.sortColumn('capital') : {}), render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> },
-      { title: <Tooltip title="本次原生账户日收益的夏普比率；年化天数沿用原回测设置。"><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? `${row.performance.annualizationDays} 天年化` : '年化口径未记录'}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
-      { title: <Tooltip title="只展示上游原始 CAGR；未提供时不自行年化。"><span>年化收益率</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
-      { title: <Tooltip title="本次原生账户日收益的最大回撤，保留原始负值，越接近 0 回撤越小。首次点击按原值降序排列，不重新计算。"><span>最大回撤</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
-      { title: '创建时间', key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
+      { title: <Tooltip title={tr("Sharpe ratio of native daily account returns, using the backtest's original annualization setting.")}><span>Sharpe</span></Tooltip>, key: 'sharpe', width: 100, align: 'right', ...list.sortColumn('sharpe'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <Tooltip title={row.performance.annualizationDays ? tr("{{days}}-day annualization", { days: row.performance.annualizationDays }) : tr("Annualization basis not recorded")}><span><PerformanceValue value={row.performance.sharpe} /></span></Tooltip> },
+      { title: <Tooltip title={tr("Shows only the original upstream CAGR. Missing values are not annualized locally.")}><span>{tr("Annualized return")}</span></Tooltip>, key: 'annualizedReturn', width: 125, align: 'right', ...list.sortColumn('annualizedReturn'), sortDirections: ['descend', 'ascend'], render: (_value, row) => <PerformanceValue value={row.performance.annualizedReturn} percent /> },
+      { title: <Tooltip title={tr("Maximum drawdown of native daily account returns. The original negative value is retained; closer to zero means a smaller drawdown. The first click sorts original values in descending order without recalculation.")}><span>{tr("Maximum drawdown")}</span></Tooltip>, key: 'maxDrawdown', width: 115, align: 'right', ...list.sortColumn('maxDrawdown'), render: (_value, row) => <PerformanceValue value={row.performance.maxDrawdown} percent /> },
+      { title: tr("Created"), key: 'createdAt', width: 205, ...list.sortColumn('createdAt'), render: (_value, row) => <Timestamp value={row.createdAt} /> },
     ]} />}
   </section>;
 }
 function PortfolioDetail({ id, route }: { id: string; route: Route }) {
+  useTranslation('core');
   const query = usePortfolioDetail(id); const value = query.data;
-  return <div className="portfolio-result"><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} back={listPathFor(route)} /></>}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
-    <ExecutionFailure error={value.error} detail={value.errorDetail} identity={`组合 ${value.id}${value.taskId !== null ? ` / 计算任务 #${value.taskId}` : ''}`} title="回测未完成" />
-    <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
-    {value.factors && <section className="result-section"><h3>原始成员与权重</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: '来源标识', render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}
-    {!value.factors && <section className="result-section"><h3>原始研究与权重</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: '原始研究', render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>研究 #{row.researchId}</a> }, { title: <MetricLabel metricKey="weight" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} missing="未记录" /> }]} /></section>}
+  return <div className="portfolio-result"><a className="text-link back-link" href={href(listPathFor(route))}><ArrowLeftIcon size={14} />{tr("Portfolio backtests")}</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} back={listPathFor(route)} /></>}</div><RecordTitle name={value?.name} fallback={tr("Portfolio backtests")} /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
+    <ExecutionFailure error={value.error} detail={value.errorDetail} identity={tr("Portfolio {{id}}{{task}}", { id: value.id, task: value.taskId !== null ? tr(" / Task #{{id}}", { id: value.taskId }) : '' })} title={tr("Backtest not completed")} />
+    <Facts items={[[tr("Dataset"), value.datasetId], [tr("Starting capital"), <Exact value={value.capital} unit={value.currency} />], [tr("Created"), <Timestamp value={value.createdAt} />], [tr("Computation task"), value.taskId ?? tr("Not recorded")]]} />
+    {value.factors && <section className="result-section"><h3>{tr("Original members and weights")}</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: tr("Source ID"), render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}
+    {!value.factors && <section className="result-section"><h3>{tr("Original research and weights")}</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: tr("Original research"), render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>{tr("Research #")}{row.researchId}</a> }, { title: <MetricLabel metricKey="weight" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} missing={tr("Not recorded")} /> }]} /></section>}
     <PerformanceSummary value={value.performance} />
     <BacktestProgress portfolio={value} />
     <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} initialCapital={value.capital} /></Suspense></section>
-    <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>
-    <section className="result-section"><div className="section-heading"><h3>目标权重</h3><span className="quiet">历史目标（只读）</span></div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
+    <section className="result-section"><h3>{tr("Backtest metrics")}</h3><Metrics metrics={value.metrics} /></section>
+    <section className="result-section"><div className="section-heading"><h3>{tr("Target weights")}</h3><span className="quiet">{tr("Historical targets (read-only)")}</span></div>{value.targetExpiresAt && <p className="quiet expiry-fact">{tr("Expires")} <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: tr("Instrument"), dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label={tr("Target weights")} />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">{tr("No targets yet")}</p>}</section>
     <PortfolioAccounts portfolioId={id} />
   </div>}</article></div>;
 }
 function PortfolioAccounts({ portfolioId }: { portfolioId: string }) {
+  useTranslation('core');
   const query = useResource<ObservationView[]>('/observations');
   const accounts = query.data?.filter(row => row.portfolioId === portfolioId);
-  return <section className="result-section"><h3>已连接账户与退出资金</h3><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !accounts?.length ? <p className="quiet">尚无关联账户。<a href={href('/observations/new')}>绑定已有账户管理退出资金</a>。</p> : <ul>{accounts.map(row => <li key={row.id}><a href={href(`/observations/${encodeURIComponent(row.id)}?section=capital`)}>{row.name} · {row.mode === 'live' ? '实盘' : '模拟'} · {row.connectionName ?? row.connectionId ?? '账户观测'} · 管理退出资金</a></li>)}</ul>}</section>;
+  return <section className="result-section"><h3>{tr("Connected accounts and capital withdrawals")}</h3><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !accounts?.length ? <p className="quiet">{tr("No linked accounts yet.")}<a href={href('/observations/new')}>{tr("Link an existing account to manage withdrawals")}</a>。</p> : <ul>{accounts.map(row => <li key={row.id}><a href={href(`/observations/${encodeURIComponent(row.id)}?section=capital`)}>{row.name} · {row.mode === 'live' ? tr("Live") : tr("Paper")} · {row.connectionName ?? row.connectionId ?? tr("Account observations")}  {tr("· Manage withdrawals")}</a></li>)}</ul>}</section>;
 }

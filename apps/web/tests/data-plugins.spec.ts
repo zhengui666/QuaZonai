@@ -7,6 +7,7 @@ async function plugins(page: Page) {
   await page.route('**/api/v3/**', route => {
     const request = route.request(); const path = new URL(request.url()).pathname.replace('/api/v3', '');
     if (path === '/session') return route.fulfill({ json: { authenticated: true, setupRequired: false } });
+    if (path === '/settings') return route.fulfill({ json: { language: 'zh-CN', defaultModel: null, thinkingLevel: null, serviceTier: null } });
     if (path === '/data-sources') return route.fulfill({ json: [source] });
     if (path === '/extensions') return route.fulfill({ json: [{ ...source, kind: 'data' }] });
     if (path === '/datasets') return route.fulfill({ json: [] });
