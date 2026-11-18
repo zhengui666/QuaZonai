@@ -390,3 +390,43 @@ test('bodyless mutations carry explicit JSON and configured origin without chang
    assert.deepEqual(calls,[{method:'DELETE',body:'{}',type:'application/json',origin:service.origin},{method:'GET',body:'',type:undefined,origin:service.origin},{method:'POST',body:'{"original":true}',type:'application/json',origin:service.origin}]);
   }finally{await client.close();await service.close();}
 });
+
+
+test('settings language uses the existing authenticated GET and exact PATCH file path', async () => {
+  const calls: { method: string; url: string; bytes: string }[] = [];
+  let language = 'en';
+  const original = { defaultModel: { provider: 'faux', modelId: 'unchanged' }, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8 };
+  const api = await server((request, response, bytes) => {
+    calls.push({ method: request.method!, url: request.url!, bytes });
+    assert.equal(request.url, '/api/v3/settings');
+    assert.equal(request.headers.authorization, `Bearer ${fakeToken}`);
+    if (request.method === 'PATCH') {
+      const payload = JSON.parse(bytes);
+      assert.deepEqual(Object.keys(payload), ['language']);
+      if (!['en', 'zh-CN'].includes(payload.language)) { json(response, { error: 'language_unsupported' }, 400); return; }
+      language = payload.language;
+    } else assert.equal(request.method, 'GET');
+    json(response, { ...original, language });
+  });
+  const config = await configuration(api.origin);
+  try {
+    const output: unknown[] = [];
+    const emit = (value: unknown) => { output.push(value); };
+    await run(['settings', 'get'], emit);
+    assert.deepEqual(output.at(-1), { ...original, language: 'en' });
+    const file = join(config.directory, 'language.json');
+    for (const value of ['zh-CN', 'en']) {
+      const bytes = `{\n  "language": "${value}"\n}\n`;
+      await writeFile(file, bytes);
+      await run(['settings', 'set', '--file', file], emit);
+      assert.equal(calls.at(-1)!.bytes, bytes, 'CLI preserves the original PATCH file bytes');
+      assert.deepEqual(output.at(-1), { ...original, language: value });
+      await run(['settings', 'get'], emit);
+      assert.deepEqual(output.at(-1), { ...original, language: value });
+    }
+    await writeFile(file, '{"language":"unsupported"}');
+    await assert.rejects(run(['settings', 'set', '--file', file], emit), /language_unsupported/);
+    assert.equal(calls.length, 6, 'A rejected language PATCH is not automatically retried');
+    assert.equal(language, 'en');
+  } finally { await config.close(); await api.close(); }
+});

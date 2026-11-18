@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { InstanceSettingsView } from '../../../packages/contracts/src/index.ts';
 import AccountConfiguration from './account-configuration';
 import { useResource } from './data-hooks';
@@ -6,12 +7,14 @@ import { ErrorNotice, Loading } from './ui';
 
 /** Reuses the existing account configuration API; opening settings never boots an account. */
 export default function AccountSettings() {
+ const { t } = useTranslation('settings');
+
   const instance = useResource<InstanceSettingsView>('/settings/instances');
   return <div className="account-settings">
-    <h2>账户</h2>
-    <p>分别保存和查看模拟盘、实盘及远程账户配置。保存配置不等于连接账户或启动策略。</p>
-    <p>账户标识与钱包地址不同。同一实际账户不能重复创建执行宿主；实盘签名仍使用运行环境已有配置，此处不接收私钥，也不会创建新钱包。</p>
-    <p><a href={href('/settings?section=instances')}>运行器与实例连接设置</a></p>
+    <h2>{t("Accounts")}</h2>
+    <p>{t("Save and inspect paper, live, and remote account configurations separately. Saving does not connect an account or start a strategy.")}</p>
+    <p>{t("An account ID is not a wallet address. Do not create duplicate execution hosts for the same real account. Live signing uses existing runtime configuration; this page accepts no private keys and creates no wallets.")}</p>
+    <p><a href={href('/settings?section=instances')}>{t("Runner and instance connections")}</a></p>
     {instance.isPending && <Loading />}
     <ErrorNotice error={instance.error}/>
     <AccountConfiguration enabled={instance.isSuccess && instance.data.runner?.capabilities.account.compiled === true}/>

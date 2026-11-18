@@ -1,3 +1,7 @@
+import { beforeEach as beforeLocaleTest, afterEach as afterLocaleTest } from 'vitest';
+import i18n from './i18n';
+beforeLocaleTest(async () => { await i18n.changeLanguage('zh-CN'); });
+afterLocaleTest(async () => { await i18n.changeLanguage('en'); });
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {afterEach,beforeEach,it,expect,vi} from 'vitest';

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { tr } from './i18n';
 import { useState, useSyncExternalStore } from 'react';
 import { Button, Modal } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,10 +10,10 @@ import { currentRoute, navigate } from './router';
 import { DraftNotice, ErrorNotice } from './ui';
 
 const records = {
-  mandate: { collection: 'mandates', page: 'pm', label: '投资决策' },
-  research: { collection: 'research', page: 'research', label: '研究' },
-  factor: { collection: 'factors', page: 'factors', label: '因子' },
-  portfolio: { collection: 'portfolios', page: 'portfolios', label: '组合' },
+  mandate: { collection: 'mandates', page: 'pm', label: "Investment decisions" },
+  research: { collection: 'research', page: 'research', label: "Research" },
+  factor: { collection: 'factors', page: 'factors', label: "Factor" },
+  portfolio: { collection: 'portfolios', page: 'portfolios', label: "Portfolio" },
 } as const;
 type Kind = keyof typeof records;
 interface DeletionCommand { kind: Kind; id: string; path: string }
@@ -47,7 +49,7 @@ async function submitDeletion(command: DeletionCommand): Promise<DeletionReceipt
   publish(snapshot().map(value => value.path === command.path ? { ...value, busy: true } : value));
   try {
     const receipt = await api<DeletionReceipt>(command.path, { method: 'DELETE' });
-    if (receipt.kind !== command.kind || receipt.id !== command.id || !receipt.deletedAt) throw new Error('删除回执身份不一致');
+    if (receipt.kind !== command.kind || receipt.id !== command.id || !receipt.deletedAt) throw new Error(tr("Deletion receipt ID does not match"));
     publish(snapshot().filter(value => value.path !== command.path), true);
     return receipt;
   } catch (failure) {
@@ -57,6 +59,7 @@ async function submitDeletion(command: DeletionCommand): Promise<DeletionReceipt
   }
 }
 function DeleteDialog({ command, back, close }: { command: DeletionCommand; back?: string; close: () => void }) {
+  useTranslation('core');
   const cache = useQueryClient(); const registry = useSyncExternalStore(subscribe, snapshot);
   const entry = registry.find(value => value.path === command.path); const busy = entry?.busy ?? false;
   const [error, setError] = useState<unknown>(); const record = records[command.kind];
@@ -73,23 +76,25 @@ function DeleteDialog({ command, back, close }: { command: DeletionCommand; back
       for (const collection of ['/mandates', '/research', '/factors', '/portfolios']) void cache.invalidateQueries({ queryKey: [collection] });
     } catch (failure) { setError(failure); }
   }
-  return <Modal title={`删除${record.label}？`} open destroyOnHidden maskClosable={!busy} closable={!busy} keyboard={!busy}
-    okText={error ? '重试删除' : entry ? '核对原删除' : '确认删除'} cancelText="取消" confirmLoading={busy} okButtonProps={{ danger: true, disabled: busy }} cancelButtonProps={{ disabled: busy }}
+  return <Modal title={tr('Delete {{record}}?', { record: tr(record.label) })} open destroyOnHidden maskClosable={!busy} closable={!busy} keyboard={!busy}
+    okText={error ? tr("Retry deletion") : entry ? tr("Check original deletion") : tr("Confirm deletion")} cancelText={tr("Cancel")} confirmLoading={busy} okButtonProps={{ danger: true, disabled: busy }} cancelButtonProps={{ disabled: busy }}
     onOk={() => { void remove(); }} onCancel={() => { if (!busy) close(); }}>
-    <p>从列表移除，历史保留。</p>
-    {entry && <p>删除结果待核对。</p>}
+    <p>{tr("Remove from the list and keep the history.")}</p>
+    {entry && <p>{tr("Deletion outcome is unconfirmed.")}</p>}
     <code>{command.id}</code><ErrorNotice error={error} />{entry && <DraftNotice saved={entry.persisted} />}
   </Modal>;
 }
 export function DeleteRecord({ kind, id, back }: { kind: Kind; id: string; back?: string }) {
+  useTranslation('core');
   const [open, setOpen] = useState(false); const registry = useSyncExternalStore(subscribe, snapshot); const command = commandFor(kind, id);
-  return <><Button danger disabled={registry.some(value => value.path === command.path && value.busy)} onClick={() => setOpen(true)}>删除{records[kind].label}</Button>
+  return <><Button danger disabled={registry.some(value => value.path === command.path && value.busy)} onClick={() => setOpen(true)}>{tr('Delete {{record}}', { record: tr(records[kind].label) })}</Button>
     {open && <DeleteDialog command={command} back={back} close={() => setOpen(false)} />}</>;
 }
 /** Always available after authentication, including a deleted object's 404 detail. No automatic writes. */
 export function DeletionRecovery() {
+  useTranslation('core');
   const registry = useSyncExternalStore(subscribe, snapshot); const [selected, setSelected] = useState<DeletionCommand>();
-  return <>{registry.length > 0 && <section className="deletion-recovery" aria-label="待核对删除"><h2>待核对删除</h2><p>删除结果待核对。</p>
-    {registry.map(value => <div className="deletion-recovery-row" key={value.path}><span>{records[value.kind].label} <code>{value.id}</code></span><Button disabled={value.busy} loading={value.busy} onClick={() => setSelected(value)}>核对删除{records[value.kind].label}</Button><DraftNotice saved={value.persisted} /></div>)}
+  return <>{registry.length > 0 && <section className="deletion-recovery" aria-label={tr("Unconfirmed deletion")}><h2>{tr("Unconfirmed deletion")}</h2><p>{tr("Deletion outcome is unconfirmed.")}</p>
+    {registry.map(value => <div className="deletion-recovery-row" key={value.path}><span>{tr(records[value.kind].label)} <code>{value.id}</code></span><Button disabled={value.busy} loading={value.busy} onClick={() => setSelected(value)}>{tr('Check {{record}} deletion', { record: tr(records[value.kind].label) })}</Button><DraftNotice saved={value.persisted} /></div>)}
   </section>}{selected && <DeleteDialog key={selected.path} command={selected} close={() => setSelected(undefined)} />}</>;
 }

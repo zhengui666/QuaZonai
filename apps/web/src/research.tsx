@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { tr } from './i18n';
 import { thinkingLabel, thinkingOptions, thinkingUnavailableReason, reasoningModeDescription } from './model-labels';
 import { useEffect, useRef, useState } from 'react';
 import Bubble from '@ant-design/x/es/bubble';
@@ -35,22 +37,24 @@ export function nativeResearchInput(values: Record<string, string>) {
 
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
 export default function Research({ route }: { route: Route }) {
+  useTranslation('core');
   if (route.creating) return <NewStudy key={route.params.get('dataset') ?? 'new'} route={route} />;
   return route.id ? <StudyDocument key={route.id} route={route} back={listPathFor(route)} /> : <ResearchWorkspace route={route} />;
 }
 function ResearchWorkspace({ route }: { route: Route }) {
+  useTranslation('core');
   const list = useListWorkspace<ResearchListItem>(route, '/research');
-  return <section className="list-workspace" aria-label="研究列表">
-    <header className="list-heading"><h1>研究</h1><Button type="primary" className="new-study-button" icon={<PlusIcon size={15} />} onClick={() => navigate(list.detailPath('new'))}>新建研究</Button></header>
-    <ListTools list={list} searchLabel="搜索研究" placeholder="搜索研究名称、问题、依据或数据集" filters={[
-      { key: 'status', label: '研究状态' }, { key: 'datasetId', label: '研究数据集' },
-      { key: 'modality', label: '输入类型', advanced: true }, { key: 'model', label: '研究模型', advanced: true },
+  return <section className="list-workspace" aria-label={tr("Research list")}>
+    <header className="list-heading"><h1>{tr("Research")}</h1><Button type="primary" className="new-study-button" icon={<PlusIcon size={15} />} onClick={() => navigate(list.detailPath('new'))}>{tr("New research")}</Button></header>
+    <ListTools list={list} searchLabel={tr("Search research")} placeholder={tr("Search research names, questions, evidence, or datasets")} filters={[
+      { key: 'status', label: tr("Research status") }, { key: 'datasetId', label: tr("Research dataset") },
+      { key: 'modality', label: tr("Input type"), advanced: true }, { key: 'model', label: tr("Research model"), advanced: true },
     ]} />
     <ErrorNotice error={list.query.error} retry={() => { void list.query.refetch(); }} />
-    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<ResearchListItem> {...list.tableProps} rowKey="id" size="small" scroll={{ x: 1120 }} locale={{ emptyText: <Empty title={list.hasFilters ? '没有匹配的研究' : '尚无研究'} /> }} columns={[
-      { title: '研究名称', key: 'title', width: 240, ellipsis: { showTitle: false }, ...list.sortColumn('title'), render: (_value, row) => <a className="list-record-name" {...list.linkProps(row.id)}>{shortTitle(row.title, undefined, '未命名研究')}</a> },
-      { title: '数据集', key: 'datasetName', width: 190, ellipsis: { showTitle: false }, ...list.sortColumn('datasetName'), render: (_value, row) => <span className="list-cell-text">{row.datasetName ? shortTitle(row.datasetName) : '未记录'}</span> },
-      { title: '执行状态', key: 'status', width: 130, render: (_value, row) => <Status plain value={row.status} label={row.status === 'UNKNOWN' ? '执行结果未确认' : row.status === 'STARTED' ? '原生执行中' : undefined} /> },
+    {list.query.isPending ? <Loading /> : !list.data && list.query.error ? null : <Table<ResearchListItem> {...list.tableProps} rowKey="id" size="small" scroll={{ x: 1120 }} locale={{ emptyText: <Empty title={list.hasFilters ? tr("No matching research") : tr("No research yet")} /> }} columns={[
+      { title: tr("Research name"), key: 'title', width: 240, ellipsis: { showTitle: false }, ...list.sortColumn('title'), render: (_value, row) => <a className="list-record-name" {...list.linkProps(row.id)}>{shortTitle(row.title, undefined, tr("Untitled research"))}</a> },
+      { title: tr("Dataset"), key: 'datasetName', width: 190, ellipsis: { showTitle: false }, ...list.sortColumn('datasetName'), render: (_value, row) => <span className="list-cell-text">{row.datasetName ? shortTitle(row.datasetName) : tr("Not recorded")}</span> },
+      { title: tr("Execution status"), key: 'status', width: 130, render: (_value, row) => <Status plain value={row.status} label={row.status === 'UNKNOWN' ? tr("Execution outcome unconfirmed") : row.status === 'STARTED' ? tr("Native execution in progress") : undefined} /> },
     ]} />}
   </section>;
 }
@@ -58,122 +62,129 @@ export function hasActiveResearchExecution(detail: Pick<ResearchDetail, 'tasks' 
   return detail.tasks.some(task => task.status !== 'terminal') || ['queued', 'placed'].includes(detail.submission?.status ?? '');
 }
 export function ResearchUncertainty({ detail }: { detail: Pick<ResearchDetail, 'executionUncertain' | 'executionUncertainty'> }) {
+  useTranslation('core');
   if (!detail.executionUncertain) return null;
-  return <Alert className="research-uncertainty" type="warning" showIcon title="执行结果尚未确认" description={detail.executionUncertainty?.reason === 'nautilus_cancellation_unknown'
-    ? '停止请求的结果尚未确认。保留原任务，等待原始执行证据，不自动重发。此前结果不代表本次已结束。'
-    : '正在等待原始执行证据，不会自动重复运行。此前已完成的结果仍被保留，但不能代表本次执行已成功或已停止。'} />;
+  return <Alert className="research-uncertainty" type="warning" showIcon title={tr("Execution outcome is not yet confirmed")} description={detail.executionUncertainty?.reason === 'nautilus_cancellation_unknown'
+    ? tr("The stop request's outcome is unconfirmed. Keep the original task and wait for its execution evidence; do not resend it automatically. Earlier results do not prove that this execution has ended.")
+    : tr("Waiting for the original execution evidence without repeating the run. Earlier completed results are preserved, but do not establish success or termination of this execution.")} />;
 }
 function StudyDocument({ route, back }: { route: Route; back: string }) {
+  useTranslation('core');
   const cache = useQueryClient(); const query = useResearchDetail(route.id!);
   const [stopError, setStopError] = useState<unknown>(); const [stopping, setStopping] = useState(false);
   const confirm = useConfirm(); const detail = query.data;
   const tab = route.params.get('tab') ?? 'conversation';
   const selectTab = (value: string) => { const params = new URLSearchParams(route.params); params.set('tab', value); navigate(`/research/${route.id}?${params}`, true); };
-  if (!detail) return <article className="study-document"><header className="study-heading"><h1>研究</h1></header>{query.isPending ? <Loading /> : <ErrorNotice error={query.error ?? new Error('未找到研究')} retry={() => { void query.refetch(); }} />}<a className="text-link" href={href(back)}>返回研究列表</a></article>;
+  if (!detail) return <article className="study-document"><header className="study-heading"><h1>{tr("Research")}</h1></header>{query.isPending ? <Loading /> : <ErrorNotice error={query.error ?? new Error(tr("Research not found"))} retry={() => { void query.refetch(); }} />}<a className="text-link" href={href(back)}>{tr("Back to research list")}</a></article>;
   const active = hasActiveResearchExecution(detail);
   const stop = async () => { setStopping(true); setStopError(undefined); try { const value = await api<ResearchDetail>(`/research/${detail.id}/stop`, { method: 'POST' }); cache.setQueryData([`/research/${detail.id}`], value); await cache.invalidateQueries({ queryKey: ['/research'] }); } catch (error) { setStopError(error); } finally { setStopping(false); } };
-  const stoppedLabel = detail.status === 'STOPPED' && active ? '停止中' : detail.status === 'STARTED' ? '原生执行中' : undefined;
+  const stoppedLabel = detail.status === 'STOPPED' && active ? tr("Stopping") : detail.status === 'STARTED' ? tr("Native execution in progress") : undefined;
   const originalSubmission = detail.originalSubmission ?? detail.submission;
   const nativeSettings = datasetResearchSettings(detail.input.data);
-  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><Status value={detail.executionUncertain ? 'UNKNOWN' : detail.status} label={detail.executionUncertain ? '执行结果未确认' : stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看运行详情', onClick: () => selectTab('inputs') }, ...(active ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
-      <RecordTitle text={detail.title} fallback="研究" />
-      <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span></div></header>
+  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="list-back text-link" href={href(back)}><ArrowLeftIcon size={14} />{tr("Research list")}</a><Status value={detail.executionUncertain ? 'UNKNOWN' : detail.status} label={detail.executionUncertain ? tr("Execution outcome unconfirmed") : stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: tr("View execution details"), onClick: () => selectTab('inputs') }, ...(active ? [{ key: 'stop', label: stopping ? tr("Stopping") : tr("Stop research"), danger: true, disabled: stopping, onClick: () => confirm(tr("Stop research?"), tr("Stop the original execution of this research."), () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label={tr("Research actions")} icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
+      <RecordTitle text={detail.title} fallback={tr("Research")} />
+      <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? tr("Dataset name not recorded")}</span></div></header>
       <ResearchUncertainty detail={detail} /><ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
       <Tabs className="document-tabs" activeKey={tab} onChange={value => selectTab(value)} items={[
-        { key: 'conversation', label: '对话', children: <div className="research-chat"><ResearchConversation key={detail.id} messages={detail.messages} researchId={detail.id} nextCursor={detail.messagesNextCursor} />{active && !detail.executionUncertain && <Alert type="info" title="研究正在进行" />}{detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}</div> },
-        { key: 'evidence', label: '结果与评价', children: <div className="evidence-content"><ResearchAssessments assessments={detail.assessments} researchId={detail.id} /><NativeBacktestHistory key={detail.id} researchId={detail.id} active={active} />
-          {nativeSettings.modality === 'TRADE_TICK' && <section className="result-section"><h3>逐笔输入与证据范围</h3><NativeInputFacts settings={nativeSettings} preparation={detail.dataset?.preparation} coverage={detail.final?.inputCoverage ?? detail.dataset?.inputCoverage} /></section>}
-          {!detail.final ? <Empty title={active ? '尚无原生结果' : '未产生原生结果'} action={<Button onClick={() => selectTab('inputs')}>查看执行</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? detail.executionUncertain ? '此前完成的回测结果' : 'Nautilus 官方策略历史回测' : '执行结果'}</h3></div>
-            {detail.final.reason === 'explicit_native_parameter_batch_completed_displaying_last_case_not_best' && <Alert type="info" title="下方为最后一组结果，不是最优或组合结果" description="请在原生回测记录中查看每组原始请求与结果。搜索表现不等于独立样本外有效。" />}{detail.final.nativeStrategyResult && <NativeStrategyResultView key={String(detail.final.nativeStrategyResult.resultTaskId ?? detail.submission?.id)} value={detail.final.nativeStrategyResult} researchId={detail.id} />}
-            {detail.final.status !== 'COMPUTED' && <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? '原生执行中' : detail.final.status === 'FAILED' ? '原生执行失败' : undefined} />}
-            <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={`研究 #${detail.id}${detail.final.trialId !== null ? ` / 试验 #${detail.final.trialId}` : ''}`} title="原生执行失败" />
-            {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>研究结论</summary><p>{detail.final.reason}</p></details>}
+        { key: 'conversation', label: tr("Conversation"), children: <div className="research-chat"><ResearchConversation key={detail.id} messages={detail.messages} researchId={detail.id} nextCursor={detail.messagesNextCursor} />{active && !detail.executionUncertain && <Alert type="info" title={tr("Research in progress")} />}{detail.toolPolicy === 'NAUTILUS_ONLY' && <NativeResearchContinuation key={detail.id} detail={detail} active={active} changed={() => { void query.refetch(); void cache.invalidateQueries({ queryKey: ['/research'] }); }} />}</div> },
+        { key: 'evidence', label: tr("Results and evaluation"), children: <div className="evidence-content"><ResearchAssessments assessments={detail.assessments} researchId={detail.id} /><NativeBacktestHistory key={detail.id} researchId={detail.id} active={active} />
+          {nativeSettings.modality === 'TRADE_TICK' && <section className="result-section"><h3>{tr("Tick inputs and evidence scope")}</h3><NativeInputFacts settings={nativeSettings} preparation={detail.dataset?.preparation} coverage={detail.final?.inputCoverage ?? detail.dataset?.inputCoverage} /></section>}
+          {!detail.final ? <Empty title={active ? tr("No native results yet") : tr("No native results were produced")} action={<Button onClick={() => selectTab('inputs')}>{tr("View execution")}</Button>} /> : <section className="independent-result"><div className="section-heading"><h3>{detail.final.nativeStrategyResult ? detail.executionUncertain ? tr("Previously completed backtest results") : tr("Native Nautilus historical strategy backtest") : tr("Execution results")}</h3></div>
+            {detail.final.reason === 'explicit_native_parameter_batch_completed_displaying_last_case_not_best' && <Alert type="info" title={tr("The last result group is shown below, not a selected optimum or combined result")} description={tr("See the native backtest records for each original request and result. Search performance does not establish independent out-of-sample validity.")} />}{detail.final.nativeStrategyResult && <NativeStrategyResultView key={String(detail.final.nativeStrategyResult.resultTaskId ?? detail.submission?.id)} value={detail.final.nativeStrategyResult} researchId={detail.id} />}
+            {detail.final.status !== 'COMPUTED' && <Status value={detail.final.status} label={detail.final.status === 'STARTED' ? tr("Native execution in progress") : detail.final.status === 'FAILED' ? tr("Native execution failed") : undefined} />}
+            <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={tr("Research #{{id}}{{trial}}", { id: detail.id, trial: detail.final.trialId !== null ? tr(" / Trial #{{id}}", { id: detail.final.trialId }) : '' })} title={tr("Native execution failed")} />
+            {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>{tr("Research conclusion")}</summary><p>{detail.final.reason}</p></details>}
           </section>}
         </div> },
-        { key: 'literature', label: '文献', children: <Literature value={detail.literature} publicQueries={detail.input.publicLiteratureQueries} /> },
-        { key: 'inputs', label: '运行详情', children: <div className="input-content"><section><h3>研究输入</h3><TextDisclosure label="原始研究目标" value={detail.input.goal} collapsed /><Facts items={[["数据集", detail.dataset?.name ?? detail.datasetId ?? '未记录'], ["来源", detail.dataset?.source ?? '未记录'], ["模型", detail.model], ["请求推理强度", thinkingLabel(detail.reasoningConfiguration?.requestedLevel ?? detail.input.thinkingLevel ?? '未记录')], ["保留的模型推理配置", detail.reasoningConfiguration ? thinkingLabel(detail.reasoningConfiguration.effectiveLevel) : '未记录'], ["执行方式", detail.reasoningConfiguration?.mode === 'PI_MULTI_AGENT' ? 'Pi 多 Agent 分析委派（配置记录，不代表请求成功）' : detail.reasoningConfiguration?.mode === 'NATIVE' ? '模型原生（配置记录，不代表请求成功）' : '未记录'], ["推理速度", detail.input.serviceTier === 'priority' ? 'Fast' : detail.input.serviceTier === 'default' ? '标准' : '默认速度'], ["覆盖区间", detail.dataset ? <><Timestamp value={detail.dataset.start} /><span> 至 </span><Timestamp value={detail.dataset.end} /></> : '未记录'], ["创建时间", <Timestamp value={detail.createdAt} />]]} /></section><section><h3>原始身份</h3><Facts items={[["研究", <><code>{detail.id}</code><Copy value={String(detail.id)} label="复制研究身份" /></>], ["请求", originalSubmission?.requestId ? <><code>{originalSubmission.requestId}</code><Copy value={originalSubmission.requestId} label="复制请求身份" /></> : '未记录'], ["提交", originalSubmission ? <code>{originalSubmission.id}</code> : '未记录'], ["提交状态", originalSubmission ? <Status value={originalSubmission.status} /> : '未记录'], ["终态原因", originalSubmission?.reason ? <Reason value={originalSubmission.reason} /> : '未提供']]} /></section>{detail.submission && detail.submission.id !== originalSubmission?.id && <section><h3>当前执行</h3><Facts items={[["请求", <code>{detail.submission.requestId ?? '未记录'}</code>], ["提交", <code>{detail.submission.id}</code>], ["提交状态", <Status value={detail.submission.status} />], ["终态原因", detail.submission.reason ? <Reason value={detail.submission.reason} /> : '未提供']]} /></section>}
-          {!!detail.previousStops?.length && <section><h3>历史停止记录</h3>{detail.previousStops.map(stop => <Facts key={stop.previousSubmissionId} items={[["原提交", <code>{stop.previousSubmissionId}</code>], ["停止任务", <code>{String(stop.final.taskId ?? '未记录')}</code>], ["状态", <Status value={String(stop.final.status)} />], ["停止原因", typeof stop.final.reason === 'string' ? stop.final.reason : '未记录']]} />)}</section>}
-          {!!detail.previousNativeResults?.length && <section><h3>历史原生研究结果</h3>{detail.previousNativeResults.map(run => <div key={run.previousSubmissionId}><p>原提交 #{run.previousSubmissionId} · 任务 #{String(run.final.taskId ?? '未记录')}</p><Status value={String(run.final.status ?? 'UNKNOWN')} /></div>)}</section>}
-          <ResearchDelegations delegations={detail.delegations} /><section><h3>最近执行记录</h3><Table<TaskView> rowKey="id" size="small" dataSource={detail.tasks} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 500 }} columns={[{ title: '任务', render: (_value, task) => <div className="trial-name">{task.name}<code>#{task.id}</code></div> }, { title: '状态', render: (_value, task) => <Status value={task.outcome ?? task.status} /> }, { title: '错误', render: (_value, task) => task.error ? <Reason value={task.error} /> : <span className="quiet">未提供</span> }]} /></section></div> },
+        { key: 'literature', label: tr("Literature"), children: <Literature value={detail.literature} publicQueries={detail.input.publicLiteratureQueries} /> },
+        { key: 'inputs', label: tr("Execution details"), children: <div className="input-content"><section><h3>{tr("Research input")}</h3><TextDisclosure label={tr("Original research objective")} value={detail.input.goal} collapsed /><Facts items={[[tr("Dataset"), detail.dataset?.name ?? detail.datasetId ?? tr("Not recorded")], [tr("Source"), detail.dataset?.source ?? tr("Not recorded")], [tr("Model"), detail.model], [tr("Requested reasoning effort"), thinkingLabel(detail.reasoningConfiguration?.requestedLevel ?? detail.input.thinkingLevel ?? tr("Not recorded"))], [tr("Saved model reasoning settings"), detail.reasoningConfiguration ? thinkingLabel(detail.reasoningConfiguration.effectiveLevel) : tr("Not recorded")], [tr("Execution method"), detail.reasoningConfiguration?.mode === 'PI_MULTI_AGENT' ? tr("Pi multi-agent analysis delegation (saved configuration, not proof of success)") : detail.reasoningConfiguration?.mode === 'NATIVE' ? tr("Native model reasoning (saved configuration, not proof of success)") : tr("Not recorded")], [tr("Processing tier"), detail.input.serviceTier === 'priority' ? 'Fast' : detail.input.serviceTier === 'default' ? tr("Standard") : tr("Default tier")], [tr("Coverage window"), detail.dataset ? <><Timestamp value={detail.dataset.start} /><span>  {tr("to")} </span><Timestamp value={detail.dataset.end} /></> : tr("Not recorded")], [tr("Created"), <Timestamp value={detail.createdAt} />]]} /></section><section><h3>{tr("Original identity")}</h3><Facts items={[[tr("Research"), <><code>{detail.id}</code><Copy value={String(detail.id)} label={tr("Copy research ID")} /></>], [tr("Request"), originalSubmission?.requestId ? <><code>{originalSubmission.requestId}</code><Copy value={originalSubmission.requestId} label={tr("Copy request ID")} /></> : tr("Not recorded")], [tr("Submission"), originalSubmission ? <code>{originalSubmission.id}</code> : tr("Not recorded")], [tr("Submission status"), originalSubmission ? <Status value={originalSubmission.status} /> : tr("Not recorded")], [tr("Terminal reason"), originalSubmission?.reason ? <Reason value={originalSubmission.reason} /> : tr("Not provided")]]} /></section>{detail.submission && detail.submission.id !== originalSubmission?.id && <section><h3>{tr("Current execution")}</h3><Facts items={[[tr("Request"), <code>{detail.submission.requestId ?? tr("Not recorded")}</code>], [tr("Submission"), <code>{detail.submission.id}</code>], [tr("Submission status"), <Status value={detail.submission.status} />], [tr("Terminal reason"), detail.submission.reason ? <Reason value={detail.submission.reason} /> : tr("Not provided")]]} /></section>}
+          {!!detail.previousStops?.length && <section><h3>{tr("Historical stop records")}</h3>{detail.previousStops.map(stop => <Facts key={stop.previousSubmissionId} items={[[tr("Original submission"), <code>{stop.previousSubmissionId}</code>], [tr("Stop task"), <code>{String(stop.final.taskId ?? tr("Not recorded"))}</code>], [tr("Status"), <Status value={String(stop.final.status)} />], [tr("Stop reason"), typeof stop.final.reason === 'string' ? stop.final.reason : tr("Not recorded")]]} />)}</section>}
+          {!!detail.previousNativeResults?.length && <section><h3>{tr("Historical native research results")}</h3>{detail.previousNativeResults.map(run => <div key={run.previousSubmissionId}><p>{tr("Original submission #")}{run.previousSubmissionId}  {tr("· Task #")}{String(run.final.taskId ?? tr("Not recorded"))}</p><Status value={String(run.final.status ?? 'UNKNOWN')} /></div>)}</section>}
+          <ResearchDelegations delegations={detail.delegations} /><section><h3>{tr("Recent execution records")}</h3><Table<TaskView> rowKey="id" size="small" dataSource={detail.tasks} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 500 }} columns={[{ title: tr("Task"), render: (_value, task) => <div className="trial-name">{task.name}<code>#{task.id}</code></div> }, { title: tr("Status"), render: (_value, task) => <Status value={task.outcome ?? task.status} /> }, { title: tr("Error"), render: (_value, task) => task.error ? <Reason value={task.error} /> : <span className="quiet">{tr("Not provided")}</span> }]} /></section></div> },
       ]} />
   </article>;
 }
 export function ResearchDelegations({ delegations }: { delegations: ResearchDetail['delegations'] }) {
+  useTranslation('core');
   if (!delegations?.length) return null;
-  return <section aria-label="Pi 子 Agent 分析记录"><h3>Pi 子 Agent 分析记录</h3><p>子 Agent 分析父 Agent 提供的材料；不代表科学工具执行结果。状态与答案来自原始 Pi 记录。</p>
+  return <section aria-label={tr("Pi subagent analysis records")}><h3>{tr("Pi subagent analysis records")}</h3><p>{tr("Subagents analyze materials supplied by the parent agent; their answers are not scientific tool execution results. Status and answers come from the original Pi records.")}</p>
     <Table<ResearchDelegationView> rowKey="taskId" size="small" dataSource={delegations} pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 700 }} columns={[
-      { title: '原始身份', render: (_value, task) => <div>任务 <code>#{task.taskId}</code><br />会话 <code>{task.conversationId ?? '未记录'}</code><br />提交 <code>{task.submissionId ?? '未记录'}</code></div> },
-      { title: '状态', render: (_value, task) => <Status value={task.status} /> },
-      { title: '底层模型配置', render: (_value, task) => <div>{task.model ? <code>{task.model.provider}/{task.model.modelId}</code> : '未记录'}<br />{task.effectiveLevel ? thinkingLabel(task.effectiveLevel) : '未记录'}</div> },
-      { title: '答案与错误', render: (_value, task) => <>{task.answer !== null && <details><summary>展开子 Agent 答案</summary><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.answer}</div></details>}{task.error && <div role="alert" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.error}</div>}{task.answer === null && !task.error && <span className="quiet">尚无答案或错误记录</span>}</> },
+      { title: tr("Original identity"), render: (_value, task) => <div>{tr("Task")} <code>#{task.taskId}</code><br />{tr("Conversation")} <code>{task.conversationId ?? tr("Not recorded")}</code><br />{tr("Submission")} <code>{task.submissionId ?? tr("Not recorded")}</code></div> },
+      { title: tr("Status"), render: (_value, task) => <Status value={task.status} /> },
+      { title: tr("Underlying model configuration"), render: (_value, task) => <div>{task.model ? <code>{task.model.provider}/{task.model.modelId}</code> : tr("Not recorded")}<br />{task.effectiveLevel ? thinkingLabel(task.effectiveLevel) : tr("Not recorded")}</div> },
+      { title: tr("Answers and errors"), render: (_value, task) => <>{task.answer !== null && <details><summary>{tr("Expand subagent answer")}</summary><div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.answer}</div></details>}{task.error && <div role="alert" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.error}</div>}{task.answer === null && !task.error && <span className="quiet">{tr("No answer or error recorded yet")}</span>}</> },
     ]} />
   </section>;
 }
 export function NativeBacktestHistory({ researchId, active }: { researchId: number; active: boolean }) {
+  useTranslation('core');
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
   const cursor = cursors.at(-1);
   const query = useResource<ResearchNativeBacktests>(`/research/${researchId}/native-backtests${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { poll: active ? 5000 : undefined });
-  return <section aria-label="原生回测记录"><h3>全部原生回测记录</h3><p>按执行任务顺序保留，包括失败或未完成的组；不代表排名或样本外验证。原始证据包含完整请求与 Nautilus 结果。</p>
+  return <section aria-label={tr("Native backtest records")}><h3>{tr("All native backtest records")}</h3><p>{tr("Preserved in execution-task order, including failed and unfinished groups. This is not a ranking or out-of-sample validation. Original evidence includes the full request and Nautilus results.")}</p>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
     <Table loading={query.isPending} rowKey="taskId" size="small" pagination={false} dataSource={query.data?.items ?? []} columns={[
-      { title: '原始任务', dataIndex: 'taskId' }, { title: '状态', dataIndex: 'status', render: value => <Status value={value} /> },
-      { title: '原始请求与结果', render: (_value, row) => <a href={row.evidenceHref} target="_blank" rel="noreferrer">打开原始 JSON</a> },
+      { title: tr("Original task"), dataIndex: 'taskId' }, { title: tr("Status"), dataIndex: 'status', render: value => <Status value={value} /> },
+      { title: tr("Original request and result"), render: (_value, row) => <a href={row.evidenceHref} target="_blank" rel="noreferrer">{tr("Open original JSON")}</a> },
     ]} />
-    <Button disabled={cursors.length <= 1 || query.isFetching} onClick={() => setCursors(previous => previous.slice(0, -1))}>上一页</Button>
-    <Button disabled={!query.data?.nextCursor || query.isFetching} onClick={() => { if (query.data?.nextCursor) setCursors(previous => [...previous, query.data!.nextCursor]); }}>下一页</Button>
-    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button>
+    <Button disabled={cursors.length <= 1 || query.isFetching} onClick={() => setCursors(previous => previous.slice(0, -1))}>{tr("Previous page")}</Button>
+    <Button disabled={!query.data?.nextCursor || query.isFetching} onClick={() => { if (query.data?.nextCursor) setCursors(previous => [...previous, query.data!.nextCursor]); }}>{tr("Next page")}</Button>
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>{tr("Refresh")}</Button>
   </section>;
 }
 
 export function ResearchRating({ value }: { value: unknown }) {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5) return <span className="quiet">未评级</span>;
-  return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value} / 5 星</span></span>;
+  useTranslation('core');
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5) return <span className="quiet">{tr("Unrated")}</span>;
+  return <span className="research-rating"><span aria-hidden="true"><Rate disabled value={value} count={5} style={{ color: '#fadb14', fontSize: 17 }} /></span><span>{value} {tr("/ 5 stars")}</span></span>;
 }
 function AssessmentLimitations({ value }: { value: Record<string, unknown> }) {
+  useTranslation('core');
   const labels: Record<string, string> = {
-    CPCV_NOT_RUN: '尚未完成组合净化交叉验证。',
-    NO_AUTOMATIC_SPLITTING_OR_SELECTION: '本次未执行自动样本切分或策略择优。',
-    CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED: '尚未审查其他研究会话中的试验历史。',
-    INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN: '尚未完成独立的数据来源审查。',
-    PRE_EXECUTION_METHOD_MISSING: '缺少执行前明确记录的研究方法。',
-    LOGIC_EVIDENCE_INSUFFICIENT: '当前逻辑证据不足。',
-    ORIGINAL_NATIVE_DATA_EVIDENCE_MISSING: '缺少匹配原配置的已完成原生回测证据。',
+    CPCV_NOT_RUN: tr("Combinatorial purged cross-validation has not been completed."),
+    NO_AUTOMATIC_SPLITTING_OR_SELECTION: tr("This run did not automatically split samples or select a preferred strategy."),
+    CROSS_CONVERSATION_TRIAL_HISTORY_NOT_AUDITED: tr("Trial history in other research conversations has not been reviewed."),
+    INDEPENDENT_SOURCE_DATA_AUDIT_NOT_RUN: tr("An independent data-source review has not been completed."),
+    PRE_EXECUTION_METHOD_MISSING: tr("No explicit research method was recorded before execution."),
+    LOGIC_EVIDENCE_INSUFFICIENT: tr("Current logic evidence is insufficient."),
+    ORIGINAL_NATIVE_DATA_EVIDENCE_MISSING: tr("Completed native backtest evidence matching the original configuration is missing."),
   };
   const items = [...(Array.isArray(value.reasons) ? value.reasons : []), ...(Array.isArray(value.limitations) ? value.limitations : [])];
   if (!items.length) return null;
-  return <div className="assessment-limitations"><h4>证据局限</h4><ul>{items.slice(0, 20).map((item, index) => <li key={index}>{typeof item === 'string' && labels[item] ? labels[item] : '另有尚未展开的证据范围限制，请在对话中要求说明。'}</li>)}</ul></div>;
+  return <div className="assessment-limitations"><h4>{tr("Evidence limitations")}</h4><ul>{items.slice(0, 20).map((item, index) => <li key={index}>{typeof item === 'string' && labels[item] ? labels[item] : tr("Additional evidence-scope limitations are not expanded here. Ask for an explanation in the conversation.")}</li>)}</ul></div>;
 }
 
 export function ResearchAssessments({ assessments, researchId }: { assessments: ResearchDetail['assessments']; researchId?: number }) {
+  useTranslation('core');
   if (!assessments?.length) return null;
   const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const stars = (value: unknown) => <ResearchRating value={value} />;
-  return <section aria-label="双路研究原始评级"><h2>双路研究评级</h2>
+  return <section className="research-original-ratings" aria-label={tr("Original two-track research ratings")}><h2>{tr("Two-track research ratings")}</h2>
     {assessments.map(row => {
       const result = row.result ?? {}; const judgment = record(result.judgment); const data = record(result.dataJudgment);
       const evidence = record(result.evidence); const logic = record(record(record(evidence.logic).result).judgment);
       return <article key={row.taskId} id={`assessment-${row.taskId}`}>
-        <h3>{row.mode === 'LOGIC' ? row.reviewTiming === 'POST_EXECUTION' ? '事后逻辑审阅（不替代事前评估）' : '事前逻辑审阅' : '综合研究报告'}</h3>
-        <p>{row.configuration === 'CURRENT' ? '当前配置' : '历史配置，不适用于当前输入'}</p><Status value={row.status} />
-        <Facts items={row.mode === 'LOGIC' ? [['逻辑评级', stars(judgment.stars)]] : [['逻辑评级', stars(logic.stars)], ['数据评级', stars(data.stars)], ['综合评级', stars(judgment.stars)], ['评级状态', result.ratingStatus === 'RATED_CONDITIONAL_STATIC_SCENARIO' ? '条件性情景评价' : result.ratingStatus === 'NOT_RATED_INSUFFICIENT_EVIDENCE' ? '证据不足，未评级' : typeof judgment.stars === 'number' ? '已记录评价，需结合局限' : '未评级']]} />
-        {record(result.instrumentDefinitionAssumption).mode === 'STATIC_SCENARIO' && <p role="note">条件性情景：历史规格未核实</p>}
-        {typeof judgment.rationale === 'string' && <p><strong>{row.mode === 'LOGIC' ? '逻辑依据：' : '综合理由：'}</strong>{readableResearchText(judgment.rationale)}</p>}{typeof data.rationale === 'string' && <p><strong>数据证据：</strong>{readableResearchText(data.rationale)}</p>}{typeof logic.rationale === 'string' && <p><strong>逻辑依据：</strong>{readableResearchText(logic.rationale)}</p>}
-        {row.error && <Alert type="warning" title="本次评价未完成" description="请查看运行详情" />}
-        {[['风险', judgment.risks], ['不确定性', judgment.uncertainties], ['数据风险', data.risks], ['数据不足', data.uncertainties]].map(([label, values]) => Array.isArray(values) && values.length > 0 ? <div key={String(label)}><h4>{String(label)}</h4><ul>{values.filter(value => typeof value === 'string').slice(0, 20).map((value, index) => <li key={index}>{readableResearchText(value)}</li>)}</ul></div> : null)}<AssessmentLimitations value={record(evidence.ratingReadiness)} />{researchId && <a className="text-link" href={href(`/research/${researchId}?tab=inputs`)}>查看原始执行记录</a>}
+        <h3>{row.mode === 'LOGIC' ? row.reviewTiming === 'POST_EXECUTION' ? tr("Post-execution logic review (does not replace pre-execution assessment)") : tr("Pre-execution logic review") : tr("Combined research report")}</h3>
+        <p>{row.configuration === 'CURRENT' ? tr("Current configuration") : tr("Historical configuration; not applicable to current inputs")}</p><Status value={row.status} />
+        <Facts items={row.mode === 'LOGIC' ? [[tr("Logic rating"), stars(judgment.stars)]] : [[tr("Logic rating"), stars(logic.stars)], [tr("Data rating"), stars(data.stars)], [tr("Overall rating"), stars(judgment.stars)], [tr("Rating status"), result.ratingStatus === 'RATED_CONDITIONAL_STATIC_SCENARIO' ? tr("Conditional scenario evaluation") : result.ratingStatus === 'NOT_RATED_INSUFFICIENT_EVIDENCE' ? tr("Insufficient evidence; unrated") : typeof judgment.stars === 'number' ? tr("Evaluation recorded; read it alongside its limitations") : tr("Unrated")]]} />
+        {record(result.instrumentDefinitionAssumption).mode === 'STATIC_SCENARIO' && <p role="note">{tr("Conditional scenario: historical specifications are unverified")}</p>}
+        {typeof judgment.rationale === 'string' && <p><strong>{row.mode === 'LOGIC' ? tr("Logic evidence:") : tr("Overall rationale:")}</strong>{readableResearchText(judgment.rationale)}</p>}{typeof data.rationale === 'string' && <p><strong>{tr("Data evidence:")}</strong>{readableResearchText(data.rationale)}</p>}{typeof logic.rationale === 'string' && <p><strong>{tr("Logic evidence:")}</strong>{readableResearchText(logic.rationale)}</p>}
+        {row.error && <Alert type="warning" title={tr("This evaluation is incomplete")} description={tr("See execution details")} />}
+        {[[tr("Risks"), judgment.risks], [tr("Uncertainty"), judgment.uncertainties], [tr("Data risks"), data.risks], [tr("Data limitations"), data.uncertainties]].map(([label, values]) => Array.isArray(values) && values.length > 0 ? <div key={String(label)}><h4>{String(label)}</h4><ul>{values.filter(value => typeof value === 'string').slice(0, 20).map((value, index) => <li key={index}>{readableResearchText(value)}</li>)}</ul></div> : null)}<AssessmentLimitations value={record(evidence.ratingReadiness)} />{researchId && <a className="text-link" href={href(`/research/${researchId}?tab=inputs`)}>{tr("View original execution records")}</a>}
 
       </article>;
     })}
   </section>;
 }
 
-const structuredPlaceholder = '结构化数据已省略，请在对话中索取可读说明。';
+const structuredPlaceholder = "Structured data is omitted here. Ask for a readable explanation in the conversation.";
 export function readableResearchText(text: string): string {
   const structured = (value: string) => {
     try { const parsed: unknown = JSON.parse(value.trim()); return parsed !== null && typeof parsed === 'object'; } catch { return false; }
   };
-  if (structured(text)) return structuredPlaceholder;
+  if (structured(text)) return tr(structuredPlaceholder);
   const fenced = text.replace(/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g, (original, language: string, body: string) =>
-    /^(json|jsonc)\b/i.test(language.trim()) || structured(body) ? structuredPlaceholder : original);
+    /^(json|jsonc)\b/i.test(language.trim()) || structured(body) ? tr(structuredPlaceholder) : original);
   // Presentation policy: withhold JSON-shaped fragments, including unfinished streams.
   // This does not validate or modify the stored message or infer any business fields.
   const startsStructure = (index: number) => {
@@ -195,14 +206,14 @@ export function readableResearchText(text: string): string {
     if (char === '"') { quoted = true; continue; }
     if (char === '{' || char === '[') stack.push(char);
     else if (char === '}' || char === ']') {
-      if (stack.pop() !== (char === '}' ? '{' : '[')) { output += fenced.slice(copied, candidate) + structuredPlaceholder; copied = index + 1; stack.length = 0; candidate = -1; continue; }
+      if (stack.pop() !== (char === '}' ? '{' : '[')) { output += fenced.slice(copied, candidate) + tr(structuredPlaceholder); copied = index + 1; stack.length = 0; candidate = -1; continue; }
       if (stack.length === 0) {
-        output += fenced.slice(copied, candidate) + structuredPlaceholder; copied = index + 1;
+        output += fenced.slice(copied, candidate) + tr(structuredPlaceholder); copied = index + 1;
         candidate = -1;
       }
     }
   }
-  return candidate >= 0 ? output + fenced.slice(copied, candidate) + structuredPlaceholder : output + fenced.slice(copied);
+  return candidate >= 0 ? output + fenced.slice(copied, candidate) + tr(structuredPlaceholder) : output + fenced.slice(copied);
 }
 export const safeMarkdownComponents = {
   a: ({ href, children }: Partial<ComponentProps>) => {
@@ -210,10 +221,11 @@ export const safeMarkdownComponents = {
     try { const url = new URL(String(href)); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) safe = url.href; } catch { /* Unsupported links remain text. */ }
     return safe ? <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>;
   },
-  img: ({ alt }: Partial<ComponentProps>) => <span className="quiet">{typeof alt === 'string' && alt ? `图片：${alt}` : '图片未自动加载'}</span>,
-  code: ({ children, lang }: Partial<ComponentProps>) => /^(json|jsonc)$/i.test(lang ?? '') ? <span className="quiet">结构化数据已省略，请在对话中索取可读说明。</span> : <code>{children}</code>,
+  img: ({ alt }: Partial<ComponentProps>) => <span className="quiet">{typeof alt === 'string' && alt ? tr("Image: {{alt}}", { alt }) : tr("Image not loaded automatically")}</span>,
+  code: ({ children, lang }: Partial<ComponentProps>) => /^(json|jsonc)$/i.test(lang ?? '') ? <span className="quiet">{tr("Structured data is omitted here. Ask for a readable explanation in the conversation.")}</span> : <code>{children}</code>,
 };
-export function ResearchMarkdown({ content }: { content: string }) { return <XMarkdown content={readableResearchText(content)} escapeRawHtml components={safeMarkdownComponents} />; }
+export function ResearchMarkdown({ content }: { content: string }) {
+  useTranslation('core'); return <XMarkdown content={readableResearchText(content)} escapeRawHtml components={safeMarkdownComponents} />; }
 export function mergeResearchMessages(older: NonNullable<ResearchDetail['messages']>, newer: NonNullable<ResearchDetail['messages']>) {
   return [...new Map([...older, ...newer].map(message => [message.entryId, message])).values()].sort((a, b) => a.entryId - b.entryId);
 }
@@ -228,9 +240,11 @@ export function acceptResearchHistoryPage(state: ResearchHistoryState, page: { m
   return { ...state, messages: mergeResearchMessages(page.messages, state.messages), cursor: requestedGeneration === state.generation ? page.nextCursor : state.cursor };
 }
 export function ResearchConversation(props: { messages: ResearchDetail['messages']; researchId?: number; nextCursor?: string | null }) {
+  useTranslation('core');
   return <ConversationSession key={props.researchId ?? 'standalone'} {...props} />;
 }
 function ConversationSession({ messages, researchId, nextCursor }: { messages: ResearchDetail['messages']; researchId?: number; nextCursor?: string | null }) {
+  useTranslation('core');
   const [history, setHistory] = useState<ResearchHistoryState>({ messages: messages ?? [], serverCursor: nextCursor, generation: 0 });
   useEffect(() => { setHistory(previous => syncResearchWindow(previous, messages ?? [], nextCursor)); }, [messages, nextCursor]);
   const [loading, setLoading] = useState(false); const [error, setError] = useState<unknown>(); const inFlight = useRef(false);
@@ -243,11 +257,11 @@ function ConversationSession({ messages, researchId, nextCursor }: { messages: R
     catch (failure) { setError(failure); } finally { inFlight.current = false; setLoading(false); }
   };
   const allMessages = mergeResearchMessages(history.messages, messages ?? []);
-  if (!allMessages.length && !next) return <section className="research-conversation" aria-label="研究对话"><Empty title="从一个研究问题开始" /></section>;
-  return <section className="research-conversation" aria-label="研究对话">{next && <Button className="history-button" loading={loading} onClick={() => { void loadOlder(); }}>加载更早的对话</Button>}<ErrorNotice error={error} /><Bubble.List autoScroll={false} items={allMessages.map(message => {
+  if (!allMessages.length && !next) return <section className="research-conversation" aria-label={tr("Research conversation")}><Empty title={tr("Start with a research question")} /></section>;
+  return <section className="research-conversation" aria-label={tr("Research conversation")}>{next && <Button className="history-button" loading={loading} onClick={() => { void loadOlder(); }}>{tr("Load earlier messages")}</Button>}<ErrorNotice error={error} /><Bubble.List autoScroll={false} items={allMessages.map(message => {
     const user = 'role' in message && message.role === 'user';
     return { key: message.entryId, role: user ? 'user' : 'ai', placement: user ? 'end' as const : 'start' as const,
-      header: user ? '你' : '研究助手', content: message.text, variant: user ? 'filled' as const : 'borderless' as const,
+      header: user ? tr("You") : tr("Research assistant"), content: message.text, variant: user ? 'filled' as const : 'borderless' as const,
       contentRender: (content: string) => user ? <p className="user-message-text">{readableResearchText(content)}</p> : <ResearchMarkdown content={content} /> };
   })} /></section>;
 }
@@ -264,6 +278,7 @@ export function canContinueResearch(detail: ResearchDetail, active: boolean): bo
 
 /** Reuses the existing resume endpoint and original submission identity, including uncertain retries. */
 export function NativeResearchContinuation({ detail, active, changed }: { detail: ResearchDetail; active: boolean; changed: () => void }) {
+  useTranslation('core');
   const key = `native-research-resume:${detail.id}`;
   type Intent = { submissionId: number; instruction: string };
   const [pending, setPending] = useState<Intent | undefined>(() => readDraft<Intent>(key));
@@ -283,26 +298,27 @@ export function NativeResearchContinuation({ detail, active, changed }: { detail
     } finally { inFlight.current = false; setBusy(false); }
   };
   if (!available && !pending && !error) return null;
-  return <section className="research-composer" aria-label="继续原生研究">
-    <Input.TextArea aria-label="后续研究要求" placeholder="回答研究助手的问题，或补充你的想法" value={instruction} disabled={!!pending || busy} onChange={event => setInstruction(event.target.value)} />
-    <Button onClick={() => { void send(); }} loading={busy} disabled={busy || !pending && (!available || !instruction.trim())}>{pending ? '核对原继续请求' : '发送 · 继续研究'}</Button>
+  return <section className="research-composer" aria-label={tr("Continue native research")}>
+    <Input.TextArea aria-label={tr("Follow-up research instructions")} placeholder={tr("Answer the research assistant's question or add your thoughts")} value={instruction} disabled={!!pending || busy} onChange={event => setInstruction(event.target.value)} />
+    <Button onClick={() => { void send(); }} loading={busy} disabled={busy || !pending && (!available || !instruction.trim())}>{pending ? tr("Check original continuation request") : tr("Send · Continue research")}</Button>
     {pending && <DraftNotice saved={draftIsPersisted(key)} />}<ErrorNotice error={error} />
   </section>;
 }
 function NewStudy({ route }: { route: Route }) {
+  useTranslation('core');
   const cache = useQueryClient(); const catalog = useModelCatalog(); const datasets = useResource<DatasetView[]>('/datasets?view=summary'); const settings = useResource<SettingsView>('/settings');
   const [form] = Form.useForm(); const [draft] = useState(() => readDraft<Record<string, unknown>>('research')); const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted('research')); const initialized = useRef(false);
   const listParams = new URLSearchParams(route.params); listParams.delete('from'); listParams.delete('dataset');
   const returnPath = listPathFor({ ...route, params: listParams });
   const command = useCommand<ResearchReceipt>('research', result => { removeDraft('research'); void cache.invalidateQueries({ queryKey: ['/research'] }); if (currentRoute().page === 'research' && currentRoute().creating) navigate(returnPath.replace('/research', `/research/${result.conversationId}`)); });
-  const origin = route.params.get('from') === 'data' ? { path: '/settings?section=data', label: '数据' } : { path: returnPath, label: '研究' };
+  const origin = route.params.get('from') === 'data' ? { path: '/settings?section=data', label: tr("Data") } : { path: returnPath, label: tr("Research") };
   const [thinkingChanged, setThinkingChanged] = useState(false);
   const thinkingLevel = Form.useWatch('thinkingLevel', form) as string | undefined;
   const serviceTier = Form.useWatch('serviceTier', form) as ServiceTier | undefined;
   const selectedModelKey = Form.useWatch('model', form) as string | undefined;
   const selectedModel = catalog.data?.models.find(model => modelKey(model) === selectedModelKey);
   const modelOptions = catalog.data?.models.map(model => ({ value: modelKey(model), label: `${model.name} / ${model.provider}` })) ?? [];
-  if (selectedModelKey && !modelOptions.some(option => option.value === selectedModelKey)) { const recorded = JSON.parse(selectedModelKey) as ModelRef; modelOptions.push({ value: selectedModelKey, label: `${recorded.provider}/${recorded.modelId} / 当前不可用` }); }
+  if (selectedModelKey && !modelOptions.some(option => option.value === selectedModelKey)) { const recorded = JSON.parse(selectedModelKey) as ModelRef; modelOptions.push({ value: selectedModelKey, label: `${recorded.provider}/${recorded.modelId} / ${tr("Currently unavailable")}` }); }
   const selectedDatasetId = Form.useWatch('datasetId', form) as string | undefined;
   const selectedDataset = datasets.data?.find(dataset => dataset.id === selectedDatasetId);
   const datasetDetail = useResource<DatasetView>(`/datasets/${encodeURIComponent(selectedDatasetId ?? '')}`, { enabled: !!selectedDataset });
@@ -321,28 +337,28 @@ function NewStudy({ route }: { route: Route }) {
   }, [selectedModel, serviceTier, command.pending]);
   const preview = Form.useWatch([], form) as Record<string, string> | undefined;
   const [specError, setSpecError] = useState<unknown>();
-  return <div className="authoring-page"><a className="text-link back-link" href={href(origin.path)}><ArrowLeftIcon size={14} />{origin.label}</a><div className="authoring-heading"><div className="authoring-symbol"><FlaskIcon weight="duotone" size={24} /></div><h1>新建研究</h1></div>
+  return <div className="authoring-page"><a className="text-link back-link" href={href(origin.path)}><ArrowLeftIcon size={14} />{origin.label}</a><div className="authoring-heading"><div className="authoring-symbol"><FlaskIcon weight="duotone" size={24} /></div><h1>{tr("New research")}</h1></div>
     <ErrorNotice error={catalog.error ?? datasets.error ?? settings.error} retry={() => { void catalog.refetch(); void datasets.refetch(); void settings.refetch(); }} />
     {catalog.isPending || datasets.isPending || settings.isPending ? <Loading /> : !catalog.data || !datasets.data || !settings.data ? null : <>
-    {catalog.data && !catalog.data.models.length && <div className="prerequisite">没有可用模型 <a href={href('/settings')}>连接模型 <ArrowUpRightIcon size={13} /></a></div>}
-    {datasets.data && !datasets.data.some(item => item.ready) && <div className="prerequisite">没有就绪的数据集 <a href={href('/settings?section=data')}>查看数据 <ArrowUpRightIcon size={13} /></a></div>}
+    {catalog.data && !catalog.data.models.length && <div className="prerequisite">{tr("No models available")} <a href={href('/settings')}>{tr("Connect a model")} <ArrowUpRightIcon size={13} /></a></div>}
+    {datasets.data && !datasets.data.some(item => item.ready) && <div className="prerequisite">{tr("No datasets are ready")} <a href={href('/settings?section=data')}>{tr("View data")} <ArrowUpRightIcon size={13} /></a></div>}
     <PendingCommand command={command} />
     <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values: Record<string, unknown>) => { if (!command.pending) setDraftSaved(saveDraft('research', values)); }} onFinish={(values: Record<string, string>) => { try { const input = nativeResearchInput(values); setSpecError(undefined); void command.submit(input); } catch (error) { setSpecError(error); } }}  disabled={!!command.pending || command.busy}>
-      <div className="form-section-heading"><FlaskIcon size={16} /><h2>研究问题</h2></div>
-      <Form.Item label="研究问题" extra="参数网格：写明策略、每个参数的候选值、窗口和成本。例如快周期 [8, 16]、慢周期 [32, 64]。QuaZonai 生成组合，Pi 编排，Nautilus 回测；每组原始结果保存在研究中，不自动选出最优。" name="goal" rules={[{ required: true, whitespace: true, message: '请输入研究问题' }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder="例如：使用这个数据集运行 Nautilus 官方策略，使用原配置并展示原生回测报告。" /></Form.Item>
-      <Form.Item label="公开论文检索主题（可选）" name="publicLiteratureTopics" extra="发送到公开检索服务；最多 3 行，每行 500 字" rules={[{ validator: (_rule, value?: string) => { try { publicLiteratureTopics(value); return Promise.resolve(); } catch { return Promise.reject(new Error('请输入最多 3 个公开主题，每行 1 个、最多 500 字，不含控制字符')); } } }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="market microstructure&#10;momentum transaction costs" /></Form.Item>
-      <div className="form-section-heading"><DatabaseIcon size={16} /><h2>市场与数据</h2></div>
-      <Form.Item label="数据集" name="datasetId" rules={[{ required: true, message: '请选择数据集' }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error('数据集尚未就绪')) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder="选择已登记数据集" options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>
-      {selectedDataset && <div className="dataset-context"><span><DatabaseIcon size={13} />{selectedDataset.source}</span><code>{selectedDataset.id}</code><code>{selectedDataset.currency}</code>{(selectedDataset.start || selectedDataset.end) && <span><Timestamp value={selectedDataset.start} /> 至 <Timestamp value={selectedDataset.end} /></span>}<span>{selectedDataset.ready ? '已就绪' : '未就绪'}</span></div>}
+      <div className="form-section-heading"><FlaskIcon size={16} /><h2>{tr("Research question")}</h2></div>
+      <Form.Item label={tr("Research question")} extra={tr("For a parameter grid, specify the strategy, candidate values for each parameter, time windows, and costs. For example: fast periods [8, 16], slow periods [32, 64]. QuaZonai generates combinations, Pi orchestrates them, and Nautilus runs the backtests. Every original result is retained; no optimum is selected automatically.")} name="goal" rules={[{ required: true, whitespace: true, message: tr("Enter a research question") }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder={tr("For example: run a Nautilus strategy on this dataset using the original configuration, and show the native backtest report.")} /></Form.Item>
+      <Form.Item label={tr("Public literature search topics (optional)")} name="publicLiteratureTopics" extra={tr("Sent to public search services; up to 3 lines, 500 characters per line")} rules={[{ validator: (_rule, value?: string) => { try { publicLiteratureTopics(value); return Promise.resolve(); } catch { return Promise.reject(new Error(tr("Enter up to 3 public topics, one per line, at most 500 characters each, without control characters"))); } } }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="market microstructure&#10;momentum transaction costs" /></Form.Item>
+      <div className="form-section-heading"><DatabaseIcon size={16} /><h2>{tr("Markets and data")}</h2></div>
+      <Form.Item label={tr("Dataset")} name="datasetId" rules={[{ required: true, message: tr("Select a dataset") }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error(tr("Dataset is not ready"))) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder={tr("Choose a registered dataset")} options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>
+      {selectedDataset && <div className="dataset-context"><span><DatabaseIcon size={13} />{selectedDataset.source}</span><code>{selectedDataset.id}</code><code>{selectedDataset.currency}</code>{(selectedDataset.start || selectedDataset.end) && <span><Timestamp value={selectedDataset.start} />  {tr("to")} <Timestamp value={selectedDataset.end} /></span>}<span>{selectedDataset.ready ? tr("Ready") : tr("Not ready")}</span></div>}
       <ErrorNotice error={datasetDetail.error} retry={() => { void datasetDetail.refetch(); }} />
       {selectedDataset && datasetDetail.isPending && <Loading />}
       {datasetDetail.data?.researchSettings?.modality === 'TRADE_TICK' && <NativeInputFacts settings={datasetDetail.data.researchSettings} preparation={datasetDetail.data.preparation} coverage={datasetDetail.data.inputCoverage} />}
-      <Form.Item label="模型" name="model" rules={[{ required: true, message: '请选择模型' }, { validator: (_rule, value: string) => !value || catalog.data?.models.some(model => modelKey(model) === value) ? Promise.resolve() : Promise.reject(new Error('所选模型不可用，请重新选择')) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder="选择可用模型" options={modelOptions} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); setThinkingChanged(false); form.setFieldValue('thinkingLevel', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.thinkingLevel ?? model?.effectiveThinkingLevel : model?.effectiveThinkingLevel); form.setFieldValue('serviceTier', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.serviceTier ?? undefined : undefined); setDraftSaved(saveDraft('research', form.getFieldsValue())); }} /></Form.Item>
+      <Form.Item label={tr("Model")} name="model" rules={[{ required: true, message: tr("Select a model") }, { validator: (_rule, value: string) => !value || catalog.data?.models.some(model => modelKey(model) === value) ? Promise.resolve() : Promise.reject(new Error(tr("The selected model is unavailable. Choose another model."))) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder={tr("Choose an available model")} options={modelOptions} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); setThinkingChanged(false); form.setFieldValue('thinkingLevel', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.thinkingLevel ?? model?.effectiveThinkingLevel : model?.effectiveThinkingLevel); form.setFieldValue('serviceTier', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.serviceTier ?? undefined : undefined); setDraftSaved(saveDraft('research', form.getFieldsValue())); }} /></Form.Item>
       {selectedModel && <p className="model-context"><code>{selectedModel.provider}/{selectedModel.modelId}</code></p>}
-      <Form.Item label="推理速度" name="serviceTier" extra={selectedModel && !selectedModel.serviceTiers.length ? '当前模型服务不支持速度配置' : undefined}><Select allowClear disabled={!selectedModel?.serviceTiers.length || !!command.pending || command.busy} placeholder={!selectedModel ? '先选择模型' : selectedModel.serviceTiers.length ? '使用默认速度' : '由模型服务决定'} suffixIcon={<CaretDownIcon size={14} />} options={selectedModel?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : '标准' }))} /></Form.Item>
-      <div className="form-columns"><Form.Item label="推理强度" name="thinkingLevel" extra={[thinkingChanged ? '原推理强度不可用，请重新选择' : undefined, reasoningModeDescription(selectedModel, thinkingLevel), thinkingUnavailableReason(selectedModel)].filter(Boolean).join('；') || undefined} rules={[{ required: !!selectedModel, message: '请选择推理强度' }, { validator: (_rule, value?: string) => !value || !selectedModel || modelSupportsThinking(selectedModel, value as ThinkingLevel) ? Promise.resolve() : Promise.reject(new Error('原推理强度不可用，请重新选择')) }]}><Select onChange={() => setThinkingChanged(false)} suffixIcon={<CaretDownIcon size={14} />} disabled={!selectedModel || !!command.pending || command.busy} options={thinkingOptions(selectedModel)} /></Form.Item></div>
-      <details className="submission-preview" open><summary>提交预览</summary>{reasoningModeDescription(selectedModel, thinkingLevel) && <p>{reasoningModeDescription(selectedModel, thinkingLevel)}</p>}<Facts items={[["研究问题", preview?.goal || '待填写'], ["市场与数据", selectedDataset ? `${selectedDataset.name} / ${selectedDataset.currency}` : '待选择'], ["模型与推理", selectedModel ? `${selectedModel.provider}/${selectedModel.modelId} / ${thinkingLevel ? thinkingLabel(thinkingLevel) : '未选择'}` : '待选择'], ["推理速度", serviceTier === 'priority' ? 'Fast' : serviceTier === 'default' ? '标准' : '默认速度']]} /></details>
-      <ErrorNotice error={specError ?? command.error} /><DraftNotice saved={draftSaved || !!command.pending} /><div className="form-actions"><Button disabled={false} onClick={() => navigate(origin.path)}>取消</Button>{command.pending ? <Button type="primary" disabled={command.busy} aria-busy={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>{command.busy ? '提交中' : '核对提交'}</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={!catalog.data?.models.length || !datasets.data?.some(item => item.ready)}>开始研究 <ArrowRightIcon size={15} /></Button>}</div>
+      <Form.Item label={tr("Processing tier")} name="serviceTier" extra={selectedModel && !selectedModel.serviceTiers.length ? tr("This model provider does not support tier settings") : undefined}><Select allowClear disabled={!selectedModel?.serviceTiers.length || !!command.pending || command.busy} placeholder={!selectedModel ? tr("Select a model first") : selectedModel.serviceTiers.length ? tr("Use the default tier") : tr("Determined by the model provider")} suffixIcon={<CaretDownIcon size={14} />} options={selectedModel?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : tr("Standard") }))} /></Form.Item>
+      <div className="form-columns"><Form.Item label={tr("Reasoning effort")} name="thinkingLevel" extra={[thinkingChanged ? tr("The previous reasoning effort is unavailable. Select another option.") : undefined, reasoningModeDescription(selectedModel, thinkingLevel), thinkingUnavailableReason(selectedModel)].filter(Boolean).join('；') || undefined} rules={[{ required: !!selectedModel, message: tr("Select a reasoning effort") }, { validator: (_rule, value?: string) => !value || !selectedModel || modelSupportsThinking(selectedModel, value as ThinkingLevel) ? Promise.resolve() : Promise.reject(new Error(tr("The previous reasoning effort is unavailable. Select another option."))) }]}><Select onChange={() => setThinkingChanged(false)} suffixIcon={<CaretDownIcon size={14} />} disabled={!selectedModel || !!command.pending || command.busy} options={thinkingOptions(selectedModel)} /></Form.Item></div>
+      <details className="submission-preview" open><summary>{tr("Submission preview")}</summary>{reasoningModeDescription(selectedModel, thinkingLevel) && <p>{reasoningModeDescription(selectedModel, thinkingLevel)}</p>}<Facts items={[[tr("Research question"), preview?.goal || tr("Not entered")], [tr("Markets and data"), selectedDataset ? `${selectedDataset.name} / ${selectedDataset.currency}` : tr("Not selected")], [tr("Model and reasoning"), selectedModel ? `${selectedModel.provider}/${selectedModel.modelId} / ${thinkingLevel ? thinkingLabel(thinkingLevel) : tr("Not selected")}` : tr("Not selected")], [tr("Processing tier"), serviceTier === 'priority' ? 'Fast' : serviceTier === 'default' ? tr("Standard") : tr("Default tier")]]} /></details>
+      <ErrorNotice error={specError ?? command.error} /><DraftNotice saved={draftSaved || !!command.pending} /><div className="form-actions"><Button disabled={false} onClick={() => navigate(origin.path)}>{tr("Cancel")}</Button>{command.pending ? <Button type="primary" disabled={command.busy} aria-busy={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>{command.busy ? tr("Submitting") : tr("Check submission")}</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={!catalog.data?.models.length || !datasets.data?.some(item => item.ready)}>{tr("Start research")} <ArrowRightIcon size={15} /></Button>}</div>
     </Form></>}
   </div>;
 }

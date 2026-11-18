@@ -7,7 +7,7 @@ import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-code
 import type { ProviderAuth } from '@earendil-works/pi-ai';
 import type { ModelLoginView } from '../../../packages/contracts/src/index.ts';
 import { ModelCredentials } from '../../research/src/credentials.ts';
-import { Application, json } from '../src/facts.ts';
+import { Application, json, settings } from '../src/facts.ts';
 import { setup, studied, context } from './support.ts';
 
 const api = '/api/v3';
@@ -103,7 +103,7 @@ test('settings retain supported reasoning and service tier before admission/repl
   const patch = (payload: object) => state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload });
   try {
     await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json({ name: 'Historical', defaultModel: state.model, taskTimeoutSeconds: 0.001, nativeTimeoutSeconds: 0.001 }); }, context);
-    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: state.model, thinkingLevel: null, serviceTier: null, tickBookCores: 1 });
+    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: state.model, thinkingLevel: null, serviceTier: null, tickBookCores: 1 });
     assert.equal((await patch({ tickBookCores: 0 })).json().error, 'tick_book_cores_invalid');
     assert.equal((await patch({ tickBookCores: 8 })).statusCode, 200);
     const availableModels = state.service.research.availableModels;
@@ -141,6 +141,57 @@ test('settings retain supported reasoning and service tier before admission/repl
     const { view } = await import('./support.ts').then(module => module.built(state)); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     assert.equal((await patch({ defaultModel: null, thinkingLevel: null })).json().error, 'model_required');
     assert.equal((await patch({ defaultModel: null, thinkingLevel: null, serviceTier: null })).statusCode, 200);
-    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: null, thinkingLevel: null, serviceTier: null, tickBookCores: 8 });
+    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null, tickBookCores: 8 });
+  } finally { await state.cleanup(); }
+});
+
+
+test('language defaults to English for new and historical settings without migrating stored data', () => {
+  for (const value of [undefined, null, {}, { defaultModel: null }, { language: 'unsupported' }]) {
+    assert.equal(settings(value).language, 'en');
+  }
+  assert.equal(settings({ language: 'zh-CN' }).language, 'zh-CN');
+  assert.equal(settings({ language: 'en' }).language, 'en');
+});
+
+test('language-only settings persist independently of model availability and reject invalid values atomically', { timeout: 20_000 }, async () => {
+  const state = await setup();
+  const read = () => state.service.app.inject({ url: `${api}/settings`, headers: state.headers });
+  const patch = (payload: object) => state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload });
+  try {
+    assert.equal((await read()).json().language, 'en');
+    const stored = { defaultModel: state.model, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8, historicalField: 'retain original settings' };
+    await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json(stored); }, context);
+    const before = (await read()).json();
+    const host = state.service.research;
+    const availableModels = host.availableModels;
+    const getModel = host.models.getModel;
+    const checkAuth = host.models.checkAuth;
+    let providerCalls = 0;
+    host.availableModels = async () => { providerCalls++; throw new Error('language must not query the model catalog'); };
+    host.models.getModel = () => { providerCalls++; throw new Error('language must not resolve a model'); };
+    host.models.checkAuth = async () => { providerCalls++; throw new Error('language must not check provider authentication'); };
+    try {
+      const saved = await patch({ language: 'zh-CN' });
+      assert.equal(saved.statusCode, 200, saved.body);
+      assert.deepEqual(saved.json(), { ...before, language: 'zh-CN' });
+      assert.deepEqual((await host.harness.snapshot(Application, context))!.settings, { ...stored, language: 'zh-CN' });
+      for (const language of ['fr', 'zh', 'EN', '', ' en ', null, 1, true, [], {}]) {
+        const rejected = await patch({ language });
+        assert.equal(rejected.statusCode, 400, rejected.body);
+        assert.equal(rejected.json().error, 'language_unsupported');
+        assert.deepEqual((await read()).json(), saved.json());
+        assert.deepEqual((await host.harness.snapshot(Application, context))!.settings, { ...stored, language: 'zh-CN' });
+      }
+      assert.equal(providerCalls, 0, 'Language changes do not depend on provider credentials or model availability');
+    } finally {
+      host.availableModels = availableModels; host.models.getModel = getModel; host.models.checkAuth = checkAuth;
+    }
+    await state.restart();
+    assert.deepEqual((await read()).json(), { ...before, language: 'zh-CN' });
+    const restored = await patch({ language: 'en' });
+    assert.equal(restored.statusCode, 200, restored.body);
+    assert.deepEqual(restored.json(), before);
+    assert.deepEqual((await state.service.research.harness.snapshot(Application, context))!.settings, { ...stored, language: 'en' });
   } finally { await state.cleanup(); }
 });

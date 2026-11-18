@@ -1,3 +1,5 @@
+import i18n from './i18n';
+const t = (key: string, values?: Record<string, unknown>): string => i18n.t(key, { ns: 'settings', ...values });
 /** Display provider values without translating or changing the submitted effort. */
 export function thinkingLabel(value: string): string {
   const labels: Record<string, string> = { off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max', ultra: 'Ultra', default: 'Default' };
@@ -16,10 +18,10 @@ export function thinkingOptions(model?: ThinkingCapabilities) {
 }
 
 export function thinkingUnavailableReason(model?: Partial<ThinkingCapabilities>) {
-  return model?.unavailableThinkingLevels?.filter(item => !model.reasoningModes?.some(mode => mode.level === item.level)).map(item => `${thinkingLabel(item.level)} 不可用：${item.reason}`).join('；') || undefined;
+  return model?.unavailableThinkingLevels?.filter(item => !model.reasoningModes?.some(mode => mode.level === item.level)).map(item => t("{{v0}} is unavailable: {{v1}}", { v0: thinkingLabel(item.level), v1: item.reason })).join(i18n.language === 'zh-CN' ? '；' : '; ') || undefined;
 }
 
 export function reasoningModeDescription(model: Partial<ThinkingCapabilities> | undefined, level: string | undefined) {
   const mode = model?.reasoningModes?.find(item => item.level === level);
-  return mode ? `${thinkingLabel(mode.level)}（Pi 多 Agent 分析委派），底层模型配置 ${thinkingLabel(mode.effectiveLevel)}。子 Agent 仅分析、审查和综合父 Agent 提供的材料；科学工具与最终整合由主 Agent 承担。` : undefined;
+  return mode ? t("{{v0}} (Pi multi-agent analysis delegation), with underlying model effort {{v1}}. Child agents only analyze, review, and synthesize material supplied by the parent. The main agent owns scientific tools and final integration.", { v0: thinkingLabel(mode.level), v1: thinkingLabel(mode.effectiveLevel) }) : undefined;
 }

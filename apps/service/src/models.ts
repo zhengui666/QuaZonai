@@ -123,7 +123,7 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
   app.get(`${API}/settings`, getSettings);
   app.patch(`${API}/settings`, async request => {
     const patch = object(request.body);
-    if (Object.keys(patch).some(key => !['defaultModel', 'thinkingLevel', 'serviceTier', 'tickBookCores'].includes(key))) throw new Problem('settings_field_not_mutable');
+    if (Object.keys(patch).some(key => !['defaultModel', 'thinkingLevel', 'serviceTier', 'tickBookCores', 'language'].includes(key))) throw new Problem('settings_field_not_mutable');
     const before = await getSettings();
     const candidate = { ...before, ...patch } as SettingsView;
     const modelChanged = JSON.stringify([candidate.defaultModel, candidate.thinkingLevel, candidate.serviceTier]) !== JSON.stringify([before.defaultModel, before.thinkingLevel, before.serviceTier]);
@@ -134,6 +134,7 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const current = settings(facts.settings);
       const next = { ...current, ...patch } as SettingsView;
+      if (!['en', 'zh-CN'].includes(next.language!)) throw new Problem('language_unsupported');
       if (!Number.isSafeInteger(next.tickBookCores) || next.tickBookCores! < 1) throw new Problem('tick_book_cores_invalid');
       if (next.serviceTier !== null && !['default', 'priority'].includes(next.serviceTier)) throw new Problem('invalid_service_tier');
       if (patch.defaultModel !== undefined && patch.defaultModel !== null) {

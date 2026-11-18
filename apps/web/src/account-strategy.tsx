@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import i18n from './i18n';
+const t = (key: string, values?: Record<string, unknown>): string => i18n.t(key, { ns: 'settings', ...values });
 import {SpotBalanceObservation} from './spot-balance-observation';
 import AccountOrders from './account-orders';
 import { useRef, useState } from 'react';
@@ -14,72 +17,80 @@ export interface StrategyReceipt {
   receipt: { persisted?: boolean; result?: Record<string, unknown> | null; persistenceError?: string } | null;
 }
 export function strategyResultText(value: StrategyReceipt) {
-  if (value.action === 'RECOVER' && value.status === 'COMPLETED' && (value.receipt?.result?.accountObservation as {supported?:boolean}|undefined)?.supported === false) return '恢复连接已收到回执，但原绑定运行器不支持有界账户观察，需要明确安排升级，不能热接管旧节点。不代表订单已对账、账户可交易或策略已启动；保留原记录，不自动重绑。';
-  if (value.status === 'REJECTED' && value.error === 'account_bound_runner_summary_upgrade_required') return '原绑定运行器不支持有界账户观察，本次未启动策略。需要明确安排升级，不能自动换绑或热接管旧节点；原订单、预留和 UNKNOWN 保留。';
+  if (value.action === 'RECOVER' && value.status === 'COMPLETED' && (value.receipt?.result?.accountObservation as {supported?:boolean}|undefined)?.supported === false) return t("A reconnection receipt was received, but the bound runner lacks bounded account observation. An explicit upgrade is required; do not take over the old node in place. This is not proof of reconciled orders, trading readiness, or a started strategy. Keep the original records; no automatic rebinding occurs.");
+  if (value.status === 'REJECTED' && value.error === 'account_bound_runner_summary_upgrade_required') return t("The bound runner lacks bounded account observation, so the strategy was not started. An explicit upgrade is required; no automatic rebinding or takeover of the old node occurs. Original orders, reservations, and UNKNOWN states remain.");
   if (value.action === 'RECOVER') return value.status === 'COMPLETED'
-    ? '已收到恢复连接回执；不代表订单已对账、账户可交易或策略已启动。不会自动撤单。'
-    : value.status === 'REJECTED' ? '恢复连接请求被拒绝；请核对原回执，不自动更换版本重试。'
-    : '恢复连接结果尚未确定；只查询原请求，不自动重连，也不把未知订单标为已结算。';
+    ? t("A reconnection receipt was received. It does not prove reconciled orders, trading readiness, or a started strategy. No orders are automatically cancelled.")
+    : value.status === 'REJECTED' ? t("Reconnection was rejected. Check the original receipt; no automatic retry with a different version occurs.")
+    : t("The reconnection outcome is unknown. Query the original request only; do not reconnect automatically or mark unknown orders as settled.");
   if (value.receipt?.persisted === false) return value.receipt.result?.state === 'STOPPED'
-    ? '原生已确认停止，但远端回执未能持久化；原命令仍标为不确定，不会自动重发。'
-    : '远端回执未能持久化，且未确认停止；请核对当前策略状态，不会自动重发。';
-  if (value.error === 'strategy_start_fence_changed') return '账户策略版本已变化，本次旧启动请求被拒绝。请先核对最新状态，再明确发起新的启动；不会自动换版本重试。';
-  if (value.status === 'REJECTED' && value.error === 'hyperliquid_native_spot_free_required') return '实盘启动暂不可用：官方现货余额观察尚未与 Account、Portfolio 和 Risk 的一致性及新鲜度接通。本次未连接或启动策略；后续需完成官方余额与风控一致性验收，不会自动重试。';
-  return value.status === 'COMPLETED' ? '原命令已收到回执；不代表订单已成交或资金已退出。'
-    : value.status === 'REJECTED' ? '原生明确拒绝本次启动，未启动策略。'
-    : '原命令尚未确定；这里只查询同一请求，不自动重发或用当前状态代替回执。';
+    ? t("The native runtime confirmed a stop, but the remote receipt could not be persisted. The original command remains uncertain and will not be resent automatically.")
+    : t("The remote receipt could not be persisted, and a stop is not confirmed. Check the current strategy status; no automatic resend occurs.");
+  if (value.error === 'strategy_start_fence_changed') return t("The account strategy version changed, so this old start request was rejected. Check the latest status before explicitly starting a new request. No automatic version-switching retry occurs.");
+  if (value.status === 'REJECTED' && value.error === 'hyperliquid_native_spot_free_required') return t("Live start is unavailable: official spot balance observation is not yet integrated with Account, Portfolio, and Risk consistency and freshness. No account connection or strategy start occurred. Official balance and risk consistency must be verified first; there is no automatic retry.");
+  return value.status === 'COMPLETED' ? t("The original command received a receipt. This does not prove filled orders or withdrawn funds.")
+    : value.status === 'REJECTED' ? t("The native runtime explicitly rejected this start; no strategy was started.")
+    : t("The original command outcome is unknown. Only the same request is queried; no automatic resend or substitution with current status occurs.");
 }
 interface AccountObservationCapability {supported?:boolean|null;reason?:string|null;nativeSessionId?:string|null}
 export function accountSummaryStartAllowed(value?:AccountObservationCapability|null,unavailable=false) {
  return !unavailable && value?.supported === true && !!value.nativeSessionId;
 }
 export function AccountObservationNotice({value,unavailable=false}:{value?:AccountObservationCapability|null;unavailable?:boolean}) {
+ const { t } = useTranslation('settings');
+
  const unsupported=!unavailable&&value?.supported===false&&!!value.nativeSessionId;
- return <section aria-label="有界账户观察能力"><h4>有界账户观察能力</h4><p>{unsupported
-  ?'原运行器不支持有界账户观察，不能启动策略。'
-  :accountSummaryStartAllowed(value,unavailable)?'最近报告：支持有界账户观察（非交易许可）。'
-  :'有界账户观察能力未知。'}</p>
+ return <section aria-label={t("Bounded account observation")}><h4>{t("Bounded account observation")}</h4><p>{unsupported
+  ?t("The original runner lacks bounded account observation; the strategy cannot start.")
+  :accountSummaryStartAllowed(value,unavailable)?t("Latest report: bounded account observation is supported (not permission to trade).")
+  :t("Bounded account observation support is unknown.")}</p>
  </section>;
 }
 interface LegacyObservation {nativeSessionId:string;observedAtNs:string;receivedAt:string;observation:{cash:unknown;equity:unknown}}
 export function LegacyAccountObservation({path,capability,unavailable=false}:{path:string;capability?:AccountObservationCapability|null;unavailable?:boolean}) {
+ const { t } = useTranslation('settings');
+
  const confirm=useConfirm(),inFlight=useRef(false);
  const [busy,setBusy]=useState(false),[result,setResult]=useState<LegacyObservation>(),[error,setError]=useState<unknown>();
  const session=!unavailable&&capability?.supported===false?capability.nativeSessionId:null;
  const read=()=>{if(!session||inFlight.current)return;inFlight.current=true;setBusy(true);setError(undefined);setResult(undefined);
    void api<LegacyObservation>(`${path}/legacy-snapshot`,{method:'POST',body:{mode:'LEGACY_FULL_SNAPSHOT',expectedNativeSessionId:session,acknowledgeFullHistoryCost:true}})
     .then(setResult).catch(setError).finally(()=>{inFlight.current=false;setBusy(false);});};
- return <section aria-label="旧运行器单次全量观察"><h4>旧运行器单次全量观察</h4>
- <p>全历史读取可能阻塞原节点或耗尽内存。</p>
- <Button disabled={!session||busy} loading={busy} onClick={()=>confirm('读取一次旧版全历史快照？','原运行器可能因全部历史量过大而缓慢、超时或内存不足；可能影响同一节点响应。仅读取已连接的原会话，不启动策略；失败不自动重试。',read)}>明确读取一次旧版观察</Button>
- {!!error&&<p role="alert">本次观察未确认完成；没有自动重发，旧记录未清除。原运行器可能仍在处理请求，不应立即重复读取。</p>}
- {result&&<div><p>原会话：{result.nativeSessionId}；原观测纳秒：{result.observedAtNs}；接收时间：{result.receivedAt}。这是一次历史读数，不代表当前在线或可交易{result.nativeSessionId!==session?'，当前会话已变化或不可用':''}。</p>
- <p>原现金：{typeof result.observation.cash==='string'?result.observation.cash:'未知'}；原权益：{typeof result.observation.equity==='string'?result.observation.equity:'未知'}。</p></div>}
+ return <section aria-label={t("One-time full observation from a legacy runner")}><h4>{t("One-time full observation from a legacy runner")}</h4>
+ <p>{t("Reading all history may block the original node or exhaust memory.")}</p>
+ <Button disabled={!session||busy} loading={busy} onClick={()=>confirm(t("Read the legacy full-history snapshot once?"),t("A large history may make the original runner slow, time out, or run out of memory, affecting the same node. Read only the connected original session; do not start a strategy. Failures are not retried automatically."),read)}>{t("Explicitly read legacy observation once")}</Button>
+ {!!error&&<p role="alert">{t("Completion is unconfirmed. No automatic resend occurred, and old records remain. The original runner may still be processing the request; do not immediately repeat the read.")}</p>}
+ {result&&<div><p>{t("Original session:")}{result.nativeSessionId}{t("; original observation time (ns):")}{result.observedAtNs}{t("; received at:")}{result.receivedAt}{t(". This is a historical reading, not proof of current connectivity or trading readiness")}{result.nativeSessionId!==session?t("; the current session has changed or is unavailable"):''}{t("Sentence end")}</p>
+ <p>{t("Original cash:")}{typeof result.observation.cash==='string'?result.observation.cash:t("Unknown")}{t("; original equity:")}{typeof result.observation.equity==='string'?result.observation.equity:t("Unknown")}{t("Sentence end")}</p></div>}
  </section>;
 }
 interface LifecycleCapability {supported?:boolean|null;configuredKind?:string|null;scope?:string|null;strategyVerified?:boolean|null;nativeSessionId?:string|null}
 export function StrategyLifecycleNotice({value,unavailable=false}:{value?:LifecycleCapability|null;unavailable?:boolean}){
+ const { t } = useTranslation('settings');
+
  const observed=!unavailable&&value?.scope==='INSTALLED_DISPATCH_ONLY'&&value.strategyVerified===false&&!!value.nativeSessionId&&typeof value.supported==='boolean';
- return <section aria-label="最近读取的原生策略接线报告"><h4>最近读取的原生策略接线报告</h4><p>{!observed?'原生策略接线状态未知。':value.supported?'最近报告：已安装策略派发入口。':'最近报告：未报告可用的策略派发入口。'}</p>
- {observed&&<p>原生报告类型：{value.configuredKind??'未提供'}；原会话：{value.nativeSessionId}。</p>}
+ return <section aria-label={t("Most recently read native strategy wiring report")}><h4>{t("Most recently read native strategy wiring report")}</h4><p>{!observed?t("Native strategy wiring status is unknown."):value.supported?t("Latest report: a strategy dispatch entry point is installed."):t("Latest report: no available strategy dispatch entry point was reported.")}</p>
+ {observed&&<p>{t("Native report type:")}{value.configuredKind??t("Not provided")}{t("; original session:")}{value.nativeSessionId}{t("Sentence end")}</p>}
  </section>;
 }
 /** Edit only known deployment strings; opaque owner configuration is not interpreted. */
 export function strategyConfigurationField(text:string,field:'instrument_id'|'name',value:string){
  const parsed:unknown=JSON.parse(text);
- if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('原策略配置必须为对象');
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error(t("Original strategy configuration must be an object"));
  const config=parsed as Record<string,unknown>;
  if(field==='instrument_id')return JSON.stringify({...config,instrument_id:value},null,2);
  const strategy=config.strategy;
- if(!strategy||typeof strategy!=='object'||Array.isArray(strategy)||(strategy as Record<string,unknown>).kind!=='REGISTERED')throw Error('原策略不是 REGISTERED，不替换策略类型');
+ if(!strategy||typeof strategy!=='object'||Array.isArray(strategy)||(strategy as Record<string,unknown>).kind!=='REGISTERED')throw Error(t("The original strategy is not REGISTERED; its type is not replaced"));
  return JSON.stringify({...config,strategy:{...strategy,name:value}},null,2);
 }
 export function StrategyConfigurationFields({text,disabled,onChange}:{text:string;disabled:boolean;onChange:(value:string)=>void}){
+ const { t } = useTranslation('settings');
+
  let config:{instrument_id?:unknown;strategy?:{kind?:unknown;name?:unknown}};
- try{const value:unknown=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))return <p>请修正高级配置 JSON 对象。</p>;config=value;}catch{return <p>请修正高级配置 JSON 对象。</p>;}
- return <fieldset disabled={disabled}><legend>原生策略配置</legend>
- <label>策略标的（必须沿用此账户已绑定标的）<Input aria-label="编辑策略标的" disabled={disabled} value={typeof config.instrument_id==='string'?config.instrument_id:''} onChange={event=>onChange(strategyConfigurationField(text,'instrument_id',event.target.value))}/></label>
- {config.strategy?.kind==='REGISTERED'&&<label>已编入运行器的原策略名称<Input aria-label="编辑原策略名称" disabled={disabled} value={typeof config.strategy.name==='string'?config.strategy.name:''} onChange={event=>onChange(strategyConfigurationField(text,'name',event.target.value))}/></label>}
+ try{const value:unknown=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))return <p>{t("Fix the advanced configuration JSON object.")}</p>;config=value;}catch{return <p>{t("Fix the advanced configuration JSON object.")}</p>;}
+ return <fieldset disabled={disabled}><legend>{t("Native strategy configuration")}</legend>
+ <label>{t("Strategy instrument (must retain the account-bound instrument)")}<Input aria-label={t("Edit strategy instrument")} disabled={disabled} value={typeof config.instrument_id==='string'?config.instrument_id:''} onChange={event=>onChange(strategyConfigurationField(text,'instrument_id',event.target.value))}/></label>
+ {config.strategy?.kind==='REGISTERED'&&<label>{t("Original strategy name compiled into the runner")}<Input aria-label={t("Edit original strategy name")} disabled={disabled} value={typeof config.strategy.name==='string'?config.strategy.name:''} onChange={event=>onChange(strategyConfigurationField(text,'name',event.target.value))}/></label>}
  </fieldset>;
 }
 type StrategyEditIdentity={accountSourceId:string;strategyRevision:string};
@@ -88,11 +99,13 @@ export function strategyEditChanged(draft:StrategyEditDraft|undefined,current:St
  return !!draft&&(!current||draft.accountKey!==accountKey||draft.accountSourceId!==current.accountSourceId||draft.strategyRevision!==current.strategyRevision);
 }
 export function strategyEditSubmission(draft:StrategyEditDraft|undefined,current:StrategyEditIdentity|undefined,accountKey:string,text:string){
- if(!current||strategyEditChanged(draft,current,accountKey))throw Error('原策略配置版本已变化；草稿保留，请核对后明确放弃草稿并读取最新配置。');
+ if(!current||strategyEditChanged(draft,current,accountKey))throw Error(t("The original strategy configuration version changed. Your draft is retained. Review it before explicitly discarding the draft and loading the latest configuration."));
  const identity=draft??current;
  return {configuration:JSON.parse(text),expectedAccountSourceId:identity.accountSourceId,expectedStrategyRevision:identity.strategyRevision};
 }
 export default function AccountStrategy({ value, configured=false, remoteUnsupported=[] }: { remoteUnsupported?:string[]; value: Pick<ObservationView,'id'|'mode'|'connectionName'|'connectionId'>;configured?:boolean }) {
+ const { t } = useTranslation('settings');
+
   const path = configured?`/accounts/configurations/${encodeURIComponent(value.id)}/strategy`:`/observations/${encodeURIComponent(value.id)}/strategy`;
   const commandIdentity=configured?`configured:${value.id}`:value.id;
   const status = useResource<{ accountSourceId: string; strategyRevision: string; strategy: NativeAccountStrategyStatus }>(path, { poll: 3000 });
@@ -119,40 +132,40 @@ export default function AccountStrategy({ value, configured=false, remoteUnsuppo
   const supported = !!native && typeof status.data?.accountSourceId === 'string' && /^\d+$/.test(status.data.strategyRevision);
   const liveSemanticsBlocked = value.mode === 'live' && configuration.data?.accountSemantics !== 'NATIVE_MARGIN';
   const unsettled = !!requestId && (!receipt.data || ['PENDING', 'UNCERTAIN'].includes(receipt.data.status));
-  return <section className="result-section"><h3>Nautilus 原生策略</h3>
-    <p>勿填写私钥或密码。</p>
+  return <section className="result-section"><h3>{t("Nautilus native strategy")}</h3>
+    <p>{t("Do not enter private keys or passwords.")}</p>
     <AccountObservationNotice value={configuration.data?.accountObservation} unavailable={!!configuration.error}/>
     {configured&&!remoteUnsupported.includes('legacySnapshot')&&<LegacyAccountObservation key={path} path={path} capability={configuration.data?.accountObservation} unavailable={!!configuration.error}/>}
     <StrategyLifecycleNotice value={configuration.data?.lifecycleCapability} unavailable={!!configuration.error}/>
     {configured&&!remoteUnsupported.includes('spotObservation')&&value.mode==='live'&&<SpotBalanceObservation key={path} path={`/accounts/configurations/${encodeURIComponent(value.id)}`} sourceId={configuration.data?.accountSourceId} nativeSessionId={configuration.data?.accountObservation?.nativeSessionId} connected={!configuration.error&&configuration.data?.connected===true&&configuration.data?.accountObservation?.supported===true}/>}
-    <details><summary>配置账户原生策略与参数（不连接、不交易）</summary>
+    <details><summary>{t("Configure native account strategy and parameters (no connection or trading)")}</summary>
 
       <ErrorNotice error={configuration.error ?? configurationError ?? saveConfiguration.error} retry={() => { void configuration.refetch(); }} />
       <StrategyConfigurationFields text={configurationText} onChange={editConfiguration} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending}/>
-      <details><summary>高级：完整原生策略配置</summary><p>精确小数请使用原策略要求的字符串格式。</p>
-      <Input.TextArea aria-label="账户原生策略配置 JSON" autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => editConfiguration(event.target.value)} /></details>
-      {editChanged&&<p role="alert">原账户或策略配置版本已变化。草稿保留，不能用新版本号覆盖原配置。请先核对，再明确放弃草稿采用最新配置。</p>}
-      {edited&&<Button disabled={!!saveConfiguration.pending||saveConfiguration.busy} onClick={()=>confirm('放弃当前未保存草稿？','只放弃本地编辑并显示最近读取的原配置，不保存、不连接、不启动。',()=>{setEdited(undefined);setConfigurationError(undefined);void configuration.refetch();})}>放弃草稿，采用最新配置</Button>}
-      <p>仅断开时可保存。</p>
+      <details><summary>{t("Advanced: full native strategy configuration")}</summary><p>{t("Use the string format required by the original strategy for exact decimals.")}</p>
+      <Input.TextArea aria-label={t("Native account strategy configuration JSON")} autoSize={{ minRows: 8, maxRows: 24 }} value={configurationText} disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending} onChange={event => editConfiguration(event.target.value)} /></details>
+      {editChanged&&<p role="alert">{t("The account or strategy configuration version changed. Your draft is retained and cannot overwrite the original configuration using a new version number. Review it before explicitly discarding the draft and adopting the latest configuration.")}</p>}
+      {edited&&<Button disabled={!!saveConfiguration.pending||saveConfiguration.busy} onClick={()=>confirm(t("Discard the unsaved draft?"),t("Discard local edits and show the most recently read original configuration. Do not save, connect, or start anything."),()=>{setEdited(undefined);setConfigurationError(undefined);void configuration.refetch();})}>{t("Discard draft and use latest configuration")}</Button>}
+      <p>{t("Configuration can be saved only while disconnected.")}</p>
       <Button disabled={!configuration.data || configuration.data.connected !== false || !!saveConfiguration.pending || editChanged} loading={saveConfiguration.busy} onClick={() => {
         try { const payload = strategyEditSubmission(edited,configuration.data,commandIdentity,configurationText); setConfigurationError(undefined); void saveConfiguration.submit(payload); }
         catch (error) { setConfigurationError(error); }
-      }}>仅保存配置</Button>
-      {!remoteUnsupported.includes('verifyConfiguration')&&(configuration.data?.pendingConfigurationRequests ?? []).map(requestId => <Button key={requestId} loading={verifyingConfiguration} disabled={verifyingConfiguration} onClick={() => confirm('核实原配置是否已持久保存？', `只核对原请求 ${requestId} 的文件与同步结果，不连接 Nautilus、不启动策略，也不解除任何订单 UNKNOWN。`, () => {
+      }}>{t("Save configuration only")}</Button>
+      {!remoteUnsupported.includes('verifyConfiguration')&&(configuration.data?.pendingConfigurationRequests ?? []).map(requestId => <Button key={requestId} loading={verifyingConfiguration} disabled={verifyingConfiguration} onClick={() => confirm(t("Check whether the original configuration was persisted?"), t("Check only the files and synchronization result for original request {{v0}}. Do not connect Nautilus, start a strategy, or resolve any order UNKNOWN state.", { v0: requestId }), () => {
         setVerifyingConfiguration(true); void api<{status:string}>(`${path}/config/commands/${encodeURIComponent(requestId)}/verify`, {method:'POST',body:{}}).then(result=>{setConfigurationReceipt(result);void configuration.refetch();}).catch(setConfigurationError).finally(()=>setVerifyingConfiguration(false));
-      })}>核实原配置保存结果：{requestId}</Button>)}
+      })}>{t("Check original configuration save result:")}{requestId}</Button>)}
       <PendingCommand command={saveConfiguration} />
-      {configurationReceipt && <p>{configurationReceipt.status === 'COMPLETED' ? '配置已保存，尚未连接或启动交易。' : '配置持久结果不确定；保留原请求，交易启动被阻止。请核对原配置回执，不要当作保存成功。'}</p>}
+      {configurationReceipt && <p>{configurationReceipt.status === 'COMPLETED' ? t("Configuration saved; not connected or trading.") : t("Configuration persistence is uncertain. Keep the original request; trading start is blocked. Check the original configuration receipt rather than treating this as a successful save.")}</p>}
     </details>
-    {liveSemanticsBlocked && <p role="status">实盘启动暂不可用：现货余额与风控尚未接通。</p>}
+    {liveSemanticsBlocked && <p role="status">{t("Live start is unavailable: spot balances and risk controls are not integrated yet.")}</p>}
     <ErrorNotice error={status.error} retry={() => { void status.refetch(); }} />
-    {native && <><Facts items={[["账户模式", value.mode === 'live' ? '实盘：可能产生真实订单' : '模拟盘'], ["策略", native.strategy_id ?? '未注册（仅恢复连接）'], ["状态", <Status value={native.state} />], ["标的", native.instrument_id], ["原生版本", native.native_version], ["策略控制修订", status.data!.strategyRevision]]} /><details><summary>账户原生策略完整配置</summary><pre>{JSON.stringify(native.config, null, 2)}</pre></details></>}
+    {native && <><Facts items={[[t("Account mode"), value.mode === 'live' ? t("Live: may place real orders") : t("Paper trading")], [t("Strategy"), native.strategy_id ?? t("Not registered (reconnection only)")], [t("Status"), <Status value={native.state} />], [t("Instrument"), native.instrument_id], [t("Native version"), native.native_version], [t("Strategy control revision"), status.data!.strategyRevision]]} /><details><summary>{t("Full native account strategy configuration")}</summary><pre>{JSON.stringify(native.config, null, 2)}</pre></details></>}
     <ErrorNotice error={fence.error} retry={() => { void fence.refetch(); }} />
-    <div className="form-actions"><Button loading={recover.busy} disabled={!fence.data || !!fence.error || !!recover.pending} onClick={() => confirm('连接账户进行恢复？', '明确连接此账户的 Nautilus 恢复节点，不加载交易策略，不自动下单、改单或撤单。原订单、预留和 UNKNOWN 保留；连接成功不代表对账完成或可交易。', () => { void recover.submit({ action: 'RECOVER', expectedAccountSourceId: fence.data!.accountSourceId, expectedStrategyRevision: fence.data!.strategyRevision }); })}>连接账户进行恢复</Button><Button type="primary" loading={start.busy} disabled={liveSemanticsBlocked || !accountSummaryStartAllowed(configuration.data?.accountObservation,!!configuration.error) || !supported || unsettled || !!status.error || native?.state === 'RUNNING' || !!start.pending} onClick={() => confirm('启动原生策略？', `${value.mode === 'live' ? '这是实盘，会按已配置策略发送真实订单。' : '这是模拟盘。'}账户：${value.connectionName ?? value.connectionId ?? value.id}；策略：${native?.strategy_id}；标的：${native?.instrument_id}。不是仅启动观测。`, () => { void start.submit({ action: 'START', expectedAccountSourceId: status.data!.accountSourceId, expectedStrategyRevision: status.data!.strategyRevision }); })}>启动{value.mode === 'live' ? '实盘' : '模拟'}策略</Button>
-    <Button danger loading={stop.busy} disabled={!!stop.pending} onClick={() => confirm('停止原生策略？', '向此账户发送官方策略 STOP；依上游配置可能撤单或平仓。停止本地观测不等于停止策略。', () => { void stop.submit({ action: 'STOP' }); })}>停止策略</Button>
-    <Button onClick={() => { void status.refetch(); void fence.refetch(); void configuration.refetch(); if (requestId) void receipt.refetch(); }}>核对状态与原回执</Button></div>
+    <div className="form-actions"><Button loading={recover.busy} disabled={!fence.data || !!fence.error || !!recover.pending} onClick={() => confirm(t("Connect the account for recovery?"), t("Explicitly connect this account's Nautilus recovery node without loading a trading strategy or automatically placing, modifying, or cancelling orders. Original orders, reservations, and UNKNOWN states remain. A connection does not prove reconciliation or trading readiness."), () => { void recover.submit({ action: 'RECOVER', expectedAccountSourceId: fence.data!.accountSourceId, expectedStrategyRevision: fence.data!.strategyRevision }); })}>{t("Connect account for recovery")}</Button><Button type="primary" loading={start.busy} disabled={liveSemanticsBlocked || !accountSummaryStartAllowed(configuration.data?.accountObservation,!!configuration.error) || !supported || unsettled || !!status.error || native?.state === 'RUNNING' || !!start.pending} onClick={() => confirm(t("Start the native strategy?"), t("{{v0}} Account: {{v1}}; strategy: {{v2}}; instrument: {{v3}}. This starts more than observation.", { v0: value.mode === 'live' ? t("This is live trading. The configured strategy may send real orders.") : t("This is paper trading."), v1: value.connectionName ?? value.connectionId ?? value.id, v2: native?.strategy_id, v3: native?.instrument_id }), () => { void start.submit({ action: 'START', expectedAccountSourceId: status.data!.accountSourceId, expectedStrategyRevision: status.data!.strategyRevision }); })}>{value.mode === 'live' ? t("Start live strategy") : t("Start paper strategy")}</Button>
+    <Button danger loading={stop.busy} disabled={!!stop.pending} onClick={() => confirm(t("Stop the native strategy?"), t("Send the official strategy STOP to this account. Depending on upstream configuration, this may cancel orders or close positions. Stopping local observation does not stop the strategy."), () => { void stop.submit({ action: 'STOP' }); })}>{t("Stop strategy")}</Button>
+    <Button onClick={() => { void status.refetch(); void fence.refetch(); void configuration.refetch(); if (requestId) void receipt.refetch(); }}>{t("Check status and original receipt")}</Button></div>
     <PendingCommand command={recover} /><PendingCommand command={start} /><PendingCommand command={stop} /><ErrorNotice error={recover.error ?? start.error ?? stop.error ?? receipt.error} />
-    {receipt.data && <div><h4>最近策略命令回执</h4><Facts items={[["请求", receipt.data.requestId], ["操作", receipt.data.action], ["回执", <Status value={receipt.data.status} />]]} /><p>{strategyResultText(receipt.data)}</p>{receipt.data.error && <code>{receipt.data.error}</code>}</div>}
+    {receipt.data && <div><h4>{t("Latest strategy command receipt")}</h4><Facts items={[[t("Request"), receipt.data.requestId], [t("Actions"), receipt.data.action], [t("Receipt"), <Status value={receipt.data.status} />]]} /><p>{strategyResultText(receipt.data)}</p>{receipt.data.error && <code>{receipt.data.error}</code>}</div>}
     {configured&&<AccountOrders key={value.id} accountId={value.id} readOnly={remoteUnsupported.includes('nativeCancellation')}/>}
   </section>;
 }

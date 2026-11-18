@@ -18,8 +18,8 @@
 .result-card h4 { font-size: 15px; margin-bottom: 16px; }
 .result-footnote { color: var(--secondary); font-size: 12px; line-height: 1.8; margin: 14px 0; }
 .research-result .ant-table-wrapper { overflow-x: auto; }
-[aria-label="双路研究原始评级"] { margin-bottom: 28px; }
-[aria-label="双路研究原始评级"] > article { border-bottom: 1px solid var(--line); padding: 18px 0; }
+.research-original-ratings { margin-bottom: 28px; }
+.research-original-ratings > article { border-bottom: 1px solid var(--line); padding: 18px 0; }
 @media (max-width: 640px) {
   .research-chat { padding: 8px 16px 20px; }
   .research-composer { padding: 12px; border-radius: 12px; }

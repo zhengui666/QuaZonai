@@ -1,12 +1,15 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvidenceMetrics, Facts, metricLabel, Metrics } from './ui';
-import { factMetricKey, metricDefinition } from './metric-glossary';
+import { factMetricKey, metricDefinition, partitionLabel } from './metric-glossary';
 import { shortTitle, shouldCollapse } from './titles';
 import { RecordTitle, TextDisclosure } from './disclosure';
+import i18n from './i18n';
 
 describe('Chinese metric presentation', () => {
+  beforeEach(async () => { await i18n.changeLanguage('zh-CN'); });
+  afterEach(async () => { await i18n.changeLanguage('en'); });
   it('translates native names without rewriting their values or annualization period', () => {
     expect(metricLabel({ key: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', label: 'raw native key', value: 1.2345 })).toBe('夏普比率（365 天年化）');
     expect(metricLabel({ key: 'HELDOUT.pearson_ic', label: 'Pearson IC', value: null })).toBe('皮尔逊信息系数（IC）');
@@ -62,6 +65,25 @@ describe('short titles and original-text disclosures', () => {
     const description = renderToStaticMarkup(createElement(TextDisclosure, { label: '研究假设', value: original }));
     expect(description).toContain('<details'); expect(description).not.toContain(' open='); expect(description).toContain(original);
     const title = renderToStaticMarkup(createElement(RecordTitle, { name: original }));
-    expect(title).toContain('完整名称与描述'); expect(title).toContain(original); expect(title).not.toContain(' open=');
+    expect(title).toContain('Full name and description'); expect(title).toContain(original); expect(title).not.toContain(' open=');
+  });
+});
+
+describe('English-first shared presentation', () => {
+  afterEach(async () => { await i18n.changeLanguage('en'); });
+  it('uses English by default and changes labels without changing metric identities', async () => {
+    expect(i18n.language).toBe('en');
+    expect(metricDefinition('Sharpe Ratio (365 days)').label).toBe('Sharpe ratio (365-day annualization)');
+    expect(metricDefinition('uniqueBars').label).toBe('Distinct BARs');
+    expect(metricDefinition('unfamiliar.original_key').label).toBe('Unrecognized metric');
+    expect(partitionLabel('TRAIN')).toBe('Training');
+    expect(shortTitle()).toBe('Untitled');
+    await i18n.changeLanguage('zh-CN');
+    expect(metricDefinition('uniqueBars').label).toBe('独立行情柱数');
+    expect(partitionLabel('TRAIN')).toBe('训练');
+    expect(shortTitle('用户原始研究名称')).toBe('用户原始研究名称');
+    await i18n.changeLanguage('en');
+    expect(metricDefinition('uniqueBars').label).toBe('Distinct BARs');
+    expect(factMetricKey('Distinct BARs')).toBe('uniqueBars');
   });
 });

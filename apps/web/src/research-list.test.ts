@@ -1,7 +1,12 @@
+import i18n from './i18n';
+import { beforeEach as useChineseInterface, afterEach as restoreDefaultInterface } from 'vitest';
+// Keep legacy Chinese-language regression assertions explicit; new language tests cover the English default.
+useChineseInterface(async () => { await i18n.changeLanguage('zh-CN'); });
+restoreDefaultInterface(async () => { await i18n.changeLanguage('en'); });
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ListPage, ResearchListItem } from '../../../packages/contracts/src/lists.ts';
 import Research, { ResearchDelegations, NativeResearchContinuation, nativeResearchInput, ResearchConversation, canContinueResearch, NativeStrategyResultView, ResearchMarkdown, safeMarkdownComponents, mergeResearchMessages, readableResearchText, ResearchRating, ResearchUncertainty, syncResearchWindow, acceptResearchHistoryPage } from './research';
 import type { ResearchDetail } from '../../../packages/contracts/src/index.ts';
@@ -330,4 +335,16 @@ describe('native Pi delegation presentation', () => {
     expect(visibleText(html)).not.toContain('Ultra');
     expect(visibleText(html)).not.toContain('重启');
   });
+});
+
+// These legacy tests inspect component elements/handlers directly (and, in the
+// demand test, supply manual state slots). Keep that boundary hook-free while
+// translating through the real singleton at the current test language. Mounted
+// language-settings tests separately exercise actual react-i18next subscriptions.
+vi.mock('react-i18next', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-i18next')>();
+  const { default: translations } = await import('i18next');
+  return { ...actual, useTranslation: (namespace?: string | string[]) => ({
+    t: translations.getFixedT(null, namespace ?? null), i18n: translations, ready: true,
+  }) };
 });

@@ -1,3 +1,8 @@
+import i18n from './i18n';
+import { beforeEach as useChineseInterface, afterEach as restoreDefaultInterface } from 'vitest';
+// Keep legacy Chinese-language regression assertions explicit; new language tests cover the English default.
+useChineseInterface(async () => { await i18n.changeLanguage('zh-CN'); });
+restoreDefaultInterface(async () => { await i18n.changeLanguage('en'); });
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -35,7 +40,7 @@ describe('parameter scan result presentation', () => {
     expect(visible).toContain('9007199254740993');
     expect(visible).not.toContain('不重新计算排名');
     expect(visible).toContain('探索性结果，未获科学资格');
-    expect(visible).toContain('执行中');
+    expect(visible).toContain('运行中');
     expect(visible).not.toContain('不代表独立证据通过');
   });
   it('does not advertise creation, rankings or retired analysis tabs', () => {

@@ -1,3 +1,7 @@
+import { beforeEach as beforeLocaleTest, afterEach as afterLocaleTest } from 'vitest';
+import i18n from './i18n';
+beforeLocaleTest(async () => { await i18n.changeLanguage('zh-CN'); });
+afterLocaleTest(async () => { await i18n.changeLanguage('en'); });
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -35,4 +39,14 @@ describe('provider reasoning presentation', () => {
     expect(reads[0]).not.toHaveProperty('refetchOnWindowFocus', false);
     expect(reads[0]).not.toHaveProperty('initialData');
   });
+});
+
+it('localizes reasoning explanations at call time but keeps provider efforts in English', async () => {
+ const model={thinkingLevels:['max'],reasoningModes:[{level:'ultra',effectiveLevel:'max',mode:'PI_MULTI_AGENT' as const}]};
+ await i18n.changeLanguage('en');
+ expect(reasoningModeDescription(model,'ultra')).toContain('underlying model effort Max');
+ expect(thinkingLabel('ultra')).toBe('Ultra');
+ await i18n.changeLanguage('zh-CN');
+ expect(reasoningModeDescription(model,'ultra')).toContain('底层模型配置 Max');
+ expect(thinkingLabel('ultra')).toBe('Ultra');
 });

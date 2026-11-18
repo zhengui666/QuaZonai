@@ -1,3 +1,4 @@
+import i18n from './i18n';
 import type { EquityPoint, Metric } from '../../../packages/contracts/src/index.ts';
 import type { NativeTickEconomicResult, TickEconomicReplayProgress } from '../../../packages/contracts/src/economic-tick.ts';
 
@@ -18,6 +19,6 @@ export function replayCurve(days: NativeTickEconomicResult['days']): EquityPoint
 export function replayMetrics(row: NativeTickEconomicResult['metrics'][number]): Metric[] {
   return [
     { key: 'Sharpe Ratio (365 days)', label: 'sharpe_365', value: row.sharpe_365 },
-    { key: 'tick.conditional_annualized_return_365', label: 'conditional_annualized_return_365', value: row.conditional_annualized_return_365, unit: '小数比例' },
+    { key: 'tick.conditional_annualized_return_365', label: 'conditional_annualized_return_365', value: row.conditional_annualized_return_365, unit: i18n.t('Fraction', { ns: 'shared' }) },
   ];
 }

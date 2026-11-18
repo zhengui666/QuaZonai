@@ -1,3 +1,8 @@
+import i18n from './i18n';
+import { beforeEach as useChineseInterface, afterEach as restoreDefaultInterface } from 'vitest';
+// Keep legacy Chinese-language regression assertions explicit; new language tests cover the English default.
+useChineseInterface(async () => { await i18n.changeLanguage('zh-CN'); });
+restoreDefaultInterface(async () => { await i18n.changeLanguage('en'); });
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
