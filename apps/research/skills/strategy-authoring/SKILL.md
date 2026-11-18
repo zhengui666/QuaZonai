@@ -9,9 +9,9 @@ description: Write, build, and run Nautilus-compatible Rust strategies as an int
 
 This reference applies to an **explicitly configured, trusted owner Rust crate**, not dynamic Python, compilation in arbitrary directories, or changes to QuaZonai/Nautilus. First read `native_runner_preparation_status` and the owner's Cargo.toml, src/lib.rs, and existing factory. The Rust APIs shown here correspond to Nautilus `634e09456c949f488b2bfcf6b6897b33cbf218d7`. If the environment uses another version, verify its signatures rather than copying develop documentation. Use the same official revision and compatible features for every Nautilus crate to avoid incompatible duplicate types. Do not modify upstream or implement a replacement matching, indicator, or return-calculation engine.
 
-## Working with the external operator agent
+## Your responsibilities
 
-The external agent uses the QuaZonai CLI to submit objectives, continue research, and read conversations and results. This internal skill turns accepted objectives into strategy source, builds, execution, and evaluation. Use the workspace bound to the current research and its native task tools. Retain the original task IDs for builds, executions, and reports. Include conclusions, the actual scope of verification, and next steps in research replies so the external agent can read and continue the same research.
+Turn the accepted research objective into strategy source, builds, native execution, and evidence-based evaluation. Work in the workspace bound to the current research using its native task tools. Retain original task IDs for builds, executions, and reports. Deliver conclusions, the actual scope of verification, limitations, and actionable next steps in the research reply. If necessary environment configuration is missing, report the specific requirement to the operator rather than changing product configuration or pretending execution succeeded.
 
 Internal logic assessment uses registered implementation-source materials and `native_assessment_read_source`. Data synthesis assessment uses the original task's evidence manifest and paginated `native_assessment_read_exposure`. Base judgments on what was actually read, not on treating the parent research summary as independent verification. Registering materials and reading native results do not restrict strategy categories or trading logic.
 
@@ -99,11 +99,11 @@ The internal research agent uses official read/write/edit tools in the explicit 
 4. Call `native_research_start_bound` with the completed build's requestId, current configuration revision, and actual dataset/model. It creates **a new research explicitly bound to the new binary**. It does not update an old research executor and does not require a global native_runner_select change.
 5. In that research, read the brief and actual request. First record complete planned requests, windows, and assumptions with `native_strategy_logic_review`; then set factory/name/config using `native_configured_configure {request: complete native request}` and execute the exact configuration with native_configured_backtest. Declare windows/parameters/assumptions first. A successful build is not successful replay. Inspect original task state, stderr, callbacks, native results, orders/fills, and fee evidence. A no-order example demonstrates integration only.
 
-These are internal agent tools, not identically named CLI subcommands. External agents submit through research start/resume to the research agent; normally resume only after the submission has terminated. Use actual available tools and bound capabilities. Do not invent capabilities or automatically resubmit an original UNKNOWN execution.
+Use the actual internal tools and bound capabilities described above. Do not invent capabilities or automatically resubmit an original UNKNOWN execution.
 
 ## 6. Backtest factories are not account strategies
 
-This factory builds BacktestRunConfig only. Paper/live execution requires a separately compiled account registration, adapters, account configuration, and explicit start. Do not automatically use a historical factory for live trading or infer permission from backtest success. Do not add wallet access, account connections, or live orders to this integration example. Saving configuration, building, and inspecting capabilities do not start a strategy.
+This factory builds BacktestRunConfig only; it does not authorize or start paper/live execution. Keep this research workflow separate from account operation. Do not add wallet access, account connections, or live orders to the integration example or infer trading permission from backtest success.
 
 For source/logic review after an existing execution, use the same native_strategy_logic_review with explicit `reviewTiming:"POST_EXECUTION"` and an authorized sourceRequestId. This creates a new independent review Task. It does not rerun the backtest, replace earlier pre-execution logic ratings/reports, or retroactively satisfy a pre-execution protocol. The child still reads only the specified source materials; it does not automatically receive historical backtests or the parent transcript. Read the original review and execution evidence separately when combining them. Omitting reviewTiming still requests pre-execution review, which rejects requests with an existing execution.
 
@@ -111,7 +111,7 @@ When a research workspace is configured, a synthesis assessment child may use `n
 
 ### Formal import of existing market data
 
-The native owner environment may explicitly enable `marketImport:true`. Only the next native_runner_build compiles the existing market-history importer entrypoint. Saving configuration neither compiles it nor changes old research/builds. This entrypoint uses high precision: the owner's official dependency graph must explicitly select the same precision, or the build reports rust_market_import_requires_high_precision_owner. It never silently changes strategy precision. Select official high precision through the owner's own Cargo feature, prepare the lock using official Cargo, create a new Build, and read its actual capabilities. Do not rewrite old capability receipts or substitute a global runner switch for binding.
+Check preparation status for an owner environment with `marketImport:true`; if it is missing, report the required configuration to the operator. The next native_runner_build compiles the existing market-history importer entrypoint; existing research/builds remain unchanged. This entrypoint uses high precision: the owner's official dependency graph must explicitly select the same precision, or the build reports rust_market_import_requires_high_precision_owner. It never silently changes strategy precision. Select official high precision through the owner's own Cargo feature, prepare the lock using official Cargo, create a new Build, and read its actual capabilities. Do not rewrite old capability receipts or substitute a global runner switch for binding.
 
 With a registered catalog, a newly bound research can use native_market_import. Without a catalog, do not borrow an unrelated dataset or create a placeholder research. Follow the formal preparation sequence:
 
@@ -136,7 +136,7 @@ Retain original requests, outputs, and failure records; do not resubmit UNKNOWN.
 
 native_strategy_catalog data_types uses native NautilusDataType names such as `["TradeTick"]`, not dataset modality names such as `["TRADE_TICK"]`. Omit the filter to discover actual selectors when needed, then reuse returned names exactly and paginate with next_cursor. Query-planning failure does not mean data is missing or replay occurred; do not recast an error as success.
 
-Import tools return the original import taskId for linkage and paginated reading, both for small results and large-result prompts. catalog_path/report_path and the real manifest/report remain direct preparation evidence. Task IDs are not mandatory strategy parameters. Do not add unnecessary ID requirements to an observer or general full-market workflow. For older small results without an ID, read the original Task linkage through the external research evidence interface rather than rerunning import.
+Import tools return the original import taskId for linkage and paginated reading, both for small results and large-result prompts. catalog_path/report_path and the real manifest/report remain direct preparation evidence. Task IDs are not mandatory strategy parameters. Do not add unnecessary ID requirements to an observer or general full-market workflow. For older small results without an ID, ask the operator to retrieve the original Task linkage rather than rerunning import.
 
 Native simulated venues for perpetuals/futures must use an instrument-compatible AccountType::Margin. An observer that never orders still cannot use Cash: the pinned upstream rejects loading perpetuals/futures into a cash account in add_instrument. Configure equities/spot according to their actual account semantics; this is not a Margin-only restriction on all strategies. Simulated account types, balances, and leverage do not imply a live account connection or trading permission.
 
@@ -154,7 +154,7 @@ Multi-root execution requires a new runner with actual capabilities.research.mul
 
 ### Explicit native post-run completion checks
 
-To inspect and write final materials after native node.run() returns, explicitly save backtestCompletion:true in the owner environment and provide this function in the same backtestFactory module:
+To inspect and write final materials after native node.run() returns, check that the owner environment enables backtestCompletion:true. If needed, report that configuration requirement to the operator. Provide this function in the same backtestFactory module:
 
 ```rust
 pub fn finalize_after_node_run(
