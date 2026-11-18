@@ -4,12 +4,13 @@ import {act,create,type ReactTestRenderer} from 'react-test-renderer';
 import {afterEach,expect,it,vi} from 'vitest';
 import i18n from './i18n';
 import NativeResultCharts,{NativeEvidenceCell} from './native-result-charts';
-const state=vi.hoisted(()=>({paths:[] as string[],failed:false,crossPage:false}));
+const state=vi.hoisted(()=>({paths:[] as string[],failed:false,crossPage:false,mixed:false}));
 vi.mock('./research-chart',()=>({default:()=>createElement('div',{'data-chart':true},'page chart')}));
 vi.mock('./ui',()=>({ErrorNotice:({error}:{error:unknown})=>error?createElement('p',null,'read failed'):null,Loading:()=>createElement('p',null,'loading')}));
 vi.mock('antd',()=>({Alert:({title}:{title:string})=>createElement('p',null,title),Button:(p:any)=>createElement('button',p,p.children),Select:(p:any)=>createElement('select',p),Table:()=>null}));
 vi.mock('./data-hooks',()=>({useResource:(path:string)=>{
  state.paths.push(path);const task=Number(new URL(`https://example.invalid${path}`).searchParams.get('taskId'));
+ if(path.includes('/native-backtests')&&state.mixed)return {isPending:false,refetch:()=>{},data:{items:[{taskId:22,ownerTaskId:11,status:'completed',evidenceHref:''},{taskId:24,ownerTaskId:11,status:'failed',evidenceHref:''}],nextCursor:null}};
  if(path.includes('/native-backtests')&&state.crossPage)return {isPending:false,refetch:()=>{},data:{items:[{taskId:22,ownerTaskId:11,status:'completed',evidenceHref:''}],nextCursor:'next-original-page'}};
  if(path.includes('/native-backtests'))return {isPending:false,refetch:()=>{},data:{items:[{taskId:22,ownerTaskId:11,status:'completed',evidenceHref:''},{taskId:23,ownerTaskId:11,status:'completed',evidenceHref:''},{taskId:24,ownerTaskId:11,status:'failed',evidenceHref:''}],nextCursor:null}};
  const q=new URL(`https://example.invalid${path}`).searchParams,p=q.get('path'),offset=Number(q.get('offset'));
@@ -17,7 +18,7 @@ vi.mock('./data-hooks',()=>({useResource:(path:string)=>{
  return {isPending:false,refetch:()=>{},data:{taskId:task,path:p,kind:p?'ROWS':'TABLES',offset,endExclusive:offset+1,totalRows:p?2:1,nextOffset:p&&offset===0?1:null,maxPayloadBytes:51200,scope:'ORIGINAL_TASK_ROWS',rows:p?[{ts_event_ns:'1776124800000000001',value:0.01}]:[{name:'equity_returns',path:'$.equity_performance.returns',rowCount:2,resultPath:'$'}]}};
 }}));
 let view:ReactTestRenderer|undefined;
-afterEach(async()=>{if(view)await act(async()=>view!.unmount());view=undefined;state.paths=[];state.failed=false;state.crossPage=false;await i18n.changeLanguage('en');});
+afterEach(async()=>{if(view)await act(async()=>view!.unmount());view=undefined;state.paths=[];state.failed=false;state.crossPage=false;state.mixed=false;await i18n.changeLanguage('en');});
 it('distinguishes an absent original field from explicit null',async()=>{
  await i18n.changeLanguage('en');
  expect(renderToStaticMarkup(createElement(NativeEvidenceCell,{value:null}))).toContain('null');
@@ -44,6 +45,13 @@ it('uses explicit native child identities, actual nextOffset, and resets pages o
 
 it('does not choose the only case on a partial run-list page', async()=>{
  state.crossPage=true;
+ await act(async()=>{view=create(createElement(NativeResultCharts,{researchId:1,taskId:11}));});
+ expect(state.paths.some(path=>path.includes('native-tables'))).toBe(false);
+ expect(view!.root.findByType('select').props.value).toBeUndefined();
+});
+
+it('does not select the surviving successful case from a failed batch', async()=>{
+ state.mixed=true;
  await act(async()=>{view=create(createElement(NativeResultCharts,{researchId:1,taskId:11}));});
  expect(state.paths.some(path=>path.includes('native-tables'))).toBe(false);
  expect(view!.root.findByType('select').props.value).toBeUndefined();

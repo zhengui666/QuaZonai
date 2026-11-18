@@ -39,8 +39,8 @@ function NativeTaskCharts({researchId,taskId}:{researchId:number;taskId:number})
 export default function NativeResultCharts({researchId,taskId}:{researchId:number;taskId:number}){
  const {t}=useTranslation('charts');const [cursor,setCursor]=useState<string>();const [previous,setPrevious]=useState<(string|undefined)[]>([]);const [selected,setSelected]=useState<number>();
  const query=useResource<ResearchNativeBacktests>(`/research/${researchId}/native-backtests${cursor?`?cursor=${encodeURIComponent(cursor)}`:''}`);
- const rows=query.data?.items??[];const matching=rows.filter(row=>row.ownerTaskId===taskId&&row.status==='completed');
- const active=rows.find(row=>row.taskId===selected)??(matching.length===1&&!cursor&&query.data?.nextCursor===null?matching[0]:undefined);
+ const rows=query.data?.items??[];const matching=rows.filter(row=>row.ownerTaskId===taskId);
+ const active=rows.find(row=>row.taskId===selected)??(matching.length===1&&matching[0]?.status==='completed'&&!cursor&&query.data?.nextCursor===null?matching[0]:undefined);
  return <section><h3>{t('Original native runs')}</h3><p>{t('Choose an original run. Failed and unfinished runs remain visible; a parameter case is not a selected winner.')}</p><ErrorNotice error={query.error} retry={()=>void query.refetch()}/>{query.isPending?<Loading/>:query.data&&!query.error&&<>
   <Select aria-label={t('Original native task')} style={{width:'100%',maxWidth:700}} placeholder={t('Choose an original run')} value={active?.taskId} options={rows.map(row=>({value:row.taskId,label:`#${row.taskId} · ${row.status} · ${row.ownerTaskId===taskId?t('This result request'):t('Historical request')}`}))} onChange={setSelected}/>
   {active?.status==='completed'?<NativeTaskCharts key={`${researchId}:${active.taskId}`} researchId={researchId} taskId={active.taskId}/>:active?<p>{t('This original task did not complete successfully. No result chart is inferred.')}</p>:null}
