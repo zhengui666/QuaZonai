@@ -63,8 +63,9 @@ test('actual configure/grid/batch prepareArguments still reject line endings and
     }
   }
   for (const event_start_ns of ['-1', '9223372036854775808', '01']) assert.throws(() => prepare({ ...request, event_start_ns }), /schema_invalid/);
-  // Unlike the provider projection, the actual local argument boundary rejects JS's final-newline `$` match.
-  assert.equal(compile(nativeToolSchema(nativeStrategyRequestSchema)).check({ ...request, event_start_ns: '1\n' }), true);
+  // The current pi-schema runtime also rejects this projected pattern; the original
+  // argument boundary remains authoritative regardless of provider regex semantics.
+  assert.equal(compile(nativeToolSchema(nativeStrategyRequestSchema)).check({ ...request, event_start_ns: '1\n' }), false);
   assert.throws(() => prepare({ ...request, event_start_ns: '1\n' }), /schema_invalid/);
 });
 

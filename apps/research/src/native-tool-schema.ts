@@ -1,7 +1,7 @@
 import type { Schema } from '@earendil-works/pi-schema';
 
 /** Provider-facing projection only. Runtime validators must compile the original
- * generated schema: JavaScript `$` can also match before a final line break.
+ * generated schema rather than relying on provider regex end-anchor semantics.
  * Replace only the generated scalar end assertion rejected by model providers;
  * preserve numeric ranges and do not visit examples/defaults or arbitrary data. */
 export function nativeToolSchema<T>(schema: Schema<T>): Schema<T> {
