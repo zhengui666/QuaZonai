@@ -297,7 +297,7 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
     || !Number.isSafeInteger(review.nativeTaskId) || Number(review.nativeTaskId) < 1
     || !Number.isSafeInteger(review.ownerTaskId) || Number(review.ownerTaskId) < 1
     || typeof review.requestId !== 'string' || !/^[a-f0-9]{64}$/.test(review.requestId)
-    || !['EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD', 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL', 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT', 'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL'].includes(review.classification)
+    || !['EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD', 'MISSING_FEE_MODEL_REJECTED_BEFORE_INSTALL', 'SOURCE_PATH_PREFIX_REJECTED_BEFORE_IMPORT', 'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL', 'QUERY_PLANNING_TYPE_COERCION_REJECTED'].includes(review.classification)
     || typeof review.sourceReview !== 'string' || !review.sourceReview.trim() || review.sourceReview.length > 8192
     || !Array.isArray(review.sources) || !review.sources.length || review.sources.length > 16
     || !review.sources.every(source => typeof source === 'string' && source.trim() && source.length <= 2048)) throw invalid();
@@ -332,8 +332,12 @@ export async function reconcileConfiguredFailure(harness: Pick<Harness, 'commit'
       || process.errorCategory !== 'native_process_failed' || process.exitObserved !== true || process.exitCode !== 1
       || process.signal !== null || process.terminationRequested !== false) throw conflict();
     const diagnostic = await tx.doc(NativeEvidencePart, conversationId, `${task.id}:private-native-stderr`, null);
+    const queryPlanningTail = 'QZ_NATIVE_JOB_FAILED\ntype_coercion\ncaused by\n' + Array(3).fill('Error during planning: Cannot infer common argument type for comparison operation Timestamp(ns, "UTC") >= Int64').join(': ') + '\n';
+    const diagnosticText = review.classification === 'QUERY_PLANNING_TYPE_COERCION_REJECTED' && typeof diagnostic.data === 'string' ? stripVTControlCharacters(diagnostic.data) : '';
     const matchesDiagnostic = importing ? diagnostic.data === 'QZ_NATIVE_JOB_FAILED\nSOURCE_PATH_PREFIX_INVALID\n' : review.classification === 'EMPTY_VENUES_REJECTED_BEFORE_ENGINE_BUILD'
       ? diagnostic.data === 'QZ_NATIVE_JOB_FAILED\nvenues must not be empty\n'
+      : review.classification === 'QUERY_PLANNING_TYPE_COERCION_REJECTED'
+      ? (diagnosticText === queryPlanningTail || diagnosticText.endsWith('\n' + queryPlanningTail))
       : review.classification === 'CASH_DERIVATIVE_REJECTED_BEFORE_INSTALL'
       ? /(?:^|\n)QZ_NATIVE_JOB_FAILED\nCash account cannot trade futures or perpetuals\n$/.test(stripVTControlCharacters(diagnostic.data))
       : /(?:^|\n)[^\n]*\[ERROR\] [^\n]*nautilus_backtest::node: Error building backtest '[^'\n]+': BacktestVenueConfig for '[^'\n]+' requires an explicit fee_model, including an explicit zero-fee model\nQZ_NATIVE_JOB_FAILED\nNATIVE_CONFIGURED_ENGINE_UNAVAILABLE\n$/.test(stripVTControlCharacters(diagnostic.data));
