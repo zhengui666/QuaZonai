@@ -1,3 +1,4 @@
+import { accountAdapter, nativeAccountAdapters } from '../../../packages/contracts/src/account-adapters.ts';
 import {nativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
 import {mkdir,mkdtemp,open,readFile,readdir,rename,rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -36,6 +37,7 @@ export async function processAccounts(config:ServiceConfig,publishDirectory:type
  }
  function ensureCapability(binding:Binding){
   if(!binding.runner.capabilities.account.compiled)throw new Problem('native_runner_account_not_compiled',409);
+  if(!nativeAccountAdapters(binding.runner.capabilities.account).includes(accountAdapter(binding.creation.configuration)))throw new Problem('native_runner_account_adapter_unavailable',409);
   if(binding.creation.configuration.nativeStrategy.strategy.kind==='REGISTERED'&&!binding.runner.capabilities.account.registration)throw new Problem('native_runner_account_registration_missing',409);
  }
  function ensureUnique(binding:Binding){

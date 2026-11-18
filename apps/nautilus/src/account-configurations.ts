@@ -1,3 +1,4 @@
+import { accountAdapter, HYPERLIQUID_ACCOUNT_ADAPTER } from '../../../packages/contracts/src/account-adapters.ts';
 import {validateAccountCredentialReference} from './account-credentials.ts';
 import { mkdir, open, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,8 +8,12 @@ import { nativeAccountStrategyConfiguration } from '../../../packages/contracts/
 
 export interface AccountCreation { requestId: string; configuration: AccountOptions }
 export function physicalAccount(account: AccountOptions): string {
+  requireAccountAdapter(account);
   return JSON.stringify(account.mode === 'live' ? ['live', account.network ?? 'mainnet', account.accountAddress?.toLowerCase(), 'SPOT_CASH', 'USDC']
     : ['paper', account.network ?? 'mainnet', account.accountId, 'SPOT_CASH', 'USDC']);
+}
+function requireAccountAdapter(account: AccountOptions) {
+  if (accountAdapter(account) !== HYPERLIQUID_ACCOUNT_ADAPTER) invalid('account_adapter_unsupported');
 }
 function invalid(code: string): never { throw Object.assign(new Error(code), { statusCode: 422 }); }
 export function accountCreation(value: unknown): AccountCreation {
@@ -16,7 +21,8 @@ export function accountCreation(value: unknown): AccountCreation {
   const row = value as Record<string, unknown>;
   if (Object.keys(row).some(key => !['requestId', 'configuration'].includes(key)) || typeof row.requestId !== 'string' || !row.requestId.trim()) invalid('account_creation_request_invalid');
   const config = row.configuration as AccountOptions;
-  if (!config || typeof config !== 'object' || Array.isArray(config) || Object.keys(config).some(key => !['id','clientId','accountId','mode','nativeStrategy','instruments','accountAddress','network','executionProductTypes','startingBalance','cashBuffer','paperFeeRate','risk','paperExecution','accountSemantics','credentialEnv'].includes(key))) invalid('account_configuration_invalid');
+  if (!config || typeof config !== 'object' || Array.isArray(config) || Object.keys(config).some(key => !['adapter','id','clientId','accountId','mode','nativeStrategy','instruments','accountAddress','network','executionProductTypes','startingBalance','cashBuffer','paperFeeRate','risk','paperExecution','accountSemantics','credentialEnv'].includes(key))) invalid('account_configuration_invalid');
+  requireAccountAdapter(config);
   if (typeof config.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(config.id) || typeof config.clientId !== 'string' || !config.clientId.trim() || typeof config.accountId !== 'string' || !config.accountId.trim()
     || !['paper','live'].includes(config.mode) || config.network !== undefined && !['mainnet','testnet'].includes(config.network)
     || !Array.isArray(config.instruments) || !config.instruments.length || !config.instruments.every(id => typeof id === 'string' && id.trim())) invalid('account_configuration_invalid');
@@ -42,7 +48,10 @@ export async function loadAccountConfigurations(root: string): Promise<AccountCr
   }
   return result;
 }
-export function sameAccountCreation(a: AccountCreation, b: AccountCreation) { return isDeepStrictEqual(a, b); }
+export function sameAccountCreation(a: AccountCreation, b: AccountCreation) {
+  return isDeepStrictEqual({ ...a, configuration: { ...a.configuration, adapter: accountAdapter(a.configuration) } },
+    { ...b, configuration: { ...b.configuration, adapter: accountAdapter(b.configuration) } });
+}
 export async function saveAccountConfiguration(root: string, value: AccountCreation): Promise<void> {
   const directory = join(root, value.configuration.id); await mkdir(directory, { recursive: true });
   const temporary = join(directory, 'configuration.next.json');

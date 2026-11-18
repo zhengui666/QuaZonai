@@ -919,3 +919,12 @@ Object.assign(zhCN, {
  "Datasets: {{countText}} · Last loaded": "{{countText}} 个数据集 · 上次加载",
  "Sentence end": "。", "Label separator": "："
 });
+
+Object.assign(en, {
+ "Broker or exchange adapter": "Broker or exchange adapter",
+ "The selected runner does not provide this account adapter.": "The selected runner does not provide this account adapter.",
+});
+Object.assign(zhCN, {
+ "Broker or exchange adapter": "券商或交易所适配器",
+ "The selected runner does not provide this account adapter.": "当前运行器未提供此账户适配器。",
+});

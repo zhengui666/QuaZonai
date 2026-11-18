@@ -10,7 +10,7 @@ export type ProcessNativeTarget = {
     research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean; multiCatalogBindings?: boolean };
     /** Absent on older runners: never infer data preparation from research support. */
     preparation?: { marketImport: boolean; fillObservationImport?: boolean };
-    account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
+    account: { compiled: boolean; adapters?: string[]; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
 }
 export type NativeExecutionTarget = RemoteNativeTarget | ProcessNativeTarget;
 export type NativeTarget = string | NativeExecutionTarget;

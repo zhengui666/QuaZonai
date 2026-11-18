@@ -6,11 +6,15 @@ on:
         description: Verify local TradeTick import contracts and product integration only
         type: boolean
         default: false
+      verify_account_adapters:
+        description: Verify native account adapter capability reporting only
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   image-and-core:
-    if: ${{ !inputs.verify_market_import }}
+    if: ${{ !inputs.verify_market_import && !inputs.verify_account_adapters }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -124,3 +128,29 @@ jobs:
           cd apps/research
           node --experimental-strip-types --test test/native-preparation-capability.test.ts test/native-market-import.test.ts test/research-assessment.test.ts
           node --experimental-strip-types -e 'await import("./plugins/native-market-import.ts")'
+
+  verify-account-adapters:
+    if: ${{ inputs.verify_account_adapters }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-account-adapters
+          cache-bin: false
+          cache-workspace-crates: false
+      - name: Verify feature-derived native capabilities without starting an account
+        run: |
+          cargo test --locked -p job --lib native_runner
+          cargo test --locked -p job --features account-runtime --lib native_runner

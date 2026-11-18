@@ -16,7 +16,9 @@ pub fn capabilities(
         "protocol":"quazonai-native-process-v1",
         "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured,"multiCatalogBindings":configured},
         "preparation":{"marketImport":cfg!(feature="market-history"),"fillObservationImport":cfg!(feature="market-history")},
-        "account":{"compiled":cfg!(feature="account-runtime"),"registration":account_registration,
+        "account":{"compiled":cfg!(feature="account-runtime"),
+            "adapters":if cfg!(feature="account-runtime") { vec!["HYPERLIQUID"] } else { vec![] },
+            "registration":account_registration,
             "command":"account-runtime","requiresExplicitStart":true},
         "running":false
     })
@@ -193,6 +195,12 @@ mod tests {
     #[test]
     fn inspection_reports_compiled_hooks_not_live_readiness() {
         let value = super::capabilities(false, true, false);
+        let expected = if cfg!(feature = "account-runtime") {
+            serde_json::json!(["HYPERLIQUID"])
+        } else {
+            serde_json::json!([])
+        };
+        assert_eq!(value["account"]["adapters"], expected);
         assert_eq!(value["running"], false);
         assert_eq!(
             value["preparation"]["marketImport"],
