@@ -1,3 +1,4 @@
+import { accountAdapter, HYPERLIQUID_ACCOUNT_ADAPTER } from '../../../packages/contracts/src/account-adapters.ts';
 import {validateAccountCredentialReference} from './account-credentials.ts';
 import {acquireAccountReceiptLock} from './account-receipt-lock.ts';
 import {nativeStrategyControl,assertSameNativeStrategyControl,type NativeStrategyControl} from '../../../packages/contracts/src/native-strategy-control.ts';
@@ -65,6 +66,7 @@ export async function createCapitalAccount(options: AccountOptions, directory: s
   options = { ...options };
   validateAccountCredentialReference(options.mode, options.credentialEnv);
   if (options.accountSemantics !== undefined && (options.accountSemantics !== 'NATIVE_MARGIN' || options.mode !== 'live')) fail('account_semantics_invalid',422);
+  if (accountAdapter(options) !== HYPERLIQUID_ACCOUNT_ADAPTER) fail('account_adapter_unsupported', 422);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(options.id) || !options.clientId || !options.accountId || !options.instruments.length) fail('account_configuration_invalid', 422);
   if (options.mode === 'paper' && (options.paperFeeRate == null || units(options.paperFeeRate) < 0n || units(options.startingBalance ?? '0') <= 0n)) fail('paper_balance_and_explicit_fee_required', 422);
   if (options.mode === 'live' && !options.accountAddress) fail('hyperliquid_master_account_required', 422);

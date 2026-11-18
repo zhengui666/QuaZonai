@@ -14,7 +14,13 @@ test('direct process account configuration preserves identity, never launches on
  const creation={requestId:'create-original',configuration:{id:'paper-one',clientId:'client',accountId:'native-paper',mode:'paper' as const,instruments:['TEST.SIM'],startingBalance:'1000',paperFeeRate:'0.001',nativeStrategy:{instrument_id:'TEST.SIM',strategy:{kind:'EMA_CROSS' as const,trade_size:'1',fast_period:2,slow_period:3}}}};
  let manager=await processAccounts(config);
  try{
-  const created=await manager.create(creation);assert.equal(created.accountSourceId!==undefined,true);
+  config.nativeProcess!.capabilities.account.adapters=[];
+  await assert.rejects(manager.create(creation),/native_runner_account_adapter_unavailable/);
+  await assert.rejects(readFile(marker),/ENOENT/);
+  config.nativeProcess!.capabilities.account.adapters=['HYPERLIQUID'];
+  const created=await manager.create(creation);
+  await manager.create({...creation,configuration:{...creation.configuration,adapter:'HYPERLIQUID'}});
+  assert.equal(JSON.parse(await readFile(join(dir,'accounts','paper-one','configuration.json'),'utf8')).configuration.adapter,undefined,'Alias replay preserves the original saved configuration');assert.equal(created.accountSourceId!==undefined,true);
   await manager.list();await manager.create(creation);await assert.rejects(manager.create({...creation,configuration:{...creation.configuration,startingBalance:'999'}}),/configuration_conflict/);await assert.rejects(readFile(marker),/ENOENT/);
   await assert.rejects(manager.create({...creation,requestId:'duplicate-physical',configuration:{...creation.configuration,id:'paper-alias'}}),/physical_account_already/);
   const binding=config.connections.find(c=>c.kind==='RUST_PROCESS')!;

@@ -1,3 +1,4 @@
+import { accountAdapter, HYPERLIQUID_ACCOUNT_ADAPTER } from '../../../packages/contracts/src/account-adapters.ts';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 const t = (key: string, values?: Record<string, unknown>): string => i18n.t(key, { ns: 'settings', ...values });
@@ -23,7 +24,7 @@ export function accountConfigurationField(text:string,key:string,value:string):s
  const config=accountConfigurationInput(text);
  const deployment={...((config.nativeStrategy??{}) as Record<string,unknown>)};
  const strategy={...((deployment.strategy??{}) as Record<string,unknown>)};
- if(['id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics','credentialEnv'].includes(key)){
+ if(['adapter','id','clientId','accountId','mode','network','startingBalance','paperFeeRate','accountAddress','accountSemantics','credentialEnv'].includes(key)){
   if(value==='')delete config[key];else config[key]=value;
  }else if(key==='instruments')config.instruments=value.split('\n').filter(line=>line!=='');
  else if(key==='instrument_id')deployment.instrument_id=value;
@@ -43,21 +44,26 @@ export function AccountInstrumentsInput({value,onChange,disabled}:{value:string;
 export function accountConfigurationForSave(text:string,instrumentsDraft?:string){
  return accountConfigurationInput(instrumentsDraft===undefined?text:accountConfigurationField(text,'instruments',instrumentsDraft));
 }
-export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrumentsChange}:{text:string;onChange:(text:string)=>void;disabled:boolean;instrumentsDraft?:string;onInstrumentsChange?:(value:string)=>void}){
+export function AccountFields({text,onChange,disabled,instrumentsDraft,onInstrumentsChange,adapters=[HYPERLIQUID_ACCOUNT_ADAPTER]}:{adapters?:readonly string[];text:string;onChange:(text:string)=>void;disabled:boolean;instrumentsDraft?:string;onInstrumentsChange?:(value:string)=>void}){
  const { t } = useTranslation('settings');
 
  let config:Record<string,unknown>;try{config=accountConfigurationInput(text);}catch{return <p>{t("Advanced configuration must be a valid JSON object.")}</p>;}
  const deployment=config.nativeStrategy as {instrument_id?:string;strategy?:{kind?:string;name?:string}}|undefined;
  const edit=(key:string,value:string)=>onChange(accountConfigurationField(text,key,value));
  const field=(key:string,label:string)=><label style={{display:'block'}} key={key}>{label}<Input aria-label={label} disabled={disabled} value={String(config[key]??'')} onChange={event=>edit(key,event.target.value)}/></label>;
+ const adapter=accountAdapter(config as {adapter?:string});
  return <fieldset disabled={disabled}><legend>{t("Account and native strategy")}</legend>
+ <label>{t('Broker or exchange adapter')}<Select aria-label={t('Broker or exchange adapter')} disabled={disabled} value={adapter} onChange={value=>edit('adapter',value)} options={adapters.filter(id=>id===HYPERLIQUID_ACCOUNT_ADAPTER).map(id=>({value:id,label:'Hyperliquid'}))}/></label>
+ {!adapters.includes(adapter)&&<p>{t('The selected runner does not provide this account adapter.')}</p>}
  {[['id',t("Local account name")],['clientId',t("Client ID")],['accountId',t("Native account ID")]].map(([key,label])=>field(key!,label!))}
  <label>{t("Account mode")}<Select aria-label={t("Account mode")} disabled={disabled} value={config.mode as string} onChange={value=>edit('mode',value)} options={[{value:'paper',label:t("Paper trading")},{value:'live',label:t("Live configuration (existing start restrictions still apply)")}]}/></label>
- <label>{t("Network")}<Select aria-label={t("Network")} disabled={disabled} allowClear value={config.network as string|undefined} onChange={value=>edit('network',value??'')} options={[{value:'mainnet',label:t("Mainnet market data")},{value:'testnet',label:t("Testnet market data")}]}/></label>
  <label style={{display:'block'}}>{t("Subscribed instruments (one native InstrumentId per line)")}<AccountInstrumentsInput disabled={disabled} value={instrumentsDraft??(Array.isArray(config.instruments)?config.instruments.join('\n'):'')} onChange={value=>onInstrumentsChange?.(value)}/></label>
  <label style={{display:'block'}}>{t("Strategy instrument (must be subscribed)")}<Input aria-label={t("Strategy instrument")} disabled={disabled} value={deployment?.instrument_id??''} onChange={event=>edit('instrument_id',event.target.value)}/></label>
+ {adapter===HYPERLIQUID_ACCOUNT_ADAPTER&&<fieldset><legend>Hyperliquid</legend>
+ <label>{t("Network")}<Select aria-label={t("Network")} disabled={disabled} allowClear value={config.network as string|undefined} onChange={value=>edit('network',value??'')} options={[{value:'mainnet',label:t("Mainnet market data")},{value:'testnet',label:t("Testnet market data")}]}/></label>
  {config.mode==='paper'?<>{field('startingBalance',t("Paper starting balance (exact USDC amount)"))}{field('paperFeeRate',t("Paper fee rate (decimal, not percentage)"))}</>:field('accountAddress',t("Public account address (not a private key)"))}
  {config.mode==='live'&&<>{field('credentialEnv',t("Existing signing credential reference (environment variable name, optional)"))}<p>{t("Enter only a QZ_HYPERLIQUID_…_PK variable name already configured in the runtime, never a private key. Leave blank to use the host credentials for this network. Saving neither reads credentials nor connects the account. A reference does not prove a distinct signer or authorization for the account. Rotating a value under the same name is not covered by account identity checks. Do not use the same signer concurrently across running instances.")}</p><label>{t("Account semantics")}<Select aria-label={t("Account semantics")} disabled={disabled} value={config.accountSemantics as string|undefined} allowClear onChange={value=>edit('accountSemantics',value??'')} placeholder={t("Legacy spot semantics (live-start protection remains)")} options={[{value:'NATIVE_MARGIN',label:t("Explicit Nautilus Margin account")}]}/></label><p>{t("This does not change the exchange account mode.")}</p></>}
+ </fieldset>}
  {deployment?.strategy?.kind==='REGISTERED'&&<label style={{display:'block'}}>{t("Strategy name compiled into the runner")}<Input aria-label={t("Strategy name compiled into the runner")} disabled={disabled} value={deployment.strategy.name??''} onChange={event=>edit('name',event.target.value)}/></label>}
 
  </fieldset>;
@@ -99,6 +105,7 @@ function PaperParameters({text,onChange,disabled,onError}:{text:string;onChange:
  if(value!==undefined&&(!value||typeof value!=='object'||Array.isArray(value)))return <p>{t("Fix the paperExecution object in the JSON first.")}</p>;
  const scenario=(value??{}) as Record<string,unknown>;
  const edit=(key:string,value:string|boolean)=>{try{onChange(paperConfigurationField(text,key,value));onError(undefined);return true;}catch(error){onError(new Error(t("{{v0}}. Configuration was not changed; the input was restored to its original JSON value.", { v0: error instanceof Error?error.message:t("Invalid simulation parameters") })));return false;}};
+ const adapter=accountAdapter(config as {adapter?:string});
  return <fieldset disabled={disabled}><legend>{t("Official Sandbox simulation parameters (optional)")}</legend>
 
  {paperFields.map(([key,label])=><label key={key} style={{display:'block'}}>{t(label)}{key==='prob_fill_on_limit'||key==='prob_slippage'?<PaperProbabilityInput label={t(label)} value={scenario[key]} disabled={disabled} onCommit={value=>edit(key,value)}/>:<Input aria-label={t(label)} value={String(scenario[key]??'')} disabled={disabled} onChange={event=>edit(key,event.target.value)}/>}</label>)}
@@ -114,7 +121,7 @@ export function SavedRunnerNotice({value}:{value?:SavedAccountRunnerReport}){
  <dl><dt>{t("Nautilus version")}</dt><dd>{value?.nautilusVersion??t("Not recorded")}</dd><dt>{t("Upstream revision")}</dt><dd>{value?.nautilusRevision??t("Not recorded")}</dd><dt>{t("Precision")}</dt><dd>{value?.precision??t("Not recorded")}</dd><dt>{t("Trusted-code compatibility declaration")}</dt><dd>{value?.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'?t("Declared single-node strategy registration (not certification)"):t("No declaration recorded")}</dd></dl>
  </section>;
 }
-export default function AccountConfiguration({enabled}:{enabled:boolean}){
+export default function AccountConfiguration({enabled,adapters=[HYPERLIQUID_ACCOUNT_ADAPTER]}:{enabled:boolean;adapters?:readonly string[]}){
  const { t } = useTranslation('settings');
 
  const records=useResource<Array<{id:string;unavailable?:string;remoteBinding?:RemoteAccountBinding;supersededBy?:string;remoteUnsupported?:string[];savedRunner?:SavedAccountRunnerReport;accountConfiguration:{mode:'paper'|'live';paperExecution?:unknown}}>>('/accounts/configurations');
@@ -123,7 +130,7 @@ export default function AccountConfiguration({enabled}:{enabled:boolean}){
  const command=useCommand<{id:string}>('account-configuration',result=>{setNotice(t("Configuration for account {{v0}} was saved. No connection or strategy start occurred.", { v0: result.id }));void records.refetch();},'/accounts/configurations');
  return <section><h3>{t("Save account configuration without connecting or trading")}</h3>
 
- <AccountFields text={text} onChange={setText} instrumentsDraft={instrumentsDraft} onInstrumentsChange={setInstrumentsDraft} disabled={!!command.pending||command.busy}/>
+ <AccountFields adapters={adapters} text={text} onChange={setText} instrumentsDraft={instrumentsDraft} onInstrumentsChange={setInstrumentsDraft} disabled={!!command.pending||command.busy}/>
 
  <details><summary>{t("Advanced: native strategy parameters and full configuration")}</summary>
  <p>{t("Do not enter private keys, passwords, or tokens.")}</p>

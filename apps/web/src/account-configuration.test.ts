@@ -141,3 +141,18 @@ vi.mock('react-i18next', async importOriginal => {
     t: translations.getFixedT(null, namespace ?? null), i18n: translations, ready: true,
   }) };
 });
+
+
+it('keeps native identities and strategy parameters unchanged when selecting the available adapter', async () => {
+ await i18n.changeLanguage('en');
+ const source={id:'account',mode:'paper',accountId:'HL-001',nativeStrategy:{instrument_id:'BTC.HYPERLIQUID',strategy:{kind:'REGISTERED',name:'owner',config:['0.0000000001']}}};
+ const edited=accountConfigurationInput(accountConfigurationField(JSON.stringify(source),'adapter','HYPERLIQUID'));
+ expect(edited).toEqual({...source,adapter:'HYPERLIQUID'});
+ let writes=0;
+ const html=renderToStaticMarkup(createElement(AccountFields,{text:JSON.stringify(edited),onChange:()=>{writes++;},disabled:false,adapters:['HYPERLIQUID']}));
+ expect(html).toContain('Broker or exchange adapter');expect(html).toContain('Hyperliquid');expect(html).not.toContain('Coinbase');expect(html).not.toContain('IBKR');expect(writes).toBe(0);
+ const unavailable=renderToStaticMarkup(createElement(AccountFields,{text:JSON.stringify(edited),onChange:()=>{writes++;},disabled:false,adapters:[]}));
+ expect(unavailable).toContain('The selected runner does not provide this account adapter.');expect(writes).toBe(0);
+ await i18n.changeLanguage('zh-CN');
+ expect(renderToStaticMarkup(createElement(AccountFields,{text:JSON.stringify(edited),onChange:()=>{},disabled:false,adapters:['HYPERLIQUID']}))).toContain('券商或交易所适配器');
+});

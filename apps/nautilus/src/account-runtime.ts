@@ -10,6 +10,8 @@ import type { NativeAccountRiskConfig, NativePaperExecutionConfig } from '../../
 
 /** One configured physical account in the existing remote native worker. */
 export interface AccountOptions {
+  /** Explicit native adapter; historical configurations omitted Hyperliquid. */
+  adapter?: string;
   id: string; clientId: string; accountId: string; mode: 'paper' | 'live';
   nativeStrategy: NativeAccountStrategyConfig;
   /** Name of an existing runner environment secret; never the private key itself. */

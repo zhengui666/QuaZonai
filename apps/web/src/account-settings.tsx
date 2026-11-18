@@ -1,3 +1,4 @@
+import { nativeAccountAdapters } from '../../../packages/contracts/src/account-adapters.ts';
 import { useTranslation } from 'react-i18next';
 import type { InstanceSettingsView } from '../../../packages/contracts/src/index.ts';
 import AccountConfiguration from './account-configuration';
@@ -17,6 +18,6 @@ export default function AccountSettings() {
     <p><a href={href('/settings?section=instances')}>{t("Runner and instance connections")}</a></p>
     {instance.isPending && <Loading />}
     <ErrorNotice error={instance.error}/>
-    <AccountConfiguration enabled={instance.isSuccess && instance.data.runner?.capabilities.account.compiled === true}/>
+    <AccountConfiguration adapters={instance.data?.runner ? nativeAccountAdapters(instance.data.runner.capabilities.account) : []} enabled={instance.isSuccess && instance.data.runner?.capabilities.account.compiled === true}/>
   </div>;
 }

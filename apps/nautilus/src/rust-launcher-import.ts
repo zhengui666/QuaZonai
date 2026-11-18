@@ -1,3 +1,4 @@
+import { validNativeAccountAdapters } from '../../../packages/contracts/src/account-adapters.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
@@ -13,7 +14,7 @@ export type ImportedLauncherCapabilities = {
   identity: ImportedLauncherIdentity & { nautilusRevision?: string; jobVersion: string };
   research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean };
   preparation?: { marketImport: boolean; fillObservationImport?: boolean };
-  account: { compiled: boolean; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false };
+  account: { compiled: boolean; adapters?: string[]; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false };
   running: false;
 };
 
@@ -27,6 +28,7 @@ function capabilities(value: unknown, expected?: ImportedLauncherIdentity): Impo
     || (v.preparation !== undefined && (typeof v.preparation?.marketImport !== 'boolean' || (v.preparation.fillObservationImport !== undefined && typeof v.preparation.fillObservationImport !== 'boolean')))
     || typeof v.account?.compiled !== 'boolean' || typeof v.account?.registration !== 'boolean'
     || v.account.command !== 'account-runtime' || v.account.requiresExplicitStart !== true
+    || !validNativeAccountAdapters(v.account)
     || (v.account.registration && !v.account.compiled)) throw new Error('rust_import_capabilities_invalid');
   if ((v.account.compatibilityDeclaration!==undefined || v.account.compatibilityVerified!==undefined) &&
     !((v.account.compatibilityDeclaration===null || v.account.compatibilityDeclaration==='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1') && v.account.compatibilityVerified===false)) throw new Error('rust_import_capabilities_invalid');

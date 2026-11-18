@@ -28,7 +28,7 @@ test('capability and expected identity mismatch retain diagnostic output, never 
   const root = await mkdtemp(join(tmpdir(), 'qz-import-invalid-'));
   try {
     const source = join(root, 'owner');
-    for (const [index, value] of [ { ...caps, running: true }, { ...caps, identity: {} }, { ...caps, identity: { ...caps.identity, nautilusRevision: 123 } }, { ...caps, account: { ...caps.account, registration: true } } ].entries()) {
+    for (const [index, value] of [ { ...caps, running: true }, { ...caps, identity: {} }, { ...caps, identity: { ...caps.identity, nautilusRevision: 123 } }, { ...caps, account: { ...caps.account, registration: true } }, { ...caps, account: { ...caps.account, adapters: ['HYPERLIQUID'] } }, { ...caps, account: { ...caps.account, compiled: true, adapters: ['HYPERLIQUID','HYPERLIQUID'] } } ].entries()) {
       await writeFile(source, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(JSON.stringify(value))});`);
       const directory = join(root, `invalid${index}`);
       await assert.rejects(importRustLauncher({ sourceExecutable: source, directory }), /capabilities_invalid/);
@@ -68,4 +68,17 @@ test('inspection passes only process lookup and isolated temporary directory, no
     if (old === undefined) delete process.env.QZ_IMPORT_TEST_SECRET; else process.env.QZ_IMPORT_TEST_SECRET = old;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test('import preserves explicitly reported native account adapters without booting an account', async () => {
+ const root=await mkdtemp(join(tmpdir(),'qz-import-adapter-'));
+ try {
+  const source=join(root,'owner');
+  const value={...caps,account:{...caps.account,compiled:true,adapters:['HYPERLIQUID']}};
+  await writeFile(source,`#!/usr/bin/env node\nif(process.argv[2]!=='capabilities')throw Error('account must not boot');console.log(${JSON.stringify(JSON.stringify(value))});`);
+  const imported=await importRustLauncher({sourceExecutable:source,directory:join(root,'artifact')});
+  assert.deepEqual(imported.capabilities.account.adapters,['HYPERLIQUID']);
+  assert.equal(imported.capabilities.running,false);
+ }finally{await rm(root,{recursive:true,force:true});}
 });
