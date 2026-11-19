@@ -14,6 +14,12 @@ import { codingWorkspace } from '../src/coding-workspace.ts';
 import { Study } from '../src/documents.ts';
 const context = BACKGROUND_CONTEXT;
 const prepare = nativeConfiguredConfigureTool.prepareArguments!;
+function outputJson(result: Awaited<ReturnType<typeof nativeConfiguredConfigureTool.execute>>) {
+  assert.ok(result.output, 'tool returns output');
+  const first = result.output[0];
+  assert.ok(first && first.type === 'text', 'first output is text');
+  return JSON.parse(first.text);
+}
 const request = { schema_version: 1, name: 'existing-owner', config: { opaque: 'x'.repeat(522 * 1024), ns: '1776124800000000000', tail: 'COMPLETE_END' } };
 
 test('configured input schema and preparation require exactly one complete object or file', () => {
@@ -53,15 +59,15 @@ test('file input retains complete request before execute; changed/deleted file c
     assert.deepEqual((await host.harness.snapshot(ResearchConfiguration,receipt.conversationId,context))?.request,request);
     assert.deepEqual((await host.harness.snapshot(Study,receipt.conversationId,context))?.input?.data.native_configured_backtest_request,request);
     const inline=await nativeConfiguredConfigureTool.execute(prepare({request}),api,context);
-    assert.deepEqual(JSON.parse((inline.output[0] as any).text).request,request);
+    assert.deepEqual(outputJson(inline).request,request);
     const brief=await nativeStrategyBriefTool.execute({summaryOnly:true},api,context);
-    const summary=JSON.parse((brief.output[0] as any).text);
+    const summary=outputJson(brief);
     assert.equal(summary.requestsIncluded,false);
     assert.deepEqual(summary.configuredRequestSummary,{name:request.name});
     assert.equal(summary.configuredRequest,undefined);
     assert.ok(JSON.stringify(brief).length<4096);
     const full=await nativeStrategyBriefTool.execute({},api,context);
-    assert.deepEqual(JSON.parse((full.output[0] as any).text).configuredRequest,request);
+    assert.deepEqual(outputJson(full).configuredRequest,request);
   } finally {await host.close();await rm(directory,{recursive:true,force:true});}
 });
 
