@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import { type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { type ToolExecutionApi, type JsonObject } from '@earendil-works/pi-durable';
 import { compile } from '@earendil-works/pi-schema';
 import { nativeConfiguredConfigureTool, nativeStrategyBriefTool } from '../plugins/native-strategy-backtest.ts';
 import { openResearch } from '../src/host.ts';
@@ -100,7 +100,8 @@ test('actual provider parameters omit top-level composition while both/neither f
   const faux=fauxProvider({tokensPerSecond:100000});const models=createModels();models.setProvider(faux.provider);
   const host=await openResearch({database:join(directory,'research.sqlite'),codingWorkspace:directory,models});
   try {
-    for (const args of [{}, {request:{schema_version:1,name:'owner',config:{}},file:'missing.json'}]) {
+    const invalidInputs: JsonObject[] = [{}, {request:{schema_version:1,name:'owner',config:{}},file:'missing.json'}];
+    for (const args of invalidInputs) {
       faux.setResponses([fauxAssistantMessage(fauxToolCall('native_configured_configure',args),{stopReason:'toolUse'}),fauxAssistantMessage('Rejected before configuration.')]);
       const receipt=await host.start(JSON.stringify(args),{goal:'Validate arguments only',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:directory},policy:{}});
       await (await host.harness.submission(receipt.submissionId,context))!.wait(context);
