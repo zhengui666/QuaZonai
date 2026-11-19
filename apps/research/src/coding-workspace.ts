@@ -1,3 +1,4 @@
+import { nativeConfiguredConfigureTool } from '../plugins/native-strategy-backtest.ts';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { defineExtension, defineTool, hook, section, ToolTask, type JsonObject, type TaskId } from '@earendil-works/pi-durable';
@@ -67,6 +68,10 @@ export async function codingWorkspace(directory: string) {
     extension: defineExtension({ name: 'qz.research-coding', tools,
       sections: [section('native-result-presentation', () => chartGuide), section('research-source', () => `You may create and edit Rust source only in the explicitly configured research source workspace ${root}, using official read/write/edit. No shell is exposed. Do not put credentials, market data or sealed/OOS data here. Use native_runner_preparation_status and the existing native_runner_build/build_status tools for the configured owner factory; writing source is not a build. After changing Cargo.toml dependencies, explicitly use prepareOwnerLock=true on native_runner_build to let official Cargo resolve Cargo.lock offline, and inspect preflight.log for changes. Never hand-edit Cargo.lock. Do not prepare the lock while another study edits or builds the same owner. Unknown build outcomes must not be automatically retried. Use native_research_start_bound after a verified build, without selecting a global runner or changing accounts. This workspace is shared by research conversations; preserve other research source and coordinate file changes. A configured compiler and owner project must actually be reachable from the service.\n\n${authoring}\n\nComplete owner module (assets/research.rs):\n\`\`\`rust\n${example}\n\`\`\``)],
       hooks: [hook(ToolTask, { async beforeTool(call) {
+        if (call.name === 'native_configured_configure' && typeof call.arguments.file === 'string') {
+          const request = JSON.parse(await readFile(await sourcePath(call.arguments.file, false), 'utf8'));
+          return { arguments: nativeConfiguredConfigureTool.prepareArguments!({ request, compact: true }) };
+        }
         if (!['read', 'write', 'edit'].includes(call.name)) return;
         if (typeof call.arguments.path !== 'string') return;
         return { arguments: { ...call.arguments, path: await sourcePath(call.arguments.path, call.name === 'write') } };
