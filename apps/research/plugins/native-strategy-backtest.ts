@@ -148,7 +148,8 @@ export const nativeStrategyConfigureTool = defineTool({
 export const nativeConfiguredConfigureTool = defineTool({
   name: 'native_configured_configure',
   description: 'Configure an installed Rust backtest factory name and opaque config on the unchanged catalog/executor. Retain prior executions on their original Tasks and clear only the current displayed result. Declare all intended factory requests to native_strategy_logic_review before execution, then explicitly configure/run each requested case. Pass exactly one of request (complete inline JSON) or file (literal workspace JSON path containing that same complete request). File input returns a compact receipt; compact=true also omits the inline request from the response. This does not compile code, create folds, choose winners or validate factory implementation. No live trading.',
-  parameters: { ...obj({ request: opt(nativeConfiguredRequestSchema), file: opt(str()), compact: opt(bool()) }), oneOf: [{ required: ['request'], not: { required: ['file'] } }, { required: ['file'], not: { required: ['request'] } }] }, replay: 'safe', executionMode: 'sequential',
+  // Keep provider parameters simple; prepareArguments enforces mutual exclusion before hooks/read.
+  parameters: obj({ request: opt(nativeConfiguredRequestSchema), file: opt(str()), compact: opt(bool()) }), replay: 'safe', executionMode: 'sequential',
   prepareArguments(args) {
     // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
     validateNumbers(args);

@@ -22,10 +22,10 @@ function outputJson(result: Awaited<ReturnType<typeof nativeConfiguredConfigureT
 }
 const request = { schema_version: 1, name: 'existing-owner', config: { opaque: 'x'.repeat(522 * 1024), ns: '1776124800000000000', tail: 'COMPLETE_END' } };
 
-test('configured input schema and preparation require exactly one complete object or file', () => {
+test('provider-compatible input schema delegates exact-one validation to preparation', () => {
   const validate = compile(nativeConfiguredConfigureTool.parameters);
   for (const input of [{}, {request, file:'run.json'}]) {
-    assert.equal(validate.check(input), false);
+    assert.equal(validate.check(input), true);
     assert.throws(() => prepare(input), /exactly_one_input/);
   }
   assert.equal(validate.check({ request }), true);
@@ -92,4 +92,26 @@ test('invalid JSON/schema/numbers and literal or symlink escapes never create co
   let commits=0;
   await assert.rejects(nativeConfiguredConfigureTool.execute(prepare({file:'/tmp/request.json'}),{commit:async()=>{commits++;}} as unknown as ToolExecutionApi,context),/research_coding_workspace_required/);
   assert.equal(commits,0);
+});
+
+
+test('actual provider parameters omit top-level composition while both/neither fail before file access', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'qz-config-provider-'));
+  const faux=fauxProvider({tokensPerSecond:100000});const models=createModels();models.setProvider(faux.provider);
+  const host=await openResearch({database:join(directory,'research.sqlite'),codingWorkspace:directory,models});
+  try {
+    for (const args of [{}, {request:{schema_version:1,name:'owner',config:{}},file:'missing.json'}]) {
+      faux.setResponses([fauxAssistantMessage(fauxToolCall('native_configured_configure',args),{stopReason:'toolUse'}),fauxAssistantMessage('Rejected before configuration.')]);
+      const receipt=await host.start(JSON.stringify(args),{goal:'Validate arguments only',model:{provider:faux.provider.id,modelId:faux.getModel().id},data:{catalog:directory},policy:{}});
+      await (await host.harness.submission(receipt.submissionId,context))!.wait(context);
+      const agent=await (await host.harness.conversation(receipt.conversationId,context))!.agent(context);
+      const tool=agent.tools.find(tool=>tool.name==='native_configured_configure');
+      assert.ok(tool);
+      for(const key of ['oneOf','anyOf','allOf','not']) assert.equal(Object.hasOwn(tool.parameters,key),false,key);
+      assert.equal((await host.harness.snapshot(ResearchConfiguration,receipt.conversationId,context))?.request??null,null);
+      const view=JSON.stringify(await host.view(receipt.conversationId));
+      assert.ok(view.includes('native_configured_request_exactly_one_input'));
+      assert.ok(!view.includes('ENOENT'),'both inputs must fail before trying the absent file');
+    }
+  } finally {await host.close();await rm(directory,{recursive:true,force:true});}
 });
