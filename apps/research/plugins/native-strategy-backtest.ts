@@ -147,18 +147,24 @@ export const nativeStrategyConfigureTool = defineTool({
 
 export const nativeConfiguredConfigureTool = defineTool({
   name: 'native_configured_configure',
-  description: 'Configure an installed Rust backtest factory name and opaque config on the unchanged catalog/executor. Retain prior executions on their original Tasks and clear only the current displayed result. Declare all intended factory requests to native_strategy_logic_review before execution, then explicitly configure/run each requested case. This does not compile code, create folds, choose winners or validate factory implementation. No live trading.',
-  parameters: obj({ request: nativeConfiguredRequestSchema }), replay: 'safe', executionMode: 'sequential',
+  description: 'Configure an installed Rust backtest factory name and opaque config on the unchanged catalog/executor. Retain prior executions on their original Tasks and clear only the current displayed result. Declare all intended factory requests to native_strategy_logic_review before execution, then explicitly configure/run each requested case. Pass exactly one of request (complete inline JSON) or file (literal workspace JSON path containing that same complete request). File input returns a compact receipt; compact=true also omits the inline request from the response. This does not compile code, create folds, choose winners or validate factory implementation. No live trading.',
+  parameters: { ...obj({ request: opt(nativeConfiguredRequestSchema), file: opt(str()), compact: opt(bool()) }), oneOf: [{ required: ['request'], not: { required: ['file'] } }, { required: ['file'], not: { required: ['request'] } }] }, replay: 'safe', executionMode: 'sequential',
   prepareArguments(args) {
     // Pi normally coerces tool arguments. Check the original JSON before coercion can round a numeric nanosecond.
     validateNumbers(args);
-    if (!args || typeof args !== 'object' || !validateConfiguredRequest.check((args as Record<string, unknown>).request)) throw new Error('native_configured_request_schema_invalid');
-    return args as { request: JsonObject };
+    if (!args || typeof args !== 'object') throw new Error('native_configured_request_schema_invalid');
+    const value = args as { request?: JsonObject; file?: string; compact?: boolean };
+    if ((value.request !== undefined) === (value.file !== undefined)) throw new Error('native_configured_request_exactly_one_input');
+    if (value.file !== undefined ? typeof value.file !== 'string' || !value.file : !validateConfiguredRequest.check(value.request)) throw new Error('native_configured_request_schema_invalid');
+    return value;
   },
   async execute(args, api, context) {
+    // The coding hook resolves file input before Pi persists the execute intent.
+    // Recovery uses that original complete request, never the current file.
+    if (args.file !== undefined) throw new Error('research_coding_workspace_required');
     validateNumbers(args.request);
     if (!validateConfiguredRequest.check(args.request)) throw new Error('native_configured_request_schema_invalid');
-    const request = structuredClone(args.request);
+    const request = structuredClone(args.request!);
     await api.commit(async tx => {
       const study = await tx.doc(Study, api.conversationId);
       if (!study.input || typeof study.input.data.catalog !== 'string' || !study.input.data.catalog) throw new Error('catalog_required');
@@ -174,7 +180,7 @@ export const nativeConfiguredConfigureTool = defineTool({
       // The previous result remains on its original Pi Task; it is not the result of this configuration.
       study.final = null;
     }, context);
-    return { output: [{ type: 'text', text: JSON.stringify({ request, configurationTaskId: api.taskId,
+    return { output: [{ type: 'text', text: JSON.stringify({ ...(args.compact ? { requestSummary: { schema_version: request.schema_version, name: request.name }, requestIncluded: false } : { request }), configurationTaskId: api.taskId,
       scope: 'CONFIGURED_NOT_EXECUTED', instrumentDefinition: { mode: 'FACTORY_CONFIGURATION_NOT_INDEPENDENTLY_VERIFIED' }, limitations: ['NATIVE_RUNNER_SEMANTIC_VALIDATION_PENDING', 'NO_IMPLICIT_CURRENCY_CONVERSION', 'NO_TRADING_PERMISSION'] }) }] };
   },
 });
@@ -598,13 +604,13 @@ export const NativeStrategyBacktestTask = defineTask<{ request: JsonObject; cata
 
 export const nativeStrategyBriefTool = defineTool({
   name: 'native_strategy_brief',
-  description: 'Read the unchanged registered upstream strategy request, data binding and original research mandate before any backtest. This reads configuration only, no market data or performance. Use it to plan official parameter candidates, explicit fees, chronological validation and logic review. Source event/availability windows are not proof of complete observed coverage; use actual native data row counts and notes later. No currency conversion or inferred balance.',
-  parameters: obj({}), replay: 'safe',
-  async execute(_args, api, context) {
+  description: 'Use summaryOnly=true to omit complete requests and schemas from this response. Read the unchanged registered upstream strategy request, data binding and original research mandate before any backtest. This reads configuration only, no market data or performance. Use it to plan official parameter candidates, explicit fees, chronological validation and logic review. Source event/availability windows are not proof of complete observed coverage; use actual native data row counts and notes later. No currency conversion or inferred balance.',
+  parameters: obj({ summaryOnly: opt(bool()) }), replay: 'safe',
+  async execute(args, api, context) {
     const input = await studyInput(api, context);
     const request = input.data.native_strategy_backtest_request === undefined ? null : registeredNativeStrategyRequest(input);
     return { output: [{ type: 'text', text: JSON.stringify({ goal: input.goal, datasetId: await studyDatasetId(api, context), specification: input.specification ?? null,
-      request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema, catalog: input.data.catalog ?? null, ...(input.data.catalogBindings ? {catalogBindings:input.data.catalogBindings} : {}), target: nativeTargetForData(input.data),
+      ...(args.summaryOnly ? { requestsIncluded: false, configuredRequestSummary: input.data.native_configured_backtest_request ? { name: (input.data.native_configured_backtest_request as JsonObject).name } : null } : { request, requestSchema: nativeStrategyRequestSchema, configuredRequest: input.data.native_configured_backtest_request ?? null, configuredRequestSchema: nativeConfiguredRequestSchema }), catalog: input.data.catalog ?? null, ...(input.data.catalogBindings ? {catalogBindings:input.data.catalogBindings} : {}), target: nativeTargetForData(input.data),
       scope: 'REGISTERED_CONFIGURATION_ONLY_NOT_OBSERVED_DATA_COVERAGE',
       limitations: ['BALANCES_AND_FEES_ARE_EXPLICIT_ASSUMPTIONS', 'NO_IMPLICIT_USDT_USDC_CONVERSION', 'NATIVE_STATISTICS_KEEP_THEIR_UPSTREAM_RETURN_BASIS'] }) }] };
   },
