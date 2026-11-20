@@ -70,6 +70,33 @@ class PackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Incomplete JS/Node'):
                 package.check_cli_archive(archive, 'linux-x86_64')
 
+    def test_standalone_launcher_has_separate_artifacts_without_native_owner(self):
+        members = package.cli_members('linux-x86_64', True)
+        self.assertIn('quazonai-launcher', members)
+        self.assertNotIn('quazonai', members)
+        self.assertIn('LAUNCHER.md', members)
+        self.assertNotIn('skill/SKILL.md', members)
+        self.assertIn('quazonai-launcher-windows-x86_64.zip', package.REQUIRED_ASSETS)
+        self.assertNotIn('app/apps/nautilus/src/native_runner.rs', members)
+        self.assertEqual(set(package.LAUNCHER_ARCHIVES), set(package.CLI_ARCHIVES))
+
+    def test_standalone_entry_maps_only_existing_protocol_without_executing_an_owner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'app/apps/cli/src').mkdir(parents=True)
+            (root / 'app/launch.mjs').write_text((package.ROOT / 'deploy/launcher-launch.mjs').read_text())
+            (root / 'distribution.json').write_text('{"version":"v0.0.0-test"}')
+            (root / 'app/apps/cli/src/main.ts').write_text('process.stdout.write(JSON.stringify(process.argv.slice(2)));')
+            node = shutil.which('node')
+            for args, expected in [(['hello', '--file', 'fixture.json'], ['remote-account', 'hello', '--file', 'fixture.json']),
+                                   (['inspect', '--file', 'fixture.json'], ['remote-owner', 'inspect', '--file', 'fixture.json']),
+                                   (['remote-account', 'relay', '--socket-path', '/fixture'], ['remote-account', 'relay', '--socket-path', '/fixture'])]:
+                result = subprocess.run([node, '--experimental-strip-types', str(root / 'app/launch.mjs'), *args], check=True, capture_output=True, text=True)
+                self.assertEqual(json.loads(result.stdout), expected)
+            denied = subprocess.run([node, '--experimental-strip-types', str(root / 'app/launch.mjs'), 'build'], capture_output=True, text=True)
+            self.assertEqual(denied.returncode, 1)
+            self.assertIn('launcher_command_invalid', denied.stderr)
+
 
 class CliEncodingTests(unittest.TestCase):
     def test_original_schema_stdout_preserves_utf8_source(self):

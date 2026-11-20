@@ -49,6 +49,8 @@ jobs:
           runtime=$(node -p "require('node:path').resolve(process.execPath, process.platform === 'win32' ? '..' : '../..')")
           python -B deploy/package.py pack-cli --runtime "$runtime" \
             --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
+          python -B deploy/package.py pack-cli --launcher --runtime "$runtime" \
+            --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
       - name: Unix installer with the real archive and no host Node
         if: runner.os != 'Windows'
         env:
