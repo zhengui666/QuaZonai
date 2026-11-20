@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdir,realpath} from 'node:fs/promises';
+import {mkdir,realpath,symlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {setup,context,fauxAssistantMessage} from './support.ts';
 import {Requests} from '../../research/src/documents.ts';
@@ -58,7 +58,34 @@ test('additional registered catalogs are captured once and retries preserve orig
   assert.deepEqual(JSON.parse(JSON.stringify(saved.metadata?.original ?? null)),direct);
   assert.equal(saved.metadata?.dataset,undefined);
 
+  const directMulti={...direct,requestId:'direct-multiple',additionalCatalogs:[first.data.catalog as string]};
+  assert.equal((await send(directMulti)).json().error,'native_multi_catalog_binding_not_available_rebuild_runner');
+  const multiTarget={...target,capabilities:{...target.capabilities,research:{...target.capabilities.research,multiCatalogBindings:true}}};
+  state.options.config.nativeProcess=multiTarget;await state.restart();
+  const alias=join(state.directory,'book-alias');await symlink(extra,alias,'dir');
+  assert.equal((await send({...directMulti,requestId:'duplicate-root',additionalCatalogs:[alias]})).json().error,'research_duplicate_catalog_binding');
+  assert.equal((await send({...directMulti,requestId:'outside-root',additionalCatalogs:[join(state.directory,'..')]})).json().error,'research_catalog_outside_data_root');
+  for (const body of [{...directMulti,catalog:state.directory},{...directMulti,additionalCatalogs:[state.directory]}]) {
+   const broad=await send({...body,requestId:'broad-root'});
+   assert.equal(broad.statusCode,400,broad.body);
+   assert.equal(broad.json().error,'research_catalog_binding_invalid');
+  }
+  assert.equal((await send({...payload,requestId:'unpaired-additional-catalogs',additionalCatalogs:[extra]})).json().error,'research_catalog_binding_invalid');
+  state.faux.setResponses([fauxAssistantMessage('Local catalog binding only. No native invocation.')]);
+  const multiAccepted=await send(directMulti);assert.equal(multiAccepted.statusCode,202,multiAccepted.body);
+  const multiReceipt=multiAccepted.json();
+  await (await state.service.research.harness.submission(multiReceipt.submissionId,context))!.wait(context);
+  const multiSaved=(await state.service.research.harness.snapshot(Requests,context))!.requests['request:direct-multiple']!;
+  assert.deepEqual(JSON.parse(JSON.stringify((multiSaved.input as {data:unknown}).data)),{
+   catalog:await realpath(extra),nautilusTarget:multiTarget,
+   catalogBindings:[{catalogRef:'catalog-1',catalog:await realpath(extra)},{catalogRef:'catalog-2',catalog:await realpath(first.data.catalog as string)}],
+  });
+  assert.equal(multiSaved.metadata?.dataset,undefined);
+
   delete state.options.config.nativeProcess;await state.restart();
+  const multiRepeated=await send(directMulti);assert.equal(multiRepeated.statusCode,202,multiRepeated.body);
+  assert.deepEqual(multiRepeated.json(),multiReceipt);
+  assert.equal((await send({...directMulti,additionalCatalogs:[alias]})).statusCode,409);
   const repeated=await send(direct);assert.equal(repeated.statusCode,202,repeated.body);
   assert.deepEqual(repeated.json(),directReceipt);
   const changed=await send({...direct,catalog:state.directory});

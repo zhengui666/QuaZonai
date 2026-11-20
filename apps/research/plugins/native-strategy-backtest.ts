@@ -38,18 +38,21 @@ export function nativeConfiguredResult(value: Parameters<typeof object>[0], requ
 
 const nativeCatalogInspectSchema = resolveSchema(schemas.NativeCatalogInspectRequestV1) as Schema<JsonObject>;
 const validateCatalogQuery = compile(nativeCatalogInspectSchema);
-const catalogToolSchema = { ...nativeCatalogInspectSchema, properties: { ...(nativeCatalogInspectSchema as { properties: Record<string, unknown> }).properties, datasetId: { type: 'string' } } } as Schema<JsonObject>;
+const catalogToolSchema = { ...nativeCatalogInspectSchema, properties: { ...(nativeCatalogInspectSchema as { properties: Record<string, unknown> }).properties, datasetId: { type: 'string' }, catalogRef: { type: 'string' } } } as Schema<JsonObject>;
 const validateCatalogToolQuery = compile(catalogToolSchema);
 
-export function registeredCatalogBindings(data: JsonObject): { datasetId: string; catalog: string }[] {
+type CatalogBinding = ({ datasetId: string; catalogRef?: never } | { catalogRef: string; datasetId?: never }) & { catalog: string };
+export function registeredCatalogBindings(data: JsonObject): CatalogBinding[] {
   if (data.catalogBindings === undefined) return [];
   if (!Array.isArray(data.catalogBindings) || !data.catalogBindings.length) throw new Error('research_catalog_bindings_invalid');
-  const bindings = data.catalogBindings.map(item => {
+  const bindings = data.catalogBindings.map((item): CatalogBinding => {
     const row = object(item, 'research_catalog_binding');
-    if (typeof row.datasetId !== 'string' || !row.datasetId || typeof row.catalog !== 'string' || !row.catalog) throw new Error('research_catalog_bindings_invalid');
-    return { datasetId: row.datasetId, catalog: row.catalog };
+    if (typeof row.catalog !== 'string' || !row.catalog) throw new Error('research_catalog_bindings_invalid');
+    if (typeof row.datasetId === 'string' && row.datasetId && row.catalogRef === undefined) return { datasetId: row.datasetId, catalog: row.catalog };
+    if (typeof row.catalogRef === 'string' && row.catalogRef && row.datasetId === undefined) return { catalogRef: row.catalogRef, catalog: row.catalog };
+    throw new Error('research_catalog_bindings_invalid');
   });
-  if (bindings[0]!.catalog !== data.catalog || new Set(bindings.map(item => item.datasetId)).size !== bindings.length || new Set(bindings.map(item => item.catalog)).size !== bindings.length) throw new Error('research_catalog_bindings_invalid');
+  if (bindings[0]!.catalog !== data.catalog || new Set(bindings.map(item => item.datasetId ?? item.catalogRef)).size !== bindings.length || new Set(bindings.map(item => item.catalog)).size !== bindings.length) throw new Error('research_catalog_bindings_invalid');
   return bindings;
 }
 export function assertConfiguredCatalogCapability(data: JsonObject, target: NativeTarget): void {
@@ -62,7 +65,7 @@ function catalogBindingInput(data: JsonObject): { catalogBindings?: JsonObject[]
 
 export const nativeStrategyCatalogTool = defineTool({
   name: 'native_strategy_catalog',
-  description: 'Inspect only a Nautilus catalog bound to this research; omit datasetId for the primary catalog, or use an exact datasetId from native_strategy_brief catalogBindings for an additional catalog. Inspect the catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. data_types uses exact official NautilusDataType names, for example TradeTick, QuoteTick, Bar or OrderBookDelta; TradeTick also accepts trades/trade/trade_tick. TRADE_TICK is QZ modality metadata, not a valid native selector name. Omit data_types to discover the available selectors rather than guessing; use returned selector names for subsequent queries. next_cursor non-null means INCOMPLETE: pass cursor unchanged and repeat the same datasetId (when selected) to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
+  description: 'Inspect only a Nautilus catalog bound to this research; omit both selectors for the primary catalog, or use an exact catalogRef (direct local binding) or datasetId (legacy registered binding) from native_strategy_brief catalogBindings for an additional catalog. Inspect the catalog through its bound executor: actual instrument definitions and versions, native data selectors and inclusive ts_init file intervals. Use instrument_ids/data_types to filter and page_size to set the projection page size. data_types uses exact official NautilusDataType names, for example TradeTick, QuoteTick, Bar or OrderBookDelta; TradeTick also accepts trades/trade/trade_tick. TRADE_TICK is QZ modality metadata, not a valid native selector name. Omit data_types to discover the available selectors rather than guessing; use returned selector names for subsequent queries. next_cursor non-null means INCOMPLETE: pass cursor unchanged and repeat the same catalogRef or datasetId (when selected) to read the next required page; do not infer absence from the first page. The same selector may span pages, and this is not a catalog snapshot. No execution, orders or performance. Use exact string envelope timestamps, not numeric instrument JSON timestamps. Coverage is not proof of event completeness, received-time accuracy, historical fees or suitability for a strategy. Do not silently convert currencies or use current definitions as historical evidence. Explicit STATIC_SCENARIO may reference an exact catalog definition timestamp while assuming its rules unchanged over the selected window; it is hypothetical, never historical-specification verification.',
   parameters: nativeToolSchema(catalogToolSchema),
   prepareArguments(args) {
     validateNumbers(args);
@@ -72,8 +75,10 @@ export const nativeStrategyCatalogTool = defineTool({
   async execute(args, api, context) {
     const input = await studyInput(api, context);
     if (typeof input.data.catalog !== 'string' || !input.data.catalog) throw new Error('catalog_required');
-    const { datasetId, ...query } = args;
-    const catalog = datasetId === undefined ? input.data.catalog : registeredCatalogBindings(input.data).find(item => item.datasetId === datasetId)?.catalog;
+    const { datasetId, catalogRef, ...query } = args;
+    if (datasetId !== undefined && catalogRef !== undefined) throw new Error('research_catalog_bindings_invalid');
+    const catalog = datasetId === undefined && catalogRef === undefined ? input.data.catalog
+      : registeredCatalogBindings(input.data).find(item => datasetId !== undefined ? item.datasetId === datasetId : item.catalogRef === catalogRef)?.catalog;
     if (typeof catalog !== 'string') throw new Error('research_catalog_dataset_unbound');
     if (!validateCatalogQuery.check(query)) throw new Error('native_catalog_query_schema_invalid');
     const binding = structuredClone(input);
