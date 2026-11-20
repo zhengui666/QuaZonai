@@ -81,6 +81,11 @@ it('contains no removed API calls or deleted grid imports', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./parameter-scans.tsx', import.meta.url), 'utf8');
   for (const retired of ['parameterScanPlan', 'parameterScanAxisValue', '/preview', '/surface', '/options', 'ScanBuilder', 'trialOrder', 'ParameterHeatmap']) expect(source).not.toContain(retired);
+  const app = await readFile(new URL('./App.tsx', import.meta.url), 'utf8');
+  expect(app).not.toContain("import('./parameter-scans')");
+  expect(app).not.toContain("page: 'parameter-scans', label:");
+  expect(app).toContain("The standalone parameter scans page has been retired");
+  expect(app).not.toContain("href(`/research/${route.id}`)");
   const research = await readFile(new URL('./research.tsx', import.meta.url), 'utf8');
   expect(research).not.toContain('/parameter-scans/new');
 });

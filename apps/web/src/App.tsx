@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import './i18n';
 import { App as AntApp, Button, ConfigProvider, Drawer, Dropdown, theme } from 'antd';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { ChartLineUpIcon, CircleHalfIcon, CircleNotchIcon, FlaskIcon, IconContext, ListIcon, MoonIcon, GearIcon, SignOutIcon, SquaresFourIcon, SunIcon, ArrowsLeftRightIcon } from '@phosphor-icons/react';
+import { ChartLineUpIcon, CircleHalfIcon, CircleNotchIcon, FlaskIcon, IconContext, ListIcon, MoonIcon, GearIcon, SignOutIcon, SunIcon, ArrowsLeftRightIcon } from '@phosphor-icons/react';
 import type { ModelAuthType, ProviderView, SessionView, SettingsView } from '../../../packages/contracts/src/index.ts';
 import { api, authenticationEvents } from './api';
 import { useResource } from './data-hooks';
@@ -19,7 +19,6 @@ import { DeletionRecovery } from './delete-record';
 import { isPlainNavigationClick } from './list-values';
 const Research = lazy(() => import('./research'));
 const Portfolios = lazy(() => import('./portfolio'));
-const ParameterScans = lazy(() => import('./parameter-scans'));
 const Observations = lazy(() => import('./observations'));
 const Settings = lazy(() => import('./settings'));
 const ModelLogin = lazy(() => import('./model-login').then(module => ({ default: module.ModelLogin })));
@@ -27,7 +26,6 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false, stal
 type Appearance = 'system' | 'light' | 'dark';
 const destinations: { page: Workspace; label: string; icon: ReactNode; secondary?: boolean }[] = [
   { page: 'research', label: "Research", icon: <FlaskIcon /> },
-  { page: 'parameter-scans', label: "Parameter scans", icon: <SquaresFourIcon /> },
   { page: 'portfolios', label: "Portfolio backtests", icon: <ChartLineUpIcon /> }, { page: 'observations', label: "Targets and observations", icon: <ArrowsLeftRightIcon /> },
   { page: 'settings', label: "Settings", icon: <GearIcon />, secondary: true },
 ];
@@ -51,7 +49,7 @@ function WorkspaceApp() {
       if (!isPlainNavigationClick(event)) return;
       const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
       const target = anchor?.getAttribute('href'); const current = currentRoute();
-      if (target && /^#\/(?:research|factors|parameter-scans|portfolios)\/(?!new(?:\?|$))[^/?]+/.test(target) && !current.id && !current.creating && ['research', 'factors', 'parameter-scans', 'portfolios'].includes(current.page)) rememberListNavigation(target);
+      if (target && /^#\/(?:research|factors|portfolios)\/(?!new(?:\?|$))[^/?]+/.test(target) && !current.id && !current.creating && ['research', 'factors', 'portfolios'].includes(current.page)) rememberListNavigation(target);
     };
     document.addEventListener('click', remember, true);
     return () => document.removeEventListener('click', remember, true);
@@ -73,7 +71,7 @@ function WorkspaceApp() {
     <header className="app-topbar"><div className="topbar-inner"><a className="wordmark" href={href('/research')}><Brand /></a><nav className="primary-nav" aria-label={tr("Main workspace")}>{links(false)}</nav><div className="topbar-right"><nav className="secondary-nav" aria-label={tr("Workspace settings")}>{links(true)}</nav><div className="topbar-divider" /><AppearanceControl /><Button className="icon-button logout-button" type="text" aria-label={tr("Sign out")} icon={<SignOutIcon size={19} />} onClick={() => { setLogoutError(undefined); void api<SessionView>('/session', { method: 'DELETE' }).then(changeSession, setLogoutError); }} /></div><Button className="mobile-menu icon-button" type="text" icon={<ListIcon size={21} />} aria-label={tr("Open navigation")} onClick={() => setDrawer(true)} /></div></header>
     <Drawer title={<Brand />} placement="left" getContainer={false} open={drawer} onClose={() => setDrawer(false)} width={288}><nav className="drawer-nav" aria-label={tr("Workspace")}>{links(false)}<div className="drawer-divider" />{links(true)}</nav><div className="drawer-appearance"><AppearanceControl /><span>{tr("Appearance")}</span><Button type="text" onClick={() => { void api<SessionView>('/session', { method: 'DELETE' }).then(value => { setDrawer(false); changeSession(value); }, setLogoutError); }}>{tr("Sign out")}</Button></div></Drawer>
     <main id="main-content" tabIndex={-1}><ErrorNotice error={logoutError} /><DeletionRecovery /><AppErrorBoundary key={`${route.page}/${route.creating}/${route.id ?? ''}/${route.creating ? route.params.toString() : ''}/${route.page === 'settings' ? route.params.get('section') ?? '' : ''}`}><Suspense fallback={<Loading />}>
-      {route.unknown ? <Empty title={tr("Page not found")} action={<a className="text-link" href={href('/research')}>{tr("Back to research")}</a>} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'parameter-scans' ? <ParameterScans route={route} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : <Settings connect={setAuthRequest} route={route} />}
+      {route.unknown ? <Empty title={tr("Page not found")} action={<a className="text-link" href={href('/research')}>{tr("Back to research")}</a>} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'parameter-scans' ? <Empty title={tr("The standalone parameter scans page has been retired")} action={<a className="text-link" href={href('/research')}>{tr("Back to research")}</a>} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : <Settings connect={setAuthRequest} route={route} />}
     </Suspense></AppErrorBoundary></main>
     {authRequest && <Suspense fallback={<Loading />}><ModelLogin key={authRequest.id} request={authRequest} changed={refreshModels} close={() => setAuthRequest(undefined)} /></Suspense>}
   </>;
