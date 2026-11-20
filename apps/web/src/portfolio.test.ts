@@ -18,12 +18,22 @@ vi.mock('./data-hooks', () => ({
   } }),
   useResource: () => ({ isPending: false, data: [{ id: 'o-original', portfolioId: 'p-original', name: '已有账户', mode: 'paper', connectionId: 'binding' }] }),
 }));
-const render = (creating: boolean, params = new URLSearchParams()) => renderToStaticMarkup(createElement(Portfolios, { route: { page: 'portfolios', creating, ...(creating ? {} : { id: 'p-original' }), params } }));
+const render = (creating: boolean, params = new URLSearchParams(), id = creating ? undefined : 'p-original') => renderToStaticMarkup(createElement(Portfolios, { route: { page: 'portfolios', creating, id, params } }));
 it('removes retired portfolio construction and review allocation routes', () => {
   for (const html of [render(true), render(false, new URLSearchParams('view=allocations'))]) {
     expect(html).toContain('该自研组合创建入口已移除');
     expect(html).toContain('#/research/new');
     expect(html).not.toContain('<form');
+  }
+});
+it('returns a neutral notice for old tick list and detail links without opening a portfolio', () => {
+  const params = new URLSearchParams('view=tick');
+  const list = renderToStaticMarkup(createElement(Portfolios, { route: { page: 'portfolios', creating: false, params } }));
+  for (const html of [list, render(false, params, 'old-tick-id')]) {
+    expect(html).toContain('旧版 Tick 经济回放页面已退役');
+    expect(html).toContain('href="#/portfolios"');
+    expect(html).not.toContain('原始账户目标');
+    expect(html).not.toContain('tick-economic-replays');
   }
 });
 it('retains real target delivery, exact capital, and account capital management links', () => {
