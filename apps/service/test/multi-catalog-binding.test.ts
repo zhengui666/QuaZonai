@@ -38,5 +38,31 @@ test('additional registered catalogs are captured once and retries preserve orig
   assert.equal(conflicting.statusCode,400); assert.equal(conflicting.json().error,'research_catalog_binding_invalid');
   const noRunner=await send(direct);
   assert.equal(noRunner.statusCode,422); assert.equal(noRunner.json().error,'research_catalog_requires_local_runner');
+
+  const target: import('../../../packages/contracts/src/nautilus.ts').ProcessNativeTarget={
+   kind:'RUST_PROCESS',id:'direct-catalog-test',binary:state.options.config.jobBinary,
+   capabilities:{schemaVersion:1,protocol:'quazonai-native-process-v1',identity:{nautilusVersion:'protocol-only',precision:'high'},
+    research:{singleStrategyRegistration:false,configuredRunFactory:true},
+    account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false},
+  };
+  state.options.config.nativeProcess=target;await state.restart();
+  const relative=await send({...direct,requestId:'relative-catalog',catalog:'book'});
+  assert.equal(relative.statusCode,422,relative.body);
+  assert.equal(relative.json().error,'research_catalog_local_path_required');
+  state.faux.setResponses([fauxAssistantMessage('Catalog admission only. No native invocation.')]);
+  const accepted=await send(direct);assert.equal(accepted.statusCode,202,accepted.body);
+  const directReceipt=accepted.json();
+  await (await state.service.research.harness.submission(directReceipt.submissionId,context))!.wait(context);
+  const saved=(await state.service.research.harness.snapshot(Requests,context))!.requests['request:direct-catalog']!;
+  assert.deepEqual(JSON.parse(JSON.stringify((saved.input as {data:unknown}).data)),{catalog:await realpath(extra),nautilusTarget:target});
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.metadata?.original ?? null)),direct);
+  assert.equal(saved.metadata?.dataset,undefined);
+
+  delete state.options.config.nativeProcess;await state.restart();
+  const repeated=await send(direct);assert.equal(repeated.statusCode,202,repeated.body);
+  assert.deepEqual(repeated.json(),directReceipt);
+  const changed=await send({...direct,catalog:state.directory});
+  assert.equal(changed.statusCode,409,changed.body);
+  assert.equal(changed.json().error,'request_id_conflict');
  }finally{await state.cleanup();}
 });
