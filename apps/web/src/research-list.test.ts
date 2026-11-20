@@ -84,6 +84,13 @@ describe('same-conversation native continuation', () => {
   expect(nativeResearchInput({ goal: '运行官方原生策略', datasetId: 'native-data', model: '{"provider":"p","modelId":"m"}', thinkingLevel: 'high', serviceTier: 'priority', publicLiteratureTopics: 'momentum', metric: 'pearson_ic', scope: 'single-factor', maxMembers: '1', scenarios: '1000' })).toEqual({ goal: '运行官方原生策略', datasetId: 'native-data', model: {provider:'p',modelId:'m'}, thinkingLevel:'high',serviceTier:'priority', publicLiteratureQueries:['momentum'] });
 });
 
+it('submits the selected Nautilus catalog without leaking a previous dataset selection', () => {
+  const info = { goal: 'Read the native catalog', catalog: '/data/market', datasetId: 'previous-data', model: '{"provider":"p","modelId":"m"}' };
+  const base = { goal: info.goal, model: { provider: 'p', modelId: 'm' } };
+  expect(nativeResearchInput({ ...info, dataSource: 'catalog' })).toEqual({ ...base, catalog: info.catalog });
+  expect(nativeResearchInput({ ...info, dataSource: 'dataset' })).toEqual({ ...base, datasetId: info.datasetId });
+});
+
 it('shows continuation for completed discussion stops and settled owner stops, not active or scored finals', () => {
   const detail = { id: 781, toolPolicy: 'NAUTILUS_ONLY', submission: { id: 43, status: 'done' }, final: { status: 'STOPPED', trialId: null, reason: 'Discussion complete', metrics: [] } } as unknown as ResearchDetail;
   expect(canContinueResearch(detail, false)).toBe(true);

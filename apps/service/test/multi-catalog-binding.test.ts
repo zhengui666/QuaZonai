@@ -33,5 +33,10 @@ test('additional registered catalogs are captured once and retries preserve orig
    const result=await send({...payload,requestId:JSON.stringify(additionalDatasetIds),additionalDatasetIds});assert.ok(result.statusCode>=400,result.body);
   }
   assert.equal((await send({...payload,requestId:'literature',mode:'LITERATURE_ONLY'})).statusCode,400);
+  const direct={requestId:'direct-catalog',goal:payload.goal,model:state.model,catalog:extra};
+  const conflicting=await send({...direct,datasetId:'controlled'});
+  assert.equal(conflicting.statusCode,400); assert.equal(conflicting.json().error,'research_catalog_binding_invalid');
+  const noRunner=await send(direct);
+  assert.equal(noRunner.statusCode,422); assert.equal(noRunner.json().error,'research_catalog_requires_local_runner');
  }finally{await state.cleanup();}
 });

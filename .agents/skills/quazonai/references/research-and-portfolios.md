@@ -19,6 +19,14 @@ Pre-registered entries such as EMA_CROSS, GRID_MARKET_MAKER, ORDER_BOOK_IMBALANC
 
 Official DataEngine aggregates Hurst/VPIN INTERNAL BARs from original TradeTicks; EXTERNAL BARs require the original complete BarType. If external non-time BARs are only for strategy consumption, explicitly configure native venue.bar_execution=false and supply original Quote/Trade data for execution. Omission retains the official default true; glue does not silently disable it. Research/account factory registration and capabilities are independent; research configuration does not expand account execution capabilities.
 
+To start research directly against an existing local Nautilus catalog, pass its absolute path as seen by the QuaZonai service instead of a dataset ID:
+
+```sh
+quazonai research start --goal "$goal" --catalog "$catalog_path" --model "$provider:$model_id" --request-id "$request_id"
+```
+
+This uses the catalog in place. It does not discover, import, or register data. Use a catalog the operator has already made available under the service data directory to its local process runner. For a saved JSON request, use the top-level `catalog` field instead of `datasetId` and `additionalDatasetIds` and retain that request and its ID.
+
 Inspect actual data types and coverage first. Data preparation does not establish profitability. Preserve missing or un-warmed statistics as unavailable and retain official metric names, currencies, and units. Backtests do not start accounts or turn historical target points into live strategies.
 
 ## Read the process and native results

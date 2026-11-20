@@ -37,7 +37,8 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
     mode=LITERATURE_ONLY with datasetId admits only descriptive metadata and approved public literature; no native execution or sealed data.
-  research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
+  research start --goal TEXT (--catalog SERVER_PATH | --dataset ID) --model provider:modelId --request-id ORIGINAL_ID
+    --catalog submits an existing Nautilus catalog path visible to the service without registering a dataset.
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research messages ID [--cursor CURSOR]
   research native-runs ID --result-task-id TASK_ID [--offset OFFSET]
@@ -75,7 +76,7 @@ const options = {
   help: { type: 'boolean' as const, short: 'h' }, version: { type: 'boolean' as const },
   origin: { type: 'string' as const }, name: { type: 'string' as const }, replace: { type: 'boolean' as const },
   'development-http': { type: 'boolean' as const }, 'ca-certificate': { type: 'string' as const },
-  file: { type: 'string' as const }, goal: { type: 'string' as const }, dataset: { type: 'string' as const },
+  file: { type: 'string' as const }, goal: { type: 'string' as const }, dataset: { type: 'string' as const }, catalog: { type: 'string' as const },
   model: { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
@@ -166,14 +167,16 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   if (group === 'research' && action === 'start') {
     let submission: ResearchStart;
     if (values.file) {
-      if (values.goal || values.dataset || values.model) throw new CliError('file_or_goal_required');
+      if (values.goal !== undefined || values.dataset !== undefined || values.catalog !== undefined || values.model !== undefined) throw new CliError('file_or_goal_required');
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       submission = file.body as unknown as ResearchStart; body = file.bytes;
 
     } else {
       const match = /^([^:]+):(.+)$/.exec(values.model ?? '');
-      if (!values.goal || !values.dataset || !match || !values['request-id']) throw new CliError('goal_dataset_model_request_id_required');
-      submission = { requestId: values['request-id'], goal: values.goal, datasetId: values.dataset, model: { provider: match[1]!, modelId: match[2]! } };
+      if (values.dataset !== undefined && values.catalog !== undefined) throw new CliError('catalog_or_dataset_required');
+      if (!values.goal || !(values.catalog || values.dataset) || !match || !values['request-id']) throw new CliError('goal_catalog_or_dataset_model_request_id_required');
+      const fields = { requestId: values['request-id'], goal: values.goal, model: { provider: match[1]!, modelId: match[2]! } };
+      submission = values.catalog ? { ...fields, catalog: values.catalog } : { ...fields, datasetId: values.dataset! };
       body = JSON.stringify(submission);
     }
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);
