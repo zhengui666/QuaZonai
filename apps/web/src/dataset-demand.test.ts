@@ -11,9 +11,6 @@ vi.mock('antd',async()=>{const {createElement:h}=await import('react');return {
 };});
 vi.mock('./ui',async()=>{const {createElement:h}=await import('react');return {Copy:()=>null,Empty:()=>null,Facts:()=>null,Status:()=>null,Timestamp:()=>null,Loading:()=>h('span',null,'loading'),ErrorNotice:({error,retry}:any)=>error?h('button',{onClick:retry},'retry'):null};});
 vi.mock('./native-input',async()=>{const {createElement:h}=await import('react');return {NativeInputFacts:({coverage}:any)=>h('span',null,coverage?.marker??'no-coverage')};});
-// The dataset-detail lifecycle is independent of the separately tested settings panels.
-vi.mock('./dataset-registration',()=>({default:()=>null}));
-vi.mock('./dataset-selection',()=>({default:()=>null}));
 import Data from './data';
 let renderer:ReactTestRenderer|undefined,client:QueryClient|undefined;
 async function settle(){await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10));});}
