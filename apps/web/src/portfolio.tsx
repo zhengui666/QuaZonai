@@ -1,11 +1,11 @@
 import { useTranslation } from 'react-i18next';
 import { tr, locale } from './i18n';
 import { lazy, Suspense } from 'react';
-import { Table, Tabs, Tooltip } from 'antd';
+import { Table, Tooltip } from 'antd';
 import { ArrowLeftIcon } from '@phosphor-icons/react';
 import type { ObservationView } from '../../../packages/contracts/src/index.ts';
 import { usePortfolioDetail, useResource } from './data-hooks';
-import { href, navigate, type Route } from './router';
+import { href, type Route } from './router';
 import { Empty, ErrorNotice, Exact, Facts, Loading, MetricLabel, Metrics, Status, Timestamp } from './ui';
 import { RecordTitle } from './disclosure';
 import { shortTitle } from './titles';
@@ -13,7 +13,6 @@ import { ExecutionFailure } from './diagnostics';
 import { FactorIdentity } from './factors';
 import { DeleteRecord } from './delete-record';
 import { BacktestProgress } from './backtest-progress';
-import { TickEconomicReplays, TickReplayDetail } from './tick-economic-replays';
 import type { PortfolioListItem } from '../../../packages/contracts/src/lists.ts';
 import { ListTools, listPathFor, useListWorkspace } from './list-workspace';
 import type { PortfolioPerformanceSummary } from '../../../packages/contracts/src/portfolio-performance.ts';
@@ -21,13 +20,10 @@ const EquityPlot = lazy(() => import('./equity-plot'));
 export default function Portfolios({ route }: { route: Route }) {
   useTranslation('core');
   if (route.creating || route.params.get('view') === 'allocations') return <Empty title={tr("The custom portfolio creation workflow has been removed")} action={<a href={href('/research/new')}>{tr("Use native research")}</a>} />;
-  const view = route.params.get('view') ?? 'strategies';
-  if (route.id) return view === 'tick' ? <TickReplayDetail key={route.id} id={route.id} route={route} /> : <PortfolioDetail id={route.id} route={route} />;
+  if (route.params.get('view') === 'tick') return <Empty title={tr("The legacy tick economic replay view has been retired")} action={<a href={href('/portfolios')}>{tr("Portfolio backtests")}</a>} />;
+  if (route.id) return <PortfolioDetail id={route.id} route={route} />;
   return <div className="index-page"><header className="page-heading"><h1>{tr("Portfolio backtests")}</h1></header>
-    <Tabs destroyOnHidden activeKey={view === 'tick' ? view : 'strategies'} onChange={key => navigate(`/portfolios?view=${key}`)} items={[
-      { key: 'strategies', label: tr("Strategy portfolios"), children: <StrategyPortfolios route={route} /> },
-      { key: 'tick', label: tr("Tick-level economic replays"), children: <TickEconomicReplays route={route} /> },
-    ]} />
+    <StrategyPortfolios route={route} />
   </div>;
 }
 const progressLabels: Record<string, string> = { QUEUED: "Awaiting backtest", FORECASTING: "Generating member predictions", SIMULATING: "Account backtest", CAPACITY: "Assessing capacity", COMPLETED: "Backtest completed", FAILED: "Backtest failed", STOPPED: "Backtest stopped" };

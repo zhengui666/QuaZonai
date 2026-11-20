@@ -241,6 +241,7 @@ export const zhCN: Record<string, string> = {
   "The custom portfolio creation workflow has been removed": "该自研组合创建入口已移除",
   "Use native research": "使用原生研究",
   "Strategy portfolios": "策略组合",
+  "The legacy tick economic replay view has been retired": "旧版 Tick 经济回放页面已退役",
   "Tick-level economic replays": "Tick 经济回放",
   "Account backtest": "账户回测",
   "Assessing capacity": "评估容量",
