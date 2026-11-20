@@ -58,9 +58,9 @@ export interface ResearchSpecification {
 export interface ResearchInput { mode?: 'LITERATURE_ONLY'; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
 /** Explicit completed-build binding applies only to this new research, never global selection. */
 export type ResearchRunnerBinding = { runnerBuildRequestId?: string; expectedRunnerRevision?: number };
-export type ResearchStart = ResearchRunnerBinding & ({ requestId: string; input: ResearchInput; reviewedFactorIds?: string[]; catalog?: never } | {
+export type ResearchStart = ResearchRunnerBinding & ({ requestId: string; input: ResearchInput; reviewedFactorIds?: string[]; catalog?: never; additionalCatalogs?: never } | {
   requestId: string; input?: never; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier;
-} & ({ mode?: 'LITERATURE_ONLY'; datasetId: string; additionalDatasetIds?: string[]; catalog?: never } | { catalog: string; mode?: never; datasetId?: never; additionalDatasetIds?: never }));
+} & ({ mode?: 'LITERATURE_ONLY'; datasetId: string; additionalDatasetIds?: string[]; catalog?: never; additionalCatalogs?: never } | { catalog: string; additionalCatalogs?: string[]; mode?: never; datasetId?: never; additionalDatasetIds?: never }));
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
 export interface ResearchResume { submissionId: number; instruction?: string }

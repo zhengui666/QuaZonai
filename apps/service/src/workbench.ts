@@ -63,10 +63,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
   };
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    if (Object.keys(body).some(key => !['mode', 'requestId', 'input', 'goal', 'model', 'datasetId', 'additionalDatasetIds', 'catalog', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
+    if (Object.keys(body).some(key => !['mode', 'requestId', 'input', 'goal', 'model', 'datasetId', 'additionalDatasetIds', 'catalog', 'additionalCatalogs', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
     if (body.mode !== undefined && body.mode !== 'LITERATURE_ONLY') throw new Problem('research_mode_unsupported');
     if (body.mode === 'LITERATURE_ONLY' && (body.input !== undefined || body.specification !== undefined || body.runnerBuildRequestId !== undefined || body.expectedRunnerRevision !== undefined || retainedNautilusTarget)) throw new Problem('literature_only_binding_unsupported');
     if ('catalog' in body && ('input' in body || 'datasetId' in body || 'additionalDatasetIds' in body || body.mode !== undefined || retainedNautilusTarget)) throw new Problem('research_catalog_binding_invalid');
+    if ('additionalCatalogs' in body && (!('catalog' in body) || !Array.isArray(body.additionalCatalogs) || body.additionalCatalogs.some(path => typeof path !== 'string' || !path.trim()))) throw new Problem('research_catalog_binding_invalid');
     if (body.additionalDatasetIds !== undefined && ('input' in body || body.mode === 'LITERATURE_ONLY' || !Array.isArray(body.additionalDatasetIds) || body.additionalDatasetIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(body.additionalDatasetIds).size !== body.additionalDatasetIds.length || body.additionalDatasetIds.includes(body.datasetId))) throw new Problem('research_additional_datasets_invalid');
     const original = json(body); const old = (await readResearchAdmissions(host))[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
@@ -135,18 +136,23 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
       } else {
         const runner = selectedTarget ?? config.nativeProcess;
         if (!runner) throw new Problem('research_catalog_requires_local_runner', 422);
-        const path = text(submission.catalog, 'catalog');
-        if (!isAbsolute(path)) throw new Problem('research_catalog_local_path_required', 422);
-        const [root, catalog] = await Promise.all([realpath(config.dataDir), realpath(path)]).catch(() => { throw new Problem('research_catalog_not_found', 404); });
-        const bound = relative(root, catalog);
-        if (bound === '..' || bound.startsWith('..' + sep) || isAbsolute(bound)) throw new Problem('research_catalog_outside_data_root', 422);
-        if (!(await stat(catalog)).isDirectory()) throw new Problem('research_catalog_not_directory', 422);
-        data = bindScienceData({ catalog }, runner);
+        const paths = [text(submission.catalog, 'catalog'), ...(submission.additionalCatalogs ?? [])];
+        if (paths.some(path => !isAbsolute(path))) throw new Problem('research_catalog_local_path_required', 422);
+        if (paths.length > 1 && runner.capabilities.research.multiCatalogBindings !== true) throw new Problem('native_multi_catalog_binding_not_available_rebuild_runner', 422);
+        const [root, ...catalogs] = await Promise.all([config.dataDir, ...paths].map(path => realpath(path))).catch(() => { throw new Problem('research_catalog_not_found', 404); });
+        for (const catalog of catalogs) {
+          if (catalogs.length > 1 && catalog === root) throw new Problem('research_catalog_binding_invalid');
+          const bound = relative(root!, catalog);
+          if (bound === '..' || bound.startsWith('..' + sep) || isAbsolute(bound)) throw new Problem('research_catalog_outside_data_root', 422);
+          if (!(await stat(catalog)).isDirectory()) throw new Problem('research_catalog_not_directory', 422);
+        }
+        if (new Set(catalogs).size !== catalogs.length) throw new Problem('research_duplicate_catalog_binding');
+        data = bindScienceData({ catalog: catalogs[0]!, ...(catalogs.length > 1 ? { catalogBindings: catalogs.map((catalog, index) => ({ catalogRef: `catalog-${index + 1}`, catalog })) } : {}) }, runner);
       }
       input = { ...(submission.mode ? { mode: submission.mode } : {}), goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data, policy };
     }
     // Only admission resolves extra registered identities. Retries above reuse the original input.
-    if (input.data.catalogBindings !== undefined) throw new Problem('research_catalog_bindings_reserved');
+    if (submission.catalog === undefined && input.data.catalogBindings !== undefined) throw new Problem('research_catalog_bindings_reserved');
     if (Array.isArray(body.additionalDatasetIds) && body.additionalDatasetIds.length) {
       const bound = [sourceDataset!, ...body.additionalDatasetIds.map(id => dataset(String(id)))];
       const bindings = [];

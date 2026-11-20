@@ -28,7 +28,9 @@ for (const multi of [false, true]) for (const retainCanonical of [false, true]) 
   faux.setResponses([fauxAssistantMessage(fauxToolCall('native_configured_backtest', { request, finishResearch: true }), { stopReason: 'toolUse' })]);
   const options = { database: join(directory, 'research.sqlite'), models };
   let host = await openResearch(options);
-  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, ...(multi ? {catalogBindings:[{datasetId:"primary",catalog:directory},{datasetId:"book",catalog:directory+"-book"}]} : {}), nautilusTarget: target }, policy: {} };
+  const bindings = retainCanonical ? [{catalogRef:'catalog-1', catalog:directory},{catalogRef:'catalog-2', catalog:directory+'-book'}]
+    : [{datasetId:'primary', catalog:directory},{datasetId:'book', catalog:directory+'-book'}];
+  const input = { goal: 'Run the installed owner Rust multi-instrument factory, no live trading.', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { catalog: directory, ...(multi ? {catalogBindings:bindings} : {}), nautilusTarget: target }, policy: {} };
   try {
     const admission = await host.start('factory-protocol', input);
     await (await host.harness.submission(admission.submissionId, context))!.wait(context);
@@ -71,4 +73,9 @@ test('catalog binding validation and inspection never accept unbound dataset sel
  assert.deepEqual(registeredCatalogBindings({catalog:'/legacy'}),[]);
  for(const catalogBindings of [[],[{datasetId:'x',catalog:'/other'}],[...data.catalogBindings,data.catalogBindings[1]],['bad']]) assert.throws(()=>registeredCatalogBindings({...data,catalogBindings}),/binding/);
  await assert.rejects(()=>nativeStrategyCatalogTool.execute({datasetId:'unbound'}, {snapshot:async()=>({input:{data}})} as any,context),/research_catalog_dataset_unbound/);
+ const direct={...data,catalogBindings:[{catalogRef:'catalog-1',catalog:'/primary'},{catalogRef:'catalog-2',catalog:'/book'}]};
+ assert.deepEqual(registeredCatalogBindings(direct),direct.catalogBindings);
+ const api={snapshot:async()=>({input:{data:direct}})} as any;
+ await assert.rejects(()=>nativeStrategyCatalogTool.execute({catalogRef:'unbound'},api,context),/research_catalog_dataset_unbound/);
+ await assert.rejects(()=>nativeStrategyCatalogTool.execute({catalogRef:'catalog-2',datasetId:'book'},api,context),/research_catalog_bindings_invalid/);
 });
