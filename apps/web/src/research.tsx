@@ -27,13 +27,9 @@ import { ExecutionFailure, Reason } from './diagnostics';
 import { Literature } from './literature';
 import { publicLiteratureTopics } from './literature-input';
 import { DeleteRecord } from './delete-record';
+import { nativeResearchInput } from './research-start-input.ts';
 
-/** Only transport user intent; do not reconstruct retired scoring/fit specifications. */
-export function nativeResearchInput(values: Record<string, string>) {
-  const publicQueries = publicLiteratureTopics(values.publicLiteratureTopics);
-  return { goal: values.goal, ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: JSON.parse(values.model!) as ModelRef, datasetId: values.datasetId, ...(values.thinkingLevel ? { thinkingLevel: values.thinkingLevel } : {}), ...(values.serviceTier ? { serviceTier: values.serviceTier } : {}) };
-}
-
+export { nativeResearchInput } from './research-start-input.ts';
 
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
 export default function Research({ route }: { route: Route }) {
@@ -306,7 +302,7 @@ export function NativeResearchContinuation({ detail, active, changed }: { detail
 }
 function NewStudy({ route }: { route: Route }) {
   useTranslation('core');
-  const cache = useQueryClient(); const catalog = useModelCatalog(); const datasets = useResource<DatasetView[]>('/datasets?view=summary'); const settings = useResource<SettingsView>('/settings');
+  const cache = useQueryClient(); const catalog = useModelCatalog(); const settings = useResource<SettingsView>('/settings');
   const [form] = Form.useForm(); const [draft] = useState(() => readDraft<Record<string, unknown>>('research')); const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted('research')); const initialized = useRef(false);
   const listParams = new URLSearchParams(route.params); listParams.delete('from'); listParams.delete('dataset');
   const returnPath = listPathFor({ ...route, params: listParams });
@@ -319,16 +315,20 @@ function NewStudy({ route }: { route: Route }) {
   const selectedModel = catalog.data?.models.find(model => modelKey(model) === selectedModelKey);
   const modelOptions = catalog.data?.models.map(model => ({ value: modelKey(model), label: `${model.name} / ${model.provider}` })) ?? [];
   if (selectedModelKey && !modelOptions.some(option => option.value === selectedModelKey)) { const recorded = JSON.parse(selectedModelKey) as ModelRef; modelOptions.push({ value: selectedModelKey, label: `${recorded.provider}/${recorded.modelId} / ${tr("Currently unavailable")}` }); }
+  const initialSource = command.values ? typeof command.values.catalog === 'string' ? 'catalog' : 'dataset' : route.params.has('dataset') ? 'dataset' : draft?.dataSource === 'catalog' ? 'catalog' : 'dataset';
+  const dataSource = Form.useWatch('dataSource', form) ?? initialSource;
+  const useNativeCatalog = dataSource === 'catalog';
+  const datasets = useResource<DatasetView[]>('/datasets?view=summary', { enabled: !useNativeCatalog });
   const selectedDatasetId = Form.useWatch('datasetId', form) as string | undefined;
-  const selectedDataset = datasets.data?.find(dataset => dataset.id === selectedDatasetId);
+  const selectedDataset = useNativeCatalog ? undefined : datasets.data?.find(dataset => dataset.id === selectedDatasetId);
   const datasetDetail = useResource<DatasetView>(`/datasets/${encodeURIComponent(selectedDatasetId ?? '')}`, { enabled: !!selectedDataset });
   useEffect(() => {
-    if (initialized.current || !catalog.data || !datasets.data || !settings.data) return;
+    if (initialized.current || !catalog.data || !settings.data) return;
     initialized.current = true;
-    if (command.values) { form.setFieldsValue({ ...command.values, publicLiteratureTopics: Array.isArray(command.values.publicLiteratureQueries) ? command.values.publicLiteratureQueries.join('\n') : '', model: modelKey(command.values.model as ModelRef) }); return; }
+    if (command.values) { form.setFieldsValue({ ...command.values, dataSource: initialSource, publicLiteratureTopics: Array.isArray(command.values.publicLiteratureQueries) ? command.values.publicLiteratureQueries.join('\n') : '', model: modelKey(command.values.model as ModelRef) }); return; }
     const preferred = settings.data.defaultModel && catalog.data.models.find(model => modelKey(model) === modelKey(settings.data!.defaultModel!));
-    form.setFieldsValue({ ...(preferred ? { model: modelKey(preferred), thinkingLevel: settings.data.thinkingLevel ?? preferred.effectiveThinkingLevel, serviceTier: !draft?.model || draft.model === modelKey(preferred) ? settings.data.serviceTier ?? undefined : undefined } : {}), ...draft, ...(route.params.get('dataset') ? { datasetId: route.params.get('dataset') } : {}) });
-  }, [catalog.data, datasets.data, settings.data]);
+    form.setFieldsValue({ ...(preferred ? { model: modelKey(preferred), thinkingLevel: settings.data.thinkingLevel ?? preferred.effectiveThinkingLevel, serviceTier: !draft?.model || draft.model === modelKey(preferred) ? settings.data.serviceTier ?? undefined : undefined } : {}), ...draft, dataSource: initialSource, ...(route.params.get('dataset') ? { datasetId: route.params.get('dataset') } : {}) });
+  }, [catalog.data, settings.data]);
   useEffect(() => {
     if (!command.pending && selectedModel && thinkingLevel && !modelSupportsThinking(selectedModel, thinkingLevel as ThinkingLevel)) { setThinkingChanged(true); }
   }, [selectedModel, thinkingLevel, command.pending]);
@@ -338,27 +338,32 @@ function NewStudy({ route }: { route: Route }) {
   const preview = Form.useWatch([], form) as Record<string, string> | undefined;
   const [specError, setSpecError] = useState<unknown>();
   return <div className="authoring-page"><a className="text-link back-link" href={href(origin.path)}><ArrowLeftIcon size={14} />{origin.label}</a><div className="authoring-heading"><div className="authoring-symbol"><FlaskIcon weight="duotone" size={24} /></div><h1>{tr("New research")}</h1></div>
-    <ErrorNotice error={catalog.error ?? datasets.error ?? settings.error} retry={() => { void catalog.refetch(); void datasets.refetch(); void settings.refetch(); }} />
-    {catalog.isPending || datasets.isPending || settings.isPending ? <Loading /> : !catalog.data || !datasets.data || !settings.data ? null : <>
+    <ErrorNotice error={catalog.error ?? settings.error} retry={() => { void catalog.refetch(); void settings.refetch(); }} />
+    {catalog.isPending || settings.isPending ? <Loading /> : !catalog.data || !settings.data ? null : <>
     {catalog.data && !catalog.data.models.length && <div className="prerequisite">{tr("No models available")} <a href={href('/settings')}>{tr("Connect a model")} <ArrowUpRightIcon size={13} /></a></div>}
-    {datasets.data && !datasets.data.some(item => item.ready) && <div className="prerequisite">{tr("No datasets are ready")} <a href={href('/settings?section=data')}>{tr("View data")} <ArrowUpRightIcon size={13} /></a></div>}
     <PendingCommand command={command} />
-    <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values: Record<string, unknown>) => { if (!command.pending) setDraftSaved(saveDraft('research', values)); }} onFinish={(values: Record<string, string>) => { try { const input = nativeResearchInput(values); setSpecError(undefined); void command.submit(input); } catch (error) { setSpecError(error); } }}  disabled={!!command.pending || command.busy}>
+    <Form form={form} initialValues={{ dataSource: initialSource }} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onValuesChange={(_changed, values: Record<string, unknown>) => { if (!command.pending) setDraftSaved(saveDraft('research', values)); }} onFinish={(values: Record<string, string>) => { try { const input = nativeResearchInput(values); setSpecError(undefined); void command.submit(input); } catch (error) { setSpecError(error); } }}  disabled={!!command.pending || command.busy}>
       <div className="form-section-heading"><FlaskIcon size={16} /><h2>{tr("Research question")}</h2></div>
       <Form.Item label={tr("Research question")} extra={tr("For a parameter grid, specify the strategy, candidate values for each parameter, time windows, and costs. For example: fast periods [8, 16], slow periods [32, 64]. QuaZonai generates combinations, Pi orchestrates them, and Nautilus runs the backtests. Every original result is retained; no optimum is selected automatically.")} name="goal" rules={[{ required: true, whitespace: true, message: tr("Enter a research question") }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder={tr("For example: run a Nautilus strategy on this dataset using the original configuration, and show the native backtest report.")} /></Form.Item>
       <Form.Item label={tr("Public literature search topics (optional)")} name="publicLiteratureTopics" extra={tr("Sent to public search services; up to 3 lines, 500 characters per line")} rules={[{ validator: (_rule, value?: string) => { try { publicLiteratureTopics(value); return Promise.resolve(); } catch { return Promise.reject(new Error(tr("Enter up to 3 public topics, one per line, at most 500 characters each, without control characters"))); } } }]}><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="market microstructure&#10;momentum transaction costs" /></Form.Item>
       <div className="form-section-heading"><DatabaseIcon size={16} /><h2>{tr("Markets and data")}</h2></div>
+      <Form.Item label={tr("Research data source")} name="dataSource"><Select options={[{ value: 'dataset', label: tr("Registered dataset") }, { value: 'catalog', label: tr("Nautilus catalog") }]} /></Form.Item>
+      {useNativeCatalog ? <Form.Item label={tr("Nautilus catalog path")} name="catalog" extra={tr("Use an existing catalog under the QuaZonai service's data directory.")} rules={[{ required: true, pattern: /^\//, message: tr("Enter an absolute path visible to the QuaZonai service") }]}><Input /></Form.Item> : <>
+      <ErrorNotice error={datasets.error} retry={() => { void datasets.refetch(); }} />
+      {datasets.isPending && <Loading />}
+      {datasets.data && !datasets.data.some(item => item.ready) && <div className="prerequisite">{tr("No datasets are ready")} <a href={href('/settings?section=data')}>{tr("View data")} <ArrowUpRightIcon size={13} /></a></div>}
       <Form.Item label={tr("Dataset")} name="datasetId" rules={[{ required: true, message: tr("Select a dataset") }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error(tr("Dataset is not ready"))) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder={tr("Choose a registered dataset")} options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>
       {selectedDataset && <div className="dataset-context"><span><DatabaseIcon size={13} />{selectedDataset.source}</span><code>{selectedDataset.id}</code><code>{selectedDataset.currency}</code>{(selectedDataset.start || selectedDataset.end) && <span><Timestamp value={selectedDataset.start} />  {tr("to")} <Timestamp value={selectedDataset.end} /></span>}<span>{selectedDataset.ready ? tr("Ready") : tr("Not ready")}</span></div>}
       <ErrorNotice error={datasetDetail.error} retry={() => { void datasetDetail.refetch(); }} />
       {selectedDataset && datasetDetail.isPending && <Loading />}
       {datasetDetail.data?.researchSettings?.modality === 'TRADE_TICK' && <NativeInputFacts settings={datasetDetail.data.researchSettings} preparation={datasetDetail.data.preparation} coverage={datasetDetail.data.inputCoverage} />}
+      </>}
       <Form.Item label={tr("Model")} name="model" rules={[{ required: true, message: tr("Select a model") }, { validator: (_rule, value: string) => !value || catalog.data?.models.some(model => modelKey(model) === value) ? Promise.resolve() : Promise.reject(new Error(tr("The selected model is unavailable. Choose another model."))) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder={tr("Choose an available model")} options={modelOptions} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); setThinkingChanged(false); form.setFieldValue('thinkingLevel', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.thinkingLevel ?? model?.effectiveThinkingLevel : model?.effectiveThinkingLevel); form.setFieldValue('serviceTier', settings.data?.defaultModel && modelKey(settings.data.defaultModel) === value ? settings.data.serviceTier ?? undefined : undefined); setDraftSaved(saveDraft('research', form.getFieldsValue())); }} /></Form.Item>
       {selectedModel && <p className="model-context"><code>{selectedModel.provider}/{selectedModel.modelId}</code></p>}
       <Form.Item label={tr("Processing tier")} name="serviceTier" extra={selectedModel && !selectedModel.serviceTiers.length ? tr("This model provider does not support tier settings") : undefined}><Select allowClear disabled={!selectedModel?.serviceTiers.length || !!command.pending || command.busy} placeholder={!selectedModel ? tr("Select a model first") : selectedModel.serviceTiers.length ? tr("Use the default tier") : tr("Determined by the model provider")} suffixIcon={<CaretDownIcon size={14} />} options={selectedModel?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : tr("Standard") }))} /></Form.Item>
       <div className="form-columns"><Form.Item label={tr("Reasoning effort")} name="thinkingLevel" extra={[thinkingChanged ? tr("The previous reasoning effort is unavailable. Select another option.") : undefined, reasoningModeDescription(selectedModel, thinkingLevel), thinkingUnavailableReason(selectedModel)].filter(Boolean).join('；') || undefined} rules={[{ required: !!selectedModel, message: tr("Select a reasoning effort") }, { validator: (_rule, value?: string) => !value || !selectedModel || modelSupportsThinking(selectedModel, value as ThinkingLevel) ? Promise.resolve() : Promise.reject(new Error(tr("The previous reasoning effort is unavailable. Select another option."))) }]}><Select onChange={() => setThinkingChanged(false)} suffixIcon={<CaretDownIcon size={14} />} disabled={!selectedModel || !!command.pending || command.busy} options={thinkingOptions(selectedModel)} /></Form.Item></div>
-      <details className="submission-preview" open><summary>{tr("Submission preview")}</summary>{reasoningModeDescription(selectedModel, thinkingLevel) && <p>{reasoningModeDescription(selectedModel, thinkingLevel)}</p>}<Facts items={[[tr("Research question"), preview?.goal || tr("Not entered")], [tr("Markets and data"), selectedDataset ? `${selectedDataset.name} / ${selectedDataset.currency}` : tr("Not selected")], [tr("Model and reasoning"), selectedModel ? `${selectedModel.provider}/${selectedModel.modelId} / ${thinkingLevel ? thinkingLabel(thinkingLevel) : tr("Not selected")}` : tr("Not selected")], [tr("Processing tier"), serviceTier === 'priority' ? 'Fast' : serviceTier === 'default' ? tr("Standard") : tr("Default tier")]]} /></details>
-      <ErrorNotice error={specError ?? command.error} /><DraftNotice saved={draftSaved || !!command.pending} /><div className="form-actions"><Button disabled={false} onClick={() => navigate(origin.path)}>{tr("Cancel")}</Button>{command.pending ? <Button type="primary" disabled={command.busy} aria-busy={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>{command.busy ? tr("Submitting") : tr("Check submission")}</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={!catalog.data?.models.length || !datasets.data?.some(item => item.ready)}>{tr("Start research")} <ArrowRightIcon size={15} /></Button>}</div>
+      <details className="submission-preview" open><summary>{tr("Submission preview")}</summary>{reasoningModeDescription(selectedModel, thinkingLevel) && <p>{reasoningModeDescription(selectedModel, thinkingLevel)}</p>}<Facts items={[[tr("Research question"), preview?.goal || tr("Not entered")], [tr("Markets and data"), useNativeCatalog ? preview?.catalog || tr("Not entered") : selectedDataset ? `${selectedDataset.name} / ${selectedDataset.currency}` : tr("Not selected")], [tr("Model and reasoning"), selectedModel ? `${selectedModel.provider}/${selectedModel.modelId} / ${thinkingLevel ? thinkingLabel(thinkingLevel) : tr("Not selected")}` : tr("Not selected")], [tr("Processing tier"), serviceTier === 'priority' ? 'Fast' : serviceTier === 'default' ? tr("Standard") : tr("Default tier")]]} /></details>
+      <ErrorNotice error={specError ?? command.error} /><DraftNotice saved={draftSaved || !!command.pending} /><div className="form-actions"><Button disabled={false} onClick={() => navigate(origin.path)}>{tr("Cancel")}</Button>{command.pending ? <Button type="primary" disabled={command.busy} aria-busy={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>{command.busy ? tr("Submitting") : tr("Check submission")}</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={!catalog.data?.models.length || !useNativeCatalog && !datasets.data?.some(item => item.ready)}>{tr("Start research")} <ArrowRightIcon size={15} /></Button>}</div>
     </Form></>}
   </div>;
 }

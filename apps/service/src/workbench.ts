@@ -5,7 +5,8 @@ import type { ProcessNativeTarget, RemoteNativeTarget } from '../../../packages/
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput as NativeResearchInput } from '../../research/src/documents.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
@@ -62,9 +63,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
   };
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    if (Object.keys(body).some(key => !['mode', 'requestId', 'input', 'goal', 'model', 'datasetId', 'additionalDatasetIds', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
+    if (Object.keys(body).some(key => !['mode', 'requestId', 'input', 'goal', 'model', 'datasetId', 'additionalDatasetIds', 'catalog', 'specification', 'publicLiteratureQueries', 'thinkingLevel', 'serviceTier', 'runnerBuildRequestId', 'expectedRunnerRevision'].includes(key))) throw new Problem('research_field_unsupported');
     if (body.mode !== undefined && body.mode !== 'LITERATURE_ONLY') throw new Problem('research_mode_unsupported');
     if (body.mode === 'LITERATURE_ONLY' && (body.input !== undefined || body.specification !== undefined || body.runnerBuildRequestId !== undefined || body.expectedRunnerRevision !== undefined || retainedNautilusTarget)) throw new Problem('literature_only_binding_unsupported');
+    if ('catalog' in body && ('input' in body || 'datasetId' in body || 'additionalDatasetIds' in body || body.mode !== undefined || retainedNautilusTarget)) throw new Problem('research_catalog_binding_invalid');
     if (body.additionalDatasetIds !== undefined && ('input' in body || body.mode === 'LITERATURE_ONLY' || !Array.isArray(body.additionalDatasetIds) || body.additionalDatasetIds.some(id => typeof id !== 'string' || !id.trim()) || new Set(body.additionalDatasetIds).size !== body.additionalDatasetIds.length || body.additionalDatasetIds.includes(body.datasetId))) throw new Problem('research_additional_datasets_invalid');
     const original = json(body); const old = (await readResearchAdmissions(host))[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
@@ -74,6 +76,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
       return host.start(requestId, old.input as NativeResearchInput, undefined, old.sourceEvidence as unknown as CapturedReviewSource | undefined, nativeAdmission?.metadata);
+    }
+    if ('catalog' in body && nativeAdmission) {
+      if (nativeAdmission.metadata?.original === undefined || canonical(nativeAdmission.metadata.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
+      return host.start(requestId, nativeAdmission.input as NativeResearchInput, undefined, nativeAdmission.sourceEvidence as unknown as CapturedReviewSource | undefined, nativeAdmission.metadata);
     }
     let selectedTarget: ProcessNativeTarget | undefined;
     if (body.runnerBuildRequestId !== undefined || body.expectedRunnerRevision !== undefined) {
@@ -89,7 +95,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
       const nativeModality = nativeResearchInput(configured.data)?.modality ?? configured.nativeModality;
       return { id, name, assetClass, currency, source, start, end, ...(nativeModality ? { nativeModality } : {}), ...(preparation ? { preparation } : {}), ...(inputCoverage ? { inputCoverage } : {}) };
     };
-    if ('input' in submission) {
+    if (submission.input !== undefined) {
       const native = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
       if (native) {
         if (canonical(native.input) !== canonical(json(submission.input))) throw new Problem('request_id_conflict', 409);
@@ -111,16 +117,33 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
       }
     } else {
       const publicQueries = publicLiteratureQueries(submission.publicLiteratureQueries);
-      const configured = dataset(text(submission.datasetId, 'dataset_id'));
+      const configured = submission.catalog === undefined ? dataset(text(submission.datasetId, 'dataset_id')) : undefined;
       sourceDataset = configured;
-      if (submission.mode !== 'LITERATURE_ONLY') capturedDataset = captureDataset(configured);
+      if (configured && submission.mode !== 'LITERATURE_ONLY') capturedDataset = captureDataset(configured);
       if (submission.serviceTier !== undefined && !['default', 'priority'].includes(submission.serviceTier)) throw new Problem('invalid_service_tier');
       const preferences = await getSettings();
       const preferredModel = preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId;
       const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
       const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
-      input = { ...(submission.mode ? { mode: submission.mode } : {}), goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: submission.mode === 'LITERATURE_ONLY' ? { dataset: { id: configured.id, name: configured.name, assetClass: configured.assetClass, currency: configured.currency } } : structuredClone(configured.data),
-        policy: submission.mode === 'LITERATURE_ONLY' ? {} : { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
+      let data: ResearchInput['data'];
+      let policy: ResearchInput['policy'] = {};
+      if (configured) {
+        data = submission.mode === 'LITERATURE_ONLY'
+          ? { dataset: { id: configured.id, name: configured.name, assetClass: configured.assetClass, currency: configured.currency } }
+          : structuredClone(configured.data);
+        if (submission.mode !== 'LITERATURE_ONLY') policy = { ...configured.policy, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) };
+      } else {
+        const runner = selectedTarget ?? config.nativeProcess;
+        if (!runner) throw new Problem('research_catalog_requires_local_runner', 422);
+        const path = text(submission.catalog, 'catalog');
+        if (!isAbsolute(path)) throw new Problem('research_catalog_local_path_required', 422);
+        const [root, catalog] = await Promise.all([realpath(config.dataDir), realpath(path)]).catch(() => { throw new Problem('research_catalog_not_found', 404); });
+        const bound = relative(root, catalog);
+        if (bound === '..' || bound.startsWith('..' + sep) || isAbsolute(bound)) throw new Problem('research_catalog_outside_data_root', 422);
+        if (!(await stat(catalog)).isDirectory()) throw new Problem('research_catalog_not_directory', 422);
+        data = bindScienceData({ catalog }, runner);
+      }
+      input = { ...(submission.mode ? { mode: submission.mode } : {}), goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data, policy };
     }
     // Only admission resolves extra registered identities. Retries above reuse the original input.
     if (input.data.catalogBindings !== undefined) throw new Problem('research_catalog_bindings_reserved');

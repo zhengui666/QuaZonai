@@ -221,6 +221,13 @@ test('native research and account-control commands preserve original file bytes 
   try {
     const bytes = JSON.stringify({ requestId: 'original-native', goal: 'Run native indicators', model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered' }, null, 2) + '\n'; await writeFile(file, bytes);
     await run(['research', 'start', '--file', file], () => {}); assert.equal(sent[0]!.bytes, bytes);
+    const catalog = '/srv/quazonai/data/nautilus';
+    const shorthand = ['research', 'start', '--goal', 'Run native indicators', '--model', 'faux:original', '--request-id', 'native-catalog', '--catalog', catalog];
+    await run(shorthand, () => {});
+    assert.deepEqual(JSON.parse(sent[1]!.bytes), { requestId: 'native-catalog', goal: 'Run native indicators', model: { provider: 'faux', modelId: 'original' }, catalog });
+    await assert.rejects(run([...shorthand, '--dataset', 'registered']), /catalog_or_dataset_required/);
+    await assert.rejects(run(['research', 'start', '--file', file, '--catalog', catalog]), /file_or_goal_required/);
+    assert.equal(sent.length, 2);
     const preview = '{ "requestId":"preview-original", "amount":"100.000000000000000001", "currency":"USD" }\n'; await writeFile(file, preview);
     await run(['capital', 'status', 'o-original'], () => {});
     const beforeContext = sent.length; await assert.rejects(run(['capital', 'context', 'o-original'], () => {}), /unknown_capital_command/); assert.equal(sent.length, beforeContext);
@@ -231,7 +238,7 @@ test('native research and account-control commands preserve original file bytes 
     const command = '{ "requestId":"command-original", "action":"CANCEL", "exitId":"native-original", "expectedRevision":"9007199254740993" }\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
     await writeFile(file, '{"requestId":"retired-start","action":"START","previewId":"old"}'); const beforeStart = sent.length; await assert.rejects(run(['capital','command','o-original','--file',file],()=>{}), /capital_exit_planning_retired/); assert.equal(sent.length,beforeStart);
     const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); const sentBeforeRetired = sent.length; await assert.rejects(run(['observation', 'automatic', 'o-original', '--file', file], () => {}), /unknown_observation_command/); assert.equal(sent.length, sentBeforeRetired);
-    assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
+    assert.deepEqual(sent.slice(2).map(row => [row.method, row.url]), [
       ['GET', '/api/v3/observations/o-original/capital-exits'],
       ['GET', '/api/v3/observations/o-original/capital-exits/exit%2Foriginal'],
       ['POST', '/api/v3/observations/o-original/capital-exits/commands'],
