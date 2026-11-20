@@ -24,6 +24,7 @@ export const zhCN: Record<string, string> = {
   "Appearance": "外观设置",
   "Page not found": "未找到页面",
   "Back to research": "返回研究",
+  "The standalone parameter scans page has been retired": "独立参数扫描页面已下线",
   "System": "跟随系统",
   "Light": "浅色",
   "Dark": "深色",
