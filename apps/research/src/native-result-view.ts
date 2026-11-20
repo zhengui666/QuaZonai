@@ -7,11 +7,24 @@ import { object } from './trials.ts';
 // depend on Harness truncating an oversized response into invalid JSON.
 export const nativeToolMaxBytes = 50 * 1024;
 export const nativeToolOutputLimits = { maxBytes: nativeToolMaxBytes, maxLines: 2000 };
+function nativeToolPageHint(taskId: number) {
+  return { taskId, projection: 'SUMMARY_NOT_INCLUDED_USE_PAGED_TASK_VIEW', reader: 'native_assessment_read_exposure',
+    summaryPath: '$.summary', rowsReviewed: false, note: 'Even the compact summary exceeds one response; read the original Task summary in pages. Original evidence is retained.' };
+}
 export function nativeToolText(view: JsonObject, taskId: number): string {
   const text = JSON.stringify(view);
-  return Buffer.byteLength(text) <= nativeToolMaxBytes ? text : JSON.stringify({ taskId,
-    projection: 'SUMMARY_NOT_INCLUDED_USE_PAGED_TASK_VIEW', reader: 'native_assessment_read_exposure',
-    summaryPath: '$.summary', rowsReviewed: false, note: 'Even the compact summary exceeds one response; read the original Task summary in pages. Original evidence is retained.' });
+  return Buffer.byteLength(text) <= nativeToolMaxBytes ? text : JSON.stringify(nativeToolPageHint(taskId));
+}
+
+/** Keep the native import verdict visible without expanding the paged evidence. */
+export function nativeImportToolText(result: JsonObject, taskId: number): string {
+  const text = JSON.stringify(result);
+  if (Buffer.byteLength(text) <= nativeToolMaxBytes) return text;
+  const report = result.report;
+  const status = report && typeof report === 'object' && !Array.isArray(report) ? report.status : undefined;
+  return JSON.stringify({ ...nativeToolPageHint(taskId),
+    ...(status === 'IMPORTED' || status === 'INCOMPLETE' ? { report: { status } } : {}),
+    ...(typeof result.research_qualified === 'boolean' ? { research_qualified: result.research_qualified } : {}) });
 }
 
 /** A model-facing view only; the official Task retains the result and original row-page references. */

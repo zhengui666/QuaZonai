@@ -5,7 +5,7 @@ import {join,normalize} from 'node:path';
 import type {NativeTarget,NativeJson} from '../../../packages/contracts/src/nautilus.ts';
 import {studyInput,object} from '../src/trials.ts';
 import {validateNumbers} from '../src/input.ts';
-import {nativeToolText,nativeToolOutputLimits} from '../src/native-result-view.ts';
+import {nativeImportToolText,nativeToolOutputLimits} from '../src/native-result-view.ts';
 import {executeNativeValue,nativeTargetForData,withNativeRemoteTracking,retainNativeRemoteUncertainty,nativeUncertainTaskId,reconcileNativeExecution,cancelUnsettledNativeExecutions} from '../src/native-execution.ts';
 
 const schemas=JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json',import.meta.url),'utf8')).components.schemas;
@@ -51,7 +51,7 @@ function importTool(name:string,parameters:Schema<JsonObject>,prepareArguments:(
     }
     const task=await api.waitForTask(id,context);
     if(task.state.outcome.status!=='completed')throw new Error(task.state.outcome.status==='failed'?task.state.outcome.error.message:'native_market_import_aborted');
-    return {output:[{type:'text',text:nativeToolText({...task.state.outcome.result,taskId:id},id)}]};
+    return {output:[{type:'text',text:nativeImportToolText({...task.state.outcome.result,taskId:id},id)}]};
   },
 });}
 /** Preparation uses the same original import Task, before a catalog can be registered. */
