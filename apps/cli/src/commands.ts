@@ -63,7 +63,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   capital status OBSERVATION_ID | get OBSERVATION_ID EXIT_ID
   observation cancel-protection OBSERVATION_ID
   capital command OBSERVATION_ID --file STOP_REQUEST.json (PAUSE/CANCEL only)
-  settings get | set --file SETTINGS.json | set --tick-book-cores COUNT
+  settings get | set --file SETTINGS.json
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
@@ -83,7 +83,6 @@ const options = {
   'result-task-id': { type: 'string' as const }, offset: { type: 'string' as const },
   instruction: { type: 'string' as const },
   'account-source-id': { type: 'string' as const }, 'expected-revision': { type: 'string' as const },
-  'tick-book-cores': { type: 'string' as const },
   'socket-path': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
@@ -285,10 +284,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   } else if (group === 'settings') {
     path = '/settings';
     if (action === 'set') {
-      if (values['tick-book-cores'] !== undefined) {
-        if (values.file || !/^[1-9]\d*$/.test(values['tick-book-cores']) || !Number.isSafeInteger(Number(values['tick-book-cores']))) throw new CliError('tick_book_cores_invalid');
-        body = JSON.stringify({ tickBookCores: Number(values['tick-book-cores']) });
-      } else body = (await fileBody(values.file)).bytes;
+      body = (await fileBody(values.file)).bytes;
       method = 'PATCH';
     }
     else if (action !== 'get') throw new CliError('unknown_settings_command');

@@ -213,7 +213,7 @@ export interface InstanceSettingsUpdate {
   expectedRevision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
 export type InterfaceLanguage = 'en' | 'zh-CN';
-export interface SettingsView { language?: InterfaceLanguage; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; tickBookCores?: number }
+export interface SettingsView { language?: InterfaceLanguage; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null }
 export interface WorkspaceView { name: string; connections: ConnectionView[] }
 export interface ExtensionView {
   name: string; version: string | null; enabled: boolean; kind: string; required?: boolean;

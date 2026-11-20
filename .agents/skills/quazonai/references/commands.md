@@ -72,9 +72,8 @@ The old `portfolio replay-ticks` / `tick-replay` service routes have been remove
 
 | Command | Request or check |
 | --- | --- |
-| `settings get` | Read language (`en` default or `zh-CN`), default model, thinkingLevel, serviceTier, and tickBookCores; use language for normal responses unless the user explicitly requests another language |
+| `settings get` | Read language (`en` default or `zh-CN`), default model, thinkingLevel and serviceTier; use language for normal responses unless the user explicitly requests another language |
 | `settings set --file SETTINGS.json` | PATCH required settings, then read back with `settings get` |
-| `settings set --tick-book-cores COUNT` | Positive safe integer; cannot be combined with `--file` |
 | `extensions list` | Read name, enabled, required, state, and error |
 | `extensions enable NAME` / `extensions disable NAME` | Use actual names and read back loaded/disabled/pending_restart/error; required extensions may reject disabling |
 | `maintenance status` | Read RUNNING/DRAINING/QUIESCED, epoch, and blockers |
