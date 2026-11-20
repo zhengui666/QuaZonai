@@ -1,4 +1,4 @@
-import { nativeToolText } from '../../research/src/native-result-view.ts';
+import { nativeImportToolText } from '../../research/src/native-result-view.ts';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -67,7 +67,7 @@ export async function researchTaskEvidence(host: ResearchHost, id: number, taskI
     const study = await tx.doc(Study, id as ConversationId);
     if (!study.input || study.deletedAt) throw new Problem('research_evidence_not_found', 404);
     const state=task.kind==='qz.native-market-import'&&task.state.status==='terminal'&&task.state.outcome.status==='completed'
-      ? {...task.state,outcome:{...task.state.outcome,result:JSON.parse(nativeToolText(object(task.state.outcome.result,'native_market_import_result'),task.id))}}
+      ? {...task.state,outcome:{...task.state.outcome,result:JSON.parse(nativeImportToolText(object(task.state.outcome.result,'native_market_import_result'),task.id))}}
       : task.state;
     return { taskId, kind: task.kind, input: task.input, state };
   }, context);

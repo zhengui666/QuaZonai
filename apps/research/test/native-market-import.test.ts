@@ -27,18 +27,30 @@ test('market import preserves explicit book modality and clock choices through t
 
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {exposureReadTool} from '../plugins/research-assessment.ts';
-import {nativeToolText} from '../src/native-result-view.ts';
+import {nativeImportToolText,nativeToolText,nativeToolMaxBytes} from '../src/native-result-view.ts';
 
 test('oversized preparation metadata has a working same-conversation summary reader, not a backtest table reader',async()=>{
   // Transport-only metadata, not synthetic market observations or a scientific import claim.
-  const result={schema_version:1,research_qualified:false,report:{native_files:Array.from({length:1000},(_,i)=>({path:`/declared/output/${i}/${'p'.repeat(80)}`}))}};
-  const hint=JSON.parse(nativeToolText(result,7));assert.equal(hint.reader,'native_assessment_read_exposure');
+  const result={schema_version:1,research_qualified:false,catalog_path:'/declared/output/catalog',report:{status:'IMPORTED',native_files:Array.from({length:1000},(_,i)=>({path:`/declared/output/${i}/${'p'.repeat(80)}`}))}};
+  const originalHint=JSON.parse(nativeToolText(result,7));
+  const text=nativeImportToolText(result,7);
+  assert.ok(Buffer.byteLength(text)<=nativeToolMaxBytes);
+  const hint=JSON.parse(text);
+  assert.equal(hint.reader,'native_assessment_read_exposure');
+  assert.equal(hint.summaryPath,'$.summary');
+  assert.equal(hint.taskId,7);
+  assert.deepEqual(hint,{...originalHint,report:{status:'IMPORTED'},research_qualified:false});
+  const {research_qualified:_,...withoutQualification}=result;
+  assert.deepEqual(JSON.parse(nativeImportToolText({...withoutQualification,report:{...result.report,status:'UNKNOWN'}},7)),originalHint);
+  const small={report:{status:'IMPORTED'},research_qualified:false,taskId:7};
+  assert.equal(nativeImportToolText(small,7),JSON.stringify(small));
   let conversationId=1;
   const api={conversationId:1,agent:async()=>({model:{provider:'test',modelId:'metadata'}}),models:{getModel:()=>({contextWindow:200000})},
     commit:async(fn:any)=>fn({conversation:async()=>({owner:null}),task:async()=>({conversationId,kind:'qz.native-market-import',state:{status:'terminal',outcome:{status:'completed',result}}}),doc:async()=>({pages:[],runs:[]})})};
   const read=await exposureReadTool.execute({taskId:7,path:'$.summary/report/native_files',offset:0,pageSize:3},api as any,context);
   const page=JSON.parse((read.output![0] as any).text);assert.equal(page.rows.length,3);assert.equal(page.nextOffset,3);
   assert.equal(page.rows[0].summaryPath,'$.summary/report/native_files/0');
+  assert.deepEqual(result.report.native_files.length,1000);
   await assert.rejects(()=>exposureReadTool.execute({taskId:7,path:'$.canonical_result.orders',offset:0,pageSize:3},api as any,context),/assessment_evidence_task_unavailable/);
   conversationId=2;
   await assert.rejects(()=>exposureReadTool.execute({taskId:7,path:'$.summary',offset:0,pageSize:3},api as any,context),/assessment_evidence_task_unavailable/);
