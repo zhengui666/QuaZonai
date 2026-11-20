@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { Button, Form, Input, InputNumber, Segmented, Select } from 'antd';
+import { Button, Form, Input, Segmented, Select } from 'antd';
 import { ArrowClockwiseIcon, CaretDownIcon, CircleHalfIcon, MagnifyingGlassIcon, MoonIcon, PlugsIcon, SunIcon } from '@phosphor-icons/react';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
@@ -12,10 +12,10 @@ import { useModelCatalog, useResource } from './data-hooks';
 import { thinkingLabel, thinkingOptions, thinkingUnavailableReason, reasoningModeDescription } from './model-labels';
 import type { ModelLoginRequest } from './model-login';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, Status, useConfirm } from './ui';
-type Fields = { model?: string; thinking: ThinkingLevel | 'default'; serviceTier?: ServiceTier; tickBookCores: number };
+type Fields = { model?: string; thinking: ThinkingLevel | 'default'; serviceTier?: ServiceTier };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
-function fields(value: SettingsView): Fields { return { model: value.defaultModel ? modelKey(value.defaultModel) : undefined, thinking: value.thinkingLevel ?? 'default', serviceTier: value.serviceTier ?? undefined, tickBookCores: value.tickBookCores ?? 1 }; }
-function payload(value: Fields): SettingsView { return { defaultModel: value.model ? JSON.parse(value.model) as ModelRef : null, thinkingLevel: value.model && value.thinking !== 'default' ? value.thinking : null, serviceTier: value.model ? value.serviceTier ?? null : null, tickBookCores: value.tickBookCores ?? 1 }; }
+function fields(value: SettingsView): Fields { return { model: value.defaultModel ? modelKey(value.defaultModel) : undefined, thinking: value.thinkingLevel ?? 'default', serviceTier: value.serviceTier ?? undefined }; }
+function payload(value: Fields): SettingsView { return { defaultModel: value.model ? JSON.parse(value.model) as ModelRef : null, thinkingLevel: value.model && value.thinking !== 'default' ? value.thinking : null, serviceTier: value.model ? value.serviceTier ?? null : null }; }
 export default function ModelSettings({ connect }: { connect: (value: ModelLoginRequest) => void }) {
  const { t } = useTranslation('settings');
 
@@ -55,7 +55,6 @@ export default function ModelSettings({ connect }: { connect: (value: ModelLogin
       <Form.Item label={t("Default model")} name="model"><Select showSearch allowClear optionFilterProp="label" options={options} suffixIcon={<CaretDownIcon size={14} />} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); form.setFieldValue('thinking', 'default'); if (!current?.serviceTier || !model?.serviceTiers.includes(current.serviceTier)) form.setFieldValue('serviceTier', undefined); setDraftSaved(saveDraft('settings', form.getFieldsValue())); }} /></Form.Item>
       <Form.Item label={t("Reasoning effort")} name="thinking" extra={[reasoningModeDescription(selected, current?.thinking), thinkingUnavailableReason(selected)].filter(Boolean).join("; ") || undefined} rules={[{ validator: (_rule, value?: string) => !value || value === 'default' || !current?.model || !selected || modelSupportsThinking(selected, value as ThinkingLevel) ? Promise.resolve() : Promise.reject(new Error(t("The previous reasoning effort is unavailable. Choose another"))) }]}><Select disabled={!current?.model || saving || !!pendingSave} suffixIcon={<CaretDownIcon size={14} />} options={[{ value: 'default', label: thinkingLabel('default') }, ...thinkingOptions(selected)]} /></Form.Item>
       <Form.Item label={t("Service tier")} name="serviceTier" extra={selected && !selected.serviceTiers.length ? t("This model service does not support tier selection") : undefined}><Select allowClear disabled={!selected?.serviceTiers.length || saving || !!pendingSave} placeholder={!selected ? t("Choose a model first") : selected.serviceTiers.length ? t("Use default tier") : t("Determined by the model service")} suffixIcon={<CaretDownIcon size={14} />} options={selected?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : t("Standard") }))} /></Form.Item>
-      <Form.Item label={t("CPU cores for tick replay")} name="tickBookCores" rules={[{ required: true, type: 'integer', min: 1 }]}><InputNumber min={1} precision={0} /></Form.Item>
       <ErrorNotice error={error} /><DraftNotice saved={draftSaved} /><div className="settings-save"><Button type="primary" loading={saving} disabled={!dirty && !pendingSave} onClick={() => { void save(); }}>{saving ? t("Saving") : pendingSave ? t("Retry save") : t("Save settings")}</Button><span role="status" className="quiet">{notice || (pendingSave && !saving ? t("Save outcome needs reconciliation") : dirty ? t("Unsaved") : '')}</span></div>
     </Form>}</div></section>
     <section className="settings-group"><header><h2>{t("Appearance")}</h2></header><div className="settings-group-body"><Segmented aria-label={t("Appearance")} className="appearance-options" value={appearance.mode} onChange={value => appearance.setMode(value as 'system' | 'light' | 'dark')} options={[{ value: 'system', label: <span><CircleHalfIcon size={16} />{t("System")}</span> }, { value: 'light', label: <span><SunIcon size={16} />{t("Light")}</span> }, { value: 'dark', label: <span><MoonIcon size={16} />{t("Dark")}</span> }]} /></div></section>

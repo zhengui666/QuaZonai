@@ -103,16 +103,14 @@ test('settings retain supported reasoning and service tier before admission/repl
   const patch = (payload: object) => state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload });
   try {
     await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json({ name: 'Historical', defaultModel: state.model, taskTimeoutSeconds: 0.001, nativeTimeoutSeconds: 0.001 }); }, context);
-    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: state.model, thinkingLevel: null, serviceTier: null, tickBookCores: 1 });
-    assert.equal((await patch({ tickBookCores: 0 })).json().error, 'tick_book_cores_invalid');
-    assert.equal((await patch({ tickBookCores: 8 })).statusCode, 200);
+    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: state.model, thinkingLevel: null, serviceTier: null });
     const availableModels = state.service.research.availableModels;
     state.service.research.availableModels = async () => [];
     try {
-      assert.equal((await patch({ tickBookCores: 4 })).statusCode, 200);
-      assert.equal((await patch({ defaultModel: { modelId: state.model.modelId, provider: state.model.provider }, thinkingLevel: null, serviceTier: null, tickBookCores: 8 })).statusCode, 200);
+      assert.equal((await patch({ language: 'en' })).statusCode, 200);
+      assert.equal((await patch({ defaultModel: { modelId: state.model.modelId, provider: state.model.provider }, thinkingLevel: null, serviceTier: null })).statusCode, 200);
     } finally { state.service.research.availableModels = availableModels; }
-    for (const field of ['name', 'maxTrials', 'taskTimeoutSeconds', 'nativeTimeoutSeconds']) assert.equal((await patch({ [field]: 1 })).json().error, 'settings_field_not_mutable');
+    for (const field of ['name', 'maxTrials', 'taskTimeoutSeconds', 'nativeTimeoutSeconds', 'tickBookCores']) assert.equal((await patch({ [field]: 1 })).json().error, 'settings_field_not_mutable');
     assert.equal((await patch({ defaultModel: state.model, thinkingLevel: 'unsupported' })).json().error, 'thinking_level_unsupported');
     assert.equal((await patch({ serviceTier: 'fast' })).json().error, 'invalid_service_tier');
     assert.equal((await patch({ serviceTier: 'priority' })).json().error, 'service_tier_unsupported');
@@ -141,7 +139,7 @@ test('settings retain supported reasoning and service tier before admission/repl
     const { view } = await import('./support.ts').then(module => module.built(state)); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     assert.equal((await patch({ defaultModel: null, thinkingLevel: null })).json().error, 'model_required');
     assert.equal((await patch({ defaultModel: null, thinkingLevel: null, serviceTier: null })).statusCode, 200);
-    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null, tickBookCores: 8 });
+    assert.deepEqual(await state.service.work.getSettings(), { language: 'en', defaultModel: null, thinkingLevel: null, serviceTier: null });
   } finally { await state.cleanup(); }
 });
 
@@ -163,6 +161,7 @@ test('language-only settings persist independently of model availability and rej
     const stored = { defaultModel: state.model, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8, historicalField: 'retain original settings' };
     await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json(stored); }, context);
     const before = (await read()).json();
+    assert.equal(Object.hasOwn(before, 'tickBookCores'), false);
     const host = state.service.research;
     const availableModels = host.availableModels;
     const getModel = host.models.getModel;

@@ -98,11 +98,9 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
       ['GET', '/api/v3/research/models'], ['GET', '/api/v3/research?cursor=%7B%22id%22%3A4%7D'], ['POST', '/api/v3/research/42/stop'], ['POST', '/api/v3/observations'], ['GET', '/api/v3/observations'], ['PATCH', '/api/v3/settings'], ['PATCH', '/api/v3/extensions/qz.research-native'],
     ]);
     assert.deepEqual(output.at(-3), { id: 'o-1', cash: null });
-    for (const cores of ['4', '12']) {
-      await run(['settings', 'set', '--tick-book-cores', cores], () => {});
-      assert.deepEqual(JSON.parse(sent.at(-1)!.bytes), { tickBookCores: Number(cores) });
-    }
-    for (const cores of ['0', '1.2', '-1']) await assert.rejects(run(['settings', 'set', `--tick-book-cores=${cores}`]), /tick_book_cores_invalid/);
+    const callsBeforeRetiredFlag = sent.length;
+    await assert.rejects(run(['settings', 'set', '--tick-book-cores=4']), { code: 'ERR_PARSE_ARGS_UNKNOWN_OPTION' });
+    assert.equal(sent.length, callsBeforeRetiredFlag);
     assert.ok((await schemas() as { names: string[] }).names.includes('ResearchStart'));
     assert.ok((await schemas('NativeStrategyBacktestRequestV1', true) as { schema: unknown }).schema);
   } finally { await config.close(); await api.close(); }
@@ -402,7 +400,7 @@ test('bodyless mutations carry explicit JSON and configured origin without chang
 test('settings language uses the existing authenticated GET and exact PATCH file path', async () => {
   const calls: { method: string; url: string; bytes: string }[] = [];
   let language = 'en';
-  const original = { defaultModel: { provider: 'faux', modelId: 'unchanged' }, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8 };
+  const original = { defaultModel: { provider: 'faux', modelId: 'unchanged' }, thinkingLevel: 'high', serviceTier: 'priority' };
   const api = await server((request, response, bytes) => {
     calls.push({ method: request.method!, url: request.url!, bytes });
     assert.equal(request.url, '/api/v3/settings');

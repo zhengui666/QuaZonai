@@ -21,7 +21,7 @@ vi.mock('./account-settings', () => ({ default: () => null }));
 vi.mock('./data', () => ({ default: () => null }));
 import Settings from './settings';
 
-const original: SettingsView = { defaultModel: { provider: 'original', modelId: 'original-model' }, thinkingLevel: 'high', serviceTier: 'priority', tickBookCores: 8 };
+const original: SettingsView = { defaultModel: { provider: 'original', modelId: 'original-model' }, thinkingLevel: 'high', serviceTier: 'priority' };
 let renderer: ReactTestRenderer | undefined;
 let cache: QueryClient;
 beforeEach(async () => {
