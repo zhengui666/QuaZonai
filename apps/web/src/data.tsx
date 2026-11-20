@@ -6,8 +6,6 @@ import type { DatasetView } from '../../../packages/contracts/src/index.ts';
 import { useResource } from './data-hooks';
 import { navigate } from './router';
 import { Copy, Empty, ErrorNotice, Facts, Loading, Status, Timestamp } from './ui';
-import DatasetRegistration from './dataset-registration';
-import DatasetSelection from './dataset-selection';
 import { NativeInputFacts } from './native-input';
 export default function Data() {
  const { t, i18n } = useTranslation('settings');
@@ -23,8 +21,6 @@ export default function Data() {
       { title: t("Status"), render: (_value, row) => <Status plain value={row.ready ? 'ready' : 'not_ready'} label={row.ready ? t("Ready") : t("Not ready")} /> },
       { title: t("Actions"), width: 130, render: (_value, row) => row.ready ? <Button onClick={() => study(row.id)}>{t("Use for research")}<ArrowUpRightIcon size={13} /></Button> : <span className="quiet">{t("Check the data configuration")}</span> },
     ]} />}
-    <DatasetSelection />
-    <DatasetRegistration />
     <Drawer className="dataset-drawer" getContainer={false} title={summary?.name} open={!!summary} onClose={() => setSelectedId(undefined)} width="min(520px, 100vw)" footer={selected?.ready && <Button type="primary" onClick={() => study(selected.id)}>{t("Use for research")}<ArrowUpRightIcon size={13} /></Button>}>
       <ErrorNotice error={detail.error} retry={() => { void detail.refetch(); }} />{detail.isPending && summary && <Loading />}
       {selected && <><Facts items={[[t("Dataset ID"), <><code>{selected.id}</code><Copy value={selected.id} label={t("Copy dataset ID")} /></>], [t("Research admission"), <Status value={selected.ready ? 'ready' : 'not_ready'} label={selected.ready ? t("Prepared") : t("Preparation needed")} />], [t("Source"), selected.source], [t("Asset class"), selected.assetClass], [t("Currency"), selected.currency], [t("Start time"), <Timestamp value={selected.start} />], [t("End time"), <Timestamp value={selected.end} />]]} /><NativeInputFacts modality={selected.nativeModality} settings={selected.researchSettings} preparation={selected.preparation} coverage={selected.inputCoverage} /></>}
