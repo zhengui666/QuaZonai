@@ -18,7 +18,7 @@ import { ModelCredentials } from '../src/credentials.ts';
 
 const context = BACKGROUND_CONTEXT;
 const input = (goal: string) => ({ goal, model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'max' as const, data: {}, policy: { } });
-type RequestBody = { tools?: { name?: string }[]; instructions: string; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
+type RequestBody = { tools?: { name?: string }[]; instructions: string; input?: { role?: string; content?: { type: string; text?: string }[] }[]; service_tier?: string; reasoning: { effort: string }; prompt_cache_key: string; composition_marker?: string };
 
 function controlledProvider(provider: Provider = openaiCodexProvider(), modelsStore?: import('@earendil-works/pi-ai').ModelsStore) {
   const requests: RequestBody[] = [];
@@ -66,8 +66,10 @@ test('official Codex serializes max and per-study Fast choices without mixing co
     for (const receipt of receipts) assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     assert.equal(controlled.requests.length, choices.length);
     for (const choice of choices) {
-      const request = controlled.requests.find(body => body.instructions.includes(choice.goal))!;
+      const request = controlled.requests.find(body => body.input?.some(item => item.role === 'user'
+        && item.content?.some(part => part.type === 'input_text' && part.text === choice.goal)));
       assert.ok(request);
+      assert.equal(request.instructions.includes(choice.goal), false);
       assert.equal(request.reasoning.effort, 'max');
       assert.equal(request.service_tier, 'serviceTier' in choice ? choice.serviceTier : undefined);
     }
