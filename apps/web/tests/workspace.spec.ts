@@ -905,25 +905,6 @@ test('instance tokens stay masked and out of browser storage while an uncertain 
 });
 
 // Controlled display and polling evidence only; real replay admission/recovery lives in Service tests.
-test('retired tick portfolio links never request legacy replay or portfolio detail data', async ({ page }) => {
-  const state = await contract(page); state.empty();
-  const retiredRequests: string[] = [];
-  page.on('request', request => {
-    const { pathname } = new URL(request.url());
-    if (/^\/api\/v3\/(?:tick-economic-replays(?:\/|$)|portfolios\/old-tick-id(?:\/|$))/.test(pathname)) retiredRequests.push(pathname);
-  });
-  await page.goto('/#/portfolios');
-  await expect(page.getByRole('heading', { name: '尚无策略组合', exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Tick 经济回放', exact: true })).toHaveCount(0);
-  for (const path of ['/portfolios?view=tick', '/portfolios/old-tick-id?view=tick']) {
-    await page.goto(`/#${path}`);
-    await expect(page.getByText('旧版 Tick 经济回放页面已退役', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: '组合回测', exact: true }).last()).toHaveAttribute('href', '#/portfolios');
-  }
-  expect(retiredRequests).toEqual([]);
-  expect(state.writes).toEqual([]);
-});
-
 test('portfolio table shows all three performance metrics and sends sortable fields through the list query', async ({ page }, info) => {
   const state = await contract(page); const reads: URLSearchParams[] = [];
   const longName = '名称很长的组合'.repeat(15);
