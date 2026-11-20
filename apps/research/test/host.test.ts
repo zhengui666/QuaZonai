@@ -37,11 +37,17 @@ test('native backoff checkpoint survives close/reopen; quota and auth fail witho
     let ready!: (id: TaskId) => void;
     const backoff = new Promise<TaskId>((resolve) => { ready = resolve; });
     graph.start(async (call) => { if (call.kind !== 'value') return; const value = call.value; const task = Object.values(value.tasks).find((task) => 'phase' in task.state && task.state.phase === 'retry'); if (task) ready(task.id); });
-    setup_.faux.setResponses([(_transcript, options) => {
+    const originalInput = input(setup_.model);
+    setup_.faux.setResponses([(transcript, options) => {
+      const { messages, ...modelContext } = transcript;
+      const user = messages.find(message => message.role === 'user');
+      assert.ok(user?.role === 'user');
+      assert.equal(typeof user.content === 'string' ? user.content : user.content.map(part => part.type === 'text' ? part.text : '').join(''), originalInput.goal);
+      assert.equal(JSON.stringify(modelContext).includes(originalInput.goal), false);
       assert.equal(options!.timeoutMs, undefined); assert.equal(options!.maxRetries, 0);
       return fauxAssistantMessage('', { stopReason: 'error', errorMessage: '503 service unavailable' });
     }]);
-    const receipt = await host.start('transient-retry', input(setup_.model));
+    const receipt = await host.start('transient-retry', originalInput);
     const taskId = await backoff;
     const task = (await host.harness.getTask(taskId, context))!;
     assert.notEqual(task.state.status, 'terminal');
@@ -58,7 +64,9 @@ test('native backoff checkpoint survives close/reopen; quota and auth fail witho
     assert.equal(setup_.faux.state.callCount, 2);
     const agent = await (await host.harness.conversation(receipt.conversationId, context))!.agent(context);
     assert.equal(agent.thinkingLevel, (await host.availableModels())[0]!.effectiveThinkingLevel);
-    assert.ok((await host.view(receipt.conversationId)).docs['pi.agent']);
+    const agentDoc = (await host.view(receipt.conversationId)).docs['pi.agent'];
+    assert.ok(agentDoc);
+    assert.equal(JSON.stringify(agentDoc).includes(originalInput.goal), false);
     for (const message of ['insufficient_quota: billing quota exhausted', '401 unauthorized: invalid api key']) {
       const before: number = setup_.faux.state.callCount;
       setup_.faux.setResponses([fauxAssistantMessage('', { stopReason: 'error', errorMessage: message })]);
