@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -86,5 +87,33 @@ class CliEncodingTests(unittest.TestCase):
             (package.ROOT / 'packages/contracts/src/pm.ts').read_text(encoding='utf-8'),
             json.loads(result.stdout)['source'],
         )
+
+
+class LauncherBuilderTests(unittest.TestCase):
+    def test_builder_is_required_and_uses_existing_glue(self):
+        import launcher_package
+        self.assertTrue(set(launcher_package.ARCHIVES.values()).issubset(package.REQUIRED_ASSETS))
+        source = (package.ROOT/'deploy/launcher-build.mjs').read_text()
+        self.assertIn("import('./rust-launcher-build.ts')", source)
+        self.assertIn('COMPILED_NOT_CONNECTED', source)
+        self.assertNotIn('main_with_hooks', source)
+
+    def test_real_builder_archive_and_entry_without_cargo(self):
+        import launcher_package
+        node = shutil.which('node')
+        license = Path(node).resolve().parent.parent/'LICENSE'
+        if not license.is_file():
+            license = Path('/usr/share/licenses/nodejs/LICENSE')
+        if not license.is_file():
+            self.skipTest('Node distribution license not found; release matrix executes archive verifier')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runtime = root/'runtime'; (runtime/'bin').mkdir(parents=True)
+            shutil.copy2(node, runtime/'bin/node'); shutil.copy2(license, runtime/'LICENSE')
+            output = root/'assets'
+            path = launcher_package.pack(runtime, 'linux-x86_64', output, 'v3.0.0-dev.1', 'a'*40)
+            launcher_package.verify(path, 'linux-x86_64', 'v3.0.0-dev.1', 'a'*40)
+            with self.assertRaises(ValueError):
+                launcher_package.verify(path, 'linux-x86_64', 'v3.0.0-dev.2', 'a'*40)
+            subprocess.run([sys.executable, str(package.ROOT/'deploy/launcher_verify.py'), str(output), 'linux-x86_64', 'v3.0.0-dev.1'], check=True)
 
 if __name__ == '__main__': unittest.main()
