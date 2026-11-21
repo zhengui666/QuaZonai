@@ -14,9 +14,13 @@ test('native build preserves standard outputs before publishing the high-precisi
 set -euo pipefail
 profile=debug
 precision=standard
+previous=''
 for value in "$@"; do
   [[ "$value" != --release ]] || profile=release
-  [[ "$value" != market-history,catalog-prepare,hyperliquid-offline ]] || precision=high
+  if [[ "$previous" == --features && ",$value," == *,market-history,* ]]; then
+    precision=high
+  fi
+  previous=$value
 done
 mkdir -p "$CARGO_TARGET_DIR/$profile/examples"
 for binary in job source-tools catalog-prepare market-history account-runtime; do
