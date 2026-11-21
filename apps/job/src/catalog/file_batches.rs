@@ -73,16 +73,26 @@ pub fn file_batch_session(
         )?
         .into_iter()
         .map(|path| PathBuf::from(catalog.reconstruct_full_uri(&path)))
-        .collect::<Vec<_>>()
-        .into_iter();
-    Ok(FileBatchSession {
-        paths,
+        .collect();
+    Ok(file_batch_session_with_paths(
+        query, event_range, batch_rows, paths,
+    ))
+}
+
+pub(super) fn file_batch_session_with_paths(
+    query: CatalogQuery,
+    event_range: Option<Range<u64>>,
+    batch_rows: usize,
+    paths: Vec<PathBuf>,
+) -> FileBatchSession {
+    FileBatchSession {
+        paths: paths.into_iter(),
         reader: None,
         metadata: HashMap::new(),
         query,
         event_range,
         batch_rows: batch_rows.clamp(1, 4096),
-    })
+    }
 }
 
 impl FileBatchSession {

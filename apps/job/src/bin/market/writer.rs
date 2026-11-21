@@ -8,7 +8,7 @@ use nautilus_persistence::{
 };
 use nautilus_serialization::arrow::EncodeToRecordBatch;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -22,6 +22,7 @@ pub(super) struct Writer {
     pending_records: usize,
     pub(super) counts: BTreeMap<String, BTreeMap<String, u64>>,
     root: PathBuf,
+    owned_book_keys: BTreeSet<String>,
     verify_only: bool,
     max_output_bytes: Option<u64>,
 }
@@ -116,6 +117,7 @@ impl Writer {
             pending_records: 0,
             counts: BTreeMap::new(),
             root: output.to_owned(),
+            owned_book_keys: BTreeSet::new(),
             verify_only,
             max_output_bytes,
         })
@@ -176,7 +178,16 @@ impl Writer {
             }
             // Split contiguous native encodings, not all equal precisions across intervening versions.
             for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
-                crate::catalog::publish::publish_batch(&self.catalog, items, self.verify_only)?;
+                if !self.verify_only && matches!(items[0], Data::BookDelta(_)) {
+                    let path =
+                        crate::catalog::publish::publish_fresh_book_batch(&self.catalog, items)?;
+                    ensure!(
+                        self.owned_book_keys.insert(path),
+                        "NATIVE_RECORD_READBACK_MISMATCH"
+                    );
+                } else {
+                    crate::catalog::publish::publish_batch(&self.catalog, items, self.verify_only)?;
+                }
                 self.last_written
                     .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
                 *self
@@ -198,6 +209,21 @@ impl Writer {
 
     pub(super) fn finish(&mut self) -> Result<()> {
         self.flush(true)
+    }
+
+    pub(super) fn verify_owned_book_files<'a>(
+        &self,
+        inventory: impl Iterator<Item = &'a str>,
+    ) -> Result<()> {
+        if !self.owned_book_keys.is_empty() {
+            ensure!(
+                self.owned_book_keys.iter().map(String::as_str).eq(
+                    inventory.filter(|path| path.starts_with("data/order_book_deltas/"))
+                ),
+                "NATIVE_RECORD_READBACK_MISMATCH"
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn check_output_limit_for(&self, report: &impl serde::Serialize) -> Result<()> {
