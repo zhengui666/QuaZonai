@@ -7,14 +7,14 @@ output=${2:?output directory is required}
 args=()
 if [[ "$profile" == release ]]; then args+=(--release); elif [[ "$profile" != debug ]]; then exit 2; fi
 cargo build --locked "${args[@]}" -p job \
-  --features native-sandbox-test,catalog-prepare,hyperliquid-offline \
+  --features native-sandbox-test,catalog-prepare,hyperliquid-offline,hf-catalog \
   --bin job --bin source-tools --bin catalog-prepare
 mkdir -p "$output"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/job" "$output/job"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/source-tools" "$output/source-tools"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/catalog-prepare" "$output/catalog-prepare"
 cargo build --locked "${args[@]}" -p job \
-  --features market-history,catalog-prepare,hyperliquid-offline \
+  --features market-history,catalog-prepare,hyperliquid-offline,hf-catalog \
   --bin job --bin catalog-prepare --bin market-history
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/job" "$output/job-high-precision"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/catalog-prepare" "$output/catalog-prepare-high-precision"

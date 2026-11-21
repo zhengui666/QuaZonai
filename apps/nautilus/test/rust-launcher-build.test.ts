@@ -272,6 +272,9 @@ test('official Cargo offline resolver repairs stale owner lock without running b
 test('market preparation is opt-in and preserves explicit owner precision', () => {
   assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research' }), []);
   assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research', marketImport: false }), []);
+  assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research', hfCatalogs: false }), []);
+  assert.deepEqual(launcherFeatures(resolved(), { backtestFactory: 'research', hfCatalogs: true }), ['hf-catalog']);
+  assert.deepEqual(launcherFeatures(resolved(undefined, ['high-precision']), { backtestFactory: 'research', hfCatalogs: true }), ['hf-catalog', 'high-precision']);
   assert.deepEqual(launcherFeatures(resolved(undefined, ['high-precision']), { backtestFactory: 'research' }), ['high-precision']);
   assert.throws(() => launcherFeatures(resolved(), { marketImport: true }), /requires_high_precision_owner/);
   assert.deepEqual(launcherFeatures(resolved(undefined, ['high-precision']), { backtestFactory: 'research', marketImport: true }), ['market-history', 'high-precision']);

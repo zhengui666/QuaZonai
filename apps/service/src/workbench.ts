@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
+import { pinnedHfDatasetCatalog } from '../../../packages/contracts/src/nautilus.ts';
 import { isAbsolute, relative, sep } from 'node:path';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput as NativeResearchInput } from '../../research/src/documents.ts';
@@ -54,7 +55,10 @@ function portfolioUsesFactor(fact: PortfolioFact, id: string): boolean {
 }
 export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunner?: (requestId: string, revision: number) => Promise<ProcessNativeTarget>) {
   const snapshot = () => host.harness.snapshot(Application, context);
-  const getSettings = async (): Promise<SettingsView> => settings((await snapshot())!.settings);
+  const getSettings = async (): Promise<SettingsView> => ({
+    ...settings((await snapshot())!.settings),
+    ...(config.nativeProcess?.capabilities.research.hfCatalogs === true ? { nativeHfCatalogs: true as const } : {}),
+  });
   const dataset = (id: string) => {
     const found = config.datasets.find((dataset) => dataset.id === id);
     if (!found) throw new Problem('dataset_not_found', 404);
@@ -137,17 +141,24 @@ export function workbench(host: ResearchHost, config: ServiceConfig, resolveRunn
         const runner = selectedTarget ?? config.nativeProcess;
         if (!runner) throw new Problem('research_catalog_requires_local_runner', 422);
         const paths = [text(submission.catalog, 'catalog'), ...(submission.additionalCatalogs ?? [])];
-        if (paths.some(path => !isAbsolute(path))) throw new Problem('research_catalog_local_path_required', 422);
-        if (paths.length > 1 && runner.capabilities.research.multiCatalogBindings !== true) throw new Problem('native_multi_catalog_binding_not_available_rebuild_runner', 422);
-        const [root, ...catalogs] = await Promise.all([config.dataDir, ...paths].map(path => realpath(path))).catch(() => { throw new Problem('research_catalog_not_found', 404); });
-        for (const catalog of catalogs) {
-          if (catalogs.length > 1 && catalog === root) throw new Problem('research_catalog_binding_invalid');
-          const bound = relative(root!, catalog);
-          if (bound === '..' || bound.startsWith('..' + sep) || isAbsolute(bound)) throw new Problem('research_catalog_outside_data_root', 422);
-          if (!(await stat(catalog)).isDirectory()) throw new Problem('research_catalog_not_directory', 422);
+        if (paths.some(path => path.startsWith('hf:'))) {
+          const catalog = pinnedHfDatasetCatalog(paths[0]!);
+          if (!catalog || paths.length !== 1) throw new Problem('research_hf_catalog_requires_single_pinned_dataset', 422);
+          if (runner.capabilities.research.hfCatalogs !== true) throw new Problem('research_hf_catalog_runner_unsupported', 422);
+          data = bindScienceData({ catalog }, runner);
+        } else {
+          if (paths.some(path => !isAbsolute(path))) throw new Problem('research_catalog_local_path_required', 422);
+          if (paths.length > 1 && runner.capabilities.research.multiCatalogBindings !== true) throw new Problem('native_multi_catalog_binding_not_available_rebuild_runner', 422);
+          const [root, ...catalogs] = await Promise.all([config.dataDir, ...paths].map(path => realpath(path))).catch(() => { throw new Problem('research_catalog_not_found', 404); });
+          for (const catalog of catalogs) {
+            if (catalogs.length > 1 && catalog === root) throw new Problem('research_catalog_binding_invalid');
+            const bound = relative(root!, catalog);
+            if (bound === '..' || bound.startsWith('..' + sep) || isAbsolute(bound)) throw new Problem('research_catalog_outside_data_root', 422);
+            if (!(await stat(catalog)).isDirectory()) throw new Problem('research_catalog_not_directory', 422);
+          }
+          if (new Set(catalogs).size !== catalogs.length) throw new Problem('research_duplicate_catalog_binding');
+          data = bindScienceData({ catalog: catalogs[0]!, ...(catalogs.length > 1 ? { catalogBindings: catalogs.map((catalog, index) => ({ catalogRef: `catalog-${index + 1}`, catalog })) } : {}) }, runner);
         }
-        if (new Set(catalogs).size !== catalogs.length) throw new Problem('research_duplicate_catalog_binding');
-        data = bindScienceData({ catalog: catalogs[0]!, ...(catalogs.length > 1 ? { catalogBindings: catalogs.map((catalog, index) => ({ catalogRef: `catalog-${index + 1}`, catalog })) } : {}) }, runner);
       }
       input = { ...(submission.mode ? { mode: submission.mode } : {}), goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data, policy };
     }

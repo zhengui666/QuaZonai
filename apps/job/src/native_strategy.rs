@@ -188,7 +188,8 @@ pub fn run_with_registration(
         "NATIVE_STRATEGY_AVAILABILITY_START"
     );
     let id: InstrumentId = request.instrument_id.parse()?;
-    let catalog = crate::catalog::open_catalog(root)?;
+    let remote = crate::catalog::is_hf_research_catalog(root);
+    let catalog = crate::catalog::open_research_catalog(root)?;
     let scenario = match &request.instrument_definition {
         Some(NativeInstrumentDefinitionV1::StaticScenario {
             ts_init_ns,
@@ -324,16 +325,24 @@ pub fn run_with_registration(
                 Some(UnixNanos::from(available_start)),
                 Some(UnixNanos::from(request.available_end_ns.get())),
             );
-        let mut session = crate::catalog::file_batch_session(
-            &catalog,
-            query,
-            Some(request.event_start_ns.get()..request.event_end_ns.get()),
-            4096,
-        )?;
+        let event_range = request.event_start_ns.get()..request.event_end_ns.get();
+        let mut next_batch: Box<dyn FnMut() -> Result<Option<DataBatch>>> = if remote {
+            let query = node_catalog::with_event_window(&query, event_range.start, event_range.end)?;
+            let mut session = node_catalog::market_batches(&catalog, root, query)?;
+            Box::new(move || session.next_batch())
+        } else {
+            let mut session = crate::catalog::file_batch_session(
+                &catalog,
+                query,
+                Some(event_range),
+                4096,
+            )?;
+            Box::new(move || session.next_batch())
+        };
         let mut rows = 0u64;
         let mut book_input = book_input::BookInputCheck::default();
         let mut pending = Vec::<OrderBookDelta>::new();
-        while let Some(batch) = session.next_batch()? {
+        while let Some(batch) = next_batch()? {
             rows = rows
                 .checked_add(batch.len() as u64)
                 .ok_or_else(|| anyhow::anyhow!("NATIVE_STRATEGY_ROW_COUNT_OVERFLOW"))?;
@@ -430,14 +439,17 @@ pub fn run_with_registration(
         .dispose_on_completion(false)
         .build()?;
     let replay_reads = node_catalog::RowCounts::default();
-    let factories = node_catalog::factories(node_catalog::Window {
-        root: root.into(),
-        initial: instrument,
-        updates,
-        event_start: request.event_start_ns.get(),
-        event_end: request.event_end_ns.get(),
-        counts: replay_reads.clone(),
-    });
+    let factories = node_catalog::factories_with_remote(
+        node_catalog::Window {
+            root: root.into(),
+            initial: instrument,
+            updates,
+            event_start: request.event_start_ns.get(),
+            event_end: request.event_end_ns.get(),
+            counts: replay_reads.clone(),
+        },
+        remote.then_some(catalog),
+    );
     let mut node = BacktestNode::builder(vec![config])
         .with_catalog_factories(factories)
         .build()?;
@@ -462,7 +474,9 @@ pub fn run_with_registration(
             .is_some_and(|rows| rows.get() > 0)
         {
             let provenance = root.join("funding-rates.manifest.json");
-            if provenance.exists() {
+            if remote {
+                notes.push("REMOTE_FUNDING_PROVENANCE_UNVERIFIED: the catalog supplied native funding rows, but their source availability and settlement provenance have not been independently verified.".into());
+            } else if provenance.exists() {
                 let manifest: serde_json::Value =
                     serde_json::from_reader(std::fs::File::open(provenance)?)?;
                 if manifest["funding_settlement_mode"] == "HISTORICAL_POST_HOC_EVENT_TIME" {

@@ -111,6 +111,8 @@ const errors: Record<string, string> = {
   model_login_in_progress: "A connection attempt is already in progress for this provider. Refresh to continue.", model_login_not_found: "The connection attempt has ended. Connect again.",
   model_login_cancelled: "Connection cancelled.", model_prompt_changed: "The authorization step changed. Try again.",
   model_login_failed: "Could not connect to the model provider.", model_logout_failed: "Sign-out was not confirmed. Try again.",
+  research_hf_catalog_requires_single_pinned_dataset: "Enter one Hugging Face dataset pinned to a full commit, without additional catalogs.",
+  research_hf_catalog_runner_unsupported: "Select a native runner with Hugging Face catalog support.",
   provider_status_unavailable: "The model provider's status is unavailable.", settings_field_not_mutable: "This settings field cannot be changed.",
 };
 export function shortError(error: unknown): string {

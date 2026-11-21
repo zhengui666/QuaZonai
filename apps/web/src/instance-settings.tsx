@@ -4,6 +4,7 @@ const t = (key: string, values?: Record<string, unknown>): string => i18n.t(key,
 import {PreparationStatus,SelectedRunnerStatus,type PreparationView} from './native-preparation-status';
 import { href } from './router';
 import { Button, Checkbox, Form, Input, Select } from 'antd';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type { InstanceSettingsView, NativeEnvironmentSettingsUpdate } from '../../../packages/contracts/src/index.ts';
 import type { NativeRustEnvironment } from '../../../packages/contracts/src/nautilus.ts';
@@ -16,10 +17,12 @@ export function environmentFromFields(values: Fields): NativeRustEnvironment {
   const accountFactory=values.accountFactory?.trim();
   if(values.accountCompatibility!==undefined && (values.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||!accountFactory))throw new Error(t("A compatibility declaration requires an account strategy factory. Clear this option if you are not making a declaration."));
   if(values.backtestCompletion!==undefined && (typeof values.backtestCompletion!=='boolean'||values.backtestCompletion&&!values.backtestFactory?.trim()))throw new Error(t("The completion callback requires a backtest factory and an explicit boolean."));
+  if(values.hfCatalogs!==undefined && typeof values.hfCatalogs!=='boolean')throw new Error(t("Choose whether this runner should read public Hugging Face catalogs."));
   return {kind:'RUST_PROCESS',id:values.id.trim(),cargoBinary:values.cargoBinary.trim(),manifestPath:values.manifestPath.trim(),packageName:values.packageName.trim(),
     features:(values.featureNames??'').split(',').map(v=>v.trim()).filter(Boolean),
     ...(values.backtestFactory?.trim()?{backtestFactory:values.backtestFactory.trim()}:{}),...(accountFactory?{accountFactory}:{}),
     ...(values.backtestCompletion!==undefined?{backtestCompletion:values.backtestCompletion}:{}),
+    ...(values.hfCatalogs!==undefined?{hfCatalogs:values.hfCatalogs}:{}),
     ...(values.accountCompatibility?{accountCompatibility:values.accountCompatibility}:{}),
   };
 }
@@ -37,6 +40,7 @@ export default function InstanceSettings() {
  const required = [{ required: true, whitespace: true, message: t('Fill in this field') }];
 
   const query = useResource<InstanceSettingsView>('/settings/instances');
+  const cache = useQueryClient();
   const confirm=useConfirm();
   const [importId,setImportId]=useState(''),[importPath,setImportPath]=useState('');
   const [form] = Form.useForm<Fields>();
@@ -59,7 +63,7 @@ export default function InstanceSettings() {
       const request = pending ?? {expectedRevision:saved.revision,environment:environmentFromFields(values!)};
       setBusy(true); setPending(request);
       const result = await api<InstanceSettingsView>('/settings/instances',{method:'PUT',body:request});
-      setSaved(result); setPending(undefined); setDiscovery(undefined); setNotice(t("Configuration saved. Select an artifact again. No account was connected."));
+      setSaved(result); void cache.invalidateQueries({ queryKey: ['/settings'] }); setPending(undefined); setDiscovery(undefined); setNotice(t("Configuration saved. Select an artifact again. No account was connected."));
     } catch (failure) {
       setError(failure);
       if (!retryUncertainEnvironmentSave(failure instanceof ApiError ? failure.status : undefined)) {
@@ -90,7 +94,7 @@ export default function InstanceSettings() {
     try{setBuild(await api<BuildView>('/settings/instances/import',{method:'POST',body:request}));}catch(failure){setError(failure);}finally{setBusy(false);}
   }
   async function readBuild(){if(!buildRequest||busy)return;setBusy(true);setError(undefined);try{setBuild(await api<BuildView>(`/settings/instances/build/${encodeURIComponent(buildRequest.requestId)}`));}catch(failure){setError(failure);}finally{setBusy(false);}}
-  async function selectRunner(){if(!buildRequest||!saved||busy)return;setBusy(true);setError(undefined);try{setSaved(await api<InstanceSettingsView>('/settings/instances/select-runner',{method:'POST',body:{requestId:buildRequest.requestId,expectedRevision:buildRequest.expectedRevision}}));setNotice(t("Artifact selected. No account was connected."));}catch(failure){setError(failure);}finally{setBusy(false);}}
+  async function selectRunner(){if(!buildRequest||!saved||busy)return;setBusy(true);setError(undefined);try{setSaved(await api<InstanceSettingsView>('/settings/instances/select-runner',{method:'POST',body:{requestId:buildRequest.requestId,expectedRevision:buildRequest.expectedRevision}}));void cache.invalidateQueries({ queryKey: ['/settings'] });setNotice(t("Artifact selected. No account was connected."));}catch(failure){setError(failure);}finally{setBusy(false);}}
   if (!loaded) return query.error ? <ErrorNotice error={query.error} /> : <Loading />;
   return <div className="settings-page instance-settings"><header className="page-heading"><h2>{t("Nautilus native Rust environment")}</h2></header>
 
@@ -105,6 +109,7 @@ export default function InstanceSettings() {
       <Form.Item name="featureNames" label={t("Explicit features (comma-separated)")}><Input /></Form.Item>
       <Form.Item name="backtestFactory" label={t("Public backtest factory module (config / install)")}><Input /></Form.Item>
       <Form.Item name="backtestCompletion" valuePropName="checked" label={t("Completion check after the native run returns")} extra={t("Explicitly enable finalize_after_node_run in the same module. Requires a rebuild; stopping is not natural EOF.")}><Checkbox>{t("Enable")}</Checkbox></Form.Item>
+      <Form.Item name="hfCatalogs" valuePropName="checked" extra={t("Applies to the next build. Build and select that runner to use a pinned cloud catalog.")}><Checkbox>{t("Read public Hugging Face catalogs")}</Checkbox></Form.Item>
       <Form.Item name="accountFactory" label={t("Public account strategy factory module (strategy)")}><Input /></Form.Item>
       <Form.Item name="accountCompatibility" label={t("Optional account factory compatibility declaration (not certification)")} dependencies={['accountFactory']} rules={[({getFieldValue})=>({validator:async(_,value)=>{if(value && !getFieldValue('accountFactory')?.trim())throw new Error(t("Enter an account strategy factory first, or clear the declaration."));}})]}>
         <Select allowClear placeholder={t("Not declared")} options={[{value:'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1',label:t("I explicitly declare: trusted strategy using only this node for its entire lifecycle")}]}/>

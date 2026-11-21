@@ -46,6 +46,28 @@ test('additional registered catalogs are captured once and retries preserve orig
     account:{compiled:false,registration:false,command:'account-runtime',requiresExplicitStart:true},running:false},
   };
   state.options.config.nativeProcess=target;await state.restart();
+  const hf={...direct,requestId:'hf-catalog',catalog:'hf://datasets/a/native@'+'A'.repeat(40)};
+  const readSettings=()=>state.service.app.inject({method:'GET',url:'/api/v3/settings',headers:state.headers});
+  assert.equal((await readSettings()).json().nativeHfCatalogs,undefined);
+  assert.equal((await send(hf)).json().error,'research_hf_catalog_runner_unsupported');
+  for (const catalog of ['hf://datasets/a/native@main','hf://datasets/a/native@'+'a'.repeat(40)+'/data','hf://datasets/a/native@'+'a'.repeat(40)+'?token=x','hf://datasets/a/../native@'+'a'.repeat(40)]) {
+   assert.equal((await send({...hf,catalog})).json().error,'research_hf_catalog_requires_single_pinned_dataset');
+  }
+  assert.equal((await send({...hf,catalog:'https://huggingface.co/datasets/a/native'})).json().error,'research_catalog_local_path_required');
+  assert.equal((await send({...hf,additionalCatalogs:[extra]})).json().error,'research_hf_catalog_requires_single_pinned_dataset');
+  const hfTarget={...target,capabilities:{...target.capabilities,research:{...target.capabilities.research,hfCatalogs:true}}};
+  state.options.config.nativeProcess=hfTarget;await state.restart();
+  assert.equal((await readSettings()).json().nativeHfCatalogs,true);
+  state.faux.setResponses([fauxAssistantMessage('Pinned catalog admission only. No native invocation.')]);
+  const hfResponse=await send(hf);assert.equal(hfResponse.statusCode,202,hfResponse.body);
+  const hfReceipt=hfResponse.json();
+  await (await state.service.research.harness.submission(hfReceipt.submissionId,context))!.wait(context);
+  const hfSaved=(await state.service.research.harness.snapshot(Requests,context))!.requests['request:hf-catalog']!;
+  assert.deepEqual(JSON.parse(JSON.stringify((hfSaved.input as {data:unknown}).data)),{catalog:hf.catalog.toLowerCase(),nautilusTarget:hfTarget});
+  assert.deepEqual(JSON.parse(JSON.stringify(hfSaved.metadata?.original)),hf);
+  state.options.config.nativeProcess=target;await state.restart();
+  const hfRepeat=await send(hf);assert.equal(hfRepeat.statusCode,202,hfRepeat.body);assert.deepEqual(hfRepeat.json(),hfReceipt);
+  assert.equal((await send({...hf,catalog:'hf://datasets/a/native@'+'b'.repeat(40)})).statusCode,409);
   const relative=await send({...direct,requestId:'relative-catalog',catalog:'book'});
   assert.equal(relative.statusCode,422,relative.body);
   assert.equal(relative.json().error,'research_catalog_local_path_required');

@@ -37,8 +37,8 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
     mode=LITERATURE_ONLY with datasetId admits only descriptive metadata and approved public literature; no native execution or sealed data.
-  research start --goal TEXT (--catalog SERVER_PATH | --dataset ID) --model provider:modelId --request-id ORIGINAL_ID
-    --catalog submits an existing Nautilus catalog path visible to the service without registering a dataset.
+  research start --goal TEXT (--catalog CATALOG | --dataset ID) --model provider:modelId --request-id ORIGINAL_ID
+    --catalog accepts a service-local Nautilus catalog path, or hf://datasets/OWNER/REPO@FULL_40_HEX with a compatible runner. No dataset is registered.
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research messages ID [--cursor CURSOR]
   research native-runs ID --result-task-id TASK_ID [--offset OFFSET]

@@ -16,6 +16,8 @@ native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
 account-runtime = ["native-sandbox-test", "dep:nautilus-hyperliquid", "dep:nautilus-system", "nautilus-hyperliquid/high-precision", "high-precision"]
 # Operator data preparation only; default scientific job images remain offline.
 catalog-prepare = ["dep:sha2"]
+# Resolve public Hub metadata and read native catalog data over HTTPS.
+hf-catalog = ["dep:futures-util", "dep:object_store", "dep:reqwest", "dep:tokio", "tokio/sync", "nautilus-persistence/cloud"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
 chainticks-observations = ["dep:arrow", "dep:nautilus-hyperliquid"]
 market-history = ["chainticks-observations", "dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
@@ -45,6 +47,9 @@ required-features = ["account-runtime"]
 [dependencies]
 ahash = { version = "=0.8.12", features = ["serde"] }
 async-trait = "=0.1.92"
+futures-util = { version = "=0.3.34", optional = true }
+object_store = { version = "=0.13.2", default-features = false, optional = true }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json"], optional = true }
 bytes = { version = "=1.12.1", features = ["serde"] }
 ustr = "=1.1.0"
 indexmap = "=2.14.2"

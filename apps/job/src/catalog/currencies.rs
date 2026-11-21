@@ -73,6 +73,11 @@ fn register(definitions: Vec<Definition>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "hf-catalog")]
+pub(crate) fn register_json(data: &[u8]) -> Result<()> {
+    register(serde_json::from_slice(data)?)
+}
+
 /// Legacy native arrays still work for currencies already known to Nautilus.
 pub fn read_instruments(path: &Path) -> Result<Vec<InstrumentAny>> {
     instruments_from_value(serde_json::from_reader(fs::File::open(path)?)?)

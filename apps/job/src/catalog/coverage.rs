@@ -1,5 +1,5 @@
 //! Read-only projection of Nautilus catalog file coverage, not a data quality verdict.
-use super::open_catalog;
+use super::open_research_catalog;
 use anyhow::{ensure, Result};
 use contracts::{catalog_coverage::*, DbCounter, SchemaV1};
 use nautilus_model::data::{BarType, NautilusDataType};
@@ -58,7 +58,7 @@ pub fn query(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    let catalog = open_catalog(root)?;
+    let catalog = open_research_catalog(root)?;
     let series = selectors
         .into_iter()
         .map(|(kind, selector)| {

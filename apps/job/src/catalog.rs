@@ -358,6 +358,22 @@ pub(crate) fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
     Ok(catalog)
 }
 
+pub(crate) fn is_hf_research_catalog(root: &Path) -> bool {
+    root.to_str().is_some_and(|root| root.starts_with("hf://"))
+}
+
+pub(crate) fn open_research_catalog(root: &Path) -> Result<ParquetDataCatalog> {
+    if is_hf_research_catalog(root) {
+        #[cfg(feature = "hf-catalog")]
+        {
+            return crate::hf_catalog::open(root.to_str().expect("HF catalog URI is UTF-8"));
+        }
+        #[cfg(not(feature = "hf-catalog"))]
+        anyhow::bail!("NATIVE_HF_CATALOG_UNAVAILABLE");
+    }
+    open_catalog(root)
+}
+
 /// Load executable market data with original instrument definitions.
 pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
     load_catalog_mode(root, selection, false)
