@@ -9,6 +9,21 @@ use nautilus_backtest::{
 };
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "hf-catalog")]
+use nautilus_persistence::{
+    backend::{extend_catalog_factories, parquet::catalog::ParquetDataCatalog},
+    catalog::{
+        factory::{CatalogFactory, validate_catalog_params},
+        traits::CatalogReader,
+    },
+    config::{CatalogBackendType, DataCatalogConfig},
+};
+#[cfg(feature = "hf-catalog")]
+use std::{collections::{BTreeMap, btree_map::Entry}, sync::{Arc, Mutex}};
+
+#[cfg(feature = "hf-catalog")]
+const HF_BACKEND: &str = "QuaZonaiHf";
+
 /// The user crate builds official multi-venue/data/engine configuration and installs its
 /// official Strategy instances. The closure can retain its typed parameters without a registry.
 pub struct ConfiguredNativeRun {
@@ -75,10 +90,90 @@ fn checked_catalog_path(roots: &[PathBuf], protocol: &str, path: &Path) -> Resul
     );
     let selected = path.canonicalize()?;
     ensure!(
-        roots.iter().any(|root| selected.starts_with(root)),
+        roots.iter().any(|root| !crate::catalog::is_hf_research_catalog(root)
+            && selected.starts_with(root)),
         "NATIVE_CONFIGURED_CATALOG_OUTSIDE_BOUND_ROOT"
     );
     Ok(())
+}
+
+// Carry an admitted URI to the existing owner factory without normalizing it as a path.
+fn bound_catalog_root(root: &Path) -> Result<PathBuf> {
+    if crate::catalog::is_hf_research_catalog(root) {
+        #[cfg(feature = "hf-catalog")]
+        {
+            let uri = root
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("NATIVE_HF_CATALOG_INVALID"))?;
+            crate::hf_catalog::validate_uri(uri)?;
+            return Ok(root.to_owned());
+        }
+        #[cfg(not(feature = "hf-catalog"))]
+        anyhow::bail!("NATIVE_HF_CATALOG_UNAVAILABLE");
+    }
+    Ok(root.canonicalize()?)
+}
+
+#[cfg(feature = "hf-catalog")]
+fn is_bound_hf_uri(roots: &[PathBuf], uri: &str) -> bool {
+    roots.iter().any(|root| {
+        crate::catalog::is_hf_research_catalog(root) && root.to_str() == Some(uri)
+    })
+}
+
+#[cfg(feature = "hf-catalog")]
+fn checked_hf_catalog(roots: &[PathBuf], config: &DataCatalogConfig) -> Result<bool> {
+    let is_hf_backend = matches!(config.catalog_backend(),
+        CatalogBackendType::External(name) if name == HF_BACKEND);
+    let is_hf_path = crate::catalog::is_hf_research_catalog(Path::new(config.path()));
+    if !is_hf_backend && !is_hf_path && config.fs_protocol() != "hf" {
+        return Ok(false);
+    }
+    ensure!(
+        is_hf_backend && is_hf_path && config.fs_protocol() == "hf",
+        "NATIVE_CONFIGURED_HF_REQUIRES_EXPLICIT_BACKEND"
+    );
+    ensure!(
+        is_bound_hf_uri(roots, config.path()),
+        "NATIVE_CONFIGURED_CATALOG_OUTSIDE_BOUND_ROOT"
+    );
+    Ok(true)
+}
+
+#[cfg(feature = "hf-catalog")]
+fn configured_hf_factory(roots: Vec<PathBuf>) -> CatalogFactory {
+    // Each native open gets its own session, while immutable discovery is shared
+    // by all stream and instrument opens for this URI in this execution.
+    let open = Mutex::new(BTreeMap::<String, ParquetDataCatalog>::new());
+    Arc::new(move |connect| {
+        ensure!(
+            is_bound_hf_uri(&roots, &connect.uri),
+            "NATIVE_CONFIGURED_CATALOG_OUTSIDE_BOUND_ROOT"
+        );
+        ensure!(
+            connect.storage_options.is_none(),
+            "NATIVE_HF_CATALOG_ANONYMOUS_ONLY"
+        );
+        validate_catalog_params(HF_BACKEND, connect.params.as_ref(), &[])?;
+        ensure!(
+            connect.batch_size != Some(0),
+            "NATIVE_HF_CATALOG_INVALID_BATCH_SIZE"
+        );
+        let mut open = open
+            .lock()
+            .map_err(|_| anyhow::anyhow!("NATIVE_HF_CATALOG_CACHE_UNAVAILABLE"))?;
+        let catalog = match open.entry(connect.uri.clone()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(crate::hf_catalog::open(&connect.uri)?),
+        };
+        let default_batch_size = catalog.batch_size;
+        if let Some(batch_size) = connect.batch_size {
+            catalog.batch_size = batch_size;
+        }
+        let session = catalog.fork_query_catalog();
+        catalog.batch_size = default_batch_size;
+        session?.ok_or_else(|| anyhow::anyhow!("NATIVE_HF_CATALOG_SESSION_UNAVAILABLE"))
+    })
 }
 
 pub fn run(
@@ -128,10 +223,10 @@ pub(crate) fn run_with_factory(
 ) -> Result<NativeConfiguredBacktestResultV1> {
     let factory =
         factory.ok_or_else(|| anyhow::anyhow!("NATIVE_CONFIGURED_RUN_REQUIRES_USER_RUNNER"))?;
-    let root = root.canonicalize()?;
+    let root = bound_catalog_root(root)?;
     let mut roots = vec![root.clone()];
     for catalog in additional_catalogs {
-        let canonical = catalog.canonicalize()?;
+        let canonical = bound_catalog_root(catalog)?;
         if !roots.contains(&canonical) {
             roots.push(canonical);
         }
@@ -145,9 +240,16 @@ pub(crate) fn run_with_factory(
         !has_completion || !config.dispose_on_completion(),
         "NATIVE_CONFIGURED_COMPLETION_REQUIRES_RETAINED_ENGINE"
     );
-    // Validate the returned configuration's real local catalog paths, not just the path
-    // supplied to the factory. This does not sandbox arbitrary trusted user Rust code.
+    // Check the returned data config, not just the arguments passed to trusted owner Rust.
+    // Local paths remain canonical descendants; public catalog locators must match exactly.
+    #[cfg(feature = "hf-catalog")]
+    let mut uses_hf = false;
     for data in config.data() {
+        #[cfg(feature = "hf-catalog")]
+        if checked_hf_catalog(&roots, data.catalog())? {
+            uses_hf = true;
+            continue;
+        }
         checked_catalog_path(
             &roots,
             data.catalog().fs_protocol(),
@@ -156,7 +258,17 @@ pub(crate) fn run_with_factory(
     }
     let id = config.id().to_string();
     let omit_canonical = config.dispose_on_completion();
-    let mut node = BacktestNode::builder(vec![config]).build()?;
+    let builder = BacktestNode::builder(vec![config]);
+    #[cfg(feature = "hf-catalog")]
+    let builder = if uses_hf {
+        builder.with_catalog_factories(extend_catalog_factories([(
+            HF_BACKEND.into(),
+            configured_hf_factory(roots),
+        )])?)
+    } else {
+        builder
+    };
+    let mut node = builder.build()?;
     let execute = || {
         node.build()?;
         let engine = node
@@ -224,6 +336,170 @@ pub(crate) fn run_with_factory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "hf-catalog")]
+    #[test]
+    fn typed_hf_config_uses_only_the_exact_admitted_immutable_catalog() {
+        let uri = "hf://datasets/owner/repo@0123456789abcdef0123456789abcdef01234567";
+        let primary = bound_catalog_root(Path::new(uri)).unwrap();
+        assert_eq!(primary.to_str(), Some(uri));
+        let roots = vec![primary];
+        let config = |path: &str, protocol: Option<&str>, backend| {
+            DataCatalogConfig::new(path.to_owned(), protocol.map(str::to_owned), backend)
+        };
+        let hf = || Some(CatalogBackendType::External(HF_BACKEND.into()));
+        let correct = config(uri, Some("hf"), hf());
+        assert!(checked_hf_catalog(&roots, &correct).unwrap());
+        assert_eq!(correct.connect_config().uri, uri);
+        assert!(checked_hf_catalog(&roots, &config(uri, None, hf())).is_err());
+        assert!(checked_hf_catalog(&roots, &config(uri, Some("hf"), None)).is_err());
+        assert!(
+            checked_hf_catalog(&roots, &config(&format!("{uri}/other"), Some("hf"), hf())).is_err()
+        );
+        let other_root = config(&uri.replace("owner", "other"), Some("hf"), hf());
+        assert!(checked_hf_catalog(&roots, &other_root).is_err());
+        assert!(!checked_hf_catalog(&roots, &config("/tmp/local", None, None)).unwrap());
+
+        let factory = configured_hf_factory(roots);
+        assert!(factory(&other_root.connect_config()).is_err());
+    }
+
+    #[cfg(all(feature = "hf-catalog", feature = "high-precision"))]
+    #[test]
+    #[ignore = "explicit anonymous replay of the existing public Oct 13 native ALT slice"]
+    fn configured_owner_replays_published_hf_catalog_without_orders() -> Result<()> {
+        use nautilus_backtest::config::{BacktestDataConfig, BacktestVenueConfig};
+        use nautilus_common::actor::DataActor;
+        use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
+        use nautilus_model::{
+            data::{NautilusDataType, OrderBookDeltas, TradeTick},
+            enums::{AccountType, BookType, OmsType, RecordFlag},
+            identifiers::{InstrumentId, StrategyId},
+        };
+        use nautilus_trading::{
+            nautilus_strategy,
+            strategy::{StrategyConfig, StrategyCore},
+        };
+        use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+
+        const START: u64 = 1_791_864_000_000_000_000;
+        const END: u64 = 1_791_867_600_000_000_000;
+        #[derive(Debug, Default)]
+        struct Counts {
+            trades: AtomicU64,
+            book_rows: AtomicU64,
+        }
+        #[derive(Debug)]
+        struct Observer {
+            core: StrategyCore,
+            id: InstrumentId,
+            counts: Arc<Counts>,
+        }
+        nautilus_strategy!(Observer);
+        impl DataActor for Observer {
+            fn on_start(&mut self) -> Result<()> {
+                self.subscribe_trades(self.id, None, None);
+                self.subscribe_book_deltas(self.id, BookType::L2_MBP, None, None, false, None);
+                Ok(())
+            }
+
+            fn on_book_deltas(&mut self, batch: &OrderBookDeltas) -> Result<()> {
+                assert_eq!(batch.instrument_id, self.id);
+                assert!(batch.deltas.last().is_some_and(|last| last.flags & RecordFlag::F_LAST as u8 != 0));
+                for row in &batch.deltas {
+                    assert!((START..END).contains(&row.ts_init.as_u64()));
+                    assert!(row.ts_event <= row.ts_init);
+                }
+                self.counts.book_rows.fetch_add(batch.deltas.len() as u64, Ordering::Relaxed);
+                Ok(())
+            }
+
+            fn on_trade(&mut self, row: &TradeTick) -> Result<()> {
+                assert_eq!(row.instrument_id, self.id);
+                assert!((START..END).contains(&row.ts_init.as_u64()));
+                assert!(row.ts_event <= row.ts_init);
+                self.counts.trades.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+        }
+
+        fn owner(root: &Path, _: &str, _: &serde_json::Value) -> Result<CompletedConfiguredNativeRun> {
+            let id = InstrumentId::from("ALT-USD-PERP.HYPERLIQUID");
+            let catalog = DataCatalogConfig::new(
+                root.to_str().ok_or_else(|| anyhow::anyhow!("expected UTF-8 locator"))?.to_owned(),
+                Some("hf".into()),
+                Some(CatalogBackendType::External(HF_BACKEND.into())),
+            ).with_read_only(true);
+            let books = BacktestDataConfig::builder()
+                .catalog(catalog.clone())
+                .data_type(NautilusDataType::OrderBookDelta)
+                .instrument_id(id)
+                .optimize_file_loading(false)
+                .batch_deltas(true)
+                .build()?;
+            let trades = BacktestDataConfig::builder()
+                .catalog(catalog)
+                .data_type(NautilusDataType::TradeTick)
+                .instrument_id(id)
+                .optimize_file_loading(false)
+                .build()?;
+            let venue = BacktestVenueConfig::builder()
+                .name(id.venue.as_str())
+                .oms_type(OmsType::Netting)
+                .account_type(AccountType::Margin)
+                .book_type(BookType::L2_MBP)
+                .starting_balances(vec!["1000 USDC".into()])
+                .fee_model(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()))
+                .build()?;
+            let config = BacktestRunConfig::builder()
+                .venues(vec![venue])
+                .data(vec![books, trades])
+                .start(START.into())
+                .end((END - 1).into())
+                .chunk_size(4096)
+                .raise_exception(true)
+                .dispose_on_completion(false)
+                .build()?;
+            let counts = Arc::new(Counts::default());
+            let observer_counts = Arc::clone(&counts);
+            let run = ConfiguredNativeRun {
+                config,
+                install: Box::new(move |engine| engine.add_strategy(Observer {
+                    core: StrategyCore::new(StrategyConfig {
+                        strategy_id: Some(StrategyId::from("HF-OBSERVER-001")),
+                        order_id_tag: Some("001".into()),
+                        ..Default::default()
+                    }),
+                    id,
+                    counts: observer_counts,
+                })),
+            };
+            Ok(run.with_completion(move |node, run_id, _| {
+                assert_eq!(counts.trades.load(Ordering::Relaxed), 323);
+                assert_eq!(counts.book_rows.load(Ordering::Relaxed), 27_429);
+                let canonical = node.get_engine(run_id).unwrap().get_canonical_result()?;
+                assert_eq!(canonical.as_value()["run"]["outcome"], "completed");
+                for table in ["orders", "fills", "positions"] {
+                    assert!(canonical.as_value()[table].as_array().unwrap().is_empty(), "{table}");
+                }
+                Ok(())
+            }))
+        }
+
+        let uri = std::env::var("QZ_TEST_HF_CATALOG")?;
+        let result = run_with_completion(
+            Path::new(&uri),
+            &[],
+            NativeConfiguredBacktestRequestV1 {
+                schema_version: SchemaV1,
+                name: "public-hf-owner".into(),
+                config: serde_json::Value::Null,
+            },
+            Some(owner),
+        )?;
+        assert_eq!(result.native_results.as_array().unwrap().len(), 1);
+        Ok(())
+    }
 
     #[test]
     fn typed_factory_checks_actual_catalog_path_and_protocol() {

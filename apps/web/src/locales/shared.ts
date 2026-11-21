@@ -128,6 +128,8 @@ export const zhCN: Record<string, string> = {
   "Could not connect to the model provider.": "模型服务连接失败",
   "Sign-out was not confirmed. Try again.": "退出未确认，请重试",
   "The model provider's status is unavailable.": "模型服务状态不可用",
+  "Enter one Hugging Face dataset pinned to a full commit, without additional catalogs.": "请填写一个用完整提交版本固定的 Hugging Face 数据集，不要添加其他数据目录。",
+  "Select a native runner with Hugging Face catalog support.": "请选择支持 Hugging Face 数据目录的原生运行器。",
   "This settings field cannot be changed.": "设置仅支持模型配置",
   "Request failed.": "请求失败",
   "Connection failed.": "连接失败",

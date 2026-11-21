@@ -189,12 +189,13 @@ export async function instanceSettings(config: ServiceConfig) {
   function environmentValue(value: unknown): NativeRustEnvironment | null {
     if (value === null) return null;
     const item = object(value, 'rust_environment');
-    if (item.kind !== 'RUST_PROCESS' || Object.keys(item).some(k => !['kind','id','cargoBinary','manifestPath','packageName','features','backtestFactory','backtestCompletion','accountFactory','accountCompatibility','chainticksFillObservations','marketImport'].includes(k))
+    if (item.kind !== 'RUST_PROCESS' || Object.keys(item).some(k => !['kind','id','cargoBinary','manifestPath','packageName','features','backtestFactory','backtestCompletion','accountFactory','accountCompatibility','chainticksFillObservations','marketImport','hfCatalogs'].includes(k))
       || ['id','cargoBinary','manifestPath','packageName'].some(k => typeof item[k] !== 'string' || !(item[k] as string).trim())
       || !isAbsolute(item.cargoBinary as string) || !isAbsolute(item.manifestPath as string)
       || item.features !== undefined && (!Array.isArray(item.features) || item.features.some(f => typeof f !== 'string' || !f))) throw new Problem('rust_environment_invalid');
     if(item.backtestCompletion!==undefined && (typeof item.backtestCompletion!=='boolean'||item.backtestCompletion && typeof item.backtestFactory!=='string'))throw new Problem('rust_backtest_completion_factory_required');
     if(item.marketImport!==undefined && typeof item.marketImport!=='boolean')throw new Problem('rust_market_import_invalid');
+    if(item.hfCatalogs!==undefined && typeof item.hfCatalogs!=='boolean')throw new Problem('rust_hf_catalog_option_invalid');
     if(item.chainticksFillObservations!==undefined && (typeof item.chainticksFillObservations!=='boolean'||item.chainticksFillObservations && typeof item.backtestFactory!=='string'))throw new Problem('rust_observation_backtest_factory_required');
     if(item.accountCompatibility!==undefined && (item.accountCompatibility!=='TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1'||typeof item.accountFactory!=='string'))throw new Problem('rust_account_compatibility_declaration_invalid');
     for (const field of ['backtestFactory','accountFactory']) if (item[field] !== undefined) publicRustPath(String(item[field]));

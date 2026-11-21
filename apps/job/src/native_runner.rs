@@ -14,7 +14,7 @@ pub fn capabilities(
     serde_json::json!({
         "schemaVersion":1,"identity":crate::build_identity(),
         "protocol":"quazonai-native-process-v1",
-        "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured,"multiCatalogBindings":configured},
+        "research":{"singleStrategyRegistration":registration,"configuredRunFactory":configured,"multiCatalogBindings":configured,"hfCatalogs":cfg!(feature="hf-catalog")},
         "preparation":{"marketImport":cfg!(feature="market-history"),"fillObservationImport":cfg!(feature="market-history")},
         "account":{"compiled":cfg!(feature="account-runtime"),
             "adapters":if cfg!(feature="account-runtime") { vec!["HYPERLIQUID"] } else { vec![] },

@@ -178,6 +178,7 @@ export async function buildRustLauncher(options: {
   if (capabilities.protocol !== 'quazonai-native-process-v1' || capabilities.running !== false
     || capabilities.research?.configuredRunFactory !== Boolean(options.factories.backtestFactory)
     || capabilities.account?.registration !== Boolean(options.factories.accountFactory)) throw new Error('rust_build_capabilities_mismatch');
+  if (options.factories.hfCatalogs && capabilities.research?.hfCatalogs !== true) throw new Error('rust_build_hf_catalogs_capability_missing');
   if((capabilities.account?.compatibilityDeclaration??null)!==(options.factories.accountCompatibility??null))throw new Error('rust_build_compatibility_declaration_mismatch');
   if (options.factories.marketImport && capabilities.preparation?.marketImport !== true) throw new Error('rust_build_market_import_capability_missing');
   verifyLauncherIdentity(generated, capabilities.identity);
@@ -196,5 +197,6 @@ export function launcherFeatures(owner: ResolvedMetadata, factories: RustFactory
   if (factories.marketImport && !highPrecision) throw new Error('rust_market_import_requires_high_precision_owner');
   return [...(factories.accountFactory ? ['account-runtime'] : []),
     ...(factories.chainticksFillObservations ? ['chainticks-observations'] : []),
+    ...(factories.hfCatalogs ? ['hf-catalog'] : []),
     ...(factories.marketImport ? ['market-history'] : []), ...(highPrecision ? ['high-precision'] : [])];
 }

@@ -45,4 +45,7 @@ it('completion opt-in survives environment edits and requires a backtest module'
  for(const enabled of [true,false])expect(environmentFromFields({...fields,backtestCompletion:enabled}).backtestCompletion).toBe(enabled);
  expect(()=>environmentFromFields({...fields,backtestFactory:' ',backtestCompletion:true})).toThrow();
  expect(()=>environmentFromFields({...fields,backtestCompletion:'true' as never})).toThrow();
+ expect(environmentFromFields(fields)).not.toHaveProperty('hfCatalogs');
+ for(const enabled of [true,false])expect(environmentFromFields({...fields,hfCatalogs:enabled}).hfCatalogs).toBe(enabled);
+ expect(()=>environmentFromFields({...fields,hfCatalogs:'true' as never})).toThrow();
 });

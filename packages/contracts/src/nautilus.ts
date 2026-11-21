@@ -7,7 +7,7 @@ export type ProcessNativeTarget = {
   kind: 'RUST_PROCESS'; id: string; binary: string;
   /** Exact result of the explicitly inspected user-built runner, not a claimed live state. */
   capabilities: { schemaVersion: 1; protocol: 'quazonai-native-process-v1'; identity: NativeJson;
-    research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean; multiCatalogBindings?: boolean };
+    research: { singleStrategyRegistration: boolean; configuredRunFactory: boolean; multiCatalogBindings?: boolean; hfCatalogs?: boolean };
     /** Absent on older runners: never infer data preparation from research support. */
     preparation?: { marketImport: boolean; fillObservationImport?: boolean };
     account: { compiled: boolean; adapters?: string[]; registration: boolean; command: 'account-runtime'; requiresExplicitStart: true; compatibilityDeclaration?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1' | null; compatibilityVerified?: false }; running: false };
@@ -108,6 +108,7 @@ export interface NativeRustEnvironment {
   chainticksFillObservations?: boolean;
   /** Compile the existing native market-history importer; owner must explicitly use high precision. */
   marketImport?: boolean;
+  hfCatalogs?: boolean;
   /** Explicit trusted-code compatibility declaration, not node verification or isolation. */
   accountCompatibility?: 'TRUSTED_STRATEGY_ONLY_SINGLE_NODE_V1';
 }
@@ -132,4 +133,11 @@ export interface NativeConfiguredFailureReview {
   /** Source review of the original entry point and rejection boundary, including retained install effects or reads; never a rollback guarantee. */
   sourceReview: string;
   sources: string[];
+}
+
+/** Only an explicit public Hub dataset commit; never a URL, alias, subpath or credential. */
+export function pinnedHfDatasetCatalog(value: string): string | undefined {
+  const match = /^hf:\/\/datasets\/([A-Za-z0-9_][A-Za-z0-9_.-]*)\/([A-Za-z0-9_][A-Za-z0-9_.-]*)@([a-fA-F0-9]{40})$/.exec(value);
+  if (!match || match[0] !== value || [match[1]!, match[2]!].some(part => /(?:\.\.|--|[.-]$)/.test(part))) return undefined;
+  return `hf://datasets/${match[1]}/${match[2]}@${match[3]!.toLowerCase()}`;
 }

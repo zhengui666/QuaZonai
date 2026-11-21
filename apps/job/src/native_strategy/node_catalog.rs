@@ -11,7 +11,7 @@ use nautilus_persistence::{
     catalog::{
         factory::{CatalogFactory, CatalogFactoryRegistry},
         session::{DataBatchQuery, DataBatchQueryResult, TypedDataBatchSession},
-        traits::{CatalogReader, CatalogWriter, RecordBatch},
+        traits::{CatalogReader, CatalogWriter, DataCatalog, RecordBatch},
         types::{CatalogInstrumentQuery, CatalogQuery},
     },
 };
@@ -76,9 +76,28 @@ pub(super) struct Window {
     pub counts: RowCounts,
 }
 
+#[cfg(test)]
 pub(super) fn factories(window: Window) -> CatalogFactoryRegistry {
+    factories_with_remote(window, None)
+}
+
+pub(super) fn factories_with_remote(
+    window: Window,
+    remote: Option<ParquetDataCatalog>,
+) -> CatalogFactoryRegistry {
+    // Only immutable discovery and HTTP transport are shared with the validation
+    // scan. The native node still gets a new stock DataFusion session per open.
+    let remote = remote.map(|catalog| {
+        (catalog.original_uri, catalog.object_store)
+    });
     let factory: CatalogFactory = Arc::new(move |_| {
-        let mut catalog = crate::catalog::open_catalog(&window.root)?;
+        let mut catalog = if let Some((uri, store)) = &remote {
+            let mut catalog = ParquetDataCatalog::from_uri(uri, None, None, None, None)?;
+            catalog.object_store = Arc::clone(store);
+            catalog
+        } else {
+            crate::catalog::open_catalog(&window.root)?
+        };
         // Bounds the decoded page target, not DataFusion sort memory or total file buffers.
         catalog.batch_size = 4096;
         Ok(Box::new(WindowCatalog {
@@ -138,50 +157,63 @@ impl CatalogReader for WindowCatalog {
                 Some(4096),
             )));
         }
-        let mut query = query.clone();
-        ensure!(
-            query.where_clause.is_none(),
-            "NATIVE_NODE_UNEXPECTED_FILTER"
-        );
-        // Preserve the existing half-open event window separately from ts_init availability.
-        query.where_clause = Some(format!(
-            "CAST(ts_event AS BIGINT) >= {} AND CAST(ts_event AS BIGINT) < {}",
-            self.window.event_start, self.window.event_end
-        ));
-        // Directory grouping may interleave equal-ts rows across overlapping files.
-        // Use the official per-file source merge to preserve file-priority ties.
-        query.params = Some(Params::new(
-            [("optimize_file_loading".to_string(), false.into())].into(),
-        ));
-        let ids = query
-            .identifiers
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_IDENTIFIER_REQUIRED"))?;
-        ensure!(ids.len() == 1, "NATIVE_NODE_SINGLE_SELECTOR_SESSION");
-        let intervals = self
-            .catalog
-            .get_intervals(&query.data_type.clone().into(), Some(&ids[0]))?;
-        let groups = overlap_groups(intervals)
-            .into_iter()
-            .filter_map(|(start, end)| {
-                let start = start.max(query.start.map_or(0, |value| value.as_u64()));
-                let end = end.min(query.end.map_or(u64::MAX, |value| value.as_u64()));
-                (start <= end).then_some((start, end))
-            })
-            .collect::<Vec<_>>()
-            .into_iter();
-        let inner: DataBatchQueryResult = Box::new(LazyGroups {
-            root: self.window.root.clone(),
-            query: query.clone(),
-            groups,
-            current: None,
-        });
+        let query = with_event_window(query, self.window.event_start, self.window.event_end)?;
+        let inner = market_batches(&self.catalog, &self.window.root, query.clone())?;
         Ok(Box::new(CountedSession {
             inner,
             kind: query.data_type.to_string(),
             counts: self.window.counts.clone(),
         }))
     }
+}
+
+pub(super) fn with_event_window(query: &CatalogQuery, start: u64, end: u64) -> Result<CatalogQuery> {
+    let mut query = query.clone();
+    ensure!(query.where_clause.is_none(), "NATIVE_NODE_UNEXPECTED_FILTER");
+    // Keep the half-open event window distinct from ts_init availability.
+    query.where_clause = Some(format!(
+        "CAST(ts_event AS BIGINT) >= {start} AND CAST(ts_event AS BIGINT) < {end}"
+    ));
+    // Preserve official per-file source priority across overlapping time intervals.
+    query.params = Some(Params::new(
+        [("optimize_file_loading".to_string(), false.into())].into(),
+    ));
+    Ok(query)
+}
+
+pub(super) fn market_batches(
+    catalog: &ParquetDataCatalog,
+    root: &std::path::Path,
+    query: CatalogQuery,
+) -> Result<DataBatchQueryResult> {
+    let ids = query
+        .identifiers
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("NATIVE_NODE_IDENTIFIER_REQUIRED"))?;
+    ensure!(ids.len() == 1, "NATIVE_NODE_SINGLE_SELECTOR_SESSION");
+    let intervals = catalog.get_intervals(&query.data_type.clone().into(), Some(&ids[0]))?;
+
+    let groups = overlap_groups(intervals)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let start = start.max(query.start.map_or(0, |value| value.as_u64()));
+            let end = end.min(query.end.map_or(u64::MAX, |value| value.as_u64()));
+            (start <= end).then_some((start, end))
+        })
+        .collect::<Vec<_>>()
+        .into_iter();
+    let remote = if catalog.is_remote_uri() {
+        catalog.fork_query_catalog()?
+    } else {
+        None
+    };
+    Ok(Box::new(LazyGroups {
+        root: root.to_path_buf(),
+        remote,
+        query,
+        groups,
+        current: None,
+    }))
 }
 
 // This groups file I/O ranges only. All row merging, frame assembly and replay remain upstream.
@@ -202,6 +234,7 @@ fn overlap_groups(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 
 struct LazyGroups {
     root: PathBuf,
+    remote: Option<DataCatalog>,
     query: CatalogQuery,
     groups: std::vec::IntoIter<(u64, u64)>,
     current: Option<DataBatchQueryResult>,
@@ -219,12 +252,16 @@ impl DataBatchQuery for LazyGroups {
             let Some((start, end)) = self.groups.next() else {
                 return Ok(None);
             };
-            let mut catalog = crate::catalog::open_catalog(&self.root)?;
-            catalog.batch_size = 4096;
             let mut query = self.query.clone();
             query.start = Some(start.into());
             query.end = Some(end.into());
-            self.current = Some(catalog.query_batch_session(&query, Some(4096))?);
+            self.current = Some(if let Some(catalog) = self.remote.as_mut() {
+                catalog.query_batch_session(&query, Some(4096))?
+            } else {
+                let mut catalog = crate::catalog::open_catalog(&self.root)?;
+                catalog.batch_size = 4096;
+                catalog.query_batch_session(&query, Some(4096))?
+            });
         }
     }
 }

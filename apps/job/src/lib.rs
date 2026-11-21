@@ -27,6 +27,8 @@ pub mod catalog;
 pub mod catalog_prefix;
 mod fee_models;
 pub mod forward;
+#[cfg(feature = "hf-catalog")]
+pub mod hf_catalog;
 pub mod managed;
 #[cfg(feature = "native-sandbox-test")]
 #[cfg(feature = "native-node-observer")]

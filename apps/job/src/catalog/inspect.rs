@@ -1,5 +1,5 @@
 //! Read-only discovery through the pinned official catalog API.
-use super::open_catalog;
+use super::open_research_catalog;
 use anyhow::{ensure, Result};
 use contracts::{catalog_coverage::*, DbCounter, SchemaV1};
 use nautilus_model::{
@@ -43,7 +43,7 @@ pub fn query(
             "CATALOG_INSPECT_CURSOR_FILTER_MISMATCH"
         );
     }
-    let catalog = open_catalog(root)?;
+    let catalog = open_research_catalog(root)?;
     let native_instruments = catalog.query_instruments(if instrument_ids.is_empty() {
         None
     } else {
