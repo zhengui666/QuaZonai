@@ -1753,6 +1753,7 @@ fn import(
     }
     sink.finish()?;
     report.native_files = native_files(&output.join("catalog"))?;
+    sink.verify_owned_book_files(report.native_files.iter().map(|file| file.path.as_str()))?;
     report.native_records = std::mem::take(&mut sink.counts);
     report.readback_records = report
         .native_records

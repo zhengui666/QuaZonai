@@ -1,4 +1,6 @@
 //! One native publication/readback boundary for prepared immutable batches.
+use std::path::PathBuf;
+
 use anyhow::{ensure, Context, Result};
 use nautilus_model::data::{Data, HasTsInit, NautilusDataType};
 use nautilus_persistence::{
@@ -13,6 +15,23 @@ pub fn publish_batch(
     items: &[Data],
     verify_only: bool,
 ) -> Result<()> {
+    publish_and_read_back(catalog, items, verify_only, false).map(|_| ())
+}
+
+pub(crate) fn publish_fresh_book_batch(
+    catalog: &ParquetDataCatalog,
+    items: &[Data],
+) -> Result<String> {
+    publish_and_read_back(catalog, items, false, true)?
+        .context("NATIVE_PUBLICATION_BATCH_MISMATCH")
+}
+
+fn publish_and_read_back(
+    catalog: &ParquetDataCatalog,
+    items: &[Data],
+    verify_only: bool,
+    fresh_book: bool,
+) -> Result<Option<String>> {
     #[cfg(test)]
     let profile_started = std::time::Instant::now();
     let first = items.first().context("EMPTY_NATIVE_BATCH")?;
@@ -33,20 +52,46 @@ pub fn publish_batch(
     );
     #[cfg(test)]
     let write_started = std::time::Instant::now();
-    if !verify_only {
-        catalog.write_data_enum(items, None, None, None)?;
-    }
+    let owned_book_key = if fresh_book {
+        ensure!(
+            !verify_only && !catalog.is_remote_uri() && matches!(first, Data::BookDelta(_)),
+            "NATIVE_PUBLICATION_BATCH_MISMATCH"
+        );
+        let deltas = items
+            .iter()
+            .map(|data| match data {
+                Data::BookDelta(delta) => *delta,
+                _ => unreachable!("batch kind was checked above"),
+            })
+            .collect::<Vec<_>>();
+        let path = catalog.write_to_parquet(&deltas, None, None, None)?;
+        // Use the same object-key encoding as Nautilus' writer.
+        Some(
+            catalog
+                .to_object_path(path.to_str().context("CATALOG_PATH_ENCODING")?)?
+                .to_string(),
+        )
+    } else {
+        if !verify_only {
+            catalog.write_data_enum(items, None, None, None)?;
+        }
+        None
+    };
     #[cfg(test)]
     profile::add(0, write_started.elapsed().as_nanos());
     let query = CatalogQuery::new(kind)
         .with_identifiers(Some(vec![identifier]))
         .with_range(Some(first.ts_init()), Some(items.last().unwrap().ts_init()));
-    let mut session = super::file_batch_session(
-        catalog,
-        query,
-        None,
-        items.len().saturating_add(1).min(4096),
-    )?;
+    let batch_rows = items.len().saturating_add(1).min(4096);
+    let mut session = match &owned_book_key {
+        Some(key) => super::file_batches::file_batch_session_with_paths(
+            query,
+            None,
+            batch_rows,
+            vec![PathBuf::from(catalog.reconstruct_full_uri(key))],
+        ),
+        None => super::file_batch_session(catalog, query, None, batch_rows)?,
+    };
     let mut observed = 0;
     loop {
         #[cfg(test)]
@@ -76,7 +121,7 @@ pub fn publish_batch(
     ensure!(observed == items.len(), "NATIVE_RECORD_READBACK_MISMATCH");
     #[cfg(test)]
     profile::add(3, profile_started.elapsed().as_nanos());
-    Ok(())
+    Ok(owned_book_key)
 }
 
 // Native BookOrder equality intentionally does not compare all serialized fields.
