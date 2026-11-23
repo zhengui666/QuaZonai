@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [features]
+# Explicit owner research artifact only; never part of default application packaging.
+development-owner = []
 # Optional official node observer and controlled Sandbox integration.
 native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
 native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
@@ -23,6 +25,11 @@ chainticks-observations = ["dep:arrow", "dep:nautilus-hyperliquid"]
 market-history = ["chainticks-observations", "dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
+
+[[bin]]
+name = "l2-development-owner"
+path = "src/bin/l2-development-owner.rs"
+required-features = ["development-owner", "high-precision"]
 
 [[bin]]
 name = "market-history"
