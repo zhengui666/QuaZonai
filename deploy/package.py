@@ -18,9 +18,10 @@ NODE_VERSION = '22.19.0'
 CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suffix in (
     ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
     ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
+LAUNCHER_ARCHIVES = {platform: name.replace('quazonai-cli-', 'quazonai-launcher-') for platform, name in CLI_ARCHIVES.items()}
 IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application',)}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
-REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
+REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()) | set(LAUNCHER_ARCHIVES.values()))
 MARKER = '@QUAZONAI_VERSION@'
 
 def identity(version: str, revision: str) -> None:
@@ -39,14 +40,18 @@ REMOTE_OWNER_MODULES = ('account-credentials.ts', 'account-configurations.ts', '
     'capital-account.ts', 'hyperliquid-account.ts', 'remote-account-supervisor.ts',
     'remote-account-client.ts', 'remote-account-ssh.ts')
 
-def cli_members(platform: str) -> set[str]:
-    return {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',
+def cli_members(platform: str, launcher: bool = False) -> set[str]:
+    members = {'distribution.json', 'skill/SKILL.md', 'skill/release.json', 'runtime/LICENSE',
         'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
         'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
         'app/package.json', 'app/apps/cli/package.json', 'app/apps/cli/src/main.ts', 'app/packages/contracts/src/index.ts', *('app/apps/nautilus/src/' + name for name in REMOTE_OWNER_MODULES)}
+    if launcher:
+        members -= {'skill/SKILL.md', 'skill/release.json', 'quazonai.cmd' if platform.startswith('windows-') else 'quazonai'}
+        members |= {'LAUNCHER.md', 'quazonai-launcher.cmd' if platform.startswith('windows-') else 'quazonai-launcher'}
+    return members
 
-def check_cli_archive(path: Path, platform: str) -> None:
+def check_cli_archive(path: Path, platform: str, launcher: bool = False) -> None:
     regular(path)
     if path.suffix == '.zip':
         with zipfile.ZipFile(path) as archive:
@@ -57,17 +62,59 @@ def check_cli_archive(path: Path, platform: str) -> None:
             if any(not item.isfile() for item in members):
                 raise ValueError('CLI archives contain only regular files.')
             names = [item.name for item in members]
-    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'skill/'))
-    if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
+    allowed = lambda name: name in cli_members(platform, launcher) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'skill/'))
+    if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform, launcher).issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
-def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revision: str) -> Path:
+def smoke_launcher_archive(path: Path, platform: str, version: str) -> None:
+    """Run the final archive wrapper with no host Node on PATH (CI only)."""
+    check_cli_archive(path, platform, True)
+    windows = platform.startswith('windows-')
+    with tempfile.TemporaryDirectory(prefix='qz launcher smoke ', dir=os.environ.get('TMPDIR')) as temporary:
+        root = Path(temporary)
+        unpacked = root / 'unpacked'
+        unpacked.mkdir()
+        if windows:
+            with zipfile.ZipFile(path) as archive:
+                archive.extractall(unpacked)
+        else:
+            with tarfile.open(path, 'r:gz') as archive:
+                archive.extractall(unpacked, filter='data')
+        entry = unpacked / ('quazonai-launcher.cmd' if windows else 'quazonai-launcher')
+        tools = root / 'tools'
+        tools.mkdir()
+        env = {**os.environ, 'PATH': str(tools)}
+        if not windows:
+            dirname = shutil.which('dirname')
+            if not dirname:
+                raise ValueError('Archive wrapper test requires dirname.')
+            # macOS system binaries carry restricted flags which cannot be
+            # copied into the temporary fixture. Copy bytes and executable mode only.
+            shutil.copyfile(dirname, tools / 'dirname')
+            (tools / 'dirname').chmod(0o755)
+        def execute(argument: str) -> subprocess.CompletedProcess:
+            # Fixed arguments only. cmd.exe is explicit because .cmd is not a PE executable.
+            command = (f'"{os.environ["COMSPEC"]}" /d /s /c ""{entry}" {argument}"'
+                if windows else [str(entry), argument])
+            return subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        help_result = execute('--help')
+        if help_result.returncode != 0 or 'No Nautilus' not in help_result.stdout:
+            raise ValueError('Extracted launcher wrapper help failed.')
+        version_result = execute('--version')
+        if version_result.returncode != 0 or version_result.stdout.strip() != 'quazonai-launcher ' + version:
+            raise ValueError('Extracted launcher wrapper version failed.')
+        refused = execute('build')
+        if refused.returncode != 1 or 'launcher_command_invalid' not in refused.stderr:
+            raise ValueError('Extracted launcher wrapper did not reject build.')
+
+def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revision: str, launcher: bool = False) -> Path:
     identity(version, revision)
     windows = platform.startswith('windows-')
     node = runtime / ('node.exe' if windows else 'bin/node')
     regular(node); regular(runtime / 'LICENSE')
     destination.mkdir(parents=True, exist_ok=True)
-    output = destination / CLI_ARCHIVES[platform]
+    output = destination / (LAUNCHER_ARCHIVES if launcher else CLI_ARCHIVES)[platform]
+    executable = 'quazonai-launcher' if launcher else 'quazonai'
     with tempfile.TemporaryDirectory(prefix='quazonai-cli-', dir=os.environ.get('TMPDIR')) as temporary:
         directory = Path(temporary)
         cli = directory / 'app/apps/cli'
@@ -86,19 +133,22 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
             shutil.copy2(ROOT / 'apps/nautilus/src' / name, owner / name)
         (directory / 'app/package.json').write_text('{"type":"module"}\n')
         shutil.copytree(ROOT / 'contracts/generated', directory / 'app/contracts/generated')
-        shutil.copy2(ROOT / 'deploy/cli-launch.mjs', directory / 'app/launch.mjs')
+        shutil.copy2(ROOT / ('deploy/launcher-launch.mjs' if launcher else 'deploy/cli-launch.mjs'), directory / 'app/launch.mjs')
         (directory / 'runtime').mkdir()
         shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
         shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
         (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
-        shutil.copytree(ROOT / '.agents/skills/quazonai', directory / 'skill')
-        (directory / 'skill/release.json').write_text(json.dumps({'version': version, 'revision': revision}) + '\n')
-        if windows:
-            (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
+        if launcher:
+            shutil.copy2(ROOT / 'deploy/LAUNCHER.md', directory / 'LAUNCHER.md')
         else:
-            launcher = directory / 'quazonai'
-            launcher.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
-            launcher.chmod(0o755)
+            shutil.copytree(ROOT / '.agents/skills/quazonai', directory / 'skill')
+            (directory / 'skill/release.json').write_text(json.dumps({'version': version, 'revision': revision}) + '\n')
+        if windows:
+            (directory / (executable + '.cmd')).write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
+        else:
+            entry = directory / executable
+            entry.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
+            entry.chmod(0o755)
         # Validate the actual packaged module closure on each CI target, without
         # opening an account/socket, running Cargo, or executing an owner.
         imports = ['app/apps/cli/src/remote-account.ts', 'app/apps/nautilus/src/capital-account.ts',
@@ -106,6 +156,18 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         code = '\n'.join('await import(' + json.dumps((directory / name).as_uri()) + ');' for name in imports)
         subprocess.run([str(directory / ('runtime/node.exe' if windows else 'runtime/node')),
             '--experimental-strip-types', '--input-type=module', '-e', code], check=True)
+        if launcher:
+            command = [str(directory / ('runtime/node.exe' if windows else 'runtime/node')),
+                '--experimental-strip-types', str(directory / 'app/launch.mjs')]
+            help_result = subprocess.run(command + ['--help'], check=True, capture_output=True, text=True)
+            if 'No Nautilus' not in help_result.stdout:
+                raise ValueError('Launcher compatibility boundary missing.')
+            version_result = subprocess.run(command + ['--version'], check=True, capture_output=True, text=True)
+            if version_result.stdout.strip() != 'quazonai-launcher ' + version:
+                raise ValueError('Launcher release identity mismatch.')
+            refused = subprocess.run(command + ['build'], capture_output=True, text=True)
+            if refused.returncode != 1 or 'launcher_command_invalid' not in refused.stderr:
+                raise ValueError('Launcher must not offer a local build command.')
         # npm executable links are irrelevant to CLI runtime; do not ship them.
         files = [file for file in directory.rglob('*') if file.is_file() and not file.is_symlink()]
         if windows:
@@ -116,7 +178,9 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
             with tarfile.open(output, 'w:gz') as archive:
                 for file in files:
                     archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
-    check_cli_archive(output, platform)
+    check_cli_archive(output, platform, launcher)
+    if launcher:
+        smoke_launcher_archive(output, platform, version)
     return output
 
 def read_manifest(destination: Path) -> dict:
@@ -181,15 +245,19 @@ and account data remain untouched during install/update/start/stop, including ow
 `--local-runtime` option is rejected. Configure an explicitly chosen external
 backtest/account environment before research or trading.
 
-Upstream NautilusTrader is a library, not a built-in HTTP server. QuaZonai expects
-its compatible remote worker protocol (`/v1/capabilities`, `/v1/execute`, retained
-execution receipts, and separate `/accounts/<id>` APIs). Installing Nautilus alone
-or entering an arbitrary server URL is insufficient. The current HTTP transport is one supported integration boundary, not a claim
-that every existing Nautilus environment already exposes it. Direct Rust environment
-attachment is not implemented by this deployment change. Owners can build the optional
-adapter from this repository using `deploy/docker/native-build.sh` and the explicit
-`nautilus` Dockerfile target; this is a separate, user-managed deployment. See the
-repository AGENTS.md deployment section for exact commands and protocol boundaries.
+The separate `quazonai-launcher-<platform>` archives contain prebuilt Node plus QZ
+process/SSH glue, not Nautilus or user strategies. Unpack and run their
+`quazonai-launcher` entrypoint; no local build is required. Linux hosts can serve
+an existing compatible compiled owner; macOS/Windows provide remote SSH clients.
+See the archive's LAUNCHER.md for exact identity and platform boundaries.
+
+Upstream NautilusTrader is a library, not a built-in QZ control server. The owner
+must already implement the native-process account protocol and have its strategies
+compiled/registered. Merely installing Nautilus or entering an arbitrary URL is
+insufficient. Retired HTTP control is not restored; one bounded business protocol
+is used over a private socket or pinned SSH. Existing processes without that
+interface cannot be hot-attached. No host trust, remote listener or trading is
+automatically enabled by installing these archives.
 
 Automatic `restore` replaces the dedicated QuaZonai installation `data/` directory,
 not external native state. It keeps the current owner Compose override, refuses
@@ -226,6 +294,8 @@ def verify(destination: Path) -> dict:
     manifest = read_manifest(destination)
     for platform, name in CLI_ARCHIVES.items():
         check_cli_archive(destination / name, platform)
+    for platform, name in LAUNCHER_ARCHIVES.items():
+        check_cli_archive(destination / name, platform, True)
     with tarfile.open(destination / 'quazonai-deploy.tar.gz', 'r:gz') as archive:
         if set(archive.getnames()) != DEPLOY_FILES or json.load(archive.extractfile('release.json')) != manifest:
             raise ValueError('Deployment bundle does not match release.json.')
@@ -239,6 +309,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     pack = commands.add_parser('pack-cli')
+    pack.add_argument('--launcher', action='store_true')
     pack.add_argument('--runtime', type=Path, required=True)
     pack.add_argument('--output', type=Path, required=True)
     pack.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
@@ -247,7 +318,7 @@ def main() -> None:
     for name in ('prepare', 'verify'):
         commands.add_parser(name).add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision))
+    if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision, args.launcher))
     elif args.command == 'prepare': prepare(args.output)
     else: verify(args.output)
 
